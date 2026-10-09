@@ -18,6 +18,19 @@ from hermes_installer.protected_enrollment import (
 
 
 @dataclass(frozen=True, slots=True)
+class SelectedProcessOperation:
+    operation: str
+    operation_id: str
+    target: str
+    enrollment_id: str
+    generation: str
+    profile_id: str
+    principal_id: str
+    service_uid: int
+    service_gid: int
+
+
+@dataclass(frozen=True, slots=True)
 class RootRuntimeBindings:
     """The immutable handler registrations and selectors for one daemon load."""
 
@@ -27,9 +40,51 @@ class RootRuntimeBindings:
     process_manager: Any
     effect_handlers: Mapping[tuple[str, str], Any]
     native_bridges: Mapping[str, Any]
+    artifact_catalog: Any
+    build_store: Any
+    service_connector: Any
+
+    def resolve_selected_operation(self, enrollment_id: str, generation: str,
+                                   operation: str, operation_id: str) -> Any:
+        """Join a fixed effect target to one protected typed launch recipe."""
+        if operation != "process.start":
+            raise EnrollmentDenied("only protected process.start recipes are selectable")
+        recipe = self.enrollment_catalog.resolve_launch_recipe(
+            enrollment_id, generation, operation_id,
+        )
+        effect = self.enrollment_catalog.resolve_operation(enrollment_id, generation, operation)
+        if (recipe.process_start_target != effect.target
+                or recipe.enrollment_id != effect.enrollment_id
+                or recipe.generation != effect.generation
+                or recipe.profile_id != effect.profile_id
+                or recipe.principal_id != effect.principal_id
+                or recipe.service_uid != effect.service_uid):
+            raise EnrollmentDenied("selected launch recipe and process.start target do not join")
+        return SelectedProcessOperation(
+            operation=operation, operation_id=recipe.operation_id,
+            target=effect.target, enrollment_id=recipe.enrollment_id,
+            generation=recipe.generation, profile_id=recipe.profile_id,
+            principal_id=recipe.principal_id, service_uid=recipe.service_uid,
+            service_gid=recipe.service_gid,
+        )
 
     def resolve_native_package(self, package_id: str, generation: str) -> Any:
-        return self.enrollment_catalog.resolve_native_package(package_id, generation)
+        package = self.enrollment_catalog.resolve_native_package(package_id, generation)
+        pins = [(package.compiled_closure_artifact_id, package.compiled_closure_sha256),
+                (package.entrypoint_artifact_id, package.entrypoint_sha256),
+                (package.resolver_artifact_id, package.resolver_sha256)]
+        pins.extend((adapter.adapter_artifact_id, adapter.adapter_sha256)
+                    for adapter in package.adapter_records.values())
+        for artifact_id, digest in pins:
+            spec = self.artifact_catalog.artifacts.get(artifact_id)
+            if spec is None or spec.sha256 != digest:
+                raise EnrollmentDenied("native package artifact pin is absent from protected catalog")
+        return package
+
+    def resolve_device(self, enrollment_id: str, generation: str) -> Any:
+        return self.enrollment_catalog.resolve_device(
+            enrollment_id, generation, self.device_catalog,
+        )
 
 
 def build_root_runtime_bindings(
@@ -62,14 +117,16 @@ def build_root_runtime_bindings(
     devices = enrollment.protected_devices
     builds = enrollment.protected_build_records
     digest = enrollment.protected_enrollment_digest
-    if not isinstance(records, list) or not records or not isinstance(devices, list) or not devices:
-        raise EnrollmentDenied("protected service and exact Coral device records are required")
-    if not isinstance(builds, list) or not builds:
-        raise EnrollmentDenied("protected fixed build records are required")
+    if not isinstance(records, list) or not records:
+        raise EnrollmentDenied("protected service generation records are required")
+    if not isinstance(devices, list) or not isinstance(builds, list):
+        raise EnrollmentDenied("protected hardware catalog records are malformed")
 
     service_catalog = ProtectedEnrollmentCatalog.from_verified_records(
         records, protected_digest=digest, expected_uid=expected_uid,
         native_packages=getattr(enrollment, "native_package_records", None),
+        memory_enrollments=getattr(enrollment, "memory_enrollments", None),
+        parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(builds)
     device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
@@ -86,8 +143,20 @@ def build_root_runtime_bindings(
             raise EnrollmentDenied("service generation has no protected authority principal")
         uid, binding = principal
         if (uid != profile.service_uid or binding.principal_id != profile.principal_id
+                or binding.profile_id != profile.profile_id
+                or binding.namespace_id != profile.namespace_identity
                 or profile.profile_id in process_profiles):
             raise EnrollmentDenied("service generation identity does not match its authority principal")
+        for operation, target in profile.operation_targets.items():
+            if not any(
+                rule.operation == operation and rule.target == target
+                and rule.capability in binding.capabilities
+                for rule in enrollment.rules.values()
+            ):
+                raise EnrollmentDenied("service operation target lacks an exact authority rule")
+        for recipe in profile.operation_recipes.values():
+            if recipe.parameter_schema_id not in service_catalog.parameter_schemas:
+                raise EnrollmentDenied("operation recipe parameter schema is absent from protected catalog")
         # Every child executable is selected by immutable artifact identity and
         # digest from the root-loaded artifact catalog; the worker supplies none.
         child_refs: dict[str, str] = {}
@@ -96,9 +165,18 @@ def build_root_runtime_bindings(
             if spec is None:
                 raise EnrollmentDenied("service runtime artifact is absent from the protected artifact catalog")
             child_refs[f"artifact:{artifact_id}:{spec.sha256}"] = spec.sha256
+        for recipe in profile.operation_recipes.values():
+            executable_spec = artifact_catalog.artifacts.get(recipe.executable_artifact_id)
+            if executable_spec is None or executable_spec.sha256 != recipe.executable_sha256:
+                raise EnrollmentDenied("operation executable pin differs from the protected artifact catalog")
+            for artifact_id, digest_value in recipe.child_artifact_refs.items():
+                child_spec = artifact_catalog.artifacts.get(artifact_id)
+                if child_spec is None or child_spec.sha256 != digest_value:
+                    raise EnrollmentDenied("operation child artifact pin differs from the protected catalog")
         process_profiles[profile.profile_id] = profile.as_managed_profile(
             artifact_root=enrollment.artifact_staging_directory,
             child_artifact_refs=child_refs,
+            parameter_schemas=service_catalog.parameter_schemas,
         )
     if set(process_profiles) != set(profile_to_principal):
         raise EnrollmentDenied("authority process profiles and protected service generations differ")
@@ -128,6 +206,8 @@ def build_root_runtime_bindings(
         signing_key = read_protected_file(AUTHORITY_KEY_PATH, expected_uid=expected_uid, maximum=64)
     if not isinstance(signing_key, bytes) or len(signing_key) != 32:
         raise EnrollmentDenied("root package-set signing key is unavailable")
+    from .build_execution import ContentAddressedBuildStore
+    build_store = ContentAddressedBuildStore.root_store(authority_key=signing_key)
     from hermes_installer.artifacts import (
         build_package_set_handlers, load_protected_package_sets,
     )
@@ -148,9 +228,19 @@ def build_root_runtime_bindings(
         artifact_catalog, enrollment.artifact_staging_directory, package_sets,
         runtime_resolver=lambda spec: service_catalog.resolve_package_runtime(
             spec.enrollment_id, spec.generation, spec.package_set_id, build_catalog,
+            build_store=build_store,
         ),
         expected_uid=expected_uid, authorization_check=authorization_check,
     ))
+
+    from hermes_installer.service_connector import build_enrolled_service_connector_handlers
+    service_connector, connector_handlers = build_enrolled_service_connector_handlers(
+        catalog=service_catalog, process_manager=process_manager,
+    )
+    for key, handler in connector_handlers.items():
+        if key in effect_handlers:
+            raise EnrollmentDenied("fixed service connector handler conflicts with an existing root handler")
+        effect_handlers[key] = handler
 
     return RootRuntimeBindings(
         enrollment_catalog=service_catalog,
@@ -159,4 +249,7 @@ def build_root_runtime_bindings(
         process_manager=process_manager,
         effect_handlers=MappingProxyType(effect_handlers),
         native_bridges=MappingProxyType(dict(enrollment.native_bridges)),
+        artifact_catalog=artifact_catalog,
+        build_store=build_store,
+        service_connector=service_connector,
     )

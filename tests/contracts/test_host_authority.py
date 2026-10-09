@@ -8,6 +8,7 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_installer.authority.client import (
     AuthorityClient, canonical_profile_target, profile_launch_envelope,
@@ -19,7 +20,8 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity, canonical_digest,
+    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle, Sensitivity,
+    canonical_bytes, canonical_digest,
 )
 
 
@@ -129,6 +131,62 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
         self.assertEqual(context.sensitivity, Sensitivity.UNKNOWN)
         self.assertEqual(effects, [("profile:a", payload)])
         self.assertEqual(result["status"], 200)
+
+    def test_process_start_target_is_resolved_from_protected_enrollment(self):
+        binding = PrincipalBinding(1234, "principal:a", "profile:a", "namespace:a",
+                                   frozenset({"hermes-profile-invoke"}))
+        selected_target = "coral-cpython-build:start"
+        rule = EffectRule("hermes-profile-invoke", "process.start", selected_target)
+        selected = SimpleNamespace(
+            operation="process.start", profile_id="profile:a", principal_id="principal:a",
+            service_uid=1234, enrollment_id="enroll:coral", generation="generation:1",
+            operation_id="coral-cpython39-source-build-v1", target=selected_target,
+        )
+        service = AuthorityService(
+            signing_key=b"q" * 32, key_id="selected-process-fixture",
+            bindings_by_uid={1234: binding},
+            rules={(rule.capability, rule.operation, rule.target): rule},
+            handlers={(rule.operation, rule.target): lambda **_kwargs: {}},
+            policy=FixturePolicy(),
+            selected_operation_resolver=lambda enrollment, generation, operation, operation_id: (
+                selected if (enrollment, generation, operation) ==
+                ("enroll:coral", "generation:1", "process.start")
+                and operation_id == "coral-cpython39-source-build-v1" else None),
+        )
+        request = {"schema": 1, "enrollment_id": "enroll:coral",
+                   "generation": "generation:1", "operation_id": "coral-cpython39-source-build-v1",
+                   "parameters": {}}
+        digest = canonical_digest(canonical_bytes(request))
+        context = service._issue_context(1234, {
+            "purpose": "selected-process-operation", "intent": "build-cpython",
+            "trace_id": "trace-selected-process", "lease_seconds": 10,
+            "source_contexts": [], "final_payload_digest": digest,
+            "operation": "process.start",
+        })
+        grant = service._authorize_process_start(1234, None, {
+            "context": context, "enrollment_id": "enroll:coral",
+            "generation": "generation:1", "operation_id": request["operation_id"],
+            "request_digest": digest, "retry_index": 0,
+        })
+        parsed = EffectAuthorization.from_wire(grant)
+        self.assertEqual(parsed.target, selected_target)
+        self.assertEqual(parsed.capability, "hermes-profile-invoke")
+        self.assertEqual(parsed.request_digest, digest)
+
+    def test_process_start_target_cannot_be_selected_without_enrollment_resolver(self):
+        binding = PrincipalBinding(1234, "principal:a", "profile:a", "namespace:a",
+                                   frozenset({"hermes-profile-invoke"}))
+        service = AuthorityService(
+            signing_key=b"r" * 32, key_id="selected-process-unavailable",
+            bindings_by_uid={1234: binding}, rules={}, handlers={}, policy=FixturePolicy(),
+        )
+        with self.assertRaises(AuthorityDenied) as denied:
+            service._authorize_process_start(1234, None, {
+                "context": {}, "enrollment_id": "enroll:coral", "generation": "generation:1",
+                "operation_id": "coral-cpython39-source-build-v1", "request_digest": "a" * 64,
+                "retry_index": 0,
+            })
+        self.assertEqual(denied.exception.code, "effect.unavailable")
 
     def test_homelab_write_denies_when_authentik_system_membership_is_missing(self):
         policy = AuthentikSystemPolicy(

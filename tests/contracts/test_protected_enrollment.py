@@ -50,14 +50,44 @@ def launch_recipe(root_id="data"):
 
 
 def test_build_target_is_fixed_and_generation_bound():
-    catalog = ProtectedBuildCatalog.from_protected_records([build_record()])
+    catalog = ProtectedBuildCatalog.from_protected_records([
+        build_record(), build_record("colibri-source-build:start"),
+    ])
     assert catalog.resolve("coral-cpython-build:start", "g1").builder_sha256 == "3" * 64
     with pytest.raises(EnrollmentDenied):
-        catalog.resolve("colibri-source-build:start", "g1")
+        catalog.resolve("colibri-source-build:start", "g2")
     with pytest.raises(EnrollmentDenied):
         catalog.resolve("coral-cpython-build:start", "g2")
     with pytest.raises(EnrollmentDenied):
         catalog.resolve("/tmp/attacker-script", "g1")
+
+
+def test_package_runtime_requires_signed_completed_build_receipt():
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="gen-a",
+        runtime_artifact_ids=("coral-python39-source",), service_uid=1001, service_gid=1001,
+        profile_id="profile-a", principal_id="principal-a",
+        package_runtime_records={"coral-cp39-runtime-v1": SimpleNamespace(
+            runtime_artifact_id="coral-python39-source", abi="cp39/aarch64",
+            target_glibc_min="2.34", build_target="coral-cpython-build:start",
+            build_generation="gen-a", runtime_build_attestation_digest="b" * 64,
+            runtime_executable_sha256="c" * 64, runtime_build_output="python/bin/python3.9",
+            venv_root_id="venv-a", policy_revision="policy-a",
+            runtime_executable=Path("/opt/hermes/python3.9"),
+            venv_root=Path("/var/lib/hermes/venv-a"),
+        )},
+    )
+    catalog = object.__new__(ProtectedEnrollmentCatalog)
+    catalog.resolve = lambda *_args: profile
+    build_catalog = SimpleNamespace(resolve=lambda *_args: SimpleNamespace(
+        target_id="coral-cpython-build:start", generation="gen-a",
+        attest_outputs=lambda: {"python/bin/python3.9": "c" * 64},
+    ))
+    with pytest.raises(EnrollmentDenied, match="completed root build attestation"):
+        catalog.resolve_package_runtime(
+            "service-a", "gen-a", "coral-cp39-runtime-v1", build_catalog,
+            build_store=None,
+        )
 
 
 def test_fixed_build_record_rejects_unlisted_target_and_caller_recipe_fields():
@@ -121,6 +151,44 @@ def test_usb_and_pci_selection_stay_opaque_and_generation_bound(monkeypatch):
         ProtectedDeviceCatalog.from_protected_records([{**records[0], "interface_identity": "1-2.4:1.0"}])
 
 
+def test_service_profile_joins_exact_independent_device_generation(monkeypatch):
+    profile_record = {
+        "enrollment_id": "coral-enrollment", "generation": "service-g7", "profile_id": "coral-worker",
+        "principal_id": "coral-owner", "service_uid": 1001, "service_gid": 1001,
+        "service_user": "hermes-owner", "device_enrollment_id": "coral-usb-device",
+        "expected_device_generation": "device-g3", "executable": "/opt/hermes/bin/worker",
+        "executable_sha256": "a" * 64, "runtime_artifact_ids": ["runtime-v1"],
+        "package_runtime_records": {},
+        "roots": {"home_id": "home", "work_id": "work", "data_id": "data",
+                  "home": "/var/lib/hermes/home", "work": "/var/lib/hermes/work", "data": "/var/lib/hermes/data"},
+        "authority_endpoint_id": "coral-socket", "namespace_identity": "coral-ns",
+        "socket_policy_id": "coral-sockets", "target_route_ids": [],
+        "operation_targets": {"process.start": "coral-start"},
+        "operation_recipes": {"coral-inference": launch_recipe("data")},
+        "argv_recipe": ["/opt/hermes/bin/worker"], "environment": {},
+        "max_lifetime_seconds": 600, "memory_max_bytes": 1000000,
+        "cpu_quota_percent": 100, "io_weight": 100,
+    }
+    profile = _parse_profile(profile_record)
+    device_record = {
+        "device_id": "coral-usb-device", "transport": "usb", "physical_identity": "1-2.3",
+        "sysfs_path": "/sys/bus/usb/devices/1-2.3", "device_node": "/dev/bus/usb/001/004",
+        "major": 189, "minor": 3, "inode": 99, "generation": "device-g3",
+        "vendor_id": "18d1", "product_id": "9302", "interface_identity": "1-2.3:1.0",
+        "interface_sysfs_path": "/sys/bus/usb/devices/1-2.3:1.0", "driver": None,
+    }
+    devices = ProtectedDeviceCatalog.from_protected_records([device_record])
+    monkeypatch.setattr(type(devices._devices["coral-usb-device"]), "verify_current", lambda _self: None)
+    catalog = ProtectedEnrollmentCatalog({("coral-enrollment", "service-g7"): profile}, digest="0" * 64)
+    catalog.resolve = lambda enrollment_id, generation: profile if (
+        enrollment_id, generation) == ("coral-enrollment", "service-g7") else (
+            _ for _ in ()).throw(EnrollmentDenied("stale service generation"))
+    selected = catalog.resolve_device("coral-enrollment", "service-g7", devices)
+    assert (selected.generation, selected.device_allow) == ("device-g3", "char-189:3:rwm")
+    with pytest.raises(EnrollmentDenied):
+        catalog.resolve_device("coral-enrollment", "stale-service-generation", devices)
+
+
 def test_catalog_rejects_duplicate_physical_devices():
     row = {
         "device_id": "tpu-a", "transport": "pci", "physical_identity": "0000:01:00.0",
@@ -140,6 +208,7 @@ def test_profile_rejects_caller_selected_roots_and_malformed_recipe(monkeypatch)
     item = {
         "enrollment_id": "install-1", "generation": "gen-1", "profile_id": "hermes-main",
             "principal_id": "owner", "service_uid": 1001, "service_gid": 1001, "service_user": "hermes-owner",
+            "device_enrollment_id": None, "expected_device_generation": None,
             "executable": "/opt/hermes/bin/hermes", "executable_sha256": "a" * 64,
             "runtime_artifact_ids": ["hermes-runtime-v1"], "package_runtime_records": {},
         "roots": {"home_id": "home", "work_id": "work", "data_id": "data",
@@ -167,6 +236,7 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
     item = {
         "enrollment_id": "install-1", "generation": "gen-1", "profile_id": "hermes-main",
         "principal_id": "owner", "service_uid": 1001, "service_gid": 1001, "service_user": "hermes-owner",
+        "device_enrollment_id": None, "expected_device_generation": None,
         "executable": "/opt/hermes/bin/hermes", "executable_sha256": "a" * 64,
         "runtime_artifact_ids": ["hermes-runtime-v1"], "package_runtime_records": {},
         "roots": {"home_id": "home", "work_id": "work", "data_id": "data",
@@ -212,6 +282,7 @@ def test_memory_connector_route_binds_variant_port_and_exact_route():
     item = {
         "enrollment_id": "memory-service", "generation": "service-g1", "profile_id": "memory-profile",
         "principal_id": "memory-owner", "service_uid": 1001, "service_gid": 1001,
+        "device_enrollment_id": None, "expected_device_generation": None,
         "service_user": "hermes-owner", "executable": "/opt/hermes/bin/hermes",
         "executable_sha256": "a" * 64, "runtime_artifact_ids": ["runtime-v1"],
         "package_runtime_records": {},
@@ -230,8 +301,17 @@ def test_memory_connector_route_binds_variant_port_and_exact_route():
         provider="claude-mem", namespace_identity=profile.namespace_identity,
         data_root_id=profile.roots.data_id, literal_loopback_port=19331,
         backend_variant="server-v1-postgres",
-        fixed_route_map={"claude-postgres-search": {
-            "method": "POST", "path": "/v1/search", "body": {"type": "object"}}},
+        fixed_route_map={"claude-postgres-search": SimpleNamespace(
+            backend_variant="server-v1-postgres",
+            steps=(SimpleNamespace(
+                step_id="search", method="POST", path_template="/v1/search",
+                body_recipe_id="claude-search-request", response_schema_id="claude-search-result",
+                capture_fields=(), next_step_id=None,
+            ),),
+            request_schema_id="claude-search-input", result_schema_id="claude-search-output",
+            scope_bindings={"project": "root-project"}, credential_reference_id="memory-auth",
+            maximum_seconds=10, maximum_bytes=100000,
+        )},
     )
     catalog = ProtectedEnrollmentCatalog(
         {(profile.enrollment_id, profile.generation): profile}, digest="0" * 64,
@@ -243,7 +323,8 @@ def test_memory_connector_route_binds_variant_port_and_exact_route():
         "memory-claude-mem:memory-profile", "claude-postgres-search",
     )
     assert (route.backend_variant, route.literal_loopback_port) == ("server-v1-postgres", 19331)
-    assert route.route_record["path"] == "/v1/search"
+    assert route.route_record["steps"][0]["path_template"] == "/v1/search"
+    assert route.route_record["request_schema_id"] == "claude-search-input"
     with pytest.raises(EnrollmentDenied):
         catalog.resolve_connector_route(
             profile.enrollment_id, profile.generation,
@@ -274,6 +355,77 @@ def test_operation_parameter_schema_enforces_closed_types_and_finite_argv_values
     ):
         with pytest.raises(EnrollmentDenied):
             schema.validate(invalid)
+
+
+def test_selection_only_launch_resolves_fixed_recipe_and_rejects_optional_argv_field(tmp_path: Path):
+    roots = [tmp_path / name for name in ("home", "work", "data")]
+    for root in roots:
+        root.mkdir(mode=0o700)
+    recipe = launch_recipe("data-root")
+    recipe["argv_recipe"] = [{"literal": "serve"}, {"parameter": "profile"}]
+    recipe["parameter_schema_id"] = "serve-parameters-v1"
+    record = {
+        "enrollment_id": "service-a", "generation": "gen-a", "profile_id": "profile-a",
+        "principal_id": "principal-a", "service_uid": 1001, "service_gid": 1001,
+        "service_user": "hermes-owner", "device_enrollment_id": None,
+        "expected_device_generation": None, "executable": "/opt/hermes/bin/hermes",
+        "executable_sha256": "a" * 64, "runtime_artifact_ids": ["runtime-v1"],
+        "package_runtime_records": {},
+        "roots": {"home_id": "home-root", "work_id": "work-root", "data_id": "data-root",
+                  "home": str(roots[0]), "work": str(roots[1]), "data": str(roots[2])},
+        "authority_endpoint_id": "socket-a", "namespace_identity": "ns-a",
+        "socket_policy_id": "sockets-a", "target_route_ids": [],
+        "operation_targets": {"process.start": "fixed-start-target"},
+        "operation_recipes": {"hermes-serve-v1": recipe}, "argv_recipe": ["unused"],
+        "environment": {}, "max_lifetime_seconds": 600, "memory_max_bytes": 1000000,
+        "cpu_quota_percent": 100, "io_weight": 100,
+    }
+    profile = _parse_profile(record)
+    schema_record = {"id": "serve-parameters-v1", "fields": [{
+        "name": "profile", "type": "string", "required": True, "enum": ["production"],
+        "max_length": 32, "minimum": None, "maximum": None,
+    }]}
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "gen-a"): profile}, digest="a" * 64,
+        parameter_schemas=[schema_record],
+    )
+    catalog.resolve = lambda *_args: profile
+    selected = catalog.resolve_launch_recipe("service-a", "gen-a", "hermes-serve-v1")
+    assert selected.process_start_target == "fixed-start-target"
+    assert selected.cwd == roots[2]
+    assert dict(selected.parameter_schema.validate({"profile": "production"})) == {"profile": "production"}
+    with pytest.raises(EnrollmentDenied):
+        catalog.resolve_launch_recipe("service-a", "gen-a", "caller-operation")
+
+
+def test_managed_profile_conversion_carries_root_ids_and_selection_recipes(monkeypatch):
+    item = {
+        "enrollment_id": "service-a", "generation": "gen-a", "profile_id": "profile-a",
+        "principal_id": "principal-a", "service_uid": 1001, "service_gid": 1001,
+        "service_user": "hermes-owner", "device_enrollment_id": None,
+        "expected_device_generation": None, "executable": "/opt/hermes/bin/hermes",
+        "executable_sha256": "a" * 64, "runtime_artifact_ids": ["runtime-v1"],
+        "package_runtime_records": {},
+        "roots": {"home_id": "home-a", "work_id": "work-a", "data_id": "data-a",
+                  "home": "/var/lib/hermes/home-a", "work": "/var/lib/hermes/work-a",
+                  "data": "/var/lib/hermes/data-a"},
+        "authority_endpoint_id": "socket-a", "namespace_identity": "ns-a",
+        "socket_policy_id": "sockets-a", "target_route_ids": [],
+        "operation_targets": {"process.start": "fixed-start-target"},
+        "operation_recipes": {"hermes-server-start": launch_recipe("data-a")},
+        "argv_recipe": ["serve"], "environment": {}, "max_lifetime_seconds": 600,
+        "memory_max_bytes": 1000000, "cpu_quota_percent": 100, "io_weight": 100,
+    }
+    profile = _parse_profile(item)
+    monkeypatch.setattr(type(profile.roots), "validate", lambda _self, **_kwargs: None)
+    managed = profile.as_managed_profile(artifact_root=Path("/var/lib/hermes/artifacts"),
+                                         child_artifact_refs={})
+    assert (managed.enrollment_id, managed.home_id, managed.work_id, managed.data_id) == (
+        "service-a", "home-a", "work-a", "data-a")
+    assert (managed.home_root, managed.work_root, managed.data_root) == (
+        profile.roots.home, profile.roots.work, profile.roots.data)
+    assert managed.operation_recipes["hermes-server-start"]["cwd_root_id"] == "data-a"
+    assert managed.operation_targets["process.start"] == "fixed-start-target"
 
 
 def test_signed_manifest_hash_canonicalization_is_stable():

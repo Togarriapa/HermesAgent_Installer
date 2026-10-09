@@ -13,20 +13,22 @@ from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
 from hermes_installer.service_connector import (
-    FixedServiceConnector, ROUTES, Route, open_request_bytes,
+    FixedServiceConnector, ROUTES, Route, ServiceConnectorClient,
+    open_request_bytes, _parse_http_frame,
 )
 
 
-def _context(operation: str, *, generation: str = "generation:1") -> HostContext:
+def _context(operation: str, *, generation: str = "generation:1", payload: bytes | None = None) -> HostContext:
     return HostContext(
         principal_id="principal:fixture", profile_id="hermes-desktop",
-        namespace_id="namespace:fixture", uid=os.getuid(), purpose="remote.desktop",
+        namespace_id="namespace:fixture", uid=1234, purpose="remote.desktop",
         intent_id="session:fixture", trace_id="trace:fixture", sensitivity=Sensitivity.PRIVATE,
         lineage_hash="a" * 64, policy_revision="policy:fixture",
         capabilities=frozenset({"hermes-service-connect"}), issued_at_monotonic=time.monotonic(),
         monotonic_expires_at=time.monotonic() + 30, nonce="nonce:fixture",
         grant_id="grant:context", signature="signature:fixture", enrollment_id="enrollment:fixture",
         generation=generation, operation=operation,
+        final_payload_digest=canonical_digest(payload) if payload is not None else None,
     )
 
 
@@ -43,16 +45,18 @@ def _authorization(context: HostContext, operation: str, target: str, payload: b
         grant_id=f"grant:{operation}", nonce=f"nonce:{operation}", context_digest=context_digest,
         signature="signature:grant", enrollment_id=context.enrollment_id,
         generation=context.generation, operation=operation,
+        final_payload_digest=canonical_digest(payload),
     )
 
 
-def _call(connector, operation, payload, *, target="xpra-native", pid=None, pidfd=None):
-    context = _context(operation)
+def _call(connector, operation, payload, *, target="xpra-native", pid=None, pidfd=None,
+          cancelled=lambda: False):
+    context = _context(operation, payload=payload)
     auth = _authorization(context, operation, target, payload)
     return getattr(connector, operation.rsplit(".", 1)[1])(
         context=context, authorization=auth, payload=payload, timeout=2.0,
         peer_pid=os.getpid() if pid is None else pid, peer_pidfd=pidfd,
-        cancelled=lambda: False,
+        cancelled=cancelled,
     )
 
 
@@ -86,7 +90,7 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         class Lease:
             namespace_fd = -1
             pidfd = self.pidfd
-            uid = os.getuid()
+            uid = 1234
             cgroup_identity = "fixture-cgroup"
             generation = "generation:1"
             process_id = "registered-process"
@@ -118,16 +122,18 @@ class FixedServiceConnectorContracts(unittest.TestCase):
     def test_fixed_loopback_stream_performs_write_and_read_with_sequence(self):
         opened = self._open()
         self.assertTrue(self.accepted.wait(2))
+        request = b"GET /client/index.html HTTP/1.1\r\nHost: attacker.invalid\r\nAccept: text/html\r\n\r\n"
         write = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http", "connector_id": opened["connector_id"],
                  "session_id": "session:fixture", "sequence": 0,
-                 "data_b64": __import__("base64").b64encode(b"fixed-route-effect").decode("ascii")}
+                 "data_b64": __import__("base64").b64encode(request).decode("ascii")}
         _call(self.connector, "connector.write", json.dumps(write, sort_keys=True, separators=(",", ":")).encode(), pidfd=self.pidfd)
         read = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http", "connector_id": opened["connector_id"],
-                "session_id": "session:fixture", "sequence": 1, "max_bytes": 64}
+                "session_id": "session:fixture", "sequence": 1, "max_bytes": 1024}
         response = _call(self.connector, "connector.read", json.dumps(read, sort_keys=True, separators=(",", ":")).encode(), pidfd=self.pidfd)
-        self.assertEqual(__import__("base64").b64decode(json.loads(response["body"])["data_b64"]), b"fixed-route-effect")
-        self.assertEqual(bytes(self.received), b"fixed-route-effect")
-        self.assertEqual(self.resolve_calls, [("hermes-desktop", "generation:1", "xpra-native", "xpra-http")])
+        normalized = b"GET /client/index.html HTTP/1.1\r\nHost: 127.0.0.1:" + str(self.port).encode() + b"\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
+        self.assertEqual(__import__("base64").b64decode(json.loads(response["body"])["data_b64"]), normalized)
+        self.assertEqual(bytes(self.received), normalized)
+        self.assertEqual(self.resolve_calls, [("enrollment:fixture", "hermes-desktop", "generation:1", "xpra-native", "xpra-http")])
 
     def test_unknown_route_and_stale_generation_are_denied_before_resolution(self):
         payload = open_request_bytes(
@@ -138,7 +144,7 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         altered = payload.replace(b"xpra-http", b"evil-route")
         with self.assertRaises(AuthorityDenied):
             _call(self.connector, "connector.open", altered, pidfd=self.pidfd)
-        stale_context = _context("connector.open", generation="generation:old")
+        stale_context = _context("connector.open", generation="generation:old", payload=payload)
         stale_auth = _authorization(stale_context, "connector.open", "xpra-native", payload)
         with self.assertRaises(AuthorityDenied):
             self.connector.open(context=stale_context, authorization=stale_auth, payload=payload,
@@ -154,6 +160,76 @@ class FixedServiceConnectorContracts(unittest.TestCase):
                              separators=(",", ":")).encode()
         with self.assertRaises(AuthorityDenied):
             _call(self.connector, "connector.read", payload, pid=os.getpid() + 1, pidfd=self.pidfd)
+
+    def test_cancelled_read_closes_retained_stream_and_peer(self):
+        opened = self._open()
+        payload = json.dumps({"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
+                              "connector_id": opened["connector_id"], "session_id": "session:fixture",
+                              "sequence": 0, "max_bytes": 16}, sort_keys=True,
+                             separators=(",", ":")).encode()
+        with self.assertRaises(AuthorityDenied):
+            _call(self.connector, "connector.read", payload, pidfd=self.pidfd, cancelled=lambda: True)
+        self.assertNotIn(opened["connector_id"], self.connector._streams)
+
+
+class FixedConnectorProtocolContracts(unittest.TestCase):
+    def test_xpra_requests_are_limited_to_pinned_get_head_assets(self):
+        route = ROUTES[("xpra-native", "xpra-http")]
+        accepted = _parse_http_frame(
+            b"GET /client/index.html HTTP/1.1\r\nHost: attacker.invalid\r\nAccept: text/html\r\n\r\n", route)
+        self.assertIn(b"Host: 127.0.0.1:14500\r\n", accepted)
+        for request in (
+            b"POST /client/index.html HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            b"GET /client/index.html?host=evil HTTP/1.1\r\n\r\n",
+            b"GET /client/not-pinned.js HTTP/1.1\r\n\r\n",
+            b"GET /client/index.html HTTP/1.1\r\nAuthorization: Bearer x\r\n\r\n",
+        ):
+            with self.assertRaises(AuthorityDenied):
+                _parse_http_frame(request, route)
+
+    def test_hi13_remote_stream_uses_only_root_opaque_session_api(self):
+        expiry = time.monotonic() + 30
+        class RootAuthority:
+            calls = []
+            def open_remote_connector(self, handle):
+                self.calls.append(("open", handle))
+                return {"schema": 1, "session_id": "session:root", "connector_handle": "c" * 24,
+                        "generation": "generation:root", "route_id": "xpra-websocket",
+                        "expires_monotonic": expiry}
+            def write_remote_connector(self, handle, connector, sequence, data):
+                self.calls.append(("write", handle, connector, sequence, data))
+                return {"schema": 1, "session_id": "session:root", "sequence": sequence,
+                        "accepted_bytes": len(data), "expires_monotonic": expiry}
+            def read_remote_connector(self, handle, connector, sequence, maximum):
+                self.calls.append(("read", handle, connector, sequence, maximum))
+                return {"schema": 1, "session_id": "session:root", "sequence": sequence,
+                        "data_bytes": b"binary", "eof": False, "expires_monotonic": expiry}
+            def close_remote_connector(self, handle, connector):
+                self.calls.append(("close", handle, connector))
+                return {"schema": 1, "session_id": "session:root", "state": "closed"}
+        authority = RootAuthority()
+        client = ServiceConnectorClient(authority, "r" * 32)
+        stream = client.open()
+        self.assertEqual(stream.route_id, "xpra-websocket")
+        self.assertEqual(stream.write(b"frame"), 5)
+        self.assertEqual(stream.read(64), b"binary")
+        stream.close()
+        self.assertEqual([item[0] for item in authority.calls], ["open", "write", "read", "close"])
+        self.assertEqual(authority.calls[1][1:4], ("r" * 32, "c" * 24, 0))
+
+    def test_colibri_allows_only_uncredentialed_chat_completion(self):
+        route = ROUTES[("colibri-main", "colibri-openai-v1")]
+        frame = b'{"model":"enrolled","messages":[],"stream":false}'
+        request = (b"POST /v1/chat/completions HTTP/1.1\r\nContent-Type: application/json\r\n"
+                   + f"Content-Length: {len(frame)}\r\n\r\n".encode() + frame)
+        self.assertIn(b"POST /v1/chat/completions", _parse_http_frame(request, route))
+        for request in (
+            b"GET /health HTTP/1.1\r\n\r\n",
+            b"POST /v1/chat/completions HTTP/1.1\r\nAuthorization: Bearer x\r\n"
+            b"Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        ):
+            with self.assertRaises(AuthorityDenied):
+                _parse_http_frame(request, route)
 
 
 if __name__ == "__main__":
