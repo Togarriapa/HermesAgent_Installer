@@ -179,6 +179,11 @@ class MemoryServiceEnrollment:
         scope_values = {key: _id(value, f"scope {key}") for key, value in scope.items()}
         if scope_values["user_id"] != profile:
             raise MemoryEnrollmentError("provider user scope must bind to the enrolled profile")
+        for parsed in routes.values():
+            route_scope = parsed.scope_bindings
+            if (route_scope["backend_project_ref"] != scope_values["project_id"]
+                    or route_scope["backend_agent_ref"] != scope_values["user_id"]):
+                raise MemoryEnrollmentError("route provider scope differs from root-forced enrollment scope")
 
         private_routes = record["private_extraction_embedding_routes"]
         if not isinstance(private_routes, Mapping) or set(private_routes) != {"extract", "embed"}:
