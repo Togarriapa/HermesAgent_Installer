@@ -83,6 +83,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "root_journal_roots",
             "resource_controller_roles", "native_mcp_tool_bindings",
             "remote_observation_enrollments",
+            "native_schema_artifacts", "composio_channel_enrollments",
+            "channel_delivery_bindings",
             "generation_digest",
         })
         expected = hashlib.sha256(json.dumps(

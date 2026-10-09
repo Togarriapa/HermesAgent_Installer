@@ -44,3 +44,5 @@ Original WhatsApp authenticated trigger v45: `plans/amendments/2026-10-09-whatsa
 Root channel peer delivery v48: `plans/amendments/2026-10-09-root-channel-peer-delivery-v48.md`; concrete originalchannel transport join, tasks open.
 
 Composio selected trigger derivation v77: `plans/amendments/2026-10-10-composio-trigger-artifact-exchange-derivation-v77.md`; existing RG-F03/R0060/RB-T08 gates remain open and account setup proof stays distinct.
+
+Existing resource child-attempt context v82: `plans/amendments/2026-10-10-resource-existing-child-attempt-context-v82.md`; existing RB-T08 task open.

@@ -13,7 +13,7 @@ from hermes_installer.authority.enrollment import (
     write_protected_file, _validate_service_generations, _parse_observer_delivery_bindings,
     _parse_source_issuers, _parse_native_schema_artifact_records,
     _parse_composio_channel_enrollment_records, _parse_channel_delivery_binding_records,
-    _parse_source_issuers, _validate_root_key_selection,
+    _validate_root_key_selection,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
