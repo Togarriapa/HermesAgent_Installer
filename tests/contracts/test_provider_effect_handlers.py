@@ -43,7 +43,7 @@ class Network:
         self.calls.append((url, kwargs))
         if url == CODEX_ENDPOINT:
             return SimpleNamespace(status=200,
-                body=b'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
+                body=b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
                 headers={"Content-Type": "text/event-stream", "Set-Cookie": "not-forwarded"})
         return SimpleNamespace(status=200, body=b'{"ok":true}',
                                headers={"Content-Type": "application/json",

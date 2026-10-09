@@ -2184,7 +2184,8 @@
     "RB-T06": [
       "RB-T05",
       "RB-T07",
-      "RB-T08"
+      "RB-T08",
+      "RB-T09"
     ],
     "RP-T01": [
       "RT-F01"
@@ -2332,6 +2333,14 @@
       "HI-T09",
       "HI-T12",
       "PR-F01"
+    ],
+    "RB-T09": [
+      "RB-T02",
+      "RB-T03",
+      "HI-T03",
+      "HI-T08",
+      "HI-T09",
+      "HI-T12"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."

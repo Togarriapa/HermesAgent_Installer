@@ -558,3 +558,10 @@ Selected memory services SHALL use profile/generation-bound protected connectors
 
 - **WHEN** memory request uses another profile/project or assumes a route absent from selected packaged backend
 - **THEN** root denies before bytes or reports exact incomplete integration, preserving private store/owner and original mandatory memory scope
+
+### Requirement: SK01 Exact memory route identity
+The installer SHALL bind distinct outer memory effect and profile connector targets through protected same-generation enrollment and select only the exact backend approved_route_id in planning/memory-service-connector-contract.json.
+
+#### Scenario: Wrong backend route or sibling target
+- **WHEN** a caller substitutes another profile, backend variant or unsupported delete/health route
+- **THEN** reject before service bytes and preserve the exact incomplete requirement.
