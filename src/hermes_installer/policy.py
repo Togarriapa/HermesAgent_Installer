@@ -556,7 +556,7 @@ class Dispatcher:
                     continue
                 if route.free_only and (not model.endswith(":free") or route.input_usd_per_million != 0 or route.output_usd_per_million != 0):
                     continue
-                if tool_request and not route.supports_tools:
+                if requires_tools and not route.supports_tools:
                     continue
                 if route.input_usd_per_million is None or route.output_usd_per_million is None:
                     continue
