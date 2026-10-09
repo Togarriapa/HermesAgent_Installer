@@ -6,6 +6,7 @@ import os
 import secrets
 import stat
 import shutil
+import time
 import unittest
 import pwd
 import grp
@@ -71,7 +72,7 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
     def test_root_provision_uses_kernel_peer_and_independent_setup_admission(self):
         receipt = EnrollmentReceipt(1, "transaction:root-issued", "receipt:root-issued",
                                     "generation-1", "a" * 64, None, "committed",
-                                    ("enrollment-1",), 1.0, 30.0)
+                                    ("enrollment-1",), time.monotonic(), time.monotonic() + 30.0)
 
         class Transaction:
             def enroll(self, request, *, setup_authorization):
@@ -121,7 +122,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
                     "provision_receipt_handle": "receipt:1", "generation_id": "gen-1",
                     "generation_digest": "c" * 64, "previous_generation_digest": None,
                     "state": "committed", "enrollment_ids": ["enrollment-1"],
-                    "issued_monotonic": 1.0, "expires_monotonic": 30.0}
+                    "issued_monotonic": time.monotonic(),
+                    "expires_monotonic": time.monotonic() + 30.0}
 
         result = BootstrapEnrollmentClient(rpc).provision(("source:opaque",), "transaction:1")
         self.assertEqual(calls[0][0], "enrollment.provision")

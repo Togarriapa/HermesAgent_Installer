@@ -197,7 +197,8 @@ def _receipt_from_wire(value: Mapping[str, Any]) -> EnrollmentReceipt:
             or any(not isinstance(item, str) or not item for item in value["enrollment_ids"])
             or any(isinstance(value[key], bool) or not isinstance(value[key], (int, float))
                    for key in ("issued_monotonic", "expires_monotonic"))
-            or value["expires_monotonic"] <= value["issued_monotonic"]):
+            or value["expires_monotonic"] <= value["issued_monotonic"]
+            or not time.monotonic() < value["expires_monotonic"] <= time.monotonic() + 300.0):
         raise BootstrapEnrollmentError("root setup authority returned an invalid provision receipt")
     return EnrollmentReceipt(1, value["transaction_handle"], value["provision_receipt_handle"],
                              value["generation_id"], value["generation_digest"],
@@ -367,6 +368,7 @@ class RootBootstrapEnrollment:
             from .enrollment import read_protected_file
             previous = read_protected_file(self.authority_path, expected_uid=0, maximum=MAX_AUTHORITY_BYTES)
             authority = dict(self.authority_loader(self.authority_path))
+            _validate_authority_base(authority)
         else:
             previous = None
             if policy.authority_base is None and self.authority_builder is None:
@@ -387,6 +389,7 @@ class RootBootstrapEnrollment:
         journal = self.transaction_root / f"{transaction_id}.json"
         backup = self.transaction_root / f"{transaction_id}.authority.previous"
         identity: ServiceIdentity | None = None
+        identity_attempted = False
         created_roots: list[Path] = []
         staged_artifacts: list[Path] = []
         previous_authority: bytes | None = None
@@ -407,8 +410,16 @@ class RootBootstrapEnrollment:
                        backup=backup if previous is not None else None, identity=identity,
                        provision_receipt_handle=provision_receipt_handle,
                        request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
-                       setup_authorization=setup_authorization)
+                       setup_authorization=setup_authorization,
+                       previous_generation_digest=previous_generation_digest)
         try:
+            identity_attempted = True
+            _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
+                           roots=candidate_roots,
+                           backup=backup if previous is not None else None, identity=identity,
+                           provision_receipt_handle=provision_receipt_handle,
+                           request_digest=request_digest, artifact_receipt_digests=artifact_receipt_digests,
+                           setup_authorization=setup_authorization, identity_attempted=True)
             identity = self.identity.ensure()
             _write_journal(journal, transaction_id, "preparing", created_roots, staged_artifacts,
                            roots=candidate_roots,
@@ -492,6 +503,18 @@ class RootBootstrapEnrollment:
                     issued_monotonic=issued, expires_monotonic=issued + 300.0,
                 )
         except Exception:
+            if identity_attempted and identity is None:
+                _write_journal(journal, transaction_id, "incomplete", created_roots, staged_artifacts,
+                               roots=candidate_roots,
+                               backup=backup if previous is not None else None,
+                               identity=None, generation_digest=published_generation_digest,
+                               provision_receipt_handle=provision_receipt_handle,
+                               request_digest=request_digest,
+                               artifact_receipt_digests=artifact_receipt_digests,
+                               setup_authorization=setup_authorization, identity_attempted=True)
+                raise BootstrapEnrollmentPending(
+                    "service identity creation has an ambiguous partial effect; root reconciliation is required"
+                ) from None
             if (published_generation_digest is not None
                     and _current_generation_digest(self.authority_path) == published_generation_digest):
                 if previous_authority is not None:
@@ -601,10 +624,21 @@ class RootBootstrapEnrollment:
                 raise BootstrapEnrollmentError("transaction journal is malformed") from None
             if (not isinstance(journal, dict) or journal.get("schema") != 1
                     or journal.get("transaction_id") != transaction_id
-                    or journal.get("state") not in {"preparing", "committing", "committed", "rolled_back"}):
+                    or journal.get("state") not in {"preparing", "committing", "committed", "incomplete", "rolled_back"}):
                 raise BootstrapEnrollmentError("transaction journal does not match recovery request")
-            if journal["state"] in {"committed", "rolled_back"}:
+            if journal["state"] in {"committed", "incomplete", "rolled_back"}:
                 return journal["state"]
+            identity_value = journal.get("identity")
+            if journal["state"] == "preparing" and journal.get("identity_attempted") is True and identity_value is None:
+                _write_journal(path, transaction_id, "incomplete", [], [],
+                               roots=tuple(Path(p) for p in journal.get("roots", [])),
+                               backup=Path(journal["backup"]) if journal.get("backup") else None,
+                               request_digest=journal.get("request_digest"),
+                               provision_receipt_handle=journal.get("provision_receipt_handle"),
+                               artifact_receipt_digests=tuple(journal.get("artifact_receipt_digests", [])),
+                               setup_authorization=journal.get("setup_authorization"),
+                               identity_attempted=True)
+                return "incomplete"
             if journal["state"] == "committing":
                 backup_text = journal.get("backup", "")
                 expected = journal.get("generation_digest")
@@ -617,9 +651,8 @@ class RootBootstrapEnrollment:
                         self.authority_writer(self.authority_path, backup.read_bytes())
                     else:
                         self.authority_path.unlink()
-                elif current is None:
+                elif current != journal.get("previous_generation_digest"):
                     raise BootstrapEnrollmentError("authority state changed during interrupted enrollment")
-            identity_value = journal.get("identity")
             identity = None
             if isinstance(identity_value, dict) and set(identity_value) == {"name", "uid", "gid", "created"}:
                 identity = ServiceIdentity(identity_value["name"], identity_value["uid"],
@@ -992,7 +1025,15 @@ def _write_journal(path: Path, transaction_id: str, state: str,
                    provision_receipt_handle: str | None = None,
                    request_digest: str | None = None,
                    artifact_receipt_digests: tuple[str, ...] = (),
-                   setup_authorization: VerifiedRootSetupAuthorization | Mapping[str, Any] | None = None) -> None:
+                   setup_authorization: VerifiedRootSetupAuthorization | Mapping[str, Any] | None = None,
+                   identity_attempted: bool | None = None,
+                   previous_generation_digest: str | None = None) -> None:
+    if identity_attempted is None:
+        prior_journal = _read_json_if_owned(path)
+        identity_attempted = bool(prior_journal.get("identity_attempted", False)) if isinstance(prior_journal, dict) else False
+    prior_journal = _read_json_if_owned(path)
+    if previous_generation_digest is None and isinstance(prior_journal, dict):
+        previous_generation_digest = prior_journal.get("previous_generation_digest")
     if isinstance(setup_authorization, VerifiedRootSetupAuthorization):
         setup = {"target_id": setup_authorization.target_id,
                  "setup_session_id": setup_authorization.setup_session_id,
@@ -1015,7 +1056,9 @@ def _write_journal(path: Path, transaction_id: str, state: str,
                                         "provision_receipt_handle": provision_receipt_handle,
                                         "request_digest": request_digest,
                                         "artifact_receipt_digests": list(artifact_receipt_digests),
-                                        "setup_authorization": setup}))
+                                        "setup_authorization": setup,
+                                        "identity_attempted": identity_attempted,
+                                        "previous_generation_digest": previous_generation_digest}))
 
 
 def _unique_pairs(pairs):
