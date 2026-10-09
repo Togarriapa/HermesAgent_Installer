@@ -24,6 +24,10 @@ class CloudflareClient:
         if not isinstance(token,str) or not token.strip() or len(token)>4096 or "\n" in token or "\r" in token:
             raise ValueError("A valid Cloudflare API token is required")
         self.__token=token.strip(); self.network=network or BoundedNetwork()
+    @staticmethod
+    def _object_id(value:str)->str:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}",value): raise ValueError("Invalid Cloudflare resource identifier")
+        return value
     @classmethod
     def _valid_path(cls,path:str)->bool:
         endpoint=path.split("?",1)[0]
