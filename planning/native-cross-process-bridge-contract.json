@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "change": "host-principal-custody",
+  "requirement_id": "HI11",
+  "task_id": "HI-T11",
+  "evidence_id": "EV-HI11",
+  "state": "specified; root/native producer/gateway implementation and acceptance pending",
+  "topology": "separately attested enrolled Hermes producer and provider gateway; same-peer capture_source handles are not portable bearer authority",
+  "producer_api": {
+    "method": "prepare_native_event",
+    "operation": "native.event.prepare",
+    "request": [
+      "schema=1",
+      "payload_bytes",
+      "parent_receipt_handles",
+      "purpose",
+      "intent_id",
+      "trace_id",
+      "retry_index"
+    ],
+    "forbidden": [
+      "gateway_id",
+      "destination",
+      "role",
+      "PID",
+      "executable",
+      "URL",
+      "credential",
+      "sensitivity_label"
+    ],
+    "validation": "root itself captures exact complete SDK request envelope bytes from authenticated producer, joins complete immutable parent receipt ancestry, and derives normalized final provider request with protected selected canonicalizer; messages-only snapshot is source ancestry, not sufficient final effect body",
+    "response": [
+      "native_event_handle",
+      "expires_monotonic"
+    ],
+    "authority": "opaque handle is lookup reference only, unusable except by fixed host-selected gateway peer",
+    "python_signature": "prepare_native_event(payload: bytes, *, parent_receipt_handles=(), purpose, intent_id, trace_id, retry_index=0) -> opaque native_event_handle"
+  },
+  "gateway_api": {
+    "method": "dispatch_native_request",
+    "operation": "native.request.dispatch",
+    "request": [
+      "schema=1",
+      "native_event_handle",
+      "normalized_payload",
+      "retry_index"
+    ],
+    "validation": "authenticate actual gateway SO_PEERCRED + PIDFD/starttime/executable digest/profile/enrollment/generation; require exact protected mapping from producer to gateway, normalized payload digest and retry index match",
+    "semantics": "single root RPC atomically claims handle, validates full source closure/current policy/account/zero budget/lease, internally issues fresh context+one-use effect and invokes fixed provider handler; caller receives no transferable grant",
+    "effect_operation": "provider.dispatch fixed target/recipient/capability derived only from protected enrollment and canonical payload",
+    "response": "bounded eligible provider result/stream or exact redacted error; no secret/context credential leakage",
+    "python_signature": "dispatch_native_request(handle, normalized_payload: bytes, retry_index=0) -> bounded result/stream"
+  },
+  "protected_handle_state": [
+    "handle_nonce",
+    "producer_enrollment_id",
+    "producer_process_identity",
+    "producer_executable_digest",
+    "producer_profile_id",
+    "producer_generation",
+    "gateway_enrollment_id",
+    "gateway_process_identity",
+    "gateway_executable_digest",
+    "gateway_profile_id",
+    "gateway_generation",
+    "canonicalizer_artifact_digest",
+    "normalized_final_payload_sha256",
+    "source_receipt_closure_digest",
+    "purpose",
+    "intent_id",
+    "trace_id",
+    "effect_operation",
+    "fixed_effect_target",
+    "recipient",
+    "retry_index",
+    "issued_monotonic",
+    "expires_monotonic",
+    "consumption_state"
+  ],
+  "consumption": "atomic pending->consuming->consumed; before effect bytes reserve once and consume source admission; concurrent/replayed/stale/cross-peer use denies. Failure does not resurrect grant. Retry requires a newly prepared bridge plus root-observed retry authorization and full unchanged parent lineage, never replay old bridge/context/grant. Receipt ancestry remains retained for provenance; provenance existence does not grant repeat effects.",
+  "lease": "minimum of source receipt/producer/gateway/context/policy/request deadline; finite existing operation cap; watchdog cancels active egress on expiry/revoke/generation/PID change",
+  "no_laundering": "unknown/private remains private/ineligible public; transport header only opaque reference, never permission or caller public classification",
+  "coverage": [
+    "primary",
+    "auxiliary",
+    "title",
+    "tools",
+    "memory",
+    "background",
+    "schedule",
+    "retry",
+    "childdelegation"
+  ],
+  "evidence": "actual two enrolled separate processes native positive flow plus wrong gateway PID/exe/gen, producer replacement, digest/canonicalizer mismatch, dropped parents, concurrent reuse, retry replay, expired/revoked lease, private-public bypass before external bytes",
+  "receipt_lifetime": "source.capture immutable peer-bound receipt may remain as provenance parent until its bounded lease; retaining ancestry is not permission to repeat effect. prepare_native_event captures a NEW exact complete request envelope and bridge admission per attempt. Failed/retried request does not destroy audit ancestry or revive consumed bridge; each new bridge/attempt includes full closure and fresh root retry admission.",
+  "protected_authority_config": {
+    "field": "native_bridges",
+    "entries": [
+      "id",
+      "producer_profile_id",
+      "gateway_profile_id",
+      "canonicalizer_artifact_id",
+      "canonicalizer_sha256",
+      "approved_operation"
+    ],
+    "approved_operation": "provider.dispatch only for current native provider bridge",
+    "joins": "producer/gateway profiles join root principals/process_profiles for UID/executable/artifact/profile generation; provider_enrollments derive exact fixed target/recipient/capability/model/account",
+    "constraints": "unique exact bridge per selected producer profile/operation; distinct enrolled role processes; strict finite schema and no wildcard/caller destination; missing/ambiguous joins failclosed",
+    "dynamic_identity": "root process registry resolves currently live PIDFD/starttime/cgroup/exe digest/generation for BOTH peers per prepare/dispatch; config never stores caller-selected PID as authority",
+    "digest_note": "canonicalizer digest is actual protected installed artifact, not invented in planning; absent pin leaves bridge unavailable"
+  }
+}

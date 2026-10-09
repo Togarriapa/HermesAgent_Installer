@@ -99,3 +99,35 @@ Native process inspection SHALL resolve only opaque registered process/generatio
 
 - **WHEN** native renderer relaunch changes process identity or caller supplies a sibling PID
 - **THEN** host denies or reports incomplete before remote exposure; only current registered descendants are attested
+
+### Requirement: One-use native producer gateway bridge (HI11)
+
+Cross-process native source handoff SHALL use root-issued one-use bridge state bound to both attested producer and selected gateway identities/generations, complete source closure, exact final normalized payload, operation/retry and bounded lease. Gateway dispatch SHALL authenticate its peer and atomically consume admission before effects; opaque references or caller headers SHALL not grant portable authority.
+
+#### Scenario: Cross-process stale or replayed reference
+
+- **WHEN** separate gateway resolves a native source reference with different PID/generation/payload or replays an attempt
+- **THEN** root denies before bytes; valid paired identities use exact final digest/full source closure and consume each attempt once
+
+#### Scenario: Incomplete request envelope or retry reuse
+
+- **WHEN** producer captures messages without full SDK fields or reuses a prior bridge on retry
+- **THEN** root rejects final effect mismatch/replay before bytes; a new complete request capture and fresh one-use bridge preserves full bounded parent ancestry
+
+### Requirement: Operation-bound fixed effect rules (HI12)
+
+Protected effect rules SHALL key exact capability, operation and enrolled target together; grants SHALL bind the same tuple and canonical payload. Shared targets SHALL not imply cross-operation permission. Connector frame operations SHALL each use fresh one-use bounded grants without extending original stream lease; trusted expiry/revocation cleanup SHALL remain independent.
+
+#### Scenario: Same target different operation
+
+- **WHEN** same service target has open/read/write/close rules or caller changes operation under a prior target grant
+- **THEN** root evaluates only exact enrolled operation tuple and consumes bounded frame grant; wrong operation/replay denies and expiry cleanup still closes the stream
+
+### Requirement: Protected native enrollment proof (HI10/HI11 refinement)
+
+Desktop renderer and native bridge enrollment SHALL use actual protected installed artifact digests and unambiguous root-owned identity/policy mappings. Inspector attestation SHALL derive fresh role-specific process/sandbox/relaunch/window evidence; missing pins, caller booleans or main-process-only proof SHALL leave native exposure incomplete.
+
+#### Scenario: Missing renderer or bridge canonicalizer pin
+
+- **WHEN** protected enrollment lacks actual renderer/monitor/patch/canonicalizer digest or identity join is ambiguous
+- **THEN** root denies affected native exposure/dispatch with exact incomplete evidence and never substitutes caller-provided claims

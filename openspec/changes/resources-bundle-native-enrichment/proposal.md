@@ -27,3 +27,9 @@ Append-only fixed-registry-discovery-v1 adds RB06/RB-T07/EV-RB06 for two already
 ## Protected selected event jobs refinement
 
 Append protected-resource-jobs-v1 with RB07/RB-T08/EV-RB07; preserve original scheduler/webhook/channel/bundle obligations and no automatic enablement.
+
+## Protected original plugin effects (RB08)
+
+RB08 / RB-T09 / EV-RB08 are defined by planning/protected-plugin-effect-contract.json. All pinned manifest capabilities and deny/confirmation/privacy constraints remain mandatory. Root-selected finite schemas, exact operations/targets and immutable handler identity resolve accounts/endpoints/paths/secrets; no generic HTTP, shell or model-issued authority. Runtime external writes require separately trusted task/user-order authority, not deployment consent. Financial and destructive actions require one-shot exact-final-payload confirmation; durable idempotency and ambiguity reconciliation prevent replay.
+
+See planning/protected-plugin-effect-contract.json and plans/amendments/2026-10-09-protected-plugin-effects-v1.md. RB-T09 evidence EV-RB08 distinguishes implementation from actual native/account acceptance.
