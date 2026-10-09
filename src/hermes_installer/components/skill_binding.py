@@ -10,6 +10,7 @@ import fcntl
 import os
 import re
 import stat
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,42 @@ def _read_profile_config(path: Path, owner_uid: int) -> bytes | None:
     return data
 
 
+def _canonical_private_directory(path: Path, label: str) -> Path:
+    """Resolve an existing directory while rejecting user-controlled symlinks.
+
+    macOS exposes its private temporary tree through the system `/tmp` alias.
+    That one OS-owned alias is accepted; every other symlink in the supplied
+    path is rejected before the canonical directory is used for I/O.
+    """
+    if not isinstance(path, Path) or not path.is_absolute() or ".." in path.parts:
+        raise ComponentBindingError(f"{label} path is invalid")
+    current = Path(path.anchor)
+    try:
+        for part in path.parts[1:]:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                allowed_system_alias = (
+                    info.st_uid == 0 and (
+                        (sys.platform == "darwin" and current == Path("/tmp")
+                         and os.path.realpath(current) == "/private/tmp")
+                        or (sys.platform == "darwin" and current == Path("/var")
+                            and os.path.realpath(current) == "/private/var")
+                    )
+                )
+                if not allowed_system_alias:
+                    raise ComponentBindingError(f"{label} path may not contain symlinks")
+        resolved = path.resolve(strict=True)
+        info = resolved.lstat()
+    except ComponentBindingError:
+        raise
+    except OSError:
+        raise ComponentBindingError(f"{label} path is unavailable") from None
+    if not stat.S_ISDIR(info.st_mode):
+        raise ComponentBindingError(f"{label} is not a directory")
+    return resolved
+
+
 def _merge_external_dir(config_bytes: bytes | None, external_entry: str) -> bytes:
     if config_bytes is None:
         document: object = {}
@@ -143,16 +180,12 @@ def configure_selected_profile_skill(
         raise ComponentBindingError("selected profile must be owned by the installer user")
     home = target.hermes_home
     data_root = target.profile_data_root
-    if not isinstance(home, Path) or not isinstance(data_root, Path) or not home.is_absolute() or not data_root.is_absolute():
-        raise ComponentBindingError("selected profile resolver returned invalid paths")
+    external_dir = binding.external_dir
     try:
-        if home.resolve(strict=True) != home or data_root.resolve(strict=True) != data_root:
-            raise ComponentBindingError("selected profile paths may not contain symlinks")
-        if not binding.external_dir.is_absolute() or binding.external_dir.resolve(strict=True) != binding.external_dir:
-            raise ComponentBindingError("component generation path is not canonical")
-        if binding.external_dir.is_symlink() or not binding.external_dir.is_dir():
-            raise ComponentBindingError("component generation is not an existing directory")
-        if not binding.external_dir.is_relative_to(data_root):
+        home = _canonical_private_directory(home, "Hermes home")
+        data_root = _canonical_private_directory(data_root, "profile data root")
+        external_dir = _canonical_private_directory(external_dir, "component generation")
+        if not external_dir.is_relative_to(data_root):
             raise ComponentBindingError("component generation escaped its installer-owned profile data root")
         home_info, data_info = home.lstat(), data_root.lstat()
     except OSError:
@@ -167,7 +200,7 @@ def configure_selected_profile_skill(
     # Hermes' pinned get_config_path() is get_hermes_home()/config.yaml;
     # external_dirs entries are resolved relative to that same home.
     config_path = home / "config.yaml"
-    external_entry = binding.external_dir.relative_to(home).as_posix() if binding.external_dir.is_relative_to(home) else str(binding.external_dir)
+    external_entry = external_dir.relative_to(home).as_posix() if external_dir.is_relative_to(home) else str(external_dir)
     lock_path = home / ".installer-skills-config.lock"
     temporary: Path | None = None
     try:
@@ -267,6 +300,14 @@ def stage_component_skill(
     contract = resolve_component_adapter(source.component_id)
     if source.source_identity != contract.source_identity or source.revision != contract.revision:
         raise ComponentBindingError("component source identity differs from the reviewed source pin")
+    if source.component_id == "diagram-design":
+        # This source has a specific export helper and shared reference/asset
+        # closure that generic skill discovery alone cannot establish.
+        from hermes_installer.components.diagram_design import verify_diagram_design_source
+        try:
+            verify_diagram_design_source(source)
+        except ValueError as exc:
+            raise ComponentBindingError(str(exc)) from None
     source_files = {
         name: body for name, body in source.files.items()
         if name != "INSTALLER-SOURCE-PROVENANCE.json"

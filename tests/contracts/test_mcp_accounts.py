@@ -11,8 +11,9 @@ class MCPAccountTests(unittest.TestCase):
             google(None, service="drive", resource_id="file-1", preview_eligible=False)
         with self.assertRaises(TypeError):
             google(None, service="drive", resource_id="file-1", preview_eligible=True)
-        self.assertEqual(google(None, service="drive", resource_id="file-1").service.id,
-                         "google-drive")
+        adapter = google(None, service="drive", resource_id="file-1")
+        self.assertEqual(adapter.service.id, "google-drive")
+        self.assertFalse(adapter.status()["authorized"])
         with self.assertRaises(ValueError):
             google(None, service="unknown", resource_id="x")
 

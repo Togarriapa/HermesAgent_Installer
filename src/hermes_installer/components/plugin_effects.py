@@ -527,28 +527,48 @@ class PluginEffectDispatcher:
 def build_plugin_effects_facade(*, authority: PluginAuthority,
                                 invocation_contexts: InvocationContexts,
                                 identity: object,
-                                action_schemas: PluginActionSchemaRegistry | None = None
+                                action_schemas: PluginActionSchemaRegistry | None = None,
+                                selected_package: object | None = None,
                                 ) -> PluginEffectDispatcher:
     """Bind a facade to the root-selected immutable Plugin package.
 
     This factory is for the protected installer loader only. It deliberately
     requires a trusted invocation-context provider; a plugin, tool argument,
     manifest, or caller-provided principal/source label cannot supply one.
-    The native binding API is imported lazily so source-only/fixture installs
-    remain inspectable without constructing a live binder.
+    The protected loader may pass its already verified SelectedNativePackage;
+    otherwise this function binds the package itself. Resolver metadata only
+    selects an action. The AuthorityClient still re-resolves the root grant for
+    every effect and consumes its one-use authorization before performing it.
     """
     binder = getattr(authority, "bind_selected_native_package", None)
     if not callable(binder):
         raise PluginEffectUnavailable("root native-package binding is unavailable")
     if not callable(getattr(invocation_contexts, "__call__", None)):
         raise PluginEffectUnavailable("root trusted invocation-context provider is unavailable")
-    if getattr(identity, "kind", None) != "plugins" or not getattr(identity, "resource_id", None):
+    identity_digest = getattr(identity, "content_digest", None)
+    if (getattr(identity, "kind", None) != "plugins"
+            or not isinstance(getattr(identity, "resource_id", None), str)
+            or not getattr(identity, "resource_id", None)
+            or not isinstance(identity_digest, str) or not _HEX.fullmatch(identity_digest)):
         raise PluginEffectUnavailable("trusted selected Plugin identity is unavailable")
     if action_schemas is None:
         action_schemas = component_plugin_action_schema_registry()
     try:
-        from hermes_installer.native_plugin_bindings import bind_selected_plugin_effects
-        selected = bind_selected_plugin_effects(authority)
+        from hermes_installer.native_plugin_loader import (
+            SelectedNativePackage,
+            bind_current_native_plugin_package,
+        )
+        if selected_package is None:
+            selected = bind_current_native_plugin_package(authority)
+        elif isinstance(selected_package, SelectedNativePackage):
+            selected = selected_package
+        else:
+            raise ValueError("the protected native package loader is required")
+        if (not callable(getattr(selected, "resolve", None))
+                or not callable(getattr(selected, "manifest_digest_for_adapter", None))
+                or selected.manifest_digest_for_adapter(identity.resource_id)
+                != identity_digest):
+            raise ValueError("selected Plugin manifest digest does not match the protected source identity")
     except (ImportError, RuntimeError, ValueError, PermissionError):
         raise PluginEffectUnavailable("root-selected Plugin package binding is unavailable") from None
     return PluginEffectDispatcher(authority=authority,

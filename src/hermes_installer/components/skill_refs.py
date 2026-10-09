@@ -9,6 +9,35 @@ from urllib.parse import unquote, urlsplit
 
 
 _LINK = re.compile(r"!?(?:\[[^\]\n]*\])\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+[^)]*)?\)")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_INLINE_CODE = re.compile(r"(`+).*?\1(?!`)", re.DOTALL)
+
+
+def _mask_markdown_code(text: str) -> str:
+    """Blank fenced, indented and inline code while preserving source offsets."""
+    output: list[str] = []
+    fence_char: str | None = None
+    fence_size = 0
+    for line in text.splitlines(keepends=True):
+        marker = _FENCE.match(line.rstrip("\r\n"))
+        if fence_char is not None:
+            output.append("".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in line))
+            if (marker and marker.group(1)[0] == fence_char
+                    and len(marker.group(1)) >= fence_size and not marker.group(2).strip()):
+                fence_char = None
+                fence_size = 0
+            continue
+        if marker:
+            fence_char = marker.group(1)[0]
+            fence_size = len(marker.group(1))
+            output.append("".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in line))
+            continue
+        if line.startswith("    ") or line.startswith("\t"):
+            output.append("".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in line))
+            continue
+        output.append(line)
+    masked = "".join(output)
+    return _INLINE_CODE.sub(lambda match: "".join("\n" if char == "\n" else "\r" if char == "\r" else " " for char in match.group(0)), masked)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +54,7 @@ class SkillReferenceAudit:
     checked_markdown: tuple[str, ...]
     resolved_targets: tuple[str, ...]
     problems: tuple[SkillReferenceProblem, ...]
+    skill_resolved_targets: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -45,15 +75,19 @@ def audit_skill_references(source_root: Path) -> SkillReferenceAudit:
         path for path in root.rglob("SKILL.md")
         if path.is_file() and not path.is_symlink()
     ))
-    pending = list(skills)
+    pending = [(skill, skill) for skill in skills]
     checked: set[Path] = set()
     resolved: set[str] = set()
+    skill_resolved: dict[str, set[str]] = {path.relative_to(root).as_posix(): set() for path in skills}
+    visited_by_skill: dict[str, set[Path]] = {path.relative_to(root).as_posix(): set() for path in skills}
     problems: list[SkillReferenceProblem] = []
 
     while pending:
-        markdown = pending.pop()
-        if markdown in checked:
+        skill, markdown = pending.pop()
+        skill_name = skill.relative_to(root).as_posix()
+        if markdown in visited_by_skill[skill_name]:
             continue
+        visited_by_skill[skill_name].add(markdown)
         checked.add(markdown)
         try:
             text = markdown.read_text(encoding="utf-8")
@@ -63,7 +97,7 @@ def audit_skill_references(source_root: Path) -> SkillReferenceAudit:
             ))
             continue
 
-        for match in _LINK.finditer(text):
+        for match in _LINK.finditer(_mask_markdown_code(text)):
             raw = match.group(1)
             target = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
             parsed = urlsplit(target)
@@ -112,18 +146,22 @@ def audit_skill_references(source_root: Path) -> SkillReferenceAudit:
                 continue
 
             resolved.add(normalized)
+            skill_resolved[skill_name].add(normalized)
             if candidate.is_file() and candidate.suffix.casefold() == ".md":
-                pending.append(candidate)
+                pending.append((skill, candidate))
 
     return SkillReferenceAudit(
         skill_files=tuple(path.relative_to(root).as_posix() for path in skills),
         checked_markdown=tuple(sorted(path.relative_to(root).as_posix() for path in checked)),
         resolved_targets=tuple(sorted(resolved)),
         problems=tuple(problems),
+        skill_resolved_targets=tuple((name, tuple(sorted(targets))) for name, targets in sorted(skill_resolved.items())),
     )
 
 
-def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
+def audit_skill_file_map(
+    files: dict[str, bytes], *, skill_files: tuple[str, ...] | None = None,
+) -> SkillReferenceAudit:
     """Audit a validated source archive in memory before it is staged."""
     paths = set(files)
     for name, body in files.items():
@@ -132,16 +170,26 @@ def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
             or relative.is_absolute() or not relative.parts or ".." in relative.parts
             or relative.as_posix() != name or "\\" in name):
             raise ValueError("source archive contains an unsafe path or non-byte file")
-    skills = tuple(sorted(name for name in paths if PurePosixPath(name).name == "SKILL.md"))
-    pending = list(skills)
+    available_skills = {name for name in paths if PurePosixPath(name).name == "SKILL.md"}
+    if skill_files is None:
+        skills = tuple(sorted(available_skills))
+    else:
+        if (not skill_files or len(skill_files) != len(set(skill_files))
+                or any(name not in available_skills for name in skill_files)):
+            raise ValueError("selected skill files must name existing distinct SKILL.md paths")
+        skills = tuple(sorted(skill_files))
+    pending = [(skill, skill) for skill in skills]
     checked: set[str] = set()
     resolved: set[str] = set()
+    skill_resolved: dict[str, set[str]] = {name: set() for name in skills}
+    visited_by_skill: dict[str, set[str]] = {name: set() for name in skills}
     problems: list[SkillReferenceProblem] = []
 
     while pending:
-        source = pending.pop()
-        if source in checked:
+        skill, source = pending.pop()
+        if source in visited_by_skill[skill]:
             continue
+        visited_by_skill[skill].add(source)
         checked.add(source)
         try:
             text = files[source].decode("utf-8")
@@ -149,7 +197,7 @@ def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
             problems.append(SkillReferenceProblem(source, 1, "", "markdown file cannot be read as UTF-8"))
             continue
         source_parent = PurePosixPath(source).parent.as_posix()
-        for match in _LINK.finditer(text):
+        for match in _LINK.finditer(_mask_markdown_code(text)):
             raw = match.group(1)
             target = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
             parsed = urlsplit(target)
@@ -182,12 +230,14 @@ def audit_skill_file_map(files: dict[str, bytes]) -> SkillReferenceAudit:
                 ))
                 continue
             resolved.add(normalized)
+            skill_resolved[skill].add(normalized)
             if is_file and PurePosixPath(normalized).suffix.casefold() == ".md":
-                pending.append(normalized)
+                pending.append((skill, normalized))
 
     return SkillReferenceAudit(
         skill_files=skills,
         checked_markdown=tuple(sorted(checked)),
         resolved_targets=tuple(sorted(resolved)),
         problems=tuple(problems),
+        skill_resolved_targets=tuple((name, tuple(sorted(targets))) for name, targets in sorted(skill_resolved.items())),
     )

@@ -15,6 +15,9 @@ from typing import Callable, Mapping, Sequence
 
 from hermes_installer.models.artifacts import ArtifactError
 from hermes_installer.models.artifacts import ArtifactFile
+from hermes_installer.models.build_pipeline import (
+    CORAL_CPYTHON_BUILD, NativeBuildReceipt, run_fixed_native_build,
+)
 
 CORAL_SAMPLE_REPOSITORY = "google-coral/test_data"
 CORAL_SAMPLE_REVISION = "104342d2d3480b3e66203073dac24f4e2dbb4c41"
@@ -450,6 +453,21 @@ def provision_coral_python(*, selected: bool, authority_client,
     return install_coral_runtime_package_set(authority_client,
         enrollment_id=enrollment_id, generation=generation,
         manifest_sha256=manifest_sha256, timeout=timeout, cancelled=cancelled)
+
+
+def request_coral_cpython_build(authority_client, *, enrollment_id: str,
+                                generation: str, timeout: float = 600,
+                                cancelled: Callable[[], bool] | None = None) -> NativeBuildReceipt:
+    """Request only the root-enrolled CPython 3.9.25 ARM64 build recipe."""
+    from hermes_installer.authority.types import AuthorityDenied
+
+    try:
+        return run_fixed_native_build(authority_client, operation_id=CORAL_CPYTHON_BUILD,
+            enrollment_id=enrollment_id, generation=generation, timeout=timeout,
+            cancelled=cancelled)
+    except (AuthorityDenied, AttributeError, TypeError, ValueError, OSError) as exc:
+        raise CoralError(f"root-managed Coral CPython build did not produce a verified receipt: {exc}") from exc
+
 
 def download_official_sample(destination: Path, *, selected: bool = False, cancel=None, catalog=None,
                              staging_root: Path | None = None, expected_uid: int = 0) -> Path:

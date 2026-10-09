@@ -5,14 +5,13 @@ membership are accepted only from the fixed host AuthorityClient effect.
 """
 from __future__ import annotations
 
-import json
 import math
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from ..authority.client import AuthorityClient
-from ..authority.types import AuthorityDenied, BrokeredEffectResponse
+from ..authority.types import AuthorityDenied
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,16 +187,27 @@ def inspect_managed_process(authority: AuthorityClient, *, process_id: str,
     response = inspect_effect(
         process_id, generation, timeout=timeout, cancelled=cancelled,
     )
-    if (type(response) is not BrokeredEffectResponse or response.status != 200
-            or not isinstance(response.body, bytes) or len(response.body) > 256 * 1024
-            or not isinstance(response.receipt_id, str) or not response.receipt_id):
+    result = getattr(response, "result", None)
+    receipt_id = getattr(response, "receipt_id", None)
+    expires_monotonic = getattr(response, "expires_monotonic", None)
+    if (getattr(response, "operation", None) != "process.inspect"
+            or getattr(response, "process_id", None) != process_id
+            or getattr(response, "generation", None) != generation
+            or not isinstance(result, Mapping) or not isinstance(receipt_id, str)
+            or not receipt_id or isinstance(expires_monotonic, bool)
+            or not isinstance(expires_monotonic, (int, float))):
         raise AuthorityDenied("process.inspect", "root process inspection was denied or exceeded its bound")
-    try:
-        document = json.loads(response.body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise AuthorityDenied("process.inspect", "root process inspection receipt is malformed") from None
+    document = {
+        "schema": 1,
+        "process_id": process_id,
+        "generation": generation,
+        **dict(result),
+        # The outer lease is a short-lived root control response lease. It also
+        # bounds how long this inspection can authorize downstream exposure.
+        "expires_monotonic": float(expires_monotonic),
+    }
     return parse_process_inspection(
-        document, receipt_id=response.receipt_id, process_id=process_id,
+        document, receipt_id=receipt_id, process_id=process_id,
         generation=generation, profile_id=profile_id,
         now_monotonic=authority.monotonic(),
     )
