@@ -375,7 +375,7 @@ def _run_native_worker():
             model=configured_model,
             quiet_mode=True, enabled_toolsets=["hermes-installer-fixture"],
             skip_context_files=True, load_soul_identity=False, skip_memory=True,
-            skip_background_review=True, max_iterations=3,
+            skip_background_review=True, max_iterations=5,
         )
         if agent.provider != configured_provider or agent.model != configured_model:
             raise SystemExit("Hermes native config selection mismatch: provider="
