@@ -499,6 +499,7 @@ class LocalProviderGateway:
                             # recover the complete verified source closure.
                             return gateway.context_factory(
                                 native_context_handle=native_context_handle,
+                                normalized_payload=normalized_payload,
                                 purpose="native-hermes-chat",
                                 intent=trace_id,
                                 final_payload_digest=final_digest,

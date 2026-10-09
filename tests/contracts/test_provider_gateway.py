@@ -19,7 +19,7 @@ MODEL="nvidia/nemotron-3-ultra-550b-a55b:free"
 TOKEN="local-fixture-token-value-0123456789abcdef"
 
 
-def fixture_context(*, native_context_handle=None, purpose, intent, source_contexts=(), source_receipts=(),
+def fixture_context(*, native_context_handle=None, normalized_payload=None, purpose, intent, source_contexts=(), source_receipts=(),
                     trace_id, lease_seconds, final_payload_digest=None,
                     operation=None, retry_index=0, cancelled=None,
                     sensitivity=Sensitivity.PUBLIC):
