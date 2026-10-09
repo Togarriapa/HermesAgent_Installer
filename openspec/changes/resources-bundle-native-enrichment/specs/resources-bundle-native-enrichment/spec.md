@@ -254,3 +254,10 @@ The implementation SHALL use the applicable exact root release and native assemb
 #### Scenario: First input precedes provider pending pair
 - **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
 - **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Noncircular root observation receipts
+The implementation SHALL use exact v35 initial identity and terminal companion joins applicable to this change.
+
+#### Scenario: Companion proof follows immutable terminal
+- **WHEN** root custody has issued the actual terminal receipt
+- **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence

@@ -313,3 +313,10 @@ The deployment verifier SHALL distinguish the complete frozen-tree SHA256 map fr
 #### Scenario: Frozen metadata is present
 - **WHEN** computing baseline_tree_sha256
 - **THEN** every regular frozen file including hashes.json is included, while original160 snapshot entries are checked separately against their bytes
+
+### Requirement: Noncircular root observation receipts
+The implementation SHALL use exact v35 initial identity and terminal companion joins applicable to this change.
+
+#### Scenario: Companion proof follows immutable terminal
+- **WHEN** root custody has issued the actual terminal receipt
+- **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
