@@ -267,6 +267,7 @@ class RootAuthorityRuntime:
     scope_bindings: Mapping[str, Any]
     validators: Mapping[str, Any]
     source_observer_unavailable_reason: str | None
+    resource_task_unavailable_reason: str | None
     job_enrollments: Mapping[tuple[str, str], Any]
     memory_runtime: Any | None
     job_authority: Any | None
@@ -333,7 +334,11 @@ class RootAuthorityRuntime:
 
     @property
     def task_native_observations(self) -> Any | None:
-        return getattr(self.service, "task_native_observations", None)
+        attached = getattr(self.service, "task_native_observations", None)
+        if attached is not None:
+            return attached
+        runner = getattr(self.service, "resource_task_runner", None)
+        return getattr(runner, "native_observations", None)
 
     @property
     def native_mcp_dispatcher(self) -> Any | None:
@@ -365,6 +370,8 @@ class RootAuthorityRuntime:
         # the composer never installs capability flags or callback placeholders.
         components = (
             self.task_native_observations,
+            getattr(self.service, "native_input_delivery_registry", None),
+            getattr(self.process_manager, "task_input_coordinator", None),
             self.native_mcp_dispatcher,
             self.native_runtime_observer,
             self.native_invocation_registry,
@@ -904,6 +911,7 @@ def compose_root_authority_runtime(
             build_execution_service = candidate_build_execution_service
 
     job_authority = None
+    resource_task_unavailable_reason: str | None = None
     if jobs:
         if source_observers is None:
             raise AuthorityDenied("authority.composition", "active resource jobs have no root source observer")
@@ -927,10 +935,113 @@ def compose_root_authority_runtime(
                 raise AuthorityDenied("resource.unavailable", "resource is not selected in the active generation")
             return generation
 
+        profile_task_adapters: Mapping[tuple[str, str], Any] = MappingProxyType({})
+        if any(backend.execution_binding is not None
+               for enrollment_row in jobs.values()
+               for backend in enrollment_row.backends.values()):
+            if source_observers is not None:
+                from hermes_installer.registry.resource_backends import build_resource_profile_task_adapters
+                profile_task_adapters = build_resource_profile_task_adapters(
+                    jobs, protected_bindings=bindings, authority_service=service,
+                )
+            if not profile_task_adapters:
+                resource_task_unavailable_reason = (
+                    "selected process-task adapters are not joined to active protected backend catalogs"
+                )
         job_authority = ResourceJobAuthority(
             service=service, enrollments=jobs, ledger=ledger,
             selected_generation=selected_generation,
+            profile_task_adapters=profile_task_adapters,
         )
+
+        if profile_task_adapters:
+            broker = getattr(service, "native_bridge_broker", None)
+            loader_store = getattr(service, "native_loader_observation_store", None)
+            if broker is not None and loader_store is not None and service.native_invocation_registry is not None:
+                task_graph: tuple[Any, ...] | None = None
+                task_phase = "root task observation registries"
+                try:
+                    from .task_native_observation import RootTaskNativeObservationRegistry
+                    from .source_observers import RootNativeExecutionSelectionRegistry
+                    from .native_custody_proof import RootNativeInputTargetResolver
+                    from .native_input_observer import RootNativeInputObserver
+                    from .source_observers import RootNativeInputDeliveryRegistry
+                    from .native_observer_wiring import RootTaskInputCoordinator
+                    from hermes_installer.registry.resource_backends import RootArtifactValidator
+                    from .resource_task_execution import RootResourceTaskRunner
+
+                    task_native = RootTaskNativeObservationRegistry(
+                        source_observer_registry=source_observers,
+                        native_bridge_broker=broker,
+                        admitted_task_registry=job_authority,
+                        process_custody_registry=process_manager,
+                        monotonic=service.monotonic,
+                    )
+                    task_phase = "selected native execution and PIDFD target resolver"
+                    selected_execution = RootNativeExecutionSelectionRegistry(
+                        source_observer_registry=source_observers,
+                        admitted_task_registry=job_authority,
+                        process_custody_registry=process_manager,
+                        task_native_observation_registry=task_native,
+                        monotonic=service.monotonic,
+                    )
+                    loader_proof_resolver = loader_store.source_observer_loaded_package_resolver
+                    target_resolver = RootNativeInputTargetResolver(
+                        selected_execution, process_manager,
+                        observer_enrollments=bindings.source_observer_enrollments,
+                        loader_observations=loader_store,
+                    )
+                    selected_execution.attach_native_input_target_resolver(target_resolver)
+                    input_observer = RootNativeInputObserver.for_selected_resource_tasks(
+                        service=service, source_observers=source_observers,
+                        selected_execution_registry=selected_execution,
+                        process_resolver=process_manager.resolve_live_peer,
+                        loaded_package_proof_resolver=loader_proof_resolver,
+                        monotonic=service.monotonic,
+                    )
+                    task_native.attach_native_input_observer(input_observer, selected_execution)
+                    task_phase = "selector-free native input delivery and pre-stdin coordinator"
+                    input_delivery = RootNativeInputDeliveryRegistry.from_root_runtime(
+                        source_observers, selected_execution, process_manager,
+                    )
+                    coordinator = RootTaskInputCoordinator.from_root_runtime(
+                        task_native, selected_execution, input_observer, source_observers,
+                        process_manager, input_delivery,
+                    )
+                    task_phase = "protected result validator and native completion runner"
+                    result_validator = RootArtifactValidator(
+                        backend_enrollments=backends, validators=validators,
+                        artifact_catalog=artifact_catalog,
+                        staging_root=enrollment.artifact_staging_directory,
+                        active_service_generation_digest=enrollment.protected_enrollment_digest,
+                        expected_uid=vault.expected_uid,
+                    )
+                    task_runner = RootResourceTaskRunner(
+                        service=service, job_authority=job_authority,
+                        profile_task_adapters=profile_task_adapters,
+                        protected_bindings=bindings, result_validator=result_validator,
+                        native_observations=task_native,
+                    )
+                    task_graph = (task_native, input_delivery, coordinator, task_runner)
+                except Exception as exc:
+                    # Keep selected task routes absent unless the complete
+                    # task-input, custody, result and native-evidence graph
+                    # is installed. Other service routes remain available.
+                    task_graph = None
+                    resource_task_unavailable_reason = (
+                        f"{task_phase} rejected composition ({type(exc).__name__})"
+                    )
+                if task_graph is not None:
+                    _, input_delivery, coordinator, task_runner = task_graph
+                    service.attach_native_input_delivery_registry(input_delivery)
+                    process_manager.set_task_input_coordinator(coordinator)
+                    service.attach_resource_task_runtime(task_runner, job_authority)
+                    resource_task_unavailable_reason = None
+            elif profile_task_adapters:
+                resource_task_unavailable_reason = (
+                    "active source observers, provider response registry, or native loader proof are unavailable"
+                )
+
         job_handlers = job_authority.handlers()
         for key in job_handlers:
             if key in service.handlers:
@@ -949,6 +1060,7 @@ def compose_root_authority_runtime(
         scope_bindings=MappingProxyType(dict(scope_bindings)),
         validators=MappingProxyType(dict(validators)),
         source_observer_unavailable_reason=source_observer_unavailable_reason,
+        resource_task_unavailable_reason=resource_task_unavailable_reason,
         job_enrollments=MappingProxyType(dict(jobs)), memory_runtime=memory_runtime,
         job_authority=job_authority, build_execution_service=build_execution_service,
     )
