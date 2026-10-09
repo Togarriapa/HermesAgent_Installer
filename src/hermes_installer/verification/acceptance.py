@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from typing import Callable, Mapping
 
-from ..evidence import EvidenceRecord, EvidenceState
+from ..evidence import EvidenceClass, EvidenceRecord, EvidenceState
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +84,12 @@ class WorkflowResult:
 
 Workflow = Callable[[AuthorizedTarget, str], EvidenceRecord]
 
+_TARGET_EVIDENCE_CLASS = {
+    "fixture-x86_64": EvidenceClass.FIXTURE,
+    "linux-arm64": EvidenceClass.NATIVE_ARM64,
+    "raspberry-pi-5-arm64": EvidenceClass.PHYSICAL_PI,
+}
+
 
 class TargetWorkflowRunner:
     """Dispatch only explicitly registered, target-scoped probes; no shell strings."""
@@ -112,4 +118,21 @@ class TargetWorkflowRunner:
         record.validate()
         if record.candidate_sha != candidate_sha or record.target_id != target.target_id:
             raise ValueError("probe evidence is not bound to the selected candidate and target")
+        if record.platform != target.platform or record.evidence_class != _TARGET_EVIDENCE_CLASS[target.platform]:
+            raise ValueError("probe evidence class or platform does not match the authorized target")
+        from .profiles import profile_for
+
+        profile = profile_for(record.evidence_id, acceptance_id)
+        if set(record.assertions) != set(profile.assertions):
+            raise ValueError("probe evidence does not contain the exact installer-owned assertion set")
+        # A workflow callback supplies an observation, not an authenticity
+        # decision. Keep even a structurally complete pass pending here until
+        # acceptance_report receives an enrolled verifier decision for the
+        # retained artifact digest.
+        if record.state == EvidenceState.PASS:
+            return WorkflowResult(
+                acceptance_id, EvidenceState.PENDING,
+                "Probe observation is complete but remains pending enrolled-verifier authentication.",
+                record,
+            )
         return WorkflowResult(acceptance_id, record.state, record.blocker or "Workflow evidence recorded.", record)
