@@ -133,6 +133,62 @@ class MemoryCompoundTests(unittest.TestCase):
             validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
                                   status=201, value={"anything": "looks successful"})
 
+    def test_agentmemory_pinned_results_require_exact_semantic_shapes(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+
+        found = validate_step_outcome(
+            route_id="agentmemory-search", step_id="search", status=200,
+            value={"mode": "compact", "results": [{
+                "obsId": "observation-1", "sessionId": "session-1",
+                "title": "synthetic fact", "type": "fact", "score": 0.75,
+                "timestamp": "2026-10-09T12:00:00Z",
+            }]})
+        self.assertEqual(found.result, {
+            "records": [{"id": "observation-1", "source": "agentmemory",
+                         "text": "synthetic fact"}],
+        })
+        saved = validate_step_outcome(
+            route_id="agentmemory-capture", step_id="capture", status=201,
+            value={"success": True, "memory": {"id": "memory-1", "title": "synthetic fact"}})
+        self.assertEqual(saved.captures, {"memory_id": "memory-1"})
+        self.assertEqual(saved.result, {"success": True, "id": "memory-1"})
+
+        invalid_results = [
+            {"mode": "full", "results": []},
+            {"mode": "compact", "results": [{"obsId": "x"}]},
+            {"mode": "compact", "results": [{
+                "obsId": "observation-1", "sessionId": "session-1",
+                "title": "synthetic fact", "type": "fact", "score": float("nan"),
+                "timestamp": "2026-10-09T12:00:00Z",
+            }]},
+            {"mode": "compact", "results": [{
+                "obsId": "observation-1", "sessionId": "session-1",
+                "title": "synthetic fact", "type": "fact", "score": 0.5,
+                "timestamp": "2026-10-09T12:00:00Z", "sibling_scope": "private",
+            }]},
+        ]
+        for value in invalid_results:
+            with self.subTest(value=value), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(route_id="agentmemory-search", step_id="search",
+                                      status=200, value=value)
+        for value in ({"success": True, "memory": {"id": "../other"}},
+                      {"success": False, "memory": {"id": "memory-1"}},
+                      {"success": True, "memory": {}}):
+            with self.subTest(value=value), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
+                                      status=201, value=value)
+
+    def test_openviking_find_needs_a_protected_uri_resolver(self):
+        with self.assertRaises(MemoryRecipeUnavailable):
+            build_memory_request(
+                provider="openviking", route_id="openviking-find",
+                recipe=self.recipe,
+                step={"method": "POST", "path_template": "/api/v1/search/find",
+                      "body_recipe_id": "openviking-find-owned-v1"},
+                body={"query": "synthetic fact", "limit": 8},
+                scope_bindings=self.scope,
+            )
+
     def test_protected_recipe_is_strictly_route_bound(self):
         route = {
             "approved_route_id": "agentmemory-search",
