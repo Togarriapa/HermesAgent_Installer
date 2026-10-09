@@ -26,4 +26,4 @@ jobs:
           python -m unittest discover -s tests/contracts -p "test_remote_*.py" -v
       - name: Exercise Unix peer credentials across distinct unprivileged UIDs
         run: |
-          sudo -E env PYTHONPATH=src python -m unittest discover -s tests/contracts -p "test_remote_verifier_uid_harness.py" -v
+          sudo -E env PYTHONPATH=src "$pythonLocation/bin/python" -m unittest discover -s tests/contracts -p "test_remote_verifier_uid_harness.py" -v

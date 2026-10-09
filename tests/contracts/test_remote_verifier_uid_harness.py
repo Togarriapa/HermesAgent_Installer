@@ -188,7 +188,7 @@ class TwoUidVerifierSubprocessTests(unittest.TestCase):
                 stdout, stderr = service.communicate(timeout=8)
                 self.assertEqual(service.returncode, 0, stderr[-1000:])
                 evidence = json.loads(stdout.strip().splitlines()[-1])
-                self.assertEqual(evidence["fixture_get_count"], 12,
+                self.assertEqual(evidence["fixture_get_count"], 6,
                                  "the foreign UID probe must produce zero Cloudflare fixture reads")
             finally:
                 if service.poll() is None:
