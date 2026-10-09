@@ -153,6 +153,7 @@ class MCPClient:
         supported_protocol_versions: tuple[str, ...] = SUPPORTED_PROTOCOL_VERSIONS,
         max_concurrency: int = 4,
         result_scrubber: Callable[[Any], Any] | None = None,
+        authority_client: Any | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if not service_id or not isinstance(service_id, str):
@@ -166,6 +167,7 @@ class MCPClient:
         self.transport, self.service_id, self.selection = transport, service_id, selection
         self.allowed_tools = frozenset(allowed_tools)
         self.context, self.authorizer = dispatch_context, context_authorizer
+        self.authority_client = authority_client
         self.timeout, self.versions, self.monotonic = timeout, supported_protocol_versions, monotonic
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._ids = itertools.count(1)
@@ -243,6 +245,22 @@ class MCPClient:
             raise MCPError("MCP client is closed")
         deadline = deadline if deadline is not None else self.monotonic() + self.timeout
         rid = next(self._ids)
+        if self.authority_client is not None:
+            payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": dict(params or {})}
+            response = await self._authority_request(
+                payload, deadline=deadline, operation=operation, tool=tool, args=args,
+            )
+            if response.get("jsonrpc") != "2.0" or response.get("id") != rid:
+                raise MCPError("MCP response correlation or JSON-RPC version is invalid")
+            if "error" in response:
+                error = response.get("error")
+                code = error.get("code") if isinstance(error, Mapping) else None
+                if code in {-32001, -32002, -32003}:
+                    raise MCPError("MCP authentication denied or revoked")
+                raise MCPError(f"{method} failed")
+            if "result" not in response:
+                raise MCPError(f"{method} returned no result")
+            return response["result"]
         async with self._semaphore:
             grant = self._authorize(operation, deadline, tool=tool, args=args)
             remaining = min(self.timeout, deadline - self.monotonic(),
@@ -283,6 +301,94 @@ class MCPClient:
             raise MCPError(f"{method} returned no result")
         return response["result"]
 
+    async def _authority_request(self, request: Mapping[str, Any], *, deadline: float,
+                                 operation: str, tool: str | None = None,
+                                 args: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+        """Issue one JSON-RPC request through a fresh host grant and fixed MCP broker."""
+        authority = self.authority_client
+        if authority is None:
+            raise MCPError("protected MCP authority is unavailable")
+        from ..authority import AuthorityDenied, BrokeredEffectResponse, canonical_bytes, canonical_digest
+        from .transports import StdioTransport, StreamableHTTPTransport
+        if type(self.transport) is StreamableHTTPTransport:
+            channel = "http"
+        elif type(self.transport) is StdioTransport:
+            channel = "stdio"
+        else:
+            raise MCPError("MCP broker transport is not a first-party transport")
+        if getattr(self.transport, "service_id", None) != self.service_id:
+            raise MCPError("MCP broker transport service binding is invalid")
+        target = f"mcp:{self.service_id}:{channel}"
+        payload = canonical_bytes(dict(request))
+        intent_id = _intent(
+            self.service_id, operation, self.selection, tool,
+            {"method": request.get("method"), "params": request.get("params", {}),
+             "selected_arguments": args}, channel,
+        )
+        purpose = "mcp-selected-resource-read" if operation == "call" else "mcp-connection-lifecycle"
+        cancellation = __import__("threading").Event()
+        async with self._semaphore:
+            remaining = min(self.timeout, deadline - self.monotonic())
+            if remaining <= 0:
+                raise MCPError("MCP request deadline expired")
+            try:
+                context = await asyncio.wait_for(asyncio.to_thread(
+                    authority.context, purpose=purpose, intent=intent_id, lease_seconds=min(30.0, remaining)
+                ), remaining)
+                if context.intent_id != intent_id or context.monotonic_expires_at <= self.monotonic():
+                    raise MCPError("host issued a stale or mismatched MCP context")
+                remaining = min(remaining, context.monotonic_expires_at - self.monotonic())
+                capability = f"mcp:{self.service_id}:{'read' if operation == 'call' else 'connect'}"
+                digest = canonical_digest(payload)
+                grant = await asyncio.wait_for(asyncio.to_thread(
+                    authority.authorize_effect, context, capability=capability, target=target,
+                    recipient=None, request_digest=digest, retry_index=0,
+                    cancelled=cancellation.is_set,
+                ), remaining)
+                if (grant.target != target or grant.capability != capability
+                        or grant.request_digest != digest or grant.intent_id != intent_id
+                        or grant.context_digest == ""):
+                    raise MCPError("host MCP grant is stale or mismatched")
+                remaining = min(remaining, grant.monotonic_expires_at - self.monotonic())
+                if remaining <= 0:
+                    raise MCPError("MCP authorization lease expired")
+                effect = await asyncio.wait_for(asyncio.to_thread(
+                    authority.mcp_request, grant, target=target, payload=payload,
+                    timeout=remaining, cancelled=cancellation.is_set,
+                ), remaining)
+            except asyncio.TimeoutError:
+                cancellation.set()
+                raise MCPError(f"{request.get('method', 'MCP request')} exceeded its aggregate deadline") from None
+            except asyncio.CancelledError:
+                cancellation.set()
+                raise
+            except MCPError:
+                raise
+            except AuthorityDenied as exc:
+                cancellation.set()
+                reason = "authentication denied or revoked" if getattr(exc, "code", "").startswith(("auth.", "account.")) else "host authority denied MCP request"
+                raise MCPError(reason) from None
+            except Exception:
+                cancellation.set()
+                raise MCPError("protected MCP broker is unavailable or denied the request") from None
+        if not isinstance(effect, BrokeredEffectResponse):
+            raise MCPError("protected MCP broker returned an invalid response")
+        if effect.status in {401, 403}:
+            raise MCPError("MCP authentication denied or revoked")
+        if effect.status not in {200, 202, 204}:
+            raise MCPError("protected MCP broker returned an unsuccessful response")
+        if not request.get("id"):
+            return {}
+        if not effect.body or len(effect.body) > MAX_RESULT_BYTES * 4:
+            raise MCPError("protected MCP broker returned an empty or oversized response")
+        try:
+            response = json.loads(effect.body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise MCPError("protected MCP broker returned malformed JSON-RPC") from None
+        if not isinstance(response, Mapping):
+            raise MCPError("protected MCP broker returned malformed JSON-RPC")
+        return response
+
     async def _cancel(self, rid: int, grant: DispatchAuthorization, deadline: float) -> None:
         cancel = getattr(self.transport, "cancel_request", None)
         if cancel is not None:
@@ -317,6 +423,12 @@ class MCPClient:
                 "serverInfo": {k: result["serverInfo"].get(k) for k in ("name", "version")}}
 
     async def _notify_initialized(self, deadline: float) -> None:
+        if self.authority_client is not None:
+            await self._authority_request(
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                deadline=deadline, operation="connect",
+            )
+            return
         grant = self._authorize("connect", deadline)
         try:
             payload = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
