@@ -12,6 +12,15 @@ class FakeNetwork:
   if cancelled is not None and cancelled():raise GatewayDenied("cancelled")
   return self.result
 
+class RemoteAssetManifestTests(unittest.TestCase):
+ def test_only_exact_pinned_client_assets_are_exposed(self):
+  from hermes_installer.remote.server import canonical_asset
+  self.assertEqual(canonical_asset("/client/js/Client.js"),"/client/js/Client.js")
+  for path in ("/client/js/not-shipped.js","/client/server-info","/client/../etc/passwd",
+               "/client/js/%2e%2e/admin.js","/client/sw.js","/client/"):
+   with self.subTest(path=path),self.assertRaises(GatewayDenied):canonical_asset(path)
+
+
 class RemoteJWKSUnitTests(unittest.TestCase):
  def test_issuer_and_key_set_are_fixed_bounded_and_cached(self):
   with self.assertRaises(ValueError):JWKSCache("https://evil.example")

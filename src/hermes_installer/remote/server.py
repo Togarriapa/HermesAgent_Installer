@@ -7,16 +7,39 @@ from urllib.parse import quote,unquote,urlsplit
 from .gateway import GatewayDenied,RemotePolicy,SocketLease,authorize_request,websocket_target
 from .verifier_ipc import PolicyGrant, PolicyVerifierClient
 
+_CLIENT_ASSETS = frozenset({
+    "/client/index.html", "/client/bootstrap.html", "/client/favicon.png", "/client/favicon.ico",
+    "/client/css/client.css", "/client/css/connect.css", "/client/css/icon.css",
+    "/client/css/menu-skin.css", "/client/css/menu.css", "/client/css/simple-keyboard.css",
+    "/client/css/slick.css", "/client/css/spinner.css",
+    "/client/icons/authentication.png", "/client/icons/close.png", "/client/icons/default_cursor.png",
+    "/client/icons/empty.png", "/client/icons/eye-slash.png", "/client/icons/eye.png",
+    "/client/icons/fullscreen.png", "/client/icons/maximize.png", "/client/icons/minimize.png",
+    "/client/icons/noicon.png", "/client/icons/unfullscreen.png", "/client/icons/xpra-logo.png",
+    "/client/icons/materialicons-regular.ttf", "/client/icons/materialicons-regular.woff",
+    "/client/icons/materialicons-regular.woff2",
+    *{"/client/js/" + name for name in (
+        "Client.js", "Constants.js", "DecodeWorker.js", "ImageDecoder.js", "Keycodes.js",
+        "MediaSourceUtil.js", "Menu.js", "MenuCustom.js", "Notifications.js",
+        "OffscreenDecodeWorker.js", "OffscreenDecodeWorkerHelper.js", "Protocol.js",
+        "RgbHelpers.js", "Utilities.js", "VideoDecoder.js", "WebTransport.js", "Window.js",
+        "lib/FileSaver.js", "lib/StreamSaver.js", "lib/aurora/aac.js", "lib/aurora/aurora-xpra.js",
+        "lib/aurora/aurora.js", "lib/aurora/flac.js", "lib/aurora/mp3.js",
+        "lib/brotli_decode.js", "lib/detect-zoom.js", "lib/hmac.js",
+        "lib/jquery-transform-draggable.js", "lib/jquery-ui.js", "lib/jquery.ba-throttle-debounce.js",
+        "lib/jquery.js", "lib/lz4.js", "lib/rencode.js", "lib/simple-keyboard.js", "lib/slick.js",
+        "lib/web-streams-ponyfill.es6.js",
+    )}
+})
+
+
 def canonical_asset(raw:str)->str:
     path=raw.split("?",1)[0]
-    if not path.startswith("/") or "\\" in path or unquote(path)!=path or unquote(unquote(path))!=path or any(s in {".",".."} for s in path.split("/")):raise GatewayDenied("non-canonical asset path")
-    if path in {"/client/index.html","/client/bootstrap.html","/client/favicon.png","/client/favicon.ico"}:
-        return path
-    suffix=path[len("/client/"):]
-    if suffix.startswith("js/") and suffix.endswith(".js"):return path
-    if suffix.startswith("css/") and suffix.endswith(".css"):return path
-    if suffix.startswith("icons/") and suffix.rsplit(".",1)[-1].casefold() in {"png","ico","svg","woff","woff2","ttf"}:return path
-    raise GatewayDenied("asset is outside the pinned minimal Xpra client")
+    if not path.startswith("/") or "\\" in path or unquote(path)!=path or unquote(unquote(path))!=path or any(s in {".",".."} for s in path.split("/")):
+        raise GatewayDenied("non-canonical asset path")
+    if path not in _CLIENT_ASSETS:
+        raise GatewayDenied("asset is outside the pinned Xpra client manifest")
+    return path
 @dataclass
 class GatewayRuntime:
     policy:RemotePolicy
