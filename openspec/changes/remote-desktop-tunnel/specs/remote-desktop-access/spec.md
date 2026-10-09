@@ -202,3 +202,10 @@ The installer SHALL load strict root-owned active generation catalogs, verify im
 #### Scenario: Preclaimed build hash or partial effect digest
 - **WHEN** output was not actually attested after terminal success, closure/import/device identity differs or grant signs only partial payload
 - **THEN** deny activation/effect without permissive fallback and preserve truthful failure/native evidence.
+
+### Requirement: Root remote controller and native principal binding
+The installer SHALL bind verified remote native principal and actual gateway kernel controller separately through a dedicated root-internal one-use connector issuer, active protected policy/OTP enrollment and actual origin/token/closure receipts. Normal worker contexts SHALL not be relabelled and gateway SHALL receive no policy/setup credential resolver.
+
+#### Scenario: Gateway context relabel or metadata-only origin activation
+- **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
+- **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
