@@ -938,6 +938,112 @@ class NativePackageBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeCandidateIndexManifestEntry:
+    """Fixed root-selected index member named by the pinned entrypoint manifest."""
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+
+    @classmethod
+    def from_entrypoint_manifest(
+        cls, manifest: Mapping[str, Any], binding: NativePackageBinding,
+    ) -> "NativeCandidateIndexManifestEntry | None":
+        """Parse the nested member pin after the enclosing manifest is verified.
+
+        Missing candidate_index means pre-discovery is unavailable. This method
+        does not read the manifest artifact, verify its enclosing digest, or
+        claim that the closure mount/member bytes have been checked.
+        """
+        if not isinstance(manifest, Mapping) or not isinstance(binding, NativePackageBinding):
+            raise EnrollmentDenied("native entrypoint manifest binding is unavailable")
+        if (manifest.get("schema") != 1 or manifest.get("package_id") != binding.package_id
+                or manifest.get("profile_id") != binding.profile_id
+                or manifest.get("generation") != binding.generation):
+            raise EnrollmentDenied("native entrypoint manifest does not join the protected package")
+        raw = manifest.get("candidate_index")
+        if raw is None:
+            return None
+        fields = {"artifact_id", "relative_path", "sha256", "size_bytes"}
+        if not isinstance(raw, Mapping) or set(raw) != fields:
+            raise EnrollmentDenied("native candidate index manifest pin fields are invalid")
+        expected_id = f"native-candidate-index:{binding.package_id}:{binding.generation}"
+        if (raw["artifact_id"] != expected_id
+                or raw["relative_path"] != "catalog/native-candidates.json"):
+            raise EnrollmentDenied("native candidate index is not the fixed package closure member")
+        digest, size = raw["sha256"], raw["size_bytes"]
+        if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(size) is not int or not 1 <= size <= 2 * 1024 * 1024):
+            raise EnrollmentDenied("native candidate index digest or size is invalid")
+        closure_files = manifest.get("closure_files")
+        if not isinstance(closure_files, list):
+            raise EnrollmentDenied("native entrypoint closure file list is invalid")
+        members = [item for item in closure_files
+                   if isinstance(item, Mapping)
+                   and item.get("relative_path") == "catalog/native-candidates.json"]
+        if len(members) != 1:
+            raise EnrollmentDenied("native candidate index is absent or ambiguous in the closure manifest")
+        member = members[0]
+        if member.get("sha256") != digest or member.get("size_bytes") != size:
+            raise EnrollmentDenied("native candidate index pin differs from its closure file record")
+        return cls(expected_id, "catalog/native-candidates.json", digest, size)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeCandidateIndexManifestEntry:
+    """Root-verified pin for the fixed native candidate index closure member."""
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+
+    @classmethod
+    def from_entrypoint_manifest(
+        cls, manifest: Mapping[str, Any], binding: NativePackageBinding,
+    ) -> "NativeCandidateIndexManifestEntry | None":
+        """Parse only the nested index pin after the caller verifies manifest bytes.
+
+        An older manifest with no candidate_index returns None (pre-discovery
+        unavailable). This parser does not read files, verify the enclosing
+        entrypoint SHA, or claim closure custody.
+        """
+        if not isinstance(manifest, Mapping) or not isinstance(binding, NativePackageBinding):
+            raise EnrollmentDenied("native entrypoint manifest binding is unavailable")
+        if (manifest.get("schema") != 1 or manifest.get("package_id") != binding.package_id
+                or manifest.get("profile_id") != binding.profile_id
+                or manifest.get("generation") != binding.generation):
+            raise EnrollmentDenied("native entrypoint manifest does not join the protected package")
+        raw = manifest.get("candidate_index")
+        if raw is None:
+            return None
+        fields = {"artifact_id", "relative_path", "sha256", "size_bytes"}
+        if not isinstance(raw, Mapping) or set(raw) != fields:
+            raise EnrollmentDenied("native candidate index manifest pin fields are invalid")
+        expected_id = f"native-candidate-index:{binding.package_id}:{binding.generation}"
+        if raw["artifact_id"] != expected_id or raw["relative_path"] != "catalog/native-candidates.json":
+            raise EnrollmentDenied("native candidate index is not the fixed package closure member")
+        digest = raw["sha256"]
+        size = raw["size_bytes"]
+        if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(size) is not int or not 1 <= size <= 2 * 1024 * 1024):
+            raise EnrollmentDenied("native candidate index digest or size is invalid")
+        closure_files = manifest.get("closure_files")
+        if not isinstance(closure_files, list):
+            raise EnrollmentDenied("native entrypoint closure file list is invalid")
+        members = [item for item in closure_files
+                   if isinstance(item, Mapping)
+                   and item.get("relative_path") == "catalog/native-candidates.json"]
+        if len(members) != 1:
+            raise EnrollmentDenied("native candidate index is absent or ambiguous in the closure manifest")
+        member = members[0]
+        if member.get("sha256") != digest or member.get("size_bytes") != size:
+            raise EnrollmentDenied("native candidate index pin differs from its closure file record")
+        return cls(expected_id, "catalog/native-candidates.json", digest, size)
+
+
+@dataclass(frozen=True, slots=True)
 class NativeSourceObserverJoin:
     """Metadata-only source join; it is not a loaded-closure or peer proof."""
 
