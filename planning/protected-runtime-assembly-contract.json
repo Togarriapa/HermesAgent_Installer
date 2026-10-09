@@ -46,6 +46,7 @@
       "resource_body_recipes",
       "resource_scope_bindings",
       "resource_validators",
+      "root_journal_roots",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -57,7 +58,31 @@
     "remote_session_enrollments": "Active exact HI13 rows and protected selected OTP/JWT/policy/principal/gateway joins from remote-root-session-bridge-contract.json, fully included generation_digest. Prior top-level declaration is staging/import only; no mutable sidecar/alternate active parser fallback.",
     "resource_backend_enrollments": "Strict activeRB07backend/action/recipe schema in protected-resource-job-contract.json, fullrows includedcanonicalgenerationdigest; no mutable sidecarfallback.",
     "resource_scope_bindings": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback.",
-    "resource_validators": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback."
+    "resource_validators": "Strict active rows defined in protected-resource-job-contract.json closed_resolvers; fully included generation_digest, no mutable sidecar/worker resolver fallback.",
+    "root_journal_roots": {
+      "row_fields": [
+        "root_id",
+        "absolute_path",
+        "owner_uid",
+        "owner_gid",
+        "mode",
+        "device",
+        "inode",
+        "generation",
+        "purpose"
+      ],
+      "purpose": "authority-journal",
+      "initial_selection": {
+        "root_id": "installer-authority-journal-v1",
+        "absolute_path": "/var/lib/hermes-installer/authority-journal",
+        "owner_uid": 0,
+        "owner_gid": 0,
+        "mode": 448
+      },
+      "resolution": "Root-owned installed setup selection supplies path before first snapshot; create/validate root0700 directory with held nofollow ancestor walk, then record actual fstat device/inode and root-issued journal generation. Entire strict row in active digest. Only root path resolver consumes absolute_path; workers receive root_id only. No service/caller data root aliases, symlink, group/worldwrite/ACL access or nonzero production UID. Custom root requires explicit reviewed root selection before creation, never worker request.",
+      "calls": "resolve_root_journal(root_id,expected_active_generation_digest)->RootJournalSelection(root_id,path) after actual path owner/mode/dev/inode/generation checks. Memory authority_state_root_id exact row root_id; bootstrap receipt/session stores use child bootstrap-receipts/setup-sessions; neither hardcoded separate root nor mutable mapping fallback.",
+      "state": "First root-local setup may use verified initial selection before authority file exists, then includes observed row in prepared snapshot. Initial constructor root trust is not an active worker rule. Later daemon uses active digest-bound row only."
+    }
   },
   "device_kernel_enforcement": {
     "profile_fields": [
