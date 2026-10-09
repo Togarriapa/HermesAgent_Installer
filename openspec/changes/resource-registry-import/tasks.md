@@ -36,3 +36,9 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
 
 Audio/HTTP native input transport v40: `plans/amendments/2026-10-09-native-input-audio-http-channels-v40.md`; original5 channels retain required pending scope.
+
+Original WhatsApp authenticated trigger v45: `plans/amendments/2026-10-09-whatsapp-authenticated-trigger-enrollment-v45.md`; source-backed setup/schema acquisition, originalchannel tasks remain pending.
+
+Root channel peer delivery v48: `plans/amendments/2026-10-09-root-channel-peer-delivery-v48.md`; concrete originalchannel transport join, tasks open.
+
+Composio selected trigger derivation v77: `plans/amendments/2026-10-10-composio-trigger-artifact-exchange-derivation-v77.md`; existing RG-F03/R0060/RB-T08 gates remain open and account setup proof stays distinct.

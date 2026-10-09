@@ -289,3 +289,129 @@ The implementation SHALL use the distinct selected capture/JWT/session provenanc
 #### Scenario: Microphone permission exists
 - **WHEN** actual selected scoped capture is authorized
 - **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
+
+### Requirement: Authenticated original WhatsApp channel enrollment
+The implementation SHALL use v45 exact authenticated selected trigger schema and signed account-scoped webhook provenance for original WhatsApp channel activation.
+
+#### Scenario: Manifest semantic alias has no verified provider slug
+- **WHEN** authenticated selected trigger schema is absent
+- **THEN** channel reports exact setup/schema prerequisite and retains required scope without inventing a slug or unsigned production provenance
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Peer authenticated root observed channel delivery
+The implementation SHALL use v48 actual selected root transport capture and fixed producer-bound delivery before native channel processing.
+
+#### Scenario: Worker presents an SDK message object
+- **WHEN** no actual retained root transport/account/event proof exists
+- **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
+
+### Requirement: Actual native materialization output CAS
+The implementation SHALL apply v51 exact source and compiled artifact role/closure joins.
+
+#### Scenario: Compiler produces a source and compiled digest
+- **WHEN** importing actual generated output into root CAS
+- **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
+
+### Requirement: Actual producer initial source take
+The implementation SHALL use v52 fixed peer-authenticated no-selector source delivery before selected task stdin.
+
+#### Scenario: Initial peer does not know a receipt identifier
+- **WHEN** actual rootselected initial input has been captured
+- **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Stable task identity across stdin phases
+The installer SHALL retain the same frozen task handle while resolving actual stdin receipt from root custody after EOF.
+
+#### Scenario: Pre-stdin receipt lookup
+- **WHEN** the coordinator receives the actual task handle before writing input
+- **THEN** no successful write receipt is available until custody observes complete write and EOF
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
+
+### Requirement: Closed prepared base and reader policy
+The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
+
+#### Scenario: Prepared authority treated as active
+- **WHEN** a dormant empty prepared policy is used to authorize runtime effects
+- **THEN** authorization denies until actual active compilation and receipts exist
+
+### Requirement: Actual raw event and predecessor result closure
+The installer SHALL authenticate exact original webhook bytes before root canonical event derivation and resolve actual validated prerequisite capsules for each DAG child context.
+
+#### Scenario: Reserialized HMAC or caller results
+- **WHEN** canonicalized body is substituted for raw authentication bytes or caller result dictionaries replace prerequisite capsules
+- **THEN** ingress or downstream child admission denies
+
+### Requirement: Fixed resource capture schemas
+The installer SHALL validate root-derived capture envelopes and selected timer/webhook event data against actual sealed schema artifacts before child admission.
+
+#### Scenario: Unknown protocol mapping
+- **WHEN** ingress cannot resolve its selected source schema or exact authenticated event identity
+- **THEN** it remains unavailable with its precise setup prerequisite rather than using another protocol schema
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution
