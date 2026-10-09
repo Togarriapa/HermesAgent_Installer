@@ -102,5 +102,6 @@ def search_reference_catalog(
                 excerpt=line.strip()[:240],
             ))
             if len(hits) >= limit:
-                return ReferenceSearchResult(component_id, query, tuple(hits), scanned, complete)
+                # The remaining tree was not scanned, so the result is bounded, not exhaustive.
+                return ReferenceSearchResult(component_id, query, tuple(hits), scanned, False)
     return ReferenceSearchResult(component_id, query, tuple(hits), scanned, complete)
