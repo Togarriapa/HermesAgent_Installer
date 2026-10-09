@@ -581,7 +581,33 @@
       ],
       "handoff_api": "RootInitialCompilationRegistry.finish_publication(publication_receipt)->opaque handoff_handle; RootSetupSessionStore.begin_from_initial_publication(handoff_handle)->RootSetupSessionHandle. Both root-local same actualactor/release/target/plan and immutable actualpublication currentselection proof required. Atomically consume handoff once, issue NEW normal setup_session_id/transaction_handle and record predecessor compilation IDs/input receipt closure. Transfer receipt custody by explicit registry linkage, never re-mint artifacts from caller bytes; old stage0 capabilities revoked.",
       "pending": "Null/unverified principal selection gives pending original identity choice before concretepolicypublication; no syntheticprincipal. Interrupted stage0 remains its own journaled transaction and resumes after actualactor/release revalidation, not fabricated normal setup session. Missing selected principal may still sourceverify/rootprepare within explicitstage0 scopes without publishing invalid concreteidentity policy.",
-      "selection_predecessor": "expected_selection_catalog_sha256 is str|None: None means actual verified ABSENCE before first publication, never wildcard. Root holds nofollow trusted /etc/hermes-installer directory and uses atomic no-replace/CAS; any existing file with absent predecessor denies. If selection exists, exact verified current digest is required. Initial plan/template/catalog resolve exact installed deployment closure role rows before selection exists. Stage0 sealed session also binds this expected predecessor; publisher compares current actual parent/inode/selection immediately before commit."
+      "selection_predecessor": "expected_selection_catalog_sha256 is str|None: None means actual verified ABSENCE before first publication, never wildcard. Root holds nofollow trusted /etc/hermes-installer directory and uses atomic no-replace/CAS; any existing file with absent predecessor denies. If selection exists, exact verified current digest is required. Initial plan/template/catalog resolve exact installed deployment closure role rows before selection exists. Stage0 sealed session also binds this expected predecessor; publisher compares current actual parent/inode/selection immediately before commit.",
+      "identity_credential_intake": {
+        "owner_module": "hermes_installer.authority.setup_principal",
+        "class": "RootSetupIdentityIntake",
+        "constructor": "from_initial_compilation(initial_registry,installed_actor_verifier,root_credential_vault,root_journal)",
+        "policy_selection_call": "select_authentik_policy(stage0_session_handle,*,https_origin,system_group_id,recipient_group_id)->opaque policy_selection_handle",
+        "selection_fields": [
+          "schema",
+          "selection_handle",
+          "compilation_session_handle",
+          "compilation_transaction_handle",
+          "plan_sha256",
+          "https_origin",
+          "system_group_id",
+          "recipient_group_id",
+          "policy_revision",
+          "actor_credential_ref",
+          "selection_sha256",
+          "issued_monotonic",
+          "expires_monotonic"
+        ],
+        "selection": "Nonsecret HTTPS origin and authoritative group IDs are explicit original root setup wizard choices, canonical bounds/URLTLS/security validated and bound current root actor/plan/stage0 transaction. Root chooses fixed policy revision from reviewed template, not user capability fields. No arbitrary worker origin/group/headers accepted; initial setup enrollment configures the intended identity service rather than assuming ambient existing URL. Selected account/group identities must subsequently verify actual server responses before receipt.",
+        "secure_intake_call": "collect_authentik_actor_credential(stage0_session_handle,policy_selection_handle,*,secure_existing_vault_reference=None)->opaque root_vault_reference",
+        "intake": "Installed authorized root local wizard either masked terminal/UI SecretBuffer intake (echo disabled, no argv/env/log/caller user journal) or securely resolves explicit existing root-owned vault reference. Root writes unique credential encrypted/protected through RootCredentialVault under scope authentik-system-read/currentstage0/selectedorigin; metadata owner0 nofollow/private0700 storage0600 and exact original secret-store contract. Plain token memory is bounded<=16KiB, used private network credential resolver only and wiped finally; no raw token return or profile credential file. User-private PrivateFileCredentialStore refs do not substitute root-held reference.",
+        "binding": "Root policy handle is minted only after actual credential-store receipt/rootactor/session validation; contains ref not secret. Actual identity observer resolves this selection and token within same root vault; fixed v35 GET paths and v42 stage0 rules. No bearer on worker socket; no credential copy on handoff. Handoff retains existing ref/selection receipt under root new session linkage, old stage0intake revoked.",
+        "failures": "Wrongstage0/plan/actor/origin/refscope/unsafevaultfile/expiry/credentialfailure aborts beforeidentitypublication; pending supported secureintake/setup step. No Homelab write or public eligibility is authorized by intake. Code fixture tests only; no live account mutation/identity assertion from nonsecret form."
+      }
     }
   },
   "official_pm_runtime": {

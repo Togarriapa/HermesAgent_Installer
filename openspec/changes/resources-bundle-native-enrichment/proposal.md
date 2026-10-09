@@ -121,3 +121,7 @@ First-selection/native-target v43: `plans/amendments/2026-10-09-first-selection-
 Native registration/source snapshot v44: `plans/amendments/2026-10-09-native-registration-source-snapshot-v44.md`; exact existing task join, target gates open.
 
 Original WhatsApp authenticated trigger v45: `plans/amendments/2026-10-09-whatsapp-authenticated-trigger-enrollment-v45.md`; source-backed setup/schema acquisition, originalchannel tasks remain pending.
+
+Root task initial input v46: `plans/amendments/2026-10-09-root-task-initial-input-sequence-v46.md`; exact existing task sequencing, no target completion.
+
+Root channel peer delivery v48: `plans/amendments/2026-10-09-root-channel-peer-delivery-v48.md`; concrete originalchannel transport join, tasks open.
