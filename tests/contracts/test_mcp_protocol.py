@@ -59,7 +59,9 @@ class BrokerAuthorityFixture:
         self.cancel_observed = False
 
     def context(self, *, purpose, intent, source_contexts=(), trace_id=None, lease_seconds=30, cancelled=None):
-        context = SimpleNamespace(intent_id=intent, monotonic_expires_at=time.monotonic() + lease_seconds)
+        context = SimpleNamespace(purpose=purpose, intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
+                                  uid=1000, profile_id="fixture-profile",
+                                  monotonic_expires_at=time.monotonic() + lease_seconds)
         self.contexts.append((purpose, intent, context))
         return context
 
@@ -78,7 +80,7 @@ class BrokerAuthorityFixture:
         if target != grant.target or canonical_digest(payload) != grant.request_digest:
             raise AssertionError("broker binding mismatch")
         request = __import__("json").loads(payload)
-        method, rid = request["method"], request.get("id")
+        method, rid = request["method"], request["request_id"]
         if method == self.block_method:
             import time as time_module
             while cancelled is not None and not cancelled():
