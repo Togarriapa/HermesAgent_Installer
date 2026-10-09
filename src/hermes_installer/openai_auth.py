@@ -89,7 +89,8 @@ def _nonempty(value: object, key: str, limit: int = 8192) -> str:
     return value
 
 
-def _token_response(value: Mapping[str, object]) -> tuple[str, str, str, frozenset[str], float]:
+def _token_response(value: Mapping[str, object], *, inherited_scopes: frozenset[str] | None = None,
+                    now: float | None = None) -> tuple[str, str, str, frozenset[str], float]:
     if not isinstance(value, Mapping):
         raise OAuthAttemptError("OpenAI token response is malformed")
     access = _nonempty(value.get("access_token"), "access token")
@@ -97,14 +98,17 @@ def _token_response(value: Mapping[str, object]) -> tuple[str, str, str, frozens
     identity = _nonempty(value.get("id_token"), "ID token")
     if value.get("token_type") != "Bearer":
         raise OAuthAttemptError("OpenAI token response has an unsupported token type")
-    raw_scope = _nonempty(value.get("scope"), "granted scopes", 2048)
-    scopes = frozenset(raw_scope.split())
+    raw_scope = value.get("scope")
+    if raw_scope is None and inherited_scopes is not None:
+        scopes = inherited_scopes
+    else:
+        scopes = frozenset(_nonempty(raw_scope, "granted scopes", 2048).split())
     if PLAN_SCOPE not in scopes:
         raise OAuthAttemptError("ChatGPT plan permission was not granted for Responses API use")
     lifetime = value.get("expires_in")
     if isinstance(lifetime, bool) or not isinstance(lifetime, int) or not 1 <= lifetime <= MAX_TOKEN_LIFETIME:
         raise OAuthAttemptError("OpenAI token lifetime is outside its supported bound")
-    return access, refresh, identity, scopes, time.time() + lifetime
+    return access, refresh, identity, scopes, (time.time() if now is None else now) + lifetime
 
 
 class ChatGPTPlanAuth:
@@ -220,7 +224,8 @@ class ChatGPTPlanAuth:
                     "grant_type": "refresh_token", "client_id": account.client_id,
                     "refresh_token": account.refresh_token, "resource": RESOURCE,
                 }, timeout=15)
-                access, refresh, identity, scopes, expires = _token_response(response)
+                access, refresh, identity, scopes, expires = _token_response(
+                response, inherited_scopes=account.scopes, now=self.clock())
                 if "id_token" in response:
                     claims = self.verify_id_token(identity, "", account.client_id)
                     subject = _nonempty(claims.get("sub"), "verified account subject", 512)
@@ -229,8 +234,6 @@ class ChatGPTPlanAuth:
                 else:
                     identity = account.id_token
                     subject = account.subject
-                if not secrets.compare_digest(account.client_id, account.client_id):
-                    raise OAuthAttemptError("Stored ChatGPT registration changed")
                 updated = ChatGPTAccount(account.client_id, account.host_id, subject,
                     account.email, scopes, access, refresh, identity, expires)
                 self.vault.save(credential_ref, updated)
