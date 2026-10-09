@@ -176,6 +176,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     issued_at_monotonic=now, monotonic_expires_at=now + min(lease_seconds, 20),
                     nonce="fixture-context-nonce", grant_id="fixture-context-grant",
                     signature="fixture-context-signature",
+                    final_payload_digest=_kwargs.get("final_payload_digest"),
                 )
                 self.context_value = ctx
                 return ctx
@@ -196,12 +197,16 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                     grant_id="fixture-effect-grant", nonce="fixture-effect-nonce",
                     context_digest=canonical_digest(context.claims()),
                     signature="fixture-effect-signature",
+                    final_payload_digest=context.final_payload_digest,
                 )
 
             def mcp_request(self, authorization, *, target, payload, timeout, cancelled=None):
                 if (authorization.target != target or target != "mcp:fixture:http"
                         or canonical_digest(payload) != authorization.request_digest
-                        or self.context_value is None or cancelled and cancelled()):
+                        or self.context_value is None
+                        or canonical_digest(payload) != self.context_value.final_payload_digest
+                        or authorization.final_payload_digest != self.context_value.final_payload_digest
+                        or cancelled and cancelled()):
                     raise PermissionError("fixture authority binding mismatch")
                 envelope = json.loads(payload.decode("utf-8"))
                 request = {"jsonrpc": "2.0", "id": envelope["request_id"],
