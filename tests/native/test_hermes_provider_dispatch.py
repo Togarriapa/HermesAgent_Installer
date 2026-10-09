@@ -146,7 +146,7 @@ class NativeHermesProviderDispatchTests(unittest.TestCase):
                 if home.exists():
                     if (home.parent.resolve() != data_root.path("profiles").resolve()
                             or marker.is_symlink()
-                            or marker.read_bytes() != b"hermes-installer-managed-home-v1\\n"):
+                            or marker.read_bytes() != b"hermes-installer-managed-home-v1\n"):
                         raise AssertionError("Refusing to remove a profile without the exact disposable fixture marker")
                     shutil.rmtree(home)
                 if inserted:
