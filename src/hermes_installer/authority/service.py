@@ -13,6 +13,7 @@ import hmac
 import json
 import math
 import os
+import re
 import secrets
 import select
 import socket
@@ -181,7 +182,8 @@ class AuthorityService:
                  background_consent_active: Callable[[str], bool] | None = None,
                  delegations: Mapping[str, ChildDelegationRule] | None = None,
                  process_effect_handler: Any | None = None,
-                 native_bridge_broker: Any | None = None):
+                 native_bridge_broker: Any | None = None,
+                 selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -211,6 +213,7 @@ class AuthorityService:
         self.delegations = dict(delegations or {})
         self.process_effect_handler = process_effect_handler
         self.native_bridge_broker = native_bridge_broker
+        self.selected_operation_resolver = selected_operation_resolver
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -570,6 +573,8 @@ class AuthorityService:
             return self._issue_context(uid, payload, peer_pid=peer_pid)
         if operation == "authorize_effect":
             return self._authorize_effect(uid, payload, peer_pid=peer_pid)
+        if operation == "authorize_process_start":
+            return self._authorize_process_start(uid, peer_pid, payload)
         if operation == "verify_effect":
             return self._verify_effect(uid, payload, peer_pid=peer_pid)
         if operation == "perform_effect":
@@ -588,6 +593,50 @@ class AuthorityService:
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
+
+    def _authorize_process_start(self, uid: int, peer_pid: int | None, payload: Any) -> dict[str, Any]:
+        """Resolve process.start target from root enrollment, never caller input."""
+        required = {"context", "enrollment_id", "generation", "operation_id",
+                    "request_digest", "retry_index"}
+        if not isinstance(payload, dict) or set(payload) != required:
+            raise AuthorityDenied("effect.request", "selected process authorization fields are invalid")
+        if (self.selected_operation_resolver is None
+                or any(not isinstance(payload.get(field), str) or not payload[field]
+                       for field in ("enrollment_id", "generation", "operation_id"))
+                or not isinstance(payload["request_digest"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", payload["request_digest"])
+                or type(payload["retry_index"]) is not int
+                or not 0 <= payload["retry_index"] <= 100):
+            raise AuthorityDenied("effect.unavailable", "protected selected process operation is unavailable")
+        binding = self._binding(uid)
+        context = HostContext.from_wire(payload["context"])
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, uid)
+        if (context.operation != "process.start"
+                or context.final_payload_digest != payload["request_digest"]):
+            raise AuthorityDenied("effect.binding", "selected process context does not bind the exact request")
+        try:
+            selected = self.selected_operation_resolver(
+                payload["enrollment_id"], payload["generation"], "process.start",
+                payload["operation_id"])
+        except Exception:
+            raise AuthorityDenied("effect.target", "selected process enrollment is unavailable") from None
+        if (getattr(selected, "operation", None) != "process.start"
+                or getattr(selected, "operation_id", None) != payload["operation_id"]
+                or getattr(selected, "profile_id", None) != binding.profile_id
+                or getattr(selected, "principal_id", None) != binding.principal_id
+                or getattr(selected, "service_uid", None) != uid
+                or getattr(selected, "enrollment_id", None) != payload["enrollment_id"]
+                or getattr(selected, "generation", None) != payload["generation"]
+                or not isinstance(getattr(selected, "target", None), str)
+                or "hermes-profile-invoke" not in binding.capabilities):
+            raise AuthorityDenied("effect.target", "selected process operation is not bound to this host principal")
+        return self._authorize_effect(uid, {
+            "context": context.to_wire(), "capability": "hermes-profile-invoke",
+            "target": selected.target, "recipient": None,
+            "request_digest": payload["request_digest"],
+            "retry_index": payload["retry_index"],
+        }, peer_pid=peer_pid)
 
     def _binding(self, uid: int) -> PrincipalBinding:
         binding = self.bindings_by_uid.get(uid)
