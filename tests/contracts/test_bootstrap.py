@@ -19,6 +19,17 @@ class FakeRunner:
         self.calls.append((args,timeout,capture))
         if capture:
             return 0,json.dumps({"protocol_version":1,"stages":[{"name":n} for n in EXPECTED_STAGES]}).encode()
+        if "--stage" in args:
+            stage=args[args.index("--stage")+1]
+            directory=Path(args[args.index("--dir")+1])
+            if stage=="repository":
+                (directory/".git").mkdir(parents=True)
+            if stage=="complete":
+                (directory/".hermes"/"bin").mkdir(parents=True)
+                (directory/".hermes"/"bin"/"hermes").write_text("#!/bin/sh\\n")
+                (directory/".hermes-bootstrap-complete").write_text(json.dumps({"pinnedCommit":HERMES_COMMIT}))
+            if stage=="products":
+                (directory/"apps"/"desktop"/"release"/"linux-arm64-unpacked").mkdir(parents=True)
         return 0,b""
 
 class BootstrapTests(unittest.TestCase):

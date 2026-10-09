@@ -180,10 +180,12 @@ class HermesBootstrap:
             return False
         if previous is None or previous.get("status") != "running:repository":
             return False
+        owned = any(row["resource_id"] == str(self.install_dir) and row["state"] == "active"
+                    for row in self.state.owned("hermes-generation"))
         marker = self.install_dir / ".git"
         if not marker.is_dir() or marker.is_symlink():
             return False
-        return True
+        return owned or (previous is not None and previous.get("status") == "running:repository")
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 7200) -> BootstrapReport:
         if not 60 <= timeout_per_stage <= 14_400:
