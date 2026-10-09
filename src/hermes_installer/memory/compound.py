@@ -155,11 +155,11 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
     elif provider == "openviking" and route_id == "openviking-find" and body_recipe == "openviking-find-owned-v1":
         if set(body) != {"query", "limit"}:
             raise MemoryRecipeDenied("OpenViking find accepts only query and limit")
-        target_uri = scope_bindings.get("backend_project_ref")
-        target_uri = _nonempty_text(target_uri, "root target URI", 2048)
-        payload = {"query": _nonempty_text(body["query"], "query", 16384),
-                   "limit": _positive_limit(body["limit"]), "target_uri": target_uri,
-                   "telemetry": False}
+        # The provider project reference is opaque enrollment metadata, not
+        # an OpenViking URI. Until the protected resolver supplies a validated
+        # root-owned viking:// target, do not serialize a guessed search scope.
+        raise MemoryRecipeUnavailable(
+            "root-owned OpenViking target URI resolver is not enrolled")
     elif provider == "openviking" and route_id == "openviking-session-capture":
         if body_recipe == "openviking-create-owned-session-v1":
             if body:
@@ -315,9 +315,8 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
             raise MemoryRecipeUnavailable("AgentMemory created memory title is invalid")
         return MemoryStepOutcome({"success": True, "id": memory_id}, {"memory_id": memory_id})
     if route_id == "openviking-find":
-        if value.get("status") != "ok" or not isinstance(value.get("result"), dict):
-            raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
-        return MemoryStepOutcome(value["result"], {})
+        raise MemoryRecipeUnavailable(
+            "OpenViking find result validator is not enrolled for the selected source schema")
     raise MemoryRecipeUnavailable("selected route has no semantic response validator")
 
 

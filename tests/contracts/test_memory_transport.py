@@ -28,6 +28,7 @@ class Stream:
 
     def write(self, data):
         self.writes.append(data)
+        return len(data)
 
     def read(self, max_bytes):
         if self.response is None:
@@ -44,8 +45,8 @@ class Connector:
         self.stream = stream
         self.opens = []
 
-    def open(self, *args):
-        self.opens.append(args)
+    def open(self, **kwargs):
+        self.opens.append(kwargs)
         return self.stream
 
 
@@ -99,9 +100,9 @@ def make_ipc(stream, calls):
 
 
 def response(status=200, body=b'{"healthy":true}', extra_headers=b""):
-    return (f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n".encode() + extra_headers
-            + b"Connection: close\r\n\r\n" + body)
+    head = (f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n").encode("ascii")
+    return head + extra_headers + b"Connection: close\r\n\r\n" + body
 
 
 class MemoryTransportTests(unittest.TestCase):
@@ -116,9 +117,12 @@ class MemoryTransportTests(unittest.TestCase):
             peer_pidfd=None, cancelled=lambda: False)
         self.assertEqual(result.status, 200)
         self.assertEqual(result.body, b'{"healthy":true}')
-        self.assertEqual(client.opens, [("memory-service-one", 8,
-            "memory-agentmemory:profile-one", "agentmemory-ready", "trace-one",
-            client.opens[0][-1])])
+        self.assertEqual(client.opens, [{
+            "enrollment_id": "memory-service-one", "generation": "generation-eight",
+            "target_id": "memory-agentmemory:profile-one",
+            "approved_route_id": "agentmemory-ready", "session_id": "trace-one",
+            "deadline": client.opens[0]["deadline"],
+        }])
         self.assertEqual(len(client.stream.writes), 1)
         request = client.stream.writes[0]
         self.assertTrue(request.startswith(b"GET /agentmemory/livez HTTP/1.1\r\n"))
@@ -138,7 +142,7 @@ class MemoryTransportTests(unittest.TestCase):
             with self.assertRaises(MemoryTransportDenied):
                 ipc.request(context=context, authorization=Authorization(),
                     service_id="memory-service-one",
-                    service_generation=changes.get("service_generation", 8),
+                    service_generation=changes.get("service_generation", "generation-eight"),
                     provider="agentmemory", route_id="agentmemory-ready",
                     session_id="trace-one", deadline_monotonic=time.monotonic()+5,
                     payload=b'{"schema":1}', timeout=2, peer_pid=1001,
@@ -149,7 +153,7 @@ class MemoryTransportTests(unittest.TestCase):
         calls = []
         ipc, _ = make_ipc(Stream(response()), calls)
         args = dict(context=Context(), authorization=Authorization(),
-            service_id="memory-service-one", service_generation=8,
+            service_id="memory-service-one", service_generation="generation-eight",
             provider="agentmemory", session_id="trace-one",
             deadline_monotonic=time.monotonic()+5, payload=b'{"schema":1}',
             timeout=2, peer_pid=1001, peer_pidfd=None, cancelled=lambda: False)

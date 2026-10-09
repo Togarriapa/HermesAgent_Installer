@@ -193,11 +193,17 @@ class MemoryServiceIPC:
         stream: ConnectorStream | None = None
         try:
             stream = client.open(
-                enrollment.service_enrollment_id, enrollment.service_generation,
-                enrollment.target_id, route_id, session_id, deadline_monotonic)
+                enrollment_id=enrollment.service_enrollment_id,
+                generation=enrollment.service_generation,
+                target_id=enrollment.target_id,
+                approved_route_id=route_id,
+                session_id=session_id,
+                deadline=deadline_monotonic)
             if cancelled():
                 raise MemoryTransportUnavailable("memory service operation was cancelled")
-            stream.write(frame)
+            written = stream.write(frame)
+            if type(written) is not int or written != len(frame):
+                raise MemoryTransportUnavailable("memory connector did not accept the complete HTTP frame")
             raw = bytearray()
             header_end = -1
             expected_length: int | None = None

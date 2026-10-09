@@ -15,7 +15,11 @@ class MemoryProviderError(RuntimeError):
 
 
 class MemoryBroker(Protocol):
-    def context(self, *, purpose: str, intent: str, source_contexts: tuple[Any, ...] = (), trace_id: str | None = None, lease_seconds: int = 30) -> Any: ...
+    def context(self, *, purpose: str, intent: str, operation: str,
+                source_contexts: tuple[Any, ...] = (),
+                source_receipt_handles: tuple[str, ...] = (),
+                final_payload_digest: str | None = None,
+                trace_id: str | None = None, lease_seconds: int = 30) -> Any: ...
     def authorize_effect(self, context: Any, *, capability: str, target: str, request_digest: str, recipient: str | None = None) -> Any: ...
     def memory_request(self, grant: Any, *, target: str, request_digest: str, payload: bytes, timeout: float, cancelled: Callable[[], bool] | None = None) -> Any: ...
 
@@ -50,22 +54,28 @@ class BrokerMemoryProvider:
         self.broker, self.intent, self.timeout = broker, intent, timeout
         self.cancelled = cancelled or (lambda: False)
 
-    def _context(self, purpose: str, source: Any) -> Any:
-        if source is None:
+    def _context(self, purpose: str, operation: str, raw: bytes,
+                 sources: tuple[Any, ...]) -> Any:
+        if not sources or any(source is None for source in sources):
             raise PermissionError("fresh host-issued source context is required")
-        return self.broker.context(purpose=purpose, intent=self.intent,
-            source_contexts=(source,), trace_id=getattr(source, "trace_id", None), lease_seconds=30)
+        return self.broker.context(
+            purpose=purpose, intent=self.intent, operation=f"memory.{operation}",
+            source_contexts=sources, trace_id=getattr(sources[0], "trace_id", None),
+            final_payload_digest=hashlib.sha256(raw).hexdigest(), lease_seconds=30)
 
-    def _call(self, operation: str, capability: str, payload: dict[str, Any], context: Any) -> dict[str, Any]:
+    def _call(self, operation: str, capability: str, payload: dict[str, Any],
+              sources: tuple[Any, ...], purpose: str) -> dict[str, Any]:
         if operation not in self.actions:
             raise ValueError("unsupported provider operation")
-        if context is None:
+        if not sources or any(source is None for source in sources):
             raise PermissionError("fresh host-issued memory context is required")
         target = f"memory:{self.name}:{operation}"
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        grant = self.broker.authorize_effect(context, capability=capability, target=target, request_digest=hashlib.sha256(raw).hexdigest())
+        context = self._context(purpose, operation, raw, sources)
+        digest = hashlib.sha256(raw).hexdigest()
+        grant = self.broker.authorize_effect(context, capability=capability, target=target, request_digest=digest)
         response = self.broker.memory_request(grant, target=target,
-            request_digest=hashlib.sha256(raw).hexdigest(), payload=raw,
+            request_digest=digest, payload=raw,
             timeout=self.timeout, cancelled=self.cancelled)
         if not 200 <= int(response.status) < 300:
             raise MemoryProviderError(f"{self.name} {operation} broker operation failed (status {response.status})")
@@ -79,7 +89,7 @@ class BrokerMemoryProvider:
 
     def doctor(self, context: Any) -> ProviderStatus:
         result = self._call("doctor", "memory-retrieval", {"schema": 1},
-                            self._context("memory-retrieval", context))
+                            (context,), "memory-retrieval")
         healthy = result.get("healthy") is True
         revision = result.get("revision")
         return ProviderStatus(self.name, healthy, "ready" if healthy else "service unhealthy",
@@ -95,12 +105,12 @@ class BrokerMemoryProvider:
         record_data = {"id": record.id, "namespace": record.namespace, "profile": record.profile,
                        "source": record.source, "text": record.text, "provenance": list(record.provenance)}
         extracted = self._call("extract", "memory-extraction", {"schema": 1, "record": record_data},
-                               self._context("memory-extraction", context))
+                               (context,), "memory-extraction")
         facts = extracted.get("facts")
         if not isinstance(facts, list) or not facts:
             raise MemoryProviderError("provider extraction returned no validated facts")
         embedded = self._call("embed", "memory-embedding", {"schema": 1, "facts": facts},
-                              self._context("memory-embedding", context))
+                              (context,), "memory-embedding")
         vectors = embedded.get("embeddings")
         if not isinstance(vectors, list) or len(vectors) != len(facts):
             raise MemoryProviderError("provider embedding unavailable or invalid")
@@ -108,7 +118,7 @@ class BrokerMemoryProvider:
             {"schema": 1, "namespace": record.namespace, "profile": record.profile,
              "source": record.source, "record_id": record.id, "facts": facts,
              "embeddings": vectors, "provenance": list(record.provenance)},
-            self._context("memory-capture", context))
+            (context,), "memory-capture")
 
     def search(self, namespace: str, query: str, limit: int, *, context: Any = None) -> list[MemoryRecord]:
         if not 1 <= limit <= 100:
@@ -117,21 +127,21 @@ class BrokerMemoryProvider:
             raise PermissionError("search namespace does not match signed host context")
         result = self._call("search", "memory-retrieval",
             {"schema": 1, "namespace": namespace, "query": query, "limit": limit},
-            self._context("memory-retrieval", context))
+            (context,), "memory-retrieval")
         return self._records(result.get("records"), namespace, context)
 
     def export(self, namespace: str, *, context: Any = None) -> list[MemoryRecord]:
         if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
             raise PermissionError("export namespace does not match signed host context")
         result = self._call("export", "memory-export", {"schema": 1, "namespace": namespace},
-                            self._context("memory-backup", context))
+                            (context,), "memory-export")
         return self._records(result.get("records"), namespace, context)
 
     def backup(self, namespace: str, *, context: Any = None) -> MemoryBackup:
         if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
             raise PermissionError("backup namespace does not match signed host context")
         result = self._call("backup", "memory-backup", {"schema": 1, "namespace": namespace},
-                            self._context("memory-backup", context))
+                            (context,), "memory-backup")
         archive = result.get("archive")
         digest = result.get("sha256")
         if not isinstance(archive, str) or not isinstance(digest, str):
@@ -160,16 +170,14 @@ class BrokerMemoryProvider:
             raise MemoryProviderError("backup archive digest mismatch")
         self._call("restore", "memory-restore",
             {"schema": 1, "namespace": backup.namespace, "archive": backup.archive, "sha256": digest},
-            self.broker.context(purpose="memory-restore", intent=self.intent,
-                source_contexts=(context, backup.lineage), trace_id=getattr(context, "trace_id", None),
-                lease_seconds=30))
+            (context, backup.lineage), "memory-restore")
 
     def remove(self, namespace: str, record_id: str, *, context: Any = None) -> bool:
         if context is None or getattr(context, "namespace_id", getattr(context, "namespace", None)) != namespace:
             raise PermissionError("delete namespace does not match signed host context")
         result = self._call("delete", "memory-delete",
             {"schema": 1, "namespace": namespace, "record_id": record_id},
-            self._context("memory-delete", context))
+            (context,), "memory-delete")
         return result.get("deleted") is True
 
     @staticmethod
@@ -180,7 +188,7 @@ class BrokerMemoryProvider:
         output = []
         for value in values:
             if not isinstance(value, dict) or value.get("namespace") != namespace or value.get("profile") != profile:
-                continue
+                raise PermissionError("memory broker returned a record outside signed host scope")
             if not all(isinstance(value.get(key), str) for key in ("id", "source", "text")):
                 continue
             provenance = value.get("provenance", [])
