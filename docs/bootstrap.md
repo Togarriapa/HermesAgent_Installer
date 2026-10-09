@@ -1,0 +1,9 @@
+# Bootstrap and preflight
+
+`./install.sh --help` and `./install.sh plan --json` run a read-only compatibility probe. The installer package itself uses only Python's standard library. `installer.example.json` is a secret-free starting point; create a private copy before editing it. Paths and selections are validated before handlers run.
+
+The installer support gate currently accepts Debian/Raspberry Pi OS 11–13 and Ubuntu 20.04, 22.04, 24.04 or 26.04 on 64-bit ARM Linux when glibc 2.28+, an active systemd manager and the expected FHS directories are present. This is the installer's curated apt-oriented matrix; Hermes upstream lists Linux ARM64 more broadly but describes systems meeting those runtime conditions as likely to work. The development Mac is rejected for install and service-changing commands. Preflight reports observed facts. An absent graphical session, Coral device, or target account remains pending; it is never inferred from the requested target description.
+
+The command runner takes argument arrays, resolves only fixed system-tool directories, rejects unreviewed executables and environment overrides, applies output/time limits, and kills surviving child processes on timeout. Its current allowlist only supports read-only probes; it is not a general process sandbox. The owned-state layer rejects symlink traversal and non-empty unowned roots, uses a process lock in an installer-owned root, and stores checkpoints in a private SQLite journal with full synchronous durability.
+
+The CLI names are present, while component installation, adoption, generated services, update/rollback, provider and MCP operations, and target acceptance handlers remain in progress. A pending result means a handler or authorized target probe is not yet available; it does not mean the component is installed. Run `./install.sh plan --json` for the current read-only machine report; on a TTY, running `./install.sh` opens the guided action menu.

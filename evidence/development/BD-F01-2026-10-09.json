@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-09",
+  "change_id": "installer-bootstrap-desktop",
+  "task_id": "BD-F01",
+  "state": "fixture-verified",
+  "scope": [
+    "typed standard-library orchestration package and result/config interfaces",
+    "self-contained thin launcher from a clean environment and unrelated working directory",
+    "read-only host plan and unsupported-host install rejection",
+    "bounded reviewed read-only command runner",
+    "owned state root, process lock, durable SQLite journal"
+  ],
+  "commands": [
+    "PYTHONPATH=src python3 -m unittest discover -s tests/contracts -v",
+    "npm run validate:specs",
+    "npm run validate:plan",
+    "npm run test:planning",
+    "git diff --check"
+  ],
+  "results": {
+    "contract_tests": {"passed": 20, "failed": 0},
+    "openspec_validation": {"passed": 10, "failed": 0},
+    "plan_validation": "pass",
+    "planning_tests": {"passed": 10, "failed": 0},
+    "runtime_acceptance": "not-established"
+  },
+  "limitations": [
+    "no installation or service changes were attempted on the development Mac",
+    "actual authorized Raspberry Pi graphical session and target acceptance remain pending",
+    "existing-install adoption, service generation, component handlers, account integration and rollback remain incomplete",
+    "read-only command runner is not represented as a general operating-system process sandbox"
+  ]
+}

@@ -1,0 +1,173 @@
+"""Human and JSON command line for the installer orchestration layer."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Sequence
+
+from . import __version__
+from .config import ConfigError, InstallerConfig, load_config, validate_config, write_example
+from .preflight import discover_host
+from .results import CommandResult, Finding, OutcomeState
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="hermes-installer", description="Install and maintain Hermes Agent on supported Linux ARM64 systems")
+    parser.add_argument("--version", action="version", version=f"hermes-installer {__version__}")
+    parser.add_argument("--json", action="store_true", help="Write machine-readable output")
+    parser.add_argument("--config", type=Path, help="Validated JSON configuration path")
+    sub = parser.add_subparsers(dest="command", required=True)
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        child = sub.add_parser(name, help=help_text)
+        child.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Write machine-readable output")
+        child.add_argument("--config", type=Path, default=argparse.SUPPRESS, help="Validated JSON configuration path")
+        return child
+    plan = command("plan", "Read-only compatibility and installation plan")
+    plan.add_argument("--dry-run", action="store_true", help="Explicitly request no changes")
+    install = command("install", "Apply the supported installation plan")
+    install.add_argument("--dry-run", action="store_true", help="Print the plan without changes")
+    install.add_argument("--non-interactive", action="store_true", help="Require complete validated configuration")
+    command("resume", "Resume the last checkpointed operation")
+    status = command("status", "Show discovered and recorded component states")
+    status.add_argument("component", nargs="?", help="Limit status to a component")
+    command("doctor", "Run read-only host diagnostics")
+    verify = command("verify", "Run executable acceptance probes on an identified target")
+    verify.add_argument("--target", type=Path, help="Authorized target manifest")
+    verify.add_argument("--output", type=Path, help="Evidence output directory")
+    configure = command("configure", "Configure an external provider or MCP")
+    configure.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
+    configure.add_argument("name", nargs="?", help="Adapter or connection name")
+    connection = command("test-connection", "Test a configured provider or MCP")
+    connection.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
+    connection.add_argument("name", nargs="?", help="Adapter or connection name")
+    memory = command("select-memory", "Select the single long-term memory backend")
+    memory.add_argument("choice", choices=("openviking", "claude-mem", "agent-memory"))
+    source = command("resolve-source", "Resolve a source URL to an immutable revision")
+    source.add_argument("url")
+    component = sub.add_parser("component", help="Manage an installed component")
+    component.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    component.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    component.add_argument("action", choices=("enable", "disable", "start", "stop", "logs"))
+    component.add_argument("name")
+    updates = sub.add_parser("update", help="Check, apply, or roll back an update")
+    updates.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    updates.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    updates.add_argument("action", choices=("check", "apply", "rollback"))
+    data = sub.add_parser("data", help="Back up, restore, or uninstall while retaining user data")
+    data.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    data.add_argument("--config", type=Path, default=argparse.SUPPRESS)
+    data.add_argument("action", choices=("backup", "restore", "uninstall"))
+    sub.add_parser("init-config", help="Write a secret-free example JSON configuration")
+    return parser
+
+
+def _configuration(path: Path | None) -> InstallerConfig:
+    return load_config(path) if path else validate_config({"schema_version": 1})
+
+
+def _render(result: CommandResult, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return
+    print(f"{result.command}: {result.state.value} — {result.message}")
+    for finding in result.findings:
+        print(f"  [{finding.state.value}] {finding.code}: {finding.message}")
+    if result.resume_command:
+        print(f"Resume: {result.resume_command}")
+
+
+def _host_findings(config: InstallerConfig | None = None) -> tuple[Finding, ...]:
+    configured_paths = tuple(Path(value).expanduser() for value in (config.paths.values() if config else ()))
+    facts = discover_host(selected_paths=configured_paths or None)
+    state = OutcomeState.READY if facts.supported_arm64_linux else OutcomeState.PENDING
+    items = [Finding("host.support", "Supported 64-bit Linux ARM64" if facts.supported_arm64_linux else "Host is not an enrolled supported Linux ARM64 target", state, {"os": facts.os_name, "architecture": facts.architecture})]
+    if facts.graphical_session:
+        items.append(Finding("desktop.session", "A graphical user session is present", OutcomeState.READY))
+    else:
+        items.append(Finding("desktop.session", "No graphical user session is present", OutcomeState.PENDING))
+    for lock in facts.package_locks:
+        items.append(Finding("package.lock", f"Package manager state requires review: {lock}", OutcomeState.PENDING))
+    for service in facts.service_conflicts:
+        items.append(Finding("service.conflict", f"Existing service detected; adoption must be explicit: {service}", OutcomeState.PENDING))
+    for lock in facts.package_locks:
+        items.append(Finding("package.lock.held", f"Package manager lock is currently held: {lock}", OutcomeState.PENDING))
+    for problem in facts.package_lock_probe_errors:
+        items.append(Finding("package.lock.unknown", f"Could not determine whether package manager is active: {problem}", OutcomeState.PENDING))
+    items.append(Finding("network.dns", "DNS lookup succeeded" if facts.network_dns else "DNS lookup failed or timed out" if facts.network_dns is False else "DNS probe was unavailable", OutcomeState.READY if facts.network_dns else OutcomeState.PENDING))
+    items.append(Finding("network.tls", "TLS certificate validation succeeded" if facts.network_tls else "TLS validation failed" if facts.network_tls is False else "TLS probe was unavailable", OutcomeState.READY if facts.network_tls else OutcomeState.PENDING))
+    for disk in facts.disks:
+        presence = "exists" if disk.path_exists else "does not exist yet; parent filesystem measured"
+        items.append(Finding("storage.mount", f"{disk.path} {presence}; {disk.mount} uses {disk.filesystem or 'filesystem unknown'}, {disk.available_bytes} bytes free", OutcomeState.READY if disk.path_exists and disk.filesystem and disk.available_bytes > 0 else OutcomeState.PENDING, {"device": disk.device, "connection_type": disk.connection_type, "total_bytes": disk.total_bytes}))
+    if facts.coral_devices:
+        for coral in facts.coral_devices:
+            items.append(Finding("coral.detected", f"Coral-compatible device evidence found on {coral.bus}: {coral.path}", OutcomeState.READY, coral.details))
+    else:
+        items.append(Finding("coral.pending", "No supported Coral identifier was detected; no driver was selected", OutcomeState.PENDING))
+    if facts.occupied_ports:
+        items.append(Finding("ports.bound", "Listening ports were detected; component port conflicts require review", OutcomeState.PENDING, {"ports": facts.occupied_ports}))
+    return tuple(items)
+
+
+def run(args: argparse.Namespace) -> CommandResult:
+    if args.command == "init-config":
+        path = args.config or Path("installer.example.json")
+        try:
+            write_example(path)
+        except FileExistsError:
+            return CommandResult("init-config", OutcomeState.FAILED, f"Refusing to overwrite {path}", exit_code=2)
+        return CommandResult("init-config", OutcomeState.READY, f"Wrote secret-free example configuration to {path}")
+    try:
+        config = _configuration(args.config)
+    except ConfigError as exc:
+        return CommandResult(args.command, OutcomeState.FAILED, str(exc), exit_code=2)
+
+    if args.command in {"plan", "doctor", "status"}:
+        findings = _host_findings(config)
+        state = OutcomeState.READY if all(f.state == OutcomeState.READY for f in findings) else OutcomeState.PENDING
+        suffix = "No files, services, packages, or accounts were changed."
+        return CommandResult(args.command, state, suffix, findings, exit_code=0 if state != OutcomeState.FAILED else 1)
+    if args.command == "verify":
+        if args.target is None or args.output is None:
+            return CommandResult("verify", OutcomeState.FAILED, "An authorized target manifest and evidence directory are required.", resume_command="hermes-installer verify --target <authorized-target.json> --output <evidence-dir>", exit_code=2)
+        return CommandResult("verify", OutcomeState.PENDING, "Target verification adapter is not implemented yet; no target was contacted.", resume_command=f"hermes-installer verify --target {args.target} --output {args.output}")
+    if args.command in {"install", "resume", "configure", "test-connection", "select-memory", "resolve-source", "component", "update", "data"}:
+        facts = discover_host()
+        if not facts.supported_arm64_linux:
+            return CommandResult(args.command, OutcomeState.FAILED, "Installation and service changes are restricted to supported Linux ARM64 targets. This host was not changed.", findings=_host_findings(config), exit_code=3)
+        return CommandResult(args.command, OutcomeState.PENDING, "The selected operation has no configured component handler or target authorization yet.", resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
+    raise AssertionError(f"Unhandled CLI command: {args.command}")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if not raw_args:
+        print("Hermes Agent Installer — guided setup")
+        if not sys.stdin.isatty():
+            print("Run this command in a terminal to choose an action, or use `./install.sh plan` for a read-only preflight.")
+            parser.print_help()
+            return 0
+        choices = {"1": ["plan"], "2": ["install"], "3": ["doctor"], "4": ["verify"], "0": []}
+        print("1) Review a read-only plan\n2) Install or resume setup\n3) Diagnose this machine\n4) Verify an authorized target\n0) Exit")
+        selected = input("Choose an action [0-4]: ").strip()
+        if selected not in choices:
+            print("Choose one of the listed actions.", file=sys.stderr)
+            return 2
+        if not choices[selected]:
+            return 0
+        raw_args = choices[selected]
+    args = parser.parse_args(raw_args)
+    try:
+        result = run(args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        result = CommandResult(args.command, OutcomeState.FAILED, str(exc), exit_code=1)
+    _render(result, args.json)
+    return result.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
