@@ -452,7 +452,11 @@ time.sleep(30)
             self.assertTrue(result.get("stdout_complete") and result.get("stdout", "").strip(),
                             f"child stdout lacked its bounded JSON line; stdout={result.get('stdout')!r}; "
                             f"stderr={result.get('stderr')!r}")
-            child_effects = json.loads(result["stdout"])
+            try:
+                child_effects = json.loads(result["stdout"])
+            except json.JSONDecodeError as exc:
+                self.fail(f"child stdout is not its bounded JSON probe; stdout={result.get('stdout')!r}; "
+                          f"stderr={result.get('stderr')!r}; error={exc.msg} at {exc.pos}")
             self.assertEqual(child_effects["environment_exact"], True)
             for key in ("root_home_hidden", "credential_directory_hidden", "root_proc_hidden",
                         "root_signal_denied", "ipv4_denied", "ipv6_denied"):
