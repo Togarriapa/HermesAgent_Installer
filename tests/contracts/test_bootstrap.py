@@ -10,7 +10,7 @@ def good_network(*args, **kwargs):
     from hermes_installer.network import HTTPResult
     return HTTPResult(200, {}, SCRIPT)
 class FakeNetwork:
-    def request(self,*args,**kwargs):
+    def fetch_artifact(self,**kwargs):
         from hermes_installer.network import HTTPResult
         return HTTPResult(200, {}, SCRIPT)
 class FakeRunner:
@@ -247,7 +247,9 @@ class BootstrapTests(unittest.TestCase):
             data=OwnedRoot(Path(td)/"data"); data.ensure()
             state_root=OwnedRoot(Path(td)/"state"); state_root.ensure()
             boot=HermesBootstrap(data,Journal(state_root.path("journal.sqlite3")),network=FakeNetwork(),expected_script_blob=git_blob_sha1(SCRIPT))
-            with self.assertRaisesRegex(BootstrapError,"(?i)managed host process authority"):
+            boot.script_path.parent.mkdir(parents=True,exist_ok=True)
+            boot.script_path.write_bytes(SCRIPT)
+            with self.assertRaisesRegex(BootstrapError,"(?i)host-authorized Hermes process start"):
                 boot._run_process(["--manifest"],timeout=5,capture=True)
 
     def test_install_records_download_broker_block_without_network_effect(self):
