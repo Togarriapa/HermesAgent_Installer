@@ -1543,11 +1543,11 @@ class ManagedProcessEffectHandler:
                 properties.append(
                     "--property=BindReadOnlyPaths=" + str(native_mount_source) + ":"
                     + native_mount_receipt.mount_path)
-                # BindReadOnlyPaths accepts only the bind recursion option in
-                # its optional tuple. NoExecPaths is the systemd-supported
-                # execution denial; nosuid/nodev are inherited from the
-                # protected /run mount and independently required by the
-                # mountinfo probe before admission.
+                # systemd's bind tuple supports only recursion options. Apply
+                # the other mount restrictions through its dedicated namespace
+                # properties so mountinfo reflects kernel-enforced flags.
+                properties.append("--property=PrivateMounts=yes")
+                properties.append("--property=NoSuidSgid=" + native_mount_receipt.mount_path)
                 properties.append("--property=NoExecPaths=" + native_mount_receipt.mount_path)
         except BaseException:
             os.close(parent_fd)

@@ -277,6 +277,9 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             rules={(rule.capability, rule.operation, rule.target): rule for rule in effect_rules},
             handlers=handler_map, policy=_ControlledCustodyPolicy(),
             profile_generations={self.profile_id: self.profile.generation},
+            # Control and inspect RPCs resolve opaque process IDs against the
+            # same live manager registry that created the systemd unit.
+            process_effect_handler=handlers,
         )
         if self.socket_path.exists():
             self.fail("unique per-UID authority socket already exists")
