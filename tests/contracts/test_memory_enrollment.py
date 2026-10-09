@@ -1,6 +1,7 @@
 """Strict memory source and root enrollment catalog tests (SK01, SK-T01)."""
 import unittest
 
+from hermes_installer.memory.broker import MemoryTarget
 from hermes_installer.memory.enrollment import (
     MemoryEnrollmentError, MemoryServiceEnrollment, ROUTES, SOURCE_PINS,
 )
@@ -91,6 +92,24 @@ class MemoryEnrollmentTests(unittest.TestCase):
         value["limits"]["operation_timeout_seconds"] = 16
         with self.assertRaises(MemoryEnrollmentError):
             MemoryServiceEnrollment.from_protected_record(value)
+
+    def test_broker_target_resolves_only_routes_for_selected_source_variant(self):
+        sqlite = MemoryTarget.from_enrollment(MemoryServiceEnrollment.from_protected_record(
+            record("claude-mem", "server-v1-sqlite", 43892)))
+        postgres = MemoryTarget.from_enrollment(MemoryServiceEnrollment.from_protected_record(
+            record("claude-mem", "server-v1-postgres", 43892)))
+        self.assertEqual(sqlite.service_generation, "service-gen-7")
+        self.assertEqual(sqlite.route_for("doctor"), "claude-sqlite-ready")
+        self.assertEqual(sqlite.route_for("capture"), "claude-sqlite-capture")
+        self.assertIsNone(sqlite.route_for("delete"))
+        self.assertEqual(postgres.route_for("delete"), "claude-postgres-delete")
+        agent = MemoryTarget.from_enrollment(MemoryServiceEnrollment.from_protected_record(record()))
+        self.assertEqual(agent.route_for("search"), "agentmemory-search")
+        self.assertEqual(agent.route_for("restore"), "agentmemory-restore")
+        openviking = MemoryTarget.from_enrollment(MemoryServiceEnrollment.from_protected_record(
+            record("openviking", "default", 1933)))
+        self.assertEqual(openviking.route_for("capture"), "openviking-session-capture")
+        self.assertIsNone(openviking.route_for("delete"))
 
     def test_target_and_source_pin_are_not_caller_selectable(self):
         value = record()
