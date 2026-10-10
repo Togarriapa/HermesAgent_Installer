@@ -98,6 +98,13 @@ _PREPARED_BUILD_TEMPLATE = (
     "0d98bdabf27185d769f55de12e9242d5286e07d11e5d62369c2eeedf1fa4b967",
     1235,
 )
+_NATIVE_ASSEMBLY_COMPILER_ARTIFACT = "installer-module:hermes_installer.authority.native_assembler"
+_NATIVE_ASSEMBLY_SUPPORT_MODULES = (
+    "installer-module:hermes_installer.authority.native_assembler",
+    "installer-module:hermes_installer.authority.native_materialization",
+    "installer-module:hermes_installer.authority.native_registration_projection",
+    "installer-module:hermes_installer.authority.native_output_receipts",
+)
 _CAPABILITY_MAP_TEMPLATE_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
 _CAPABILITY_MAP_TEMPLATE_PATH = "templates/reviewed-native-capability-map-v1.json"
 _CAPABILITY_MAP_TEMPLATE_SIZE = 2026
@@ -3356,6 +3363,7 @@ class RootBootstrapSession:
         self._native_materialization_receipts: dict[str, Any] = {}
         self._prepared_native_bundle: RootPreparedNativeBundle | None = None
         self._native_assembly_selections: dict[str, RootNativeBootstrapAssemblySelection] = {}
+        self._native_assembly_definitions: dict[str, RootNativeAssemblyDefinitions] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._prepared_release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
@@ -3970,6 +3978,157 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("prepared native bundle source, profile, runtime or materialization join changed")
         self._verify_current_setup_controller()
         return bundle
+
+    def _resolve_native_bootstrap_assembly(
+            self, prepared_setup_receipt_handle: str,
+            native_materialization_receipt_handle: str) -> RootNativeBootstrapAssemblySelection:
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self.resolve_prepared_receipt(prepared_setup_receipt_handle)
+        bundle = self.prepare_selected_native_bundle()
+        self._resolve_current_prepared_native_bundle(bundle)
+        if (bundle.materialization_receipt_handle != native_materialization_receipt_handle
+                or self._native_materialization_receipts.get(native_materialization_receipt_handle)
+                   is not bundle.materialization_receipt):
+            raise BootstrapEnrollmentPending("native assembly requires the exact current materialization receipt")
+        template_rows = [row.get("record") for row in self._policy.service_record_templates
+                         if isinstance(row.get("record"), Mapping)]
+        if len(template_rows) != 1 or not isinstance(template_rows[0].get("enrollment_id"), str):
+            raise BootstrapEnrollmentPending("prepared policy has no unique fixed native enrollment subject")
+        enrollment_id = template_rows[0]["enrollment_id"]
+        service_profile_id = self._policy.identity_policy.get("service_profile_id")
+        if service_profile_id != "hermes-agent-native-v1":
+            raise BootstrapEnrollmentPending("prepared policy does not select the fixed native service profile")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        compiler_rows = [row for row in release.files
+                         if row.artifact_id == _NATIVE_ASSEMBLY_COMPILER_ARTIFACT]
+        if (len(compiler_rows) != 1 or "module" not in compiler_rows[0].roles
+                or compiler_rows[0].artifact_id not in plan.allowed_artifact_ids):
+            raise BootstrapEnrollmentPending("selected release lacks the native compiler module role")
+        support_receipts = []
+        for module_id in _NATIVE_ASSEMBLY_SUPPORT_MODULES:
+            rows = [row for row in release.files if row.artifact_id == module_id]
+            if (len(rows) != 1 or "module" not in rows[0].roles
+                    or module_id not in plan.allowed_artifact_ids):
+                raise BootstrapEnrollmentPending("native assembler support module is outside the installed plan")
+            row = rows[0]
+            origins = [origin for origin in actor.module_origins
+                       if origin[1] == str(release.release_root / row.relative_path)
+                       and origin[4] == row.sha256]
+            if len(origins) != 1:
+                raise BootstrapEnrollmentPending("native assembler module is not in the current actor import closure")
+            prior = next((item for item in self._prepared_release_member_receipts.values()
+                          if item.artifact_id == module_id
+                          and item._prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootReleaseModuleReceipt(
+                    row.artifact_id, row.relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, self._seal, self, prepared.generation_id)
+                self._prepared_release_member_receipts[handle] = prior
+            prior.read_current()
+            support_receipts.append(prior)
+        compiler = next(item for item in support_receipts
+                        if item.artifact_id == _NATIVE_ASSEMBLY_COMPILER_ARTIFACT)
+        capture_rows = __import__(
+            "hermes_installer.authority.native_registration_projection",
+            fromlist=["capture_actual_hermes_registrations"],
+        ).capture_actual_hermes_registrations()
+        registration_sources = self._resolve_prepared_release_module_receipts()
+        source_digest = hashlib.sha256(_canonical([
+            {"artifact_id": item.artifact_id, "sha256": item.sha256,
+             "size_bytes": item.size_bytes, "source_receipt_handle": item.source_receipt_handle}
+            for item in registration_sources
+        ])).hexdigest()
+        closure_digest = hashlib.sha256(_canonical([
+            {"artifact_id": item.artifact_id, "sha256": item.sha256,
+             "size_bytes": item.size_bytes, "source_receipt_handle": item.source_receipt_handle}
+            for item in sorted(support_receipts, key=lambda value: value.artifact_id)
+        ])).hexdigest()
+        materialization = bundle.materialization_receipt
+        package_generation = hashlib.sha256(_canonical({
+            "package_id": "hermes-agent-native-package-v1",
+            "profile_id": service_profile_id,
+            "service_generation": prepared.generation_id,
+            "service_digest": prepared.generation_digest,
+            "resource_profile_id": materialization.resource_profile_id,
+            "resource_closure_digest": materialization.selected_closure_digest,
+            "hermes_revision": materialization.hermes_revision,
+            "compiler_sha256": compiler.sha256,
+            "compiler_closure_sha256": closure_digest,
+        })).hexdigest()
+        now = time.monotonic()
+        expires = min(prepared.expires_monotonic,
+                      self._factory.session_store.current_deadline(self._handle), now + 300.0)
+        handle = secrets.token_urlsafe(36)
+        seed = {
+            "selection_handle": handle, "setup_session_id": self._handle.session_id,
+            "transaction_handle": self._authorization.transaction_handle,
+            "plan_digest": self._authorization.plan_digest,
+            "prepared_generation_id": prepared.generation_id,
+            "protected_enrollment_digest": prepared.generation_digest,
+            "enrollment_id": enrollment_id, "service_profile_id": service_profile_id,
+            "service_generation": prepared.generation_id,
+            "resource_profile_id": materialization.resource_profile_id,
+            "package_id": "hermes-agent-native-package-v1",
+            "native_package_generation": package_generation,
+            "compiler_artifact_id": compiler.artifact_id,
+            "compiler_sha256": compiler.sha256,
+            "compiler_release_receipt_handle": compiler.source_receipt_handle,
+            "compiler_module_closure_sha256": closure_digest,
+            "pm_runtime_receipt_handle": bundle.pm_runtime_receipt_handle,
+            "materialization_receipt_handle": bundle.materialization_receipt_handle,
+            "hermes_source_receipt_handle": bundle.hermes_source_receipt_handle,
+            "resources_source_receipt_handle": bundle.resources_source_receipt_handle,
+            "definitions_handle": secrets.token_urlsafe(36),
+            "definitions_sha256": hashlib.sha256(_canonical({
+                "registrations": [{"name": row.native_tool_name,
+                                   "adapter": row.adapter_id,
+                                   "argument_sha256": row.native_schema_sha256,
+                                   "source_sha256": row.registration_source_sha256}
+                                  for row in capture_rows],
+                "source_receipt_closure_sha256": source_digest,
+            })).hexdigest(),
+            "issued_monotonic": now, "expires_monotonic": expires,
+        }
+        if expires <= now:
+            raise BootstrapEnrollmentPending("native assembly selection lease expired")
+        selection = RootNativeBootstrapAssemblySelection(
+            schema=1, selection_handle=handle, setup_session_id=seed["setup_session_id"],
+            transaction_handle=seed["transaction_handle"], plan_digest=seed["plan_digest"],
+            prepared_generation_id=prepared.generation_id,
+            protected_enrollment_digest=prepared.generation_digest,
+            enrollment_id=enrollment_id, service_profile_id=service_profile_id,
+            service_generation=prepared.generation_id,
+            resource_profile_id=materialization.resource_profile_id,
+            package_id=seed["package_id"], native_package_generation=package_generation,
+            compiler_artifact_id=compiler.artifact_id, compiler_sha256=compiler.sha256,
+            compiler_release_receipt_handle=compiler.source_receipt_handle,
+            compiler_module_closure_sha256=closure_digest,
+            pm_runtime_receipt_handle=bundle.pm_runtime_receipt_handle,
+            materialization_receipt_handle=bundle.materialization_receipt_handle,
+            hermes_source_receipt_handle=bundle.hermes_source_receipt_handle,
+            resources_source_receipt_handle=bundle.resources_source_receipt_handle,
+            definitions_handle=seed["definitions_handle"], definitions_sha256=seed["definitions_sha256"],
+            issued_monotonic=now, expires_monotonic=expires,
+            _registry_seal=self._factory._native_assembly_seal,
+        )
+        self._native_assembly_selections[handle] = selection
+        actor.verify_current(release)
+        return selection
+
+    def _resolve_current_native_bootstrap_assembly(
+            self, selection_handle: str) -> RootNativeBootstrapAssemblySelection:
+        if not isinstance(selection_handle, str) or not _GEN.fullmatch(selection_handle):
+            raise BootstrapEnrollmentPending("native assembly selection handle is malformed")
+        selection = self._native_assembly_selections.get(selection_handle)
+        if not isinstance(selection, RootNativeBootstrapAssemblySelection):
+            raise BootstrapEnrollmentPending("native assembly selection is not retained by this session")
+        self._revalidate_native_assembly_selection(selection)
+        return selection
 
     def _persist_resource_profile_choice(self, receipt: RootSelectedResourceProfile,
                                          tty_proof: Any) -> None:
@@ -4757,8 +4916,30 @@ class RootBootstrapSession:
                 or selection.protected_enrollment_digest != prepared.generation_digest
                 or selection.service_generation != prepared.generation_id):
             raise BootstrapEnrollmentPending("native assembly selection no longer matches prepared setup custody")
-        raise BootstrapEnrollmentPending(
-            "native assembly source, runtime, materialization and protected definition joins are not yet available")
+        bundle = self._prepared_native_bundle
+        if bundle is None:
+            raise BootstrapEnrollmentPending("current prepared native bundle is unavailable")
+        self._resolve_current_prepared_native_bundle(bundle)
+        if (selection.materialization_receipt_handle != bundle.materialization_receipt_handle
+                or selection.hermes_source_receipt_handle != bundle.hermes_source_receipt_handle
+                or selection.pm_runtime_receipt_handle != bundle.pm_runtime_receipt_handle
+                or selection.resources_source_receipt_handle != bundle.resources_source_receipt_handle
+                or selection.resource_profile_id != bundle.materialization_receipt.resource_profile_id
+                or selection.package_id != "hermes-agent-native-package-v1"
+                or selection.service_profile_id != "hermes-agent-native-v1"):
+            raise BootstrapEnrollmentPending("native assembly selection differs from its retained prepared bundle")
+        compiler = self._prepared_release_member_receipts.get(
+            selection.compiler_release_receipt_handle)
+        if (not isinstance(compiler, RootReleaseModuleReceipt)
+                or compiler.artifact_id != selection.compiler_artifact_id
+                or compiler.sha256 != selection.compiler_sha256
+                or compiler._prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending("native compiler source receipt is absent or stale")
+        compiler.read_current()
+        source_receipts = self._resolve_prepared_release_module_receipts()
+        if not source_receipts:
+            raise BootstrapEnrollmentPending("actual Hermes registration module receipts are unavailable")
+        self._factory._actor.verify_current(self._factory._release)
 
     def record_functional_health(self, _active_receipt: EnrollmentReceipt, _health_receipt: Any) -> None:
         self._check_live()
