@@ -50,7 +50,8 @@ class RootSetupResult:
     def __post_init__(self) -> None:
         if not isinstance(self.action, RootSetupAction) or not isinstance(self.state, RootSetupState):
             raise TypeError("root setup results require finite action and state values")
-        if self.phase not in {"admission", "distribution", "prepared", "runtime", "materialization", "health"}:
+        if self.phase not in {"admission", "distribution", "prepared", "runtime", "materialization",
+                              "publication", "health"}:
             raise ValueError("root setup phase is not a reviewed phase")
         if not self.message or len(self.message) > 512 or "\n" in self.message:
             raise ValueError("root setup message must be one bounded line")
@@ -346,9 +347,11 @@ def run_root_setup_action(
     """Run one bounded root setup intent through the installed actor.
 
     Selection handles are accepted only as opaque root-issued references.
-    Their resolution remains inside the installed registries. The current
-    runtime graph does not yet expose the recovery/update/materialization and
-    health consumers, so this function reports their exact pending phase.
+    Their resolution remains inside the installed registries. Lifecycle
+    recovery and update are kept pending until their durable rehydration and
+    generation-CAS consumers are available; installation drives the current
+    source/runtime and native materialization stages before reporting the
+    still-unconnected active-health boundary.
     """
     try:
         selected_action = RootSetupAction(action)
@@ -370,10 +373,6 @@ def run_root_setup_action(
                        "The selected root reference is validly shaped, but its installed resolver is not connected.")
     from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
     from .authority.installer_release import InstalledRootReleaseVerifier
-    from .authority.bootstrap_runtime_factory import (
-        RootBootstrapRuntimeFactory,
-        RootInitialSetupAggregate,
-    )
     from .authority.installer_release_build import (
         InstallerReleaseBuildError,
         bootstrap_selected_release,
@@ -415,6 +414,10 @@ def run_root_setup_action(
     except (OSError, RuntimeError) as exc:
         return _result(selected_action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
 
+    from .authority.bootstrap_runtime_factory import (
+        RootBootstrapRuntimeFactory,
+        RootInitialSetupAggregate,
+    )
     factory: RootBootstrapRuntimeFactory | None = None
     initial_aggregate: RootInitialSetupAggregate | None = None
     session = None
@@ -477,14 +480,69 @@ def run_root_setup_action(
         if receipt.state != "prepared" or receipt.enrollment_ids:
             return _result(selected_action, RootSetupState.FAILED, "prepared",
                            "Initial setup did not produce the required empty prepared generation.")
+
+        # Keep this sequence inside the installed root actor: every path,
+        # resource revision, profile choice, and receipt is resolved by the
+        # live factory/session. In particular, no caller-provided path or JSON
+        # can substitute for the pinned source, PM runtime, or TTY selection.
+        bundle = None
+        try:
+            bundle = session.prepare_selected_native_bundle()
+            native_policy_selection = session.observe_native_policy_configuration()
+            from .authority.native_policy_preparation import RootNativePolicyPreparationSelection
+            if (type(native_policy_selection) is not RootNativePolicyPreparationSelection
+                    or getattr(native_policy_selection, "setup_session_id", None)
+                    != session._handle.session_id
+                    or getattr(native_policy_selection, "transaction_handle", None)
+                    != receipt.transaction_handle
+                    or getattr(native_policy_selection, "prepared_generation_id", None)
+                    != receipt.generation_id
+                    or getattr(native_policy_selection, "resource_profile_selection_handle", None)
+                    != bundle.resource_profile_selection_receipt_handle):
+                raise RuntimeError("native policy choice is not bound to the current prepared transaction")
+            assembly = session.resolve_native_bootstrap_assembly(
+                receipt.provision_receipt_handle, bundle.materialization_receipt_handle)
+            materializer = getattr(session, "_native_materializer", None)
+            if materializer is None:
+                raise RuntimeError("root native materialization actor is not retained")
+            output_receipts = materializer.compile_selected(assembly)
+            _verify_native_output_receipts(output_receipts, session=session,
+                                           prepared_generation_id=receipt.generation_id)
+        except BootstrapEnrollmentPending as exc:
+            failure_refs = [_report_ref(receipt.provision_receipt_handle)]
+            if bundle is not None:
+                failure_refs.append(_report_ref(bundle.materialization_receipt_handle))
+            return _result(
+                selected_action, RootSetupState.PENDING, "materialization", _safe_reason(exc),
+                resume_allowed=True, session_id=session._handle.session_id,
+                transaction_ref=_report_ref(receipt.transaction_handle),
+                generation_ref=_report_ref(receipt.generation_id),
+                receipt_refs=tuple(failure_refs),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            return _result(
+                selected_action, RootSetupState.PENDING, "materialization", _safe_reason(exc),
+                resume_allowed=True, session_id=session._handle.session_id,
+                transaction_ref=_report_ref(receipt.transaction_handle),
+                generation_ref=_report_ref(receipt.generation_id),
+                receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
+            )
+
+        # Producing selected package bytes is still not an active installation.
+        # Do not publish a new active pointer until the installed-session
+        # factory can continue through selected service startup and the live
+        # health observer in a resumable transaction.
+        references = [_report_ref(receipt.provision_receipt_handle),
+                      _report_ref(bundle.materialization_receipt_handle)]
+        references.extend(_report_ref(item.receipt_id) for item in output_receipts)
         return _result(
-            selected_action, RootSetupState.PENDING, "prepared",
-            "The root prepared generation is recorded; source/runtime receipts, native materialization, publication, and health checks still need their verified runtime handlers.",
+            selected_action, RootSetupState.PENDING, "publication",
+            "Pinned source, PM runtime, selected Resources, native materialization, and package outputs are retained; active publication and selected-run health are not yet connected.",
             resume_allowed=True,
             session_id=session._handle.session_id,
             transaction_ref=_report_ref(receipt.transaction_handle),
             generation_ref=_report_ref(receipt.generation_id),
-            receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
+            receipt_refs=tuple(references),
         )
     except BootstrapEnrollmentPending as exc:
         return _result(selected_action, RootSetupState.PENDING, "runtime", _safe_reason(exc),
@@ -681,6 +739,7 @@ def _result(action: RootSetupAction, state: RootSetupState, phase: str, message:
         (RootSetupState.PENDING, "prepared"): "RUNTIME_HANDLERS_UNAVAILABLE",
         (RootSetupState.PENDING, "runtime"): "RUNTIME_HANDLERS_UNAVAILABLE",
         (RootSetupState.PENDING, "materialization"): "MATERIALIZATION_UNAVAILABLE",
+        (RootSetupState.PENDING, "publication"): "PUBLICATION_UNAVAILABLE",
         (RootSetupState.PENDING, "health"): "HEALTH_UNAVAILABLE",
     }.get((state, phase), "SETUP_PENDING")
     resume = action if state is RootSetupState.PENDING and resume_allowed else None
@@ -692,6 +751,35 @@ def _result(action: RootSetupAction, state: RootSetupState, phase: str, message:
 
 def _report_ref(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _verify_native_output_receipts(receipts: object, *, session: object,
+                                   prepared_generation_id: str) -> tuple[object, ...]:
+    """Require the assembler's complete fixed output-role closure."""
+    from .authority.native_output_receipts import RuntimeArtifactReceipt
+
+    required = {
+        "native-compiled-closure", "native-entrypoint-manifest",
+        "native-action-resolver", "native-boundary-overlay", "native-candidate-index",
+    }
+    if not isinstance(receipts, tuple) or len(receipts) != len(required):
+        raise RuntimeError("native assembler did not return its complete five-role receipt closure")
+    authorization = getattr(session, "_authorization", None)
+    session_handle = getattr(session, "_handle", None)
+    if (not isinstance(getattr(authorization, "transaction_handle", None), str)
+            or not isinstance(getattr(authorization, "plan_digest", None), str)
+            or not isinstance(getattr(session_handle, "session_id", None), str)):
+        raise RuntimeError("native output receipts cannot be joined to current setup custody")
+    if (any(type(item) is not RuntimeArtifactReceipt for item in receipts)
+            or {item.artifact_role for item in receipts} != required
+            or len({item.receipt_id for item in receipts}) != len(required)
+            or any(item.setup_session_id != session_handle.session_id
+                   or item.transaction_handle != authorization.transaction_handle
+                   or item.plan_digest != authorization.plan_digest
+                   or item.prepared_generation_id != prepared_generation_id
+                   for item in receipts)):
+        raise RuntimeError("native assembler receipt roles are missing, duplicated, or untyped")
+    return receipts
 
 
 __all__ = ["LauncherStatus", "RootBootstrapCandidateSelectionRegistry", "RootSetupAction",
