@@ -10,6 +10,7 @@ from hermes_installer.components.plugin_channel_provenance import (
     AuthenticatedHttpIngressProducer,
     ChannelIngressDenied,
     HttpIngressSelection,
+    ObservedChannelIngress,
     SelectedAudioIngressProducer,
 )
 
@@ -163,6 +164,38 @@ def test_http_proof_rejects_worker_constructed_object_and_wrong_selected_control
     producer = AuthenticatedHttpIngressProducer(http_selection(), "protected-selection-handle-01",
                                                 HttpObserver(), clock=FakeClock())
     assert producer.validate_claims({"proof_handle": "invented-proof-001"}) is False
+
+
+def test_event_issuer_observation_seam_consumes_only_exact_http_and_audio_records_once():
+    class Custody:
+        controller_role_id = "role-001"
+        source_issuer_id = "source-issuer-001"
+        resource_generation = "2"
+        def revalidate(self): return True
+
+    clock = FakeClock()
+    http = AuthenticatedHttpIngressProducer(http_selection(), "protected-selection-handle-01",
+                                             HttpObserver(), clock=clock)
+    request = http.observe(object())
+    result = http.consume_verified_raw_observation(request, Custody())
+    assert result["raw_payload"] == b'{"text":"hello"}'
+    assert result["event_data"]["text"] == "hello"
+    assert len(result["event_id"]) >= 32 and len(result["replay_key_sha256"]) == 64
+    with pytest.raises(ChannelIngressDenied, match="unknown, replayed"):
+        http.consume_verified_raw_observation(request, Custody())
+
+    audio = SelectedAudioIngressProducer(audio_selection(), "protected-selection-handle-01",
+                                          AudioObserver(), clock=clock)
+    capture = audio.observe(object())
+    result = audio.consume_verified_raw_observation(capture, Custody())
+    assert result["raw_payload"] == capture.payload  # metadata only; PCM remains in the sealed artifact
+    assert result["event_data"]["audio_sha256"] == "c" * 64
+    with pytest.raises(ChannelIngressDenied, match="unknown, replayed"):
+        audio.consume_verified_raw_observation(capture, Custody())
+
+    forged = ObservedChannelIngress(object(), b"{}")
+    with pytest.raises(ChannelIngressDenied, match="unknown, replayed"):
+        audio.consume_verified_raw_observation(forged, Custody())
 
 
 def test_audio_ingress_requires_root_consent_device_and_current_session_receipts():

@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import math
+import secrets
 import time
 from typing import Any, Mapping, Protocol
 
@@ -180,6 +181,7 @@ class AuthenticatedHttpIngressProducer(_Producer):
         )):
             raise TypeError("root HTTP listener/JWT/session/body verifier is required")
         self.selection, self.selection_handle, self.observer, self._clock = selection, selection_handle, observer, clock
+        self._pending: dict[int, ObservedChannelIngress] = {}
 
     @property
     def observer_enrollment_id(self) -> str:
@@ -205,7 +207,53 @@ class AuthenticatedHttpIngressProducer(_Producer):
                  "request_id": claims["request_id"], "subject_id": claims["subject_id"],
                  "raw_body_sha256": claims["body_sha256"],
                  "raw_body_size_bytes": claims["raw_body_size_bytes"]}
-        return ObservedChannelIngress(proof, _canonical_json(event))
+        observed = ObservedChannelIngress(proof, _canonical_json(event))
+        self._pending[id(observed)] = observed
+        return observed
+
+    def consume_verified_raw_observation(self, raw_observation: object,
+                                         controller_proof: object) -> Mapping[str, Any]:
+        """Return exact root-observed HTTP bytes once for the event issuer.
+
+        The issuer seals the returned fields into its own private validated
+        observation. This adapter only consumes an object identity minted by
+        ``observe`` and revalidates the bound controller and JWT/session proof.
+        """
+        if (type(raw_observation) is not ObservedChannelIngress
+                or self._pending.get(id(raw_observation)) is not raw_observation):
+            raise ChannelIngressDenied("HTTP raw observation is unknown, replayed or caller-constructed")
+        proof = raw_observation.proof
+        claims = self._validate(proof)
+        if (not callable(getattr(controller_proof, "revalidate", None))
+                or controller_proof.revalidate() is not True
+                or controller_proof.controller_role_id != self.selection.controller_role_id
+                or controller_proof.source_issuer_id != self.selection.source_issuer_id
+                or controller_proof.resource_generation != str(self.selection.resource_generation)):
+            raise ChannelIngressDenied("HTTP observation is not bound to the current selected controller")
+        body = self.observer.read_verified_http_body(self.selection, proof)
+        canonical, digest = _canonical_body(body, self.selection.max_body_bytes)
+        if (not hmac.compare_digest(digest, claims["body_sha256"])
+                or raw_observation.payload != _canonical_json({
+                    "text": claims["text"], "session_id": claims["session_id"],
+                    "request_id": claims["request_id"], "subject_id": claims["subject_id"],
+                    "raw_body_sha256": digest, "raw_body_size_bytes": len(body)})):
+            raise ChannelIngressDenied("HTTP source event differs from its exact root request")
+        body_value = json.loads(canonical)
+        event_data = {"text": body_value["text"], "session_id": claims["session_id"],
+                      "request_id": claims["request_id"], "subject_id": claims["subject_id"],
+                      "raw_body_sha256": digest, "raw_body_size_bytes": len(body)}
+        del self._pending[id(raw_observation)]
+        event_id = secrets.token_urlsafe(32)
+        replay = hashlib.sha256(_canonical_json({"selection_id": self.selection.id,
+            "session_id": claims["session_id"], "request_id": claims["request_id"],
+            "body_sha256": digest})).hexdigest()
+        return {"raw_observation_handle": secrets.token_urlsafe(32), "raw_payload": body,
+                "event_id": event_id, "replay_key_sha256": replay,
+                "observed_monotonic": claims["issued_monotonic"], "event_data": event_data}
+
+    def release_verified_raw_observation(self, raw_observation: object) -> None:
+        if type(raw_observation) is ObservedChannelIngress:
+            self._pending.pop(id(raw_observation), None)
 
     def validate_claims(self, proof: object) -> bool:
         try:
@@ -273,6 +321,7 @@ class SelectedAudioIngressProducer(_Producer):
         )):
             raise TypeError("root audio device/session/consent/capture observer is required")
         self.selection, self.selection_handle, self.observer, self._clock = selection, selection_handle, observer, clock
+        self._pending: dict[int, ObservedChannelIngress] = {}
 
     @property
     def observer_enrollment_id(self) -> str:
@@ -298,7 +347,43 @@ class SelectedAudioIngressProducer(_Producer):
                                    "audio_size_bytes": claims["size_bytes"],
                                    "format": "pcm-s16le-mono", "sample_rate_hz": 16000,
                                    "duration_milliseconds": claims["duration_milliseconds"]})
-        return ObservedChannelIngress(proof, payload)
+        observed = ObservedChannelIngress(proof, payload)
+        self._pending[id(observed)] = observed
+        return observed
+
+    def consume_verified_raw_observation(self, raw_observation: object,
+                                         controller_proof: object) -> Mapping[str, Any]:
+        """Consume selected audio metadata; PCM stays in its sealed artifact."""
+        if (type(raw_observation) is not ObservedChannelIngress
+                or self._pending.get(id(raw_observation)) is not raw_observation):
+            raise ChannelIngressDenied("audio raw observation is unknown, replayed or caller-constructed")
+        claims = self._validate(raw_observation.proof)
+        if (not callable(getattr(controller_proof, "revalidate", None))
+                or controller_proof.revalidate() is not True
+                or controller_proof.controller_role_id != self.selection.controller_role_id
+                or controller_proof.source_issuer_id != self.selection.source_issuer_id
+                or controller_proof.resource_generation != str(self.selection.resource_generation)):
+            raise ChannelIngressDenied("audio observation is not bound to the current selected controller")
+        event_data = {"session_id": claims["session_handle"], "capture_id": claims["capture_id"],
+                      "audio_artifact_receipt_handle": claims["audio_artifact_receipt_handle"],
+                      "audio_sha256": claims["audio_sha256"], "audio_size_bytes": claims["size_bytes"],
+                      "format": "pcm-s16le-mono", "sample_rate_hz": 16000,
+                      "duration_milliseconds": claims["duration_milliseconds"]}
+        if raw_observation.payload != _canonical_json(event_data):
+            raise ChannelIngressDenied("audio event differs from its root capture receipt")
+        del self._pending[id(raw_observation)]
+        event_id = secrets.token_urlsafe(32)
+        replay = hashlib.sha256(_canonical_json({"selection_id": self.selection.id,
+            "session_id": claims["session_handle"], "capture_id": claims["capture_id"],
+            "audio_sha256": claims["audio_sha256"]})).hexdigest()
+        return {"raw_observation_handle": secrets.token_urlsafe(32),
+                "raw_payload": raw_observation.payload, "event_id": event_id,
+                "replay_key_sha256": replay, "observed_monotonic": claims["issued_monotonic"],
+                "event_data": event_data}
+
+    def release_verified_raw_observation(self, raw_observation: object) -> None:
+        if type(raw_observation) is ObservedChannelIngress:
+            self._pending.pop(id(raw_observation), None)
 
     def validate_claims(self, proof: object) -> bool:
         try:
