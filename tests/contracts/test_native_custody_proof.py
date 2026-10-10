@@ -549,7 +549,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.loader_runtime = self.runtime_root / "loader"
         self.loader_runtime.mkdir(mode=0o700)
         self.mount_root = self.runtime_root / "native" / "package-1"
-        role_file = self.mount_root / "hermes" / "plugins" / "runtime.py"
+        closure_root = self.mount_root / "closure"
+        role_file = closure_root / "hermes" / "plugins" / "runtime.py"
         self.role_file = role_file
         role_file.parent.mkdir(parents=True, mode=0o755)
         (role_file.parent.parent / "__init__.py").write_text("", encoding="utf-8")
@@ -557,7 +558,7 @@ class RootLoaderObservationContracts(unittest.TestCase):
         role_file.write_bytes(_ROLE_BYTES)
         role_file.chmod(0o444)
         for directory in (role_file.parent.parent, role_file.parent,
-                          role_file.parent.parent.parent, self.mount_root,
+                          role_file.parent.parent.parent, closure_root, self.mount_root,
                           self.mount_root.parent):
             directory.chmod(0o755)
         role_stat = role_file.stat()
@@ -569,7 +570,7 @@ class RootLoaderObservationContracts(unittest.TestCase):
             "import os,socket,sys,importlib; from hermes_installer.authority.native_custody_proof import encode_loader_progress,LoadedProcessRoleObservation; "
             "path=sys.argv[1]; ack=int(sys.argv[2]); s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); "
             "s.connect(path); nonce=s.recv(43).decode('ascii'); "
-            f"sys.path.insert(0,{str(self.runtime_root / 'native' / 'package-1')!r}); "
+            f"sys.path.insert(0,{str(closure_root)!r}); "
             "module=importlib.import_module('hermes.plugins.runtime'); info=os.stat(module.__file__); "
             "roles=[LoadedProcessRoleObservation('hermes-main','hermes.plugins.runtime','hermes/plugins/runtime.py','" + _ROLE + "',info.st_dev,info.st_ino,info.st_size)]; "
             f"registrations={registrations!r}; "
@@ -832,6 +833,14 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.role_file.chmod(0o644)
         self.role_file.write_bytes(b"# different role bytes after import\n")
         self.role_file.chmod(0o444)
+        with self.assertRaises(AuthorityDenied):
+            self.store.resolve_loaded_package_closure(peer, observer)
+
+    def test_unowned_loaded_role_module_denies_proof(self):
+        self.store.receive_loader_progress(self.launch_handle, lambda: False)
+        observer = _observer(producer_uid=self.uid)
+        peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
+        os.chown(self.role_file, self.uid, self.gid)
         with self.assertRaises(AuthorityDenied):
             self.store.resolve_loaded_package_closure(peer, observer)
 
