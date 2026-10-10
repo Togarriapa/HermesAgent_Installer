@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -181,12 +182,43 @@ def test_committed_pm_venv_observation_rejects_changed_closure_and_escape(tmp_pa
     with pytest.raises(ValueError, match="closure"):
         pm_runtime.observe_committed_pm_venv_tree(root, expected_closure_sha256=expected)
     root.chmod(0o755)
-    (root / "escape").symlink_to("../../outside")
-    (root / "escape").lstat()
-    with pytest.raises(ValueError, match="escapes"):
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"must never be opened through the link")
+    outside.chmod(0o444)
+    escape = root / "escape"
+    escape.symlink_to("../outside")
+    link_mode = stat.S_IMODE(escape.lstat().st_mode)
+    outside_info = outside.stat()
+    real_open = pm_runtime.os.open
+    link_open_flags = []
+
+    def guarded_open(path, flags, *args, **kwargs):
+        if os.fspath(path) == os.fspath(outside):
+            raise AssertionError("observer attempted to open the outside target")
+        if os.fspath(path) == "escape":
+            link_open_flags.append(flags)
+            assert flags & getattr(os, "O_NOFOLLOW", 0), "link target must never be followed"
+        descriptor = real_open(path, flags, *args, **kwargs)
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) == (outside_info.st_dev, outside_info.st_ino):
+            os.close(descriptor)
+            raise AssertionError("observer opened the outside target through a link")
+        return descriptor
+
+    monkeypatch.setattr(pm_runtime.os, "open", guarded_open)
+    # Linux reports symlink mode 0777. The observer intentionally rejects
+    # that unsafe mode before it inspects the target; other hosts may reach
+    # the explicit in-root-link check instead.
+    expected_denial = ("ownership or mode is unsafe" if link_mode & 0o022
+                       else "link escapes its root")
+    with pytest.raises(ValueError, match=expected_denial):
         pm_runtime.observe_committed_pm_venv_tree(
             root, expected_closure_sha256=pm_runtime._tree_sha256(root),
         )
+    assert not link_open_flags or all(
+        flags & getattr(os, "O_NOFOLLOW", 0) for flags in link_open_flags
+    )
+    assert outside.read_bytes() == b"must never be opened through the link"
 
 
 def test_active_descriptor_must_equal_actual_receipt_executable_and_full_venv(tmp_path, monkeypatch):
