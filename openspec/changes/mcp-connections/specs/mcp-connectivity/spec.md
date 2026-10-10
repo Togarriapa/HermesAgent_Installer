@@ -230,3 +230,30 @@ The implementation SHALL resolve exact selected argument/result schema artifacts
 #### Scenario: Tool name exists without selected schema bytes
 - **WHEN** no verified selected schema artifact resolves
 - **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.

@@ -82,3 +82,29 @@ Additive root-state/build-mount refinement (SK01 / SK-T01): see plans/amendments
 Immutable source-buffer materialization v2: plans/amendments/2026-10-09-immutable-source-buffer-materialization-v2.md; exact retained original Git bytes may replace source-filesystem inode checks only when no mutable source path is used. Destination/root closure checks and existing SK-R0092 target gates remain.
 
 Root setup/journal selection v8: plans/amendments/2026-10-09-root-setup-session-journal-catalog-v8.md specifies installed root-local initial session/intent/receipt transport and active root journal catalog. Existing HI/BD/LC/SK tasks and target evidence remain open.
+
+Actual EOF/schema derivation v54: `plans/amendments/2026-10-09-stdin-eof-schema-derivation-v54.md`; exact root receipt joins in planning contracts, existing task IDs remain unchecked.
+
+Memory lifecycle/whole-turn v64: `plans/amendments/2026-10-10-memory-lifecycle-whole-turn-v64.md`; actual backend/source proof required, existing task gates open.
+
+Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenticated-handle-delivery-v70.md`; existing SK-T01/HI-T08/HI-T11 remain open, authenticated root input/response metadata only, actual whole-turn proof and failure evidence required.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Selected application workload binding v89: `plans/amendments/2026-10-10-selected-application-workload-binding-v89.md`; existing SK-F03/R0067/R0138/AC12 implementation and acceptance obligations remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.

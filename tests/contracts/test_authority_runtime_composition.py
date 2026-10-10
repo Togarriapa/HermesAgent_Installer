@@ -1,6 +1,8 @@
 from pathlib import Path
 from dataclasses import replace
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
+import hashlib
+import json
 
 import pytest
 
@@ -8,9 +10,13 @@ from hermes_installer.artifacts import ArtifactCatalog
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
+from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
+from hermes_installer.authority.runtime_composition import _native_json_schema_matches
+from hermes_installer.authority.runtime_composition import _ProtectedNativeActionResolver
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
 from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import RootJournalSelection
 from hermes_installer.protected_enrollment import EnrollmentDenied
 
 
@@ -120,6 +126,152 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         )
 
 
+def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
+    _service, enrollment, _bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    selected_root = Path("/private/var/lib/hermes-installer/authority-journal")
+    bindings = type("JournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen",
+                                 expected_active_generation_digest))
+    })()
+
+    assert _root_resource_job_ledger_path(bindings, enrollment) == (
+        selected_root / "resource-jobs.sqlite3"
+    )
+
+    stale_bindings = type("StaleJournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen", "b" * 64))
+    })()
+    with pytest.raises(AuthorityDenied, match="selection is malformed"):
+        _root_resource_job_ledger_path(stale_bindings, enrollment)
+
+
+def test_native_action_schema_validator_enforces_pinned_finite_schema_subset():
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 12},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 4},
+            "mode": {"type": "string", "enum": ["read", "search"]},
+        },
+        "required": ["query", "limit", "mode"],
+        "additionalProperties": False,
+    }
+    assert _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "", "limit": 2, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": True, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "write"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "read", "extra": "value"}, schema,
+    )
+
+
+def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
+    from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+    _service, _enrollment, bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 8}},
+        "required": ["query"], "additionalProperties": False,
+    }
+    schema_bytes = json.dumps(schema, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False).encode("utf-8")
+    schema_digest = hashlib.sha256(schema_bytes).hexdigest()
+    adapter = SimpleNamespace(
+        adapter_id="adapter:lookup", action_id="action:lookup",
+        argument_schema_id="schema:lookup:arguments", result_schema_id="schema:lookup:result",
+        workflow_bindings=(MappingProxyType({
+            "external_tool_name": "search_records",
+            "external_action_id": "search-records",
+            "external_argument_schema_id": "schema:lookup:arguments",
+            "external_result_schema_id": "schema:lookup:result",
+            "workflow_artifact_id": "workflow:lookup",
+            "workflow_sha256": "b" * 64,
+        }),),
+        adapter_artifact_id="artifact:adapter", adapter_sha256="c" * 64,
+    )
+    package = SimpleNamespace(
+        package_id="package:native", profile_id="profile:producer", generation="generation:one",
+        compiled_closure_artifact_id="artifact:closure",
+        entrypoint_artifact_id="artifact:entry", entrypoint_sha256="d" * 64,
+        resolver_artifact_id="artifact:resolver", resolver_sha256="e" * 64,
+        adapter_records=MappingProxyType({adapter.adapter_id: adapter}),
+    )
+    catalog = SimpleNamespace(
+        digest="a" * 64,
+        resolve_profile_native_package=lambda profile_id, generation: package
+        if (profile_id, generation) == (package.profile_id, package.generation) else None,
+        resolve_native_package=lambda package_id, generation: package
+        if (package_id, generation) == (package.package_id, package.generation) else None,
+    )
+    artifacts = {
+        "artifact:closure": SimpleNamespace(sha256="f" * 64, tree_files=("entry.py",)),
+        "artifact:entry": SimpleNamespace(sha256="d" * 64),
+        "artifact:resolver": SimpleNamespace(sha256="e" * 64),
+        "artifact:adapter": SimpleNamespace(sha256="c" * 64),
+        "artifact:schema": SimpleNamespace(sha256=schema_digest),
+        "workflow:lookup": SimpleNamespace(sha256="b" * 64),
+    }
+    bridge = SimpleNamespace(
+        bridge_id="bridge:one", producer_profile_id=package.profile_id,
+        producer_generation=package.generation,
+    )
+    root_bindings = replace(
+        bindings, enrollment_catalog=catalog, artifact_catalog=SimpleNamespace(artifacts=artifacts),
+        native_bridges={"bridge:one": bridge},
+        native_schema_artifact_records=({
+            "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+            "sha256": schema_digest, "schema_kind": "arguments",
+            "native_package_id": package.package_id,
+            "native_package_generation": package.generation,
+            "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+            "source_receipt_handle": "source-receipt:lookup",
+        },),
+    )
+    schema_records = ({
+        "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+        "sha256": schema_digest, "schema_kind": "arguments",
+        "native_package_id": package.package_id,
+        "native_package_generation": package.generation,
+        "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+        "source_receipt_handle": "source-receipt:lookup",
+    },)
+    schema_catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
+        schema_records, read_artifact=lambda _artifact_id, _digest: schema_bytes,
+        verify_source_receipt=lambda _handle, _identity: True,
+    )
+    assert dict(root_bindings.resolve_native_schema_record(
+        schema_records[0]["id"], package.package_id, package.generation,
+        adapter.adapter_id, adapter.action_id, "arguments",
+    )) == dict(schema_records[0])
+    schema_catalog.resolve(schema_records[0]["id"], native_package_id=package.package_id,
+                           native_package_generation=package.generation,
+                           adapter_id=adapter.adapter_id, action_id=adapter.action_id,
+                           schema_kind="arguments")
+    resolver = _ProtectedNativeActionResolver(
+        root_bindings, schema_catalog, service_generation_digest=catalog.digest,
+    )
+    identity = SimpleNamespace(profile_id=package.profile_id, generation=package.generation)
+    selected = resolver(bridge, identity, "search_records")
+    assert (selected.package_id, selected.adapter_id, selected.action_id) == (
+        package.package_id, adapter.adapter_id, adapter.action_id,
+    )
+    assert selected.validate_arguments(b'{"query":"status"}') is True
+    assert selected.validate_arguments(b'{"query":""}') is False
+    with pytest.raises(AuthorityDenied, match="absent or ambiguous"):
+        resolver(bridge, identity, "unselected_tool")
+
+
 def test_runtime_closes_attached_observation_stores():
     service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
     closed = []
@@ -134,6 +286,14 @@ def test_runtime_closes_attached_observation_stores():
     service.native_loader_observation_store = loader_store
     service.gateway_boundary_observer = gateway_observer
     service.native_window_observer = native_window_observer
+    task_observer = LoaderObservationStore()
+    invocation_registry = LoaderObservationStore()
+    bridge_broker = LoaderObservationStore()
+    mcp_dispatcher = LoaderObservationStore()
+    service.task_native_observations = task_observer
+    service.native_invocation_registry = invocation_registry
+    service.native_bridge_broker = bridge_broker
+    service.native_mcp_dispatcher = mcp_dispatcher
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=catalog, vault=vault,
@@ -141,8 +301,12 @@ def test_runtime_closes_attached_observation_stores():
     assert runtime.native_loader_observation_store is loader_store
     assert runtime.gateway_boundary_observer is gateway_observer
     assert runtime.native_window_observer is native_window_observer
+    assert runtime.task_native_observations is task_observer
+    assert runtime.native_invocation_registry is invocation_registry
+    assert runtime.native_bridge_broker is bridge_broker
+    assert runtime.native_mcp_dispatcher is mcp_dispatcher
     runtime.close()
-    assert closed == [True, True, True]
+    assert closed == [True] * 7
 
 
 def test_runtime_closes_remaining_stores_when_one_observer_close_fails():
@@ -160,13 +324,14 @@ def test_runtime_closes_remaining_stores_when_one_observer_close_fails():
 
     service.source_observer_registry = CloseFailure()
     service.native_loader_observation_store = CloseStore()
+    service.native_bridge_broker = CloseStore()
     runtime = compose_root_authority_runtime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=catalog, vault=vault,
     )
     with pytest.raises(RuntimeError, match="fixture close failure"):
         runtime.close()
-    assert closed == ["registry", "store"]
+    assert closed == ["store", "registry", "store"]
 
 
 def test_source_metadata_stays_unavailable_without_real_manager_and_pair_joins():

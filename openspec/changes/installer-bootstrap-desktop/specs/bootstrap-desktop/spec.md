@@ -380,3 +380,182 @@ The implementation SHALL verify the selected fixed candidate-index closure membe
 #### Scenario: Ordinary cache has a matching tool name
 - **WHEN** no verified selected candidate index exists
 - **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Root initial compilation precedes policy session
+The implementation SHALL create and verify the exact v42 internal stage0 compilation context without requiring a policy-dependent setup session.
+
+#### Scenario: No bootstrap policy exists yet
+- **WHEN** the actual installed root actor compiles initial selected policy
+- **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Root secure initial identity intake
+The implementation SHALL bind the exact v47 masked intake and policy selection to the actual root stage0 transaction.
+
+#### Scenario: User journal contains a credential reference
+- **WHEN** it has no verified root vault custody/scope receipt
+- **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
+
+### Requirement: Verified initial identity template revision
+The implementation SHALL resolve the exact v49 immutable identity template through the actual root installed deployment closure.
+
+#### Scenario: Only a session digest exists
+- **WHEN** identity policy revision is needed
+- **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
+
+### Requirement: Actual native materialization output CAS
+The implementation SHALL apply v51 exact source and compiled artifact role/closure joins.
+
+#### Scenario: Compiler produces a source and compiled digest
+- **WHEN** importing actual generated output into root CAS
+- **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
+
+### Requirement: Actual producer initial source take
+The implementation SHALL use v52 fixed peer-authenticated no-selector source delivery before selected task stdin.
+
+#### Scenario: Initial peer does not know a receipt identifier
+- **WHEN** actual rootselected initial input has been captured
+- **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Verified release plan and active compilation
+The implementation SHALL apply v53 exact source template/deployed plan and active receipt compilation joins.
+
+#### Scenario: Runtime outputs become available after preparation
+- **WHEN** publishing runnable active policy
+- **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
+
+### Requirement: Live selected native health control
+The installer SHALL begin native health observation from a root-retained live selected process control before fixture input, retaining actual native events and a separate semantic health receipt.
+
+#### Scenario: Terminal-only health presentation
+- **WHEN** only stdout or exit status exists without the required live native event closure
+- **THEN** health remains incomplete and functional acceptance is not asserted
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Distinct native closure and archive digests
+The installer SHALL preserve the canonical closure_files tree digest for compiled_closure_sha256 and use separate archive artifact digest for CAS bytes.
+
+#### Scenario: Archive hash substituted for closure tree
+- **WHEN** a package substitutes archive bytes SHA for the selected compiled tree hash
+- **THEN** mount and binder verification reject the mismatched digest domain
+
+### Requirement: Distinct native generation joins
+The installer SHALL resolve process and native package generations separately and preserve exact candidate index identity across receipts and manifest.
+
+#### Scenario: Generation domain substitution
+- **WHEN** an observer uses package generation as live process generation
+- **THEN** peer proof admission denies the inconsistent join
+
+### Requirement: Fixed selected display and loopback startup
+The installer SHALL launch only enrolled official Desktop/display/gateway recipes with exact Xauthority mount and private loopback role/port bindings.
+
+#### Scenario: Ambient display or broad network substitution
+- **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
+- **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
+
+### Requirement: Closed prepared base and reader policy
+The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
+
+#### Scenario: Prepared authority treated as active
+- **WHEN** a dormant empty prepared policy is used to authorize runtime effects
+- **THEN** authorization denies until actual active compilation and receipts exist
+
+### Requirement: Root selected startup and predecessor custody
+The installer SHALL use actual root source CAS/predecessor proofs and finite selected startup admission with fresh role-specific child grants.
+
+#### Scenario: Unbound startup or deployment predecessor
+- **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
+- **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution
+
+Literal bootstrap receipt binding source v72: `plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72.md`; existing BD/HI lifecycle gates open; actual typed root receipts required.
+
+Prepared unresolved receipt rendering v74: `plans/amendments/2026-10-10-prepared-unresolved-receipt-rule-rendering-v74.md`; empty output identities remain dormant and actual active receipts required under existing BD/HI tasks.
+
+Bootstrap source projection/store correction v75: `plans/amendments/2026-10-10-bootstrap-binding-projection-store-correction-v75.md`; existing BD/HI tasks remain open.
+
+First-bootstrap pinned interpreter v76: `plans/amendments/2026-10-10-first-bootstrap-isolated-pinned-interpreter-v76.md`; existing BD/HI tasks remain open, actual isolated Linux runtime/actor proof required.
+
+Same-process bootstrap handoff v78: `plans/amendments/2026-10-10-bootstrap-same-process-sealed-runtime-handoff-v78.md`; existing BD/HI tasks open, actual trusted re-exec proof required.
+
+Existing typed candidate handoff v79: `plans/amendments/2026-10-10-bootstrap-existing-typed-candidate-handoff-v79.md`; existing BD/HI tasks open.
+
+Closed root plan template selection v81: `plans/amendments/2026-10-10-closed-root-plan-template-selection-v81.md`; existing BD/HI tasks open.
+
+Two-stage source driver interpretation v83: `plans/amendments/2026-10-10-two-stage-source-driver-interpretation-v83.md`; existing BD/HI tasks open.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Reviewed native capability selection v91: `plans/amendments/2026-10-10-reviewed-native-capability-selection-v91.md`; HI-T03 remains open.
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-task-proof-dto-custody-v93.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
+
+Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.

@@ -23,6 +23,7 @@ from .client import (
     MAX_RESULT_BYTES, MAX_SCHEMA_BYTES, MAX_TOOLS, SUPPORTED_PROTOCOL_VERSIONS,
     MCPError, _selection_bound, _validate_schema, _validate_value,
 )
+from .privacy import scrub_mcp_result
 
 MAX_BROKER_REQUEST = 1_048_576
 MAX_PAGES = 32
@@ -190,7 +191,12 @@ class _Handler:
                 or canonical_digest(payload) != authorization.request_digest):
             raise MCPBrokerError("mcp.binding", "MCP target, identity, or digest does not match its grant")
         method, params = envelope["method"], envelope["params"]
-        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' else 'connect'}"
+        # Native selected schema discovery is a read and must use the observed
+        # result route. Ordinary protocol discovery remains a connect/lifecycle
+        # operation; the purpose is host-issued and included in the intent.
+        is_selected_discovery = (method == "tools/list"
+                                 and context.purpose == "mcp-selected-schema-discovery")
+        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' or is_selected_discovery else 'connect'}"
         expected_intent = mcp_intent(
             service.service_id, service.channel, envelope["request_id"], method,
             envelope["selection"], params,
@@ -249,6 +255,15 @@ class _Handler:
             result = response.get("result")
             if method == "tools/list":
                 result = self._accept_tool_page(state_key, result)
+            elif method == "tools/call":
+                # Result provenance is issued by AuthorityService over the
+                # bytes returned below. Scrub here, before that observer sees
+                # the payload, so the source receipt digest names exactly the
+                # data later exposed to the native model.
+                try:
+                    result = scrub_mcp_result(service.service_id)(result)
+                except Exception:
+                    raise MCPBrokerError("mcp.privacy", "MCP result failed reviewed privacy filtering") from None
             body = canonical_bytes({"jsonrpc": "2.0", "id": envelope["request_id"], "result": result})
         if len(body) > MAX_RESULT_BYTES * 4:
             raise MCPBrokerError("mcp.bounds", "MCP response exceeds its bound")
@@ -268,12 +283,18 @@ class _Handler:
                     or name in accepted):
                 continue
             _validate_schema(schema)
+            output_schema = item.get("outputSchema")
+            if output_schema is not None:
+                _validate_schema(output_schema)
             if len(canonical_bytes(dict(item))) > MAX_SCHEMA_BYTES:
                 raise MCPBrokerError("mcp.bounds", "MCP tool schema exceeds its bound")
             annotations = item.get("annotations", {})
             if not isinstance(annotations, Mapping):
                 annotations = {}
-            accepted[name] = {"inputSchema": dict(schema), "annotations": dict(annotations)}
+            accepted[name] = {
+                "inputSchema": dict(schema), "annotations": dict(annotations),
+                **({"outputSchema": dict(output_schema)} if output_schema is not None else {}),
+            }
         with self._lock:
             previous = self._tools.setdefault(state_key, {})
             previous.update(accepted)
@@ -283,7 +304,8 @@ class _Handler:
         if next_cursor is not None and (not isinstance(next_cursor, str) or not 1 <= len(next_cursor) <= 1024):
             raise MCPBrokerError("mcp.pagination", "MCP tools/list cursor is invalid")
         return {"tools": [
-            {"name": name, "inputSchema": item["inputSchema"], "annotations": item["annotations"]}
+            {"name": name, "inputSchema": item["inputSchema"], "annotations": item["annotations"],
+             **({"outputSchema": item["outputSchema"]} if "outputSchema" in item else {})}
             for name, item in accepted.items()
         ], **({"nextCursor": next_cursor} if next_cursor is not None else {})}
 
