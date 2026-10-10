@@ -8746,8 +8746,8 @@ class RootBootstrapSession:
         relative_path = "lib/python/hermes_installer/authority/native_source_definitions.py"
         artifact_id = "installer-module:hermes_installer.authority.native_source_definitions"
         source_artifact_id = "installer-native-source-definitions-module-v137"
-        digest = "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c"
-        size_bytes = 23_672
+        digest = "4d66c49e798eb957fa77601c4dad021182b734b1eb8fe322d52ecca060223341"
+        size_bytes = 32_858
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
@@ -8838,8 +8838,8 @@ class RootBootstrapSession:
         artifact_id = "installer-module:hermes_installer.authority.local_resource_effects"
         relative_path = "lib/python/hermes_installer/authority/local_resource_effects.py"
         source_artifact_id = "installer-reviewed-source-local-resource-effects-v180"
-        digest = "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6"
-        size_bytes = 47_854
+        digest = "1d1f72655ed335ae486c76df80f97ffd997b07440a2b9417563c2918d874be9d"
+        size_bytes = 142_474
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
