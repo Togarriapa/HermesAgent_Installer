@@ -377,6 +377,103 @@ class DurableMemoryQueue:
                 db.close()
         return receipt
 
+    def enqueue_completed_turn(self, *, target: MemoryTarget, context: HostContext,
+                               completed_turn: Any, transcript: bytes,
+                               consent: Any) -> str:
+        """Persist only a root-observed completed turn with its signed consent.
+
+        This method is for the attached root ``RootMemoryCaptureCoordinator``;
+        the ordinary memory RPC schema intentionally has no transcript field.
+        """
+        from hermes_installer.authority.native_turn_observation import RootCompletedNativeTurn
+        from hermes_installer.authority.service import BackgroundConsent
+        from hermes_installer.authority.types import HostContext, Sensitivity
+        if (type(completed_turn) is not RootCompletedNativeTurn
+                or not isinstance(context, HostContext)
+                or type(consent) is not BackgroundConsent
+                or not isinstance(transcript, bytes)
+                or not 1 <= len(transcript) <= MAX_EVENT):
+            raise BrokerDenied("root completed turn, signed context, consent, and bounded transcript are required")
+        try:
+            text = transcript.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            raise BrokerDenied("completed turn transcript is not UTF-8") from None
+        if ("\x00" in text or hashlib.sha256(transcript).hexdigest() != completed_turn.transcript_sha256
+                or len(transcript) != completed_turn.transcript_size_bytes):
+            raise BrokerDenied("completed turn bytes differ from the root transcript receipt")
+        if context.profile_id != completed_turn.profile_id:
+            raise BrokerDenied("completed turn and signed memory context profile differ")
+        if (context.profile_id != target.profile_id or context.namespace_id != target.namespace_id
+                or target.enrollment is None
+                or context.purpose != "memory-capture" or context.operation != "memory.capture"
+                or context.final_payload_digest != completed_turn.transcript_sha256
+                or context.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL}
+                or not context.source_receipts):
+            raise BrokerDenied("memory capture context is not private, source-bound, and digest-bound")
+        required_receipts = {
+            completed_turn.input_receipt_handle,
+            *completed_turn.request_receipt_handles,
+            *completed_turn.response_receipt_handles,
+            *completed_turn.tool_result_receipt_handles,
+            *completed_turn.delegation_receipt_handles,
+        }
+        source_ids = {receipt.receipt_id for receipt in context.source_receipts}
+        if not required_receipts.issubset(source_ids):
+            raise BrokerDenied("signed memory context does not contain the full completed-turn receipt closure")
+        claims = consent.claims
+        owner, generation = self.owner_state(context.profile_id)
+        if (owner != target.provider or generation != target.enrollment.memory_owner_generation
+                or claims.get("kind") != "memory-background-consent-v1"
+                or claims.get("provider_id") != target.provider
+                or claims.get("owner_generation") != generation
+                or claims.get("principal_id") != context.principal_id
+                or claims.get("profile_id") != context.profile_id
+                or claims.get("namespace_id") != context.namespace_id
+                or claims.get("uid") != context.uid
+                or claims.get("policy_revision") != context.policy_revision
+                or not isinstance(claims.get("issued_at_unix"), (int, float))
+                or isinstance(claims.get("issued_at_unix"), bool)
+                or not isinstance(claims.get("expires_at_unix"), (int, float))
+                or isinstance(claims.get("expires_at_unix"), bool)
+                or claims.get("issued_at_unix", float("inf")) > self.clock()
+                or claims.get("expires_at_unix", 0) <= self.clock()
+                or "capture" not in claims.get("allowed_actions", ())):
+            raise BrokerDenied("background consent differs from the current selected profile owner")
+        _scope(context, target, {})
+        event = {"event": "completed-turn", "turn_id": completed_turn.turn_handle,
+                 "transcript": text, "transcript_sha256": completed_turn.transcript_sha256}
+        raw_event = canonical(event, MAX_EVENT)
+        source = canonical(context.to_wire(), 16 * 1024)
+        consent_id, consent_bytes = _consent_wire(consent)
+        receipt = secrets.token_urlsafe(24)
+        now = self.clock()
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                current_owner, current_generation = self.owner_state(context.profile_id)
+                if (current_owner != owner or current_generation != generation
+                        or current_owner != target.provider):
+                    raise BrokerDenied("memory owner changed before completed turn persistence")
+                n = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
+                profile_n = db.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE profile=? AND status IN ('queued','processing')",
+                    (context.profile_id,)).fetchone()[0]
+                if n >= 10000 or profile_n >= 1000:
+                    raise BrokerUnavailable("durable memory queue is full")
+                db.execute("INSERT INTO consents(consent_id,profile,provider,owner_generation,active,created,updated) VALUES(?,?,?,?,1,?,?)",
+                    (consent_id, context.profile_id, target.provider, generation, now, now))
+                db.execute("INSERT INTO jobs(id,profile,namespace,provider,owner_generation,source_context,consent,event,status,created,updated,consent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (receipt, context.profile_id, context.namespace_id, target.provider,
+                     generation, source, consent_bytes, raw_event, "queued", now, now, consent_id))
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        return receipt
+
     def result(self, context: HostContext, receipt: str) -> dict[str, Any]:
         _text(receipt, "receipt", 128)
         if self.profile_scope is not None and context.profile_id != self.profile_scope:
@@ -1022,6 +1119,14 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
                 child = self.queues.get(target.profile_id)
                 if child is None: raise BrokerUnavailable("profile queue is unavailable")
                 return child.enqueue(target=target, context=context, body=body)
+            def enqueue_completed_turn(self, *, target: MemoryTarget, context: HostContext,
+                                       completed_turn: Any, transcript: bytes,
+                                       consent: Any) -> str:
+                child = self.queues.get(target.profile_id)
+                if child is None: raise BrokerUnavailable("profile queue is unavailable")
+                return child.enqueue_completed_turn(
+                    target=target, context=context, completed_turn=completed_turn,
+                    transcript=transcript, consent=consent)
             def result(self, context: HostContext, receipt: str) -> Mapping[str, Any]:
                 child = self.queues.get(context.profile_id)
                 if child is None: raise BrokerUnavailable("profile queue is unavailable")
@@ -1127,8 +1232,14 @@ class MemoryJobWorker:
             source=HostContext.from_wire(json.loads(source_wire.decode("utf-8")))
             if source.profile_id!=job["profile_id"] or source.namespace_id!=job["namespace_id"]:
                 raise BrokerDenied("queued signed source context scope mismatch")
-            text=("User: "+event["user_content"]+"\nAssistant: "+event["assistant_content"]
-                  if event["event"]=="turn" else event["content"])
+            if event["event"] == "completed-turn":
+                text = _text(event["transcript"], "completed turn", MAX_EVENT)
+                if hashlib.sha256(text.encode("utf-8")).hexdigest() != event.get("transcript_sha256"):
+                    raise BrokerDenied("queued completed transcript digest changed")
+            elif event["event"] == "turn":
+                text = "User: "+event["user_content"]+"\nAssistant: "+event["assistant_content"]
+            else:
+                text = event["content"]
             record={"id":job["id"],"profile":job["profile_id"],"namespace":job["namespace_id"],
                     "source":"hermes-session:"+str(event.get("session_id",job["id"])),
                     "text":_text(text,"event",MAX_EVENT),"provenance":[source.lineage_hash]}
