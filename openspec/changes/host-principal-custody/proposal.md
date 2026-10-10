@@ -364,3 +364,5 @@ Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replac
 Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
 
 RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+Jarvis214 corrects213 source-home/live-task field split: exact16 published facts; task process/resource/profilegen/context epochs are joined only at actual grant. Core/restart/207delegates/mount scope unchanged; planning/jarvis-published-home-live-task-split-v214.json.

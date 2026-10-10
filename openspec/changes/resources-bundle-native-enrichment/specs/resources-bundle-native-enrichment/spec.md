@@ -470,3 +470,12 @@ The installer SHALL bind each protected selected delegate task to its current he
 #### Scenario: Home or authorization changes
 - **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
 - **THEN** task start fails closed and sibling/primary homes remain inaccessible
+
+## ADDED Requirements
+
+### Requirement: Published home facts and live task proof separation
+The installer SHALL use the corrected field split in planning/jarvis-published-home-live-task-split-v214.json without fabricating future task enrollments in published source-home rows.
+
+#### Scenario: Compile home crosswalk before tasks exist
+- **WHEN** verified source homes are published before task admission
+- **THEN** only actual source/home/runtime/principal/namespace facts are compiled and live task/context/process/resource facts are resolved later through genuine current grants
