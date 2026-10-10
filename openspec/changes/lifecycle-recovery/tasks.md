@@ -99,3 +99,5 @@ First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-boot
 ## v181 conditional identity and independent readiness
 
 - [ ] `LC-T181.4` Persist configure-later and resume independent readiness without identity-domain or ownership widening. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
+
+- [ ] HI-T191.3 Preserve one-use intent, crash/resume reconciliation and actual owned cleanup without copied setup authority. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.

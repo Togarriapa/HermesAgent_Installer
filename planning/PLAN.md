@@ -89,3 +89,6 @@ Committed PM executable v189: `plans/amendments/2026-10-10-committed-pm-executab
 
 
 Same-worker namespace v190: `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md`; HI-T190.1 → VD-T190.2 OPEN, staged actual namespace before probes/release, all AC01..18 OPEN.
+
+
+Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; HI-T191.1 → HI-T191.2 → HI-T191.3 → VD-T191.4 OPEN. Independent daemon commit/source proof and actual source run/completion; no setup-session copy or ACK health. All AC01..18 OPEN.
