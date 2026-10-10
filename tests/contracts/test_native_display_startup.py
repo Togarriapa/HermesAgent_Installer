@@ -20,6 +20,9 @@ from hermes_installer.authority.native_display_startup import (
     selected_start_payload,
 )
 from hermes_installer.authority.remote_origin import HMACReceiptSigner
+from hermes_installer.authority.types import (
+    RootSelectedServiceContext, RootSelectedServiceEffectGrant, Sensitivity,
+)
 from hermes_installer.managed_process_custodian import ManagedProcessIdentityLease
 
 
@@ -46,12 +49,51 @@ class XauthorityEncodingTests(unittest.TestCase):
             selected_start_payload("display-enrollment", "generation-1", "other-operation")
 
     def test_startup_grant_cannot_change_role_operation(self):
+        payload = selected_start_payload(
+            "display-enrollment", "generation-1", "native-display-start-v1",
+        )
+        context = RootSelectedServiceContext(
+            schema=1, context_id="ctx", admission_handle="a" * 43,
+            admission_kind="startup", controller_proof_sha256="d" * 64,
+            selected_principal_id="principal", selected_profile_id="profile",
+            selected_generation="generation-1", selected_namespace_identity="namespace",
+            selected_subject_uid=1001, selected_subject_gid=1001,
+            service_generation_digest="e" * 64, role="display", action="start",
+            enrollment_id="display-enrollment", operation_id="native-display-start-v1",
+            operation="process.start", capability="hermes-profile-invoke",
+            target="profile:profile", source_closure_sha256="f" * 64,
+            sensitivity=Sensitivity.PUBLIC, recipient=None, policy_revision="revision",
+            authority_epoch="epoch", issued_monotonic=1.0, expires_monotonic=2.0,
+            nonce="1" * 64, signature="2" * 64,
+        )
+        context_digest = hashlib.sha256(
+            __import__("json").dumps(context.to_wire(), sort_keys=True,
+                                      separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        grant = RootSelectedServiceEffectGrant(
+            schema=1, grant_id="grant", context_sha256=context_digest,
+            admission_handle="a" * 43, operation="process.start",
+            capability="hermes-profile-invoke", target="profile:profile",
+            request_sha256=hashlib.sha256(payload).hexdigest(), nonce="3" * 64,
+            issued_monotonic=1.0, expires_monotonic=2.0, signature="4" * 64,
+        )
+        valid = RootSelectedStartupGrant(
+            schema=1, startup_authorization_handle="a" * 43, role="display",
+            service_enrollment_id="display-enrollment", generation="generation-1",
+            operation_id="native-display-start-v1",
+            selection_payload_sha256=hashlib.sha256(payload).hexdigest(),
+            controller_proof_handle="b" * 43, controller_proof_sha256="d" * 64,
+            context=context, effect_grant=grant,
+            issued_monotonic=1.0, expires_monotonic=2.0,
+        )
+        self.assertEqual(valid.selection_payload(), payload)
         with self.assertRaises(NativeDisplayStartupDenied):
             RootSelectedStartupGrant(
                 schema=1, startup_authorization_handle="a" * 43, role="display",
                 service_enrollment_id="display-enrollment", generation="generation-1",
                 operation_id="native-desktop-app-start-v1", selection_payload_sha256="b" * 64,
-                controller_proof_handle="c" * 43, context=object(), effect_authorization=object(),
+                controller_proof_handle="c" * 43, controller_proof_sha256="d" * 64,
+                context=context, effect_grant=grant,
                 issued_monotonic=1.0, expires_monotonic=2.0,
             )
 
