@@ -607,6 +607,14 @@ class RootChannelPeerDeliveryRegistry:
                 and proof.expires_monotonic > self.monotonic()
             )
 
+    def sequence_for_retained_channel_proof(
+        self, proof: RootRetainedChannelDeliveryProof,
+    ) -> int:
+        """Return the sequence only while this exact reservation is current."""
+        if not self.validate_retained_channel_proof(proof):
+            raise AuthorityDenied("channel.proof", "retained channel delivery proof is stale or unknown")
+        return proof._sequence
+
     def resolve_retained_channel_proof(
         self, proof: RootRetainedChannelDeliveryProof,
     ) -> tuple[Any, VerifiedNativeChannelPeerBinding]:
@@ -616,17 +624,76 @@ class RootChannelPeerDeliveryRegistry:
         return proof._event, proof._native_binding
 
     def publish_captured_event(self, *, channel_ingress_id: str, event_handle: Any) -> int:
-        """Fail closed until event-to-peer source/context handles have an issuer.
+        """Deliver one retained source event to its unique current native peer.
 
-        A retained event's signed receipt IDs are not native source-delivery
-        handles. The source/context handles in ChannelEventDelivery must be
-        resolved for the exact selected peer and PIDFD by a root-owned,
-        one-use issuer; this registry currently has no such API.
+        This is an in-process root collector callpoint. It derives the selected
+        channel and source observer from the retained event, selects exactly one
+        already authenticated native peer whose protected row includes that
+        source, and delegates fresh signed source/context issuance to
+        AuthorityService. Ambiguous targets fail closed; this never fans out.
         """
-        raise AuthorityDenied(
-            "channel.publish",
-            "channel event delivery is unavailable: recipient-bound source and context handle issuance is not installed",
-        )
+        from .resource_source_controllers import RootResourceEventHandle
+        if (type(event_handle) is not RootResourceEventHandle
+                or not isinstance(channel_ingress_id, str)
+                or not _ID.fullmatch(channel_ingress_id)):
+            raise AuthorityDenied("channel.publish", "retained channel event selection is malformed")
+        with self._lock:
+            if self._closed:
+                raise AuthorityDenied("channel.publish", "root channel delivery registry is closed")
+            record = self.resource_registry.resolve_retained_event(event_handle)
+            observer = self.source_observers.observers.get(
+                event_handle.source_observer_enrollment_id)
+            if (record.handle is not event_handle or observer is None
+                    or event_handle.source_kind != "native-input"
+                    or observer.source_kind != "native-input"
+                    or observer.channel_id != channel_ingress_id):
+                raise AuthorityDenied("channel.publish", "retained event is not enrolled for this channel")
+            candidates = []
+            for peer in tuple(self._peers.values()):
+                if (peer.closed
+                        or channel_ingress_id not in peer.row["allowed_channel_ingress_ids"]
+                        or event_handle.source_observer_enrollment_id
+                           not in peer.row["source_observer_enrollment_ids"]
+                        or peer.binding.profile_id != getattr(record.parent_context, "profile_id", None)
+                        or peer.binding.generation != getattr(record.parent_context, "generation", None)):
+                    continue
+                try:
+                    self._revalidate_peer(peer)
+                except AuthorityDenied:
+                    continue
+                if any(item.observer_enrollment_id == event_handle.source_observer_enrollment_id
+                       and item.channel_id == channel_ingress_id for item in peer.observers):
+                    candidates.append(peer)
+            if len(candidates) != 1:
+                raise AuthorityDenied(
+                    "channel.publish",
+                    "channel event has no unique current recipient peer; delivery remains unavailable",
+                )
+            peer = candidates[0]
+            binding = self.resolve_verified_native_peer_binding(
+                peer.binding.binding_handle, channel_ingress_id=channel_ingress_id,
+                source_observer_enrollment_id=event_handle.source_observer_enrollment_id,
+            )
+        issuer = getattr(self.service, "issue_root_channel_event_delivery", None)
+        if not callable(issuer):
+            raise AuthorityDenied(
+                "channel.publish",
+                "recipient-bound source receipt and native context issuers are not installed",
+            )
+        delivery = issuer(event_handle, channel_ingress_id, binding)
+        if type(delivery) is not RootChannelInputDelivery:
+            raise AuthorityDenied("channel.publish", "root channel delivery issuer returned an invalid result")
+        # The AuthorityService issuer has already atomically registered both
+        # recipient-bound handles and called publish_issued_delivery. Recheck
+        # that its exact delivery is now retained for the selected peer.
+        with self._lock:
+            peer = self._peers.get(binding.binding_handle)
+            if (peer is None or peer.closed
+                    or event_handle.handle not in peer.event_handles
+                    or not any(item[0].delivery_handle == delivery.delivery_handle
+                               for item in peer.pending)):
+                raise AuthorityDenied("channel.publish", "root issuer did not queue the event delivery")
+            return delivery.sequence
 
     def take(self, *, peer_uid: int, peer_pid: int, peer_pidfd: int,
              binding_handle: str) -> ChannelEventDelivery | None:
