@@ -14,7 +14,7 @@ def _binding():
         "closure-a", "b" * 64, "entrypoint-a", "c" * 64,
         "resolver-a", "d" * 64, "root-a", "mount-a", MappingProxyType({}),
         "generation-a", MappingProxyType({}), MappingProxyType({}),
-        MappingProxyType({}), MappingProxyType({}),
+        MappingProxyType({}), MappingProxyType({}), MappingProxyType({}),
     )
 
 
