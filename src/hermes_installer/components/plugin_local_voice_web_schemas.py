@@ -13,7 +13,7 @@ from hermes_installer.components.plugin_effects import PluginActionSchema
 
 # Updated with the SHA-256 of plugin_local_voice_web.py before each published
 # source cohort. Selected enrollments must match this exact source digest.
-PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256 = "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
+PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256 = "f46733a6e59788c94360187bb4d24369c5f3298984b6a351b190b1dca4feea84"
 
 
 def _freeze(value: Any) -> Any:
@@ -158,8 +158,9 @@ _rows = {
         _obj({"url": _string(2048, 1)}, ["url"]),
         _obj({"url": _string(2048, 1), "content_type": _string(256, 1), "content": _string(2_000_000),
               "untrusted_source": {"type": "boolean", "enum": [True]},
-              "authority": {"type": "string", "enum": ["none"]}, "redirects": {"type": "integer", "minimum": 0, "maximum": 4},
-              "source_receipt": _source_receipt()},
+              "authority": {"type": "string", "enum": ["none"]},
+              "redirects": {"type": "array", "items": _string(2048, 1), "minItems": 1, "maxItems": 32},
+              "source_receipt": _artifact_receipt()},
              ["url", "content_type", "content", "untrusted_source", "authority", "redirects", "source_receipt"])),
 }
 

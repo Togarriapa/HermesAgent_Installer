@@ -294,6 +294,41 @@ class AuthorityClient:
             raise AuthorityDenied("channel.delivery", "root returned a stale or mismatched channel event")
         return delivery
 
+    def take_native_channel_context(
+        self, producer_context_delivery_handle: str, *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> Any | None:
+        """Resolve one current channel-context registration for this peer.
+
+        The wire exposes only the source handle, delivery handle, digest, size,
+        and expiry. The signed HostContext remains in the root store.
+        """
+        from .native_channel_context import NativeChannelContextDelivery
+
+        if (not isinstance(producer_context_delivery_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", producer_context_delivery_handle)):
+            raise AuthorityDenied("native.channel.context", "context delivery handle is malformed")
+        result = self._rpc("native.channel.context.take", {
+            "schema": 1,
+            "producer_context_delivery_handle": producer_context_delivery_handle,
+        }, timeout=min(10.0, self.timeout), cancelled=cancelled)
+        if result is None:
+            return None
+        fields = {
+            "schema", "source_receipt_handle", "producer_context_delivery_handle",
+            "payload_sha256", "payload_size_bytes", "expires_monotonic",
+        }
+        if not isinstance(result, dict) or set(result) != fields:
+            raise AuthorityDenied("native.channel.context", "authority returned unexpected context fields")
+        try:
+            delivery = NativeChannelContextDelivery(**result)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.channel.context", "authority returned malformed context delivery") from None
+        if (delivery.producer_context_delivery_handle != producer_context_delivery_handle
+                or not self.monotonic() < delivery.expires_monotonic <= self.monotonic() + 30.0):
+            raise AuthorityDenied("native.channel.context", "authority returned a stale or mismatched context")
+        return delivery
+
     def take_selected_channel_context(
         self, event: Any, *, cancelled: Callable[[], bool] | None = None,
     ) -> Any | None:
