@@ -287,6 +287,57 @@ class RootSelectedServiceStatusReceipt:
     service_generation_digest: str
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedHealthControl:
+    """Opaque root-owned control for one actual enrolled Hermes health run."""
+
+    schema: int
+    control_handle: str
+    managed_process_handle: str
+    process_id: str
+    operation_id: str
+    enrollment_id: str
+    profile_id: str
+    process_generation: str
+    service_generation_digest: str
+    bootstrap_transaction_handle: str
+    committed_enrollment_receipt_id: str
+    health_fixture_artifact_id: str
+    health_fixture_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _manager: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or self.operation_id != "hermes-agent-health-v1"
+                or any(not isinstance(getattr(self, name), str) or not getattr(self, name)
+                       for name in ("control_handle", "managed_process_handle", "process_id",
+                                    "enrollment_id", "profile_id", "process_generation",
+                                    "bootstrap_transaction_handle", "committed_enrollment_receipt_id",
+                                    "health_fixture_artifact_id"))
+                or any(not isinstance(getattr(self, name), str)
+                       or not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name))
+                       for name in ("service_generation_digest", "health_fixture_sha256"))
+                or isinstance(self.issued_monotonic, bool)
+                or not isinstance(self.issued_monotonic, (int, float))
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or self.issued_monotonic >= self.expires_monotonic
+                or self._manager is None or self._seal is None):
+            raise ValueError("root-selected health control is malformed")
+
+    def is_current(self) -> bool:
+        check = getattr(self._manager, "_health_control_current", None)
+        return bool(callable(check) and check(self, self._seal))
+
+    def __repr__(self) -> str:
+        return "RootSelectedHealthControl(<root-private>)"
+
+
 @dataclass(slots=True)
 class _Handle:
     process_id: str
@@ -876,6 +927,7 @@ class ManagedProcessEffectHandler:
                  native_loader_observation_store: Any | None = None,
                  task_input_coordinator: Any | None = None,
                  task_admission_current: Callable[[RootAdmittedTask, bytes], bool] | None = None,
+                 native_health_start_authority: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
             raise ValueError("root process custody requires an explicit profile registry")
@@ -904,6 +956,9 @@ class ManagedProcessEffectHandler:
         self._root_selected_status_receipts: dict[
             str, tuple[RootSelectedServiceStatusReceipt, RootSelectedServiceProcessReceipt, float]
         ] = {}
+        self._health_controls: dict[str, tuple[RootSelectedHealthControl, _Handle, Any, object]] = {}
+        self._health_observation_handles: dict[str, str] = {}
+        self.native_health_start_authority: Any | None = None
         self._protected_enrollment_catalog: Any | None = None
         self._private_loopback_endpoint_leases: dict[str, tuple[Any, Any, Any]] = {}
         self._lock = threading.RLock()
@@ -915,6 +970,247 @@ class ManagedProcessEffectHandler:
             self._validate_profile(profile)
         if task_input_coordinator is not None:
             self.set_task_input_coordinator(task_input_coordinator)
+        if native_health_start_authority is not None:
+            self.bind_native_health_start_authority(native_health_start_authority)
+
+    def bind_native_health_start_authority(self, authority: Any) -> None:
+        """Bind the one concrete root health admission issuer to this manager."""
+        from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+        if type(authority) is not RootNativeHealthStartAuthority:
+            raise AuthorityDenied("native.health.authority", "concrete root health start authority is required")
+        with self._lock:
+            if self.native_health_start_authority is not None and self.native_health_start_authority is not authority:
+                raise AuthorityDenied("native.health.authority", "root health authority cannot be replaced")
+            if authority.managed_process_custody is not self:
+                raise AuthorityDenied("native.health.authority", "root health authority is bound to another manager")
+            self.native_health_start_authority = authority
+
+    def start_selected_health_operation(self, verified_effect: Any,
+                                        admission_handle: str) -> RootSelectedHealthControl:
+        """Launch the one committed native-health recipe under sealed root authority.
+
+        This path accepts no worker HostContext, EffectAuthorization, peer PID,
+        argv, or filesystem path.  The sealed health authority supplies the
+        current committed receipt, selected profile/recipe, fixture, source
+        closure and controller lease; this manager independently revalidates
+        those objects before launching the immutable profile recipe.
+        """
+        from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+        authority = self.native_health_start_authority
+        if (authority is None or type(verified_effect) is not VerifiedRootSelectedServiceEffect
+                or not isinstance(admission_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", admission_handle)):
+            raise AuthorityDenied("native.health.authority", "root health start authority is unavailable")
+        from hermes_installer.authority.native_health_observer import (
+            RootNativeHealthStartAdmission,
+        )
+        admission = authority.resolve_current_health_admission(admission_handle)
+        if (type(admission) is not RootNativeHealthStartAdmission
+                or admission.admission_handle != admission_handle
+                or authority.verify_consumed_start_effect(verified_effect, admission) is not True
+                or not authority.is_current(admission)):
+            raise AuthorityDenied("native.health.admission", "consumed health start proof is stale")
+        profile = admission._service_profile
+        operation = admission._process_operation
+        controller = admission._controller_lease
+        if (type(profile) is not ManagedProfileCustody
+                or self.profiles.get(profile.profile_id) is not profile
+                or profile.profile_id != admission.profile_id
+                or profile.enrollment_id != admission.enrollment_id
+                or profile.generation != admission.process_generation
+                or profile.owner_uid != verified_effect.selected_subject_uid
+                or profile.owner_gid != verified_effect.selected_subject_gid
+                or profile.service_generation_digest != admission.service_generation_digest
+                or operation.operation_id != admission.operation_id
+                or operation.target != verified_effect.target
+                or verified_effect.profile_id != profile.profile_id
+                or verified_effect.generation != profile.generation
+                or verified_effect.enrollment_id != profile.enrollment_id
+                or verified_effect.service_generation_digest != admission.service_generation_digest
+                or verified_effect.role != "health" or verified_effect.action != "start"
+                or verified_effect.admission_kind != "health"
+                or verified_effect.operation != "process.start"
+                or verified_effect.capability != "hermes-profile-invoke"
+                or verified_effect.selected_namespace_identity != getattr(
+                    admission, "_namespace_identity", verified_effect.selected_namespace_identity)
+                or verified_effect.request_sha256 != hashlib.sha256(
+                    json.dumps({"schema": 1, "enrollment_id": profile.enrollment_id,
+                                "generation": profile.generation,
+                                "operation_id": admission.operation_id, "parameters": {}},
+                               sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True).encode("ascii")).hexdigest()
+                or verified_effect.recipe_sha256 != admission.recipe_sha256
+                or verified_effect.source_closure_sha256 != admission._source_binding.source_closure_sha256
+                or verified_effect.controller_proof_handle != admission.controller_binding_handle
+                or getattr(controller, "proof_sha256", None) != verified_effect.controller_proof_sha256
+                or not controller.is_current()):
+            raise AuthorityDenied("native.health.binding", "health start proof differs from the selected profile")
+        operation_recipe = (profile.operation_recipes or {}).get(admission.operation_id)
+        if (not isinstance(operation_recipe, Mapping)
+                or operation_recipe.get("target") not in (None, verified_effect.target)
+                or hashlib.sha256(json.dumps(dict(operation_recipe), sort_keys=True,
+                    separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
+                    != admission.recipe_sha256
+                or type(operation_recipe.get("max_lifetime_seconds")) is not int
+                or not 0 < operation_recipe["max_lifetime_seconds"] <= profile.max_lifetime_seconds):
+            raise AuthorityDenied("native.health.recipe", "fixed health recipe has no bounded lifetime")
+        now = self.monotonic()
+        process_deadline = now + min(float(operation_recipe["max_lifetime_seconds"]),
+                                     float(profile.max_lifetime_seconds))
+        with self._lock:
+            if (profile.profile_id in self._starting
+                    or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
+                raise AuthorityDenied("process.generation", "health profile already has a managed process")
+            self._starting.add(profile.profile_id)
+        parent_pidfd = None
+        process_id = None
+        try:
+            parent_pidfd = os.pidfd_open(os.getpid(), 0)
+            if _pidfd_exited(parent_pidfd):
+                raise AuthorityDenied("native.health.parent", "custody process lifetime anchor is not live")
+            self._verify_root_controller_identity(controller, verified_effect)
+            payload = json.dumps({"schema": 1, "enrollment_id": profile.enrollment_id,
+                                  "generation": profile.generation,
+                                  "operation_id": admission.operation_id, "parameters": {}},
+                                 sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=True).encode("ascii")
+
+            def launch_current() -> bool:
+                return (authority.is_current(admission)
+                        and authority.verify_consumed_start_effect(verified_effect, admission) is True
+                        and controller.is_current() and verified_effect.is_current()
+                        and self.profiles.get(profile.profile_id) is profile)
+
+            # Internal root recipe execution shares only the lower-level
+            # selected-recipe resolver.  It deliberately has no worker grant
+            # or peer identity and is admitted by this dedicated health proof.
+            response = self.start_selected_operation(
+                profile, None, None, payload, timeout=min(30.0, max(.1, admission.expires_monotonic - now)),
+                peer_pid=None, peer_pidfd=None,
+                cancelled=lambda: (not authority.is_current(admission)
+                                   or not controller.is_current()),
+                _start_guard=launch_current, _root_selected_effect=verified_effect,
+                _root_selected_health_admission=admission,
+                _root_selected_lifecycle_deadline=process_deadline,
+                _daemon_liveness_pidfd=parent_pidfd,
+            )
+            body = response.get("body") if isinstance(response, Mapping) else None
+            decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
+            process_id = decoded.get("process_id") if isinstance(decoded, dict) else None
+            if not isinstance(process_id, str):
+                raise AuthorityDenied("native.health.launch", "manager did not retain a health process")
+            with self._lock:
+                handle = self._handles.get(process_id)
+            if (handle is None or handle.stopped or handle.profile is not profile
+                    or handle.profile.generation != admission.process_generation
+                    or not authority.is_current(admission)
+                    or not controller.is_current()):
+                raise AuthorityDenied("native.health.identity", "started health process is no longer current")
+            lease = self.resolve_owned_process_handle(handle)
+            if lease is None:
+                raise AuthorityDenied("native.health.identity", "started health PIDFD identity is unavailable")
+            try:
+                # Verify the selected executable, user, cgroup and namespaces
+                # against the manager's live retained child PIDFD before minting
+                # a control object.
+                if (lease.process_id != process_id or lease.profile_id != profile.profile_id
+                        or lease.generation != profile.generation or lease.uid != profile.owner_uid
+                        or lease.gid != profile.owner_gid or _pidfd_exited(lease.pidfd)):
+                    raise AuthorityDenied("native.health.identity", "health child identity changed")
+                issued = self.monotonic()
+                control = RootSelectedHealthControl(
+                    1, secrets.token_urlsafe(32), secrets.token_urlsafe(32), process_id,
+                    admission.operation_id, admission.enrollment_id, admission.profile_id,
+                    admission.process_generation, admission.service_generation_digest,
+                    admission.bootstrap_transaction_handle, admission.committed_enrollment_receipt_id,
+                    admission.health_fixture_artifact_id, admission.health_fixture_sha256,
+                    issued, handle.expires, self, object(),
+                )
+                with self._lock:
+                    self._health_controls[control.control_handle] = (control, handle, admission,
+                                                                      control._seal)
+                # The observer must bind actual live PIDFD and loaded closure
+                # before the health fixture is delivered by its authority.
+                observer = authority.health_observer
+                observation_handle = observer.begin_selected_health(control.control_handle)
+                if (not isinstance(observation_handle, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", observation_handle)):
+                    raise AuthorityDenied("native.health.observer", "health observer returned no retained run handle")
+                with self._lock:
+                    self._health_observation_handles[control.control_handle] = observation_handle
+                return control
+            finally:
+                lease.close()
+        except BaseException:
+            if process_id is not None:
+                with self._lock:
+                    handle = self._handles.get(process_id)
+                    for key, value in tuple(self._health_controls.items()):
+                        if value[1] is handle:
+                            self._health_controls.pop(key, None)
+                            observation = self._health_observation_handles.pop(key, None)
+                            if observation is not None:
+                                try:
+                                    self.native_health_start_authority.health_observer.cancel_selected_health(observation)
+                                except Exception:
+                                    pass
+                if handle is not None and not handle.stopped:
+                    self._stop(handle, timeout=5.0)
+            raise
+        finally:
+            if parent_pidfd is not None:
+                os.close(parent_pidfd)
+            with self._lock:
+                self._starting.discard(profile.profile_id)
+
+    def _health_control_current(self, control: RootSelectedHealthControl,
+                                seal: object) -> bool:
+        with self._lock:
+            retained = self._health_controls.get(control.control_handle)
+        if (retained is None or retained[0] is not control or retained[3] is not seal
+                or retained[1].stopped or control._seal is not seal
+                or self.monotonic() >= control.expires_monotonic):
+            return False
+        handle = retained[1]
+        if (self._handles.get(handle.process_id) is not handle
+                or self.profiles.get(handle.profile.profile_id) is not handle.profile
+                or handle.profile.generation != control.process_generation):
+            return False
+        lease = self.resolve_owned_process_handle(handle)
+        if lease is None:
+            return False
+        try:
+            return bool(lease.process_id == control.process_id
+                        and lease.profile_id == control.profile_id
+                        and lease.generation == control.process_generation
+                        and lease.uid == handle.profile.owner_uid
+                        and lease.gid == handle.profile.owner_gid
+                        and not _pidfd_exited(lease.pidfd))
+        finally:
+            lease.close()
+
+    def resolve_selected_health_control(self, control_handle: str) -> RootSelectedHealthControl:
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if retained is None or not retained[0].is_current():
+            raise AuthorityDenied("native.health.control", "selected health control is stale")
+        return retained[0]
+
+    def resolve_selected_health_process(self, control_handle: str) -> ManagedProcessIdentityLease:
+        """Return an owned duplicate PIDFD for the exact health-control child."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if retained is None or retained[0] is not control:
+            raise AuthorityDenied("native.health.control", "selected health process handle is stale")
+        lease = self.resolve_owned_process_handle(retained[1])
+        if (lease is None or lease.process_id != control.process_id
+                or lease.profile_id != control.profile_id
+                or lease.generation != control.process_generation):
+            if lease is not None:
+                lease.close()
+            raise AuthorityDenied("native.health.identity", "selected health PIDFD identity is unavailable")
+        return lease
 
     def set_task_input_coordinator(self, coordinator: Any) -> None:
         """Install the concrete root-native pre-stdin coordinator once."""
@@ -1891,6 +2187,7 @@ class ManagedProcessEffectHandler:
                                  _start_guard: Callable[[], bool] | None = None,
                                  _task_admission: RootAdmittedTask | None = None,
                                  _root_selected_effect: Any | None = None,
+                                 _root_selected_health_admission: Any | None = None,
                                  _root_selected_lifecycle_deadline: float | None = None,
                                  _xauthority_mount_source: Path | None = None,
                                  _daemon_liveness_pidfd: int | None = None,
@@ -1907,6 +2204,19 @@ class ManagedProcessEffectHandler:
             if (type(_root_selected_effect) is not VerifiedRootSelectedServiceEffect
                     or not _root_selected_effect.is_current()):
                 raise AuthorityDenied("root-selected.authority", "sealed current root service effect is required")
+        if _root_selected_health_admission is not None:
+            from hermes_installer.authority.native_health_observer import RootNativeHealthStartAdmission
+            authority = self.native_health_start_authority
+            if (type(_root_selected_health_admission) is not RootNativeHealthStartAdmission
+                    or authority is None
+                    or not authority.is_current(_root_selected_health_admission)
+                    or context is not None or authorization is not None
+                    or peer_pid is not None or peer_pidfd is not None
+                    or _daemon_liveness_pidfd is None
+                    or _root_selected_effect is None
+                    or _root_selected_effect.role != "health"
+                    or _root_selected_effect.action != "start"):
+                raise AuthorityDenied("native.health.admission", "current root health admission is required")
         request = self._json(payload)
         if (_root_selected_effect is not None
                 and _root_selected_effect.role in {
@@ -2015,6 +2325,29 @@ class ManagedProcessEffectHandler:
                 if _xauthority_mount_source is None:
                     raise AuthorityDenied("root-selected.mount", "selected display lacks its fixed role mount")
                 environment["XAUTHORITY"] = "/run/hermes-installer/display/Xauthority"
+            elif _root_selected_health_admission is not None:
+                from hermes_installer.authority.native_health_observer import RootNativeHealthStartAdmission
+                admission = _root_selected_health_admission
+                authority = self.native_health_start_authority
+                operation = admission._process_operation
+                if (type(admission) is not RootNativeHealthStartAdmission
+                        or authority is None or not authority.is_current(admission)
+                        or not authority.verify_consumed_start_effect(_root_selected_effect, admission)
+                        or self.profiles.get(profile.profile_id) is not profile
+                        or profile is not admission._service_profile
+                        or profile.profile_id != admission.profile_id
+                        or profile.enrollment_id != admission.enrollment_id
+                        or profile.generation != admission.process_generation
+                        or profile.service_generation_digest != admission.service_generation_digest
+                        or operation is not admission._process_operation
+                        or operation.operation_id != admission.operation_id
+                        or operation.target != _root_selected_effect.target
+                        or _root_selected_effect.operation != "process.start"
+                        or _root_selected_effect.capability != "hermes-profile-invoke"
+                        or _root_selected_effect.selected_principal_id != admission.principal_id
+                        or _root_selected_effect.selected_subject_uid != profile.owner_uid
+                        or _root_selected_effect.selected_subject_gid != profile.owner_gid):
+                    raise AuthorityDenied("native.health.binding", "health effect differs from the current selected recipe")
             elif (_root_selected_effect.role not in {
                     "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
                     or _root_selected_effect.admission_kind != "memory"
@@ -2487,7 +2820,7 @@ class ManagedProcessEffectHandler:
             if (pid <= 0 or pidfd < 0 or self._pidfd_target(pidfd) != pid
                     or _pidfd_exited(pidfd) or not proof.is_current()
                     or proof.proof_handle != effect.controller_proof_handle
-                    or (effect.admission_kind != "memory"
+                    or (effect.admission_kind not in {"memory", "health"}
                         and proof.startup_authorization_handle != effect.admission_handle)
                     or proof.proof_sha256 != effect.controller_proof_sha256):
                 raise ValueError("controller lease stale")
@@ -3441,10 +3774,14 @@ class ManagedProcessEffectHandler:
         else:
             memory_root = root_selected_effect.role in {
                 "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+            health_root = root_selected_effect.role == "health"
             if (root_selected_effect.action != "start"
                     or (memory_root and (context is not None or authorization is not None
                                          or lease_expires_monotonic is None))
-                    or (not memory_root and (context is None or authorization is None))):
+                    or (health_root and (context is not None or authorization is not None
+                                         or lease_expires_monotonic is None))
+                    or (not memory_root and not health_root
+                        and (context is None or authorization is None))):
                 raise AuthorityDenied("root-selected.authority", "root-selected launch must use its typed admission")
             effect_expiry = (lease_expires_monotonic if lease_expires_monotonic is not None
                              else getattr(authorization, "monotonic_expires_at", None))
@@ -5095,6 +5432,15 @@ class ManagedProcessEffectHandler:
             handle.stopped = True
             with self._lock:
                 self._handles.pop(handle.process_id, None)
+                for control_handle, retained in tuple(self._health_controls.items()):
+                    if retained[1] is handle:
+                        self._health_controls.pop(control_handle, None)
+                        observation = self._health_observation_handles.pop(control_handle, None)
+                        if observation is not None:
+                            try:
+                                self.native_health_start_authority.health_observer.cancel_selected_health(observation)
+                            except Exception:
+                                pass
             for stream in (handle.launcher.stdin, handle.launcher.stdout, handle.launcher.stderr):
                 if stream:
                     stream.close()
