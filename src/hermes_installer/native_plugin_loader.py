@@ -1623,6 +1623,7 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 setattr(plugin_manager, "_hermes_installer_native_registered_adapters", registered)
             registered.add(_adapter_id)
 
+            # The selected-package finalizer owns the phase-1 progress frame.
         module.register = register
         prepared[adapter_id] = module
     # Publish atomically after every adapter and key has been validated.

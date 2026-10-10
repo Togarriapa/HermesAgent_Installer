@@ -83,17 +83,22 @@ class RootNativeSourceDefinitionRegistry:
     """Reads only exact current module receipts from a selected installation.
 
     ``receipt_resolver`` is a root assembly dependency. It must resolve a
-    previously held RootReleaseModuleReceipt by artifact ID; arbitrary paths,
-    bytes, and caller-created receipt-shaped objects are rejected.
+    previously held RootPreparedReleaseMemberReceipt by artifact ID; arbitrary
+    paths, bytes, and caller-created receipt-shaped objects are rejected.
+    Worker modules are release members, not root-actor imports, so they must
+    not be represented by RootReleaseModuleReceipt.
     """
 
-    def __init__(self, installation_binding: Any, receipt_provider: Any,
+    def __init__(self, installation_binding: Any, worker_receipt_provider: Any,
+                 definition_receipt_provider: Any,
                  *, monotonic=time.monotonic, _seal: object | None = None):
-        if (installation_binding is None or not callable(receipt_provider)
+        if (installation_binding is None or not callable(worker_receipt_provider)
+                or not callable(definition_receipt_provider)
                 or not callable(monotonic) or _seal is not _REGISTRY_SEAL):
             raise TypeError("root source definition registry dependencies are invalid")
         self._binding = installation_binding
-        self._receipt_provider = receipt_provider
+        self._worker_receipt_provider = worker_receipt_provider
+        self._definition_receipt_provider = definition_receipt_provider
         self._monotonic = monotonic
         self._token = object()
         self._bundles: dict[str, RootPreparedSourceDefinitionBundle] = {}
@@ -102,18 +107,24 @@ class RootNativeSourceDefinitionRegistry:
     def from_selected_installation(cls, binding: Any, *, monotonic=time.monotonic):
         from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
 
-        provider = getattr(binding, "resolve_prepared_native_source_module_receipts", None)
-        if type(binding) is not RootSelectedInstallationBinding or not callable(provider):
+        worker_provider = getattr(binding, "resolve_prepared_worker_role_module_receipts", None)
+        definition_provider = getattr(binding, "resolve_prepared_native_source_definition_module_receipt", None)
+        if (type(binding) is not RootSelectedInstallationBinding
+                or not callable(worker_provider) or not callable(definition_provider)):
             raise NativeSourceDefinitionUnavailable(
                 "selected installation cannot resolve the fixed native source module set",
             )
         # Calling the exact guarded resolver here proves that this binding is
         # still attached to its live selected setup session.
-        provider()
-        return cls(binding, provider, monotonic=monotonic, _seal=_REGISTRY_SEAL)
+        worker_provider()
+        definition_provider()
+        return cls(binding, worker_provider, definition_provider,
+                   monotonic=monotonic, _seal=_REGISTRY_SEAL)
 
     def prepare_for_policy(self, selection: Any) -> RootPreparedSourceDefinitionBundle:
-        from hermes_installer.authority.bootstrap_runtime_factory import RootReleaseModuleReceipt
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            RootPreparedReleaseMemberReceipt, RootReleaseModuleReceipt,
+        )
         selection_handle = getattr(selection, "selection_handle", None)
         selection_digest = getattr(selection, "selection_sha256", None)
         if (not isinstance(selection_handle, str) or not selection_handle
@@ -122,18 +133,25 @@ class RootNativeSourceDefinitionRegistry:
             raise NativeSourceDefinitionUnavailable("native policy selection is malformed")
 
         try:
-            receipts = self._receipt_provider()
+            receipts = self._worker_receipt_provider()
         except Exception:
             receipts = ()
-        if not isinstance(receipts, tuple) or any(type(item) is not RootReleaseModuleReceipt for item in receipts):
+        try:
+            definition_receipt = self._definition_receipt_provider()
+        except Exception:
+            definition_receipt = None
+        if not isinstance(receipts, tuple) or any(
+                type(item) is not RootPreparedReleaseMemberReceipt for item in receipts):
             raise NativeSourceDefinitionUnavailable("release resolver returned non-held module evidence")
+        if len({item.relative_path for item in receipts}) != len(receipts):
+            raise NativeSourceDefinitionUnavailable("release resolver returned duplicate worker module receipts")
         by_path = {item.relative_path: item for item in receipts}
         missing: list[str] = []
-        definition_receipt = by_path.get("hermes_installer/authority/native_source_definitions.py")
-        if definition_receipt is None:
+        if (type(definition_receipt) is not RootReleaseModuleReceipt
+                or definition_receipt.relative_path != "hermes_installer/authority/native_source_definitions.py"):
             missing.append("hermes-installer.native-source-definitions.v1")
         elif not self._check_receipt(definition_receipt, "hermes_installer/authority/native_source_definitions.py"):
-            raise NativeSourceDefinitionUnavailable("source definition module receipt is stale or mismatched")
+            raise NativeSourceDefinitionUnavailable("source definition release-member receipt is stale or mismatched")
         role_receipts = []
         for declaration in _ROLE_DECLARATIONS:
             receipt = by_path.get(declaration.closure_member_path)
@@ -142,7 +160,7 @@ class RootNativeSourceDefinitionRegistry:
                 continue
             if not self._check_receipt(receipt, declaration.closure_member_path,
                                        declaration.module_sha256):
-                raise NativeSourceDefinitionUnavailable("native source role module differs from reviewed bytes")
+                raise NativeSourceDefinitionUnavailable("native source role release member differs from reviewed bytes")
             role_receipts.append(receipt)
         # The source files deliberately do not assign action or schema IDs.
         # Exact selected action/schema receipts are a separate preparation join.
