@@ -802,3 +802,10 @@ The installer SHALL preserve the original selected lock while deriving hashed re
 #### Scenario: Export omits source project
 - **WHEN** the hash-constrained dependency install succeeds using no-emit-project
 - **THEN** no application runtime is qualified until its exact source-built project wheel and complete installed origin/probe receipts also pass
+
+### Requirement: Offline probe interpreter provenance v148
+The installer SHALL distinguish the container interpreter used in dependency recipe experiments from genuine selected PM runtime observations.
+
+#### Scenario: Container version matches selected PM version
+- **WHEN** the fixture interpreter reports Python3.14.7
+- **THEN** no PM origin or actual setup environment receipt is inferred from that version match

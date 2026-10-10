@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T147.1",
+    "SK-T147.2"
+  ],
+  "correction": "The detailed empirical uv owner report identifies Python as python:3.14.7-slim-bookworm container interpreter, Linux ARM64/network none; the v147 evidence summary phrase official selected PM CPython3.14.7 overstates interpreter provenance. Actual uv executable is the catalog-pinned official PM source bytes; no actual RootPMRuntimeReceipt or installed setup environment was observed by this fixture.",
+  "actual_marker_environment": {
+    "python_full_version": "3.14.7",
+    "python_version": "3.14",
+    "implementation_name": "cpython",
+    "sys_platform": "linux",
+    "platform_system": "Linux",
+    "platform_machine": "aarch64",
+    "os_name": "posix",
+    "extra": ""
+  },
+  "verified_wheels": {
+    "aiofiles==25.1.0": "abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695",
+    "rpds-py==2026.9.1": "07deecbfce94c78473018bc7d10b337cc651d12df87a1eb2cb3e4024bc9c33d0"
+  },
+  "unchanged": "v147 approved finite lock-derived dependency stage and actual unchanged lock/export/hash comparison remain supported by isolated fixture. Production requires genuine selected PM runtime/toolchain/current source/package/license/setup receipts and independently observed installed project wheel/environment probe. Container tag/version/import success cannot mint those receipts. Two of103 wheels only; no full application qualification.",
+  "tasks": [
+    {
+      "id": "SK-T148.1",
+      "owner": "uv probe/application build",
+      "work": "Record exact container interpreter provenance versus official pinned uv bytes in nonreceipt empirical evidence; production rechecks actual PM toolchain/current closure and full project/environment probe."
+    }
+  ],
+  "acceptance": "Evidence correction only; all original AC and baseline unchanged."
+}

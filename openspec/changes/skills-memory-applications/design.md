@@ -124,3 +124,5 @@ Memory process control re-admission v145: `plans/amendments/2026-10-10-memory-pr
 Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
 
 Lock-derived offline dependency install v147: `plans/amendments/2026-10-10-lock-export-offline-wheel-install-v147.md`; official unchanged-lock export + hash-constrained offline pip sync, exact active package receipt closure, separate actual project wheel/backend and full env probe. All AC open.
+
+Offline probe provenance v148: `plans/amendments/2026-10-10-offline-probe-environment-clarification-v148.md`; container Python is fixture evidence, not observed PM receipt. Exact official uv and unchanged lock tests distinct production toolchain proof.
