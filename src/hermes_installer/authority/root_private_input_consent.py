@@ -240,6 +240,12 @@ class RootPrivateInputConsentRegistry:
         return handle
 
     def selection_handle_for_current_profile(self, binding: PrincipalBinding) -> str | None:
+        if type(binding) is not PrincipalBinding:
+            raise AuthorityDenied("consent.profile", "root selected principal binding is required")
+        with self._lock:
+            existing = self._records.get(binding.profile_id)
+        if existing is None or existing.get("state") != "enabled":
+            return None
         current = self._current_binding(binding)
         with self._lock:
             row = self._records.get(current.profile_id)
