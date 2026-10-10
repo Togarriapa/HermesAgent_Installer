@@ -2817,5 +2817,13 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "native_worker_views_v192": {
+    "amendment": "plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md",
+    "wire_contract": "planning/native-worker-selected-view-paths-v192.json",
+    "order": "HI-T192.1 \u2192 VD-T192.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

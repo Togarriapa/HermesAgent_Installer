@@ -336,3 +336,6 @@ Same-worker namespace handshake v190: `plans/amendments/2026-10-10-same-worker-n
 
 
 Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md` replaces unsafe setup-session aliasing with independently current daemon commit/source proof, actual fixed source run/events and one-use authenticated setup health intent. Only consumer-completed same-generation journal witness may enable; ACK is insufficient. All acceptance/source pins remain OPEN.
+
+
+Selected view paths v192: `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md` separates host source executable custody from fixed worker argv/path, retains byte-identical full PM venv/base closure and actual native output/package/helper views, and requires postmount inode/hash proof before release. No caller paths or broad host exposure; pins/acceptance remain OPEN.

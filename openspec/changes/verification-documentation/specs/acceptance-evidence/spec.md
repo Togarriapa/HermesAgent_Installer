@@ -843,3 +843,15 @@ The installer SHALL enforce the independent daemon commit/source proof and fixed
 #### Scenario: Transport or copied setup proof only
 - **WHEN** only ACK, copied DTO, wrong generation/source, stale intent or incomplete observer/terminal evidence exists
 - **THEN** functional enablement SHALL remain pending with one-use reconciliation and owned cleanup
+
+
+### Requirement: Exact native worker selected views v192
+The manager SHALL separate host source identity from worker-visible executable/argv and verify complete selected mounted views under `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`.
+
+#### Scenario: Protected source hidden in worker namespace
+- **WHEN** exact selected immutable venv/base/package/runtime views are required for fixed worker execution
+- **THEN** only private source-derived mounts and actual inode/hash/mount observation MAY supply worker paths
+
+#### Scenario: View not proven
+- **WHEN** source dependency, readable contract, mount, executable or package proof is absent or changed
+- **THEN** startup SHALL deny without unmasking broad host roots or caller path/environment fallback

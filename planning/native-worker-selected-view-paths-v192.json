@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md",
+  "launch_fields": [
+    "worker_executable_path",
+    "worker_argv",
+    "worker_environment",
+    "selected_view_sha256"
+  ],
+  "private_launch_field": "_selected_view",
+  "mount_row_fields": [
+    "schema",
+    "view_kind",
+    "source_root_receipt_handle",
+    "source_host_root_path",
+    "source_root_device",
+    "source_root_inode",
+    "source_closure_sha256",
+    "worker_mount_path",
+    "read_only",
+    "noexec"
+  ],
+  "view_kinds": [
+    "pm-venv",
+    "pm-base",
+    "native-runtime-output",
+    "native-package",
+    "gate-helper",
+    "gate-interpreter-runtime"
+  ],
+  "fixed_venv_alias": "/hermes/.native/pm",
+  "fixed_output_alias": "/hermes/.native-output",
+  "tasks": [
+    "HI-T192.1",
+    "VD-T192.2"
+  ],
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "source_pins": "pending coherent committed cohort",
+  "acceptance": "AC01..AC18 OPEN"
+}
