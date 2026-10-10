@@ -389,5 +389,41 @@
     }
   },
   "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness.",
-  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only."
+  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only.",
+  "capture_enablement_consent": {
+    "schema": 1,
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK01"
+    ],
+    "owner_module": "hermes_installer.authority.memory_capture_consent",
+    "type": "RootMemoryCaptureConsent",
+    "API": "RootMemoryCaptureConsentRegistry.from_authority_service(service,root_setup_choice_registry,memory_enrollment_catalog,root_journal)->root registry. issue_selected_capture_consent(current_explicit_choice_receipt_handle,selected_memory_binding)->opaque background_consent_handle root-local; resolve_capture_consent(handle,*,completed_turn_receipt_handle,selected_memory_binding)->RootMemoryCaptureConsent; revoke_capture_consent(handle,current_authorized_owner_request)->root revocation receipt. AuthorityService delegates these finite calls; no worker mint/authorized_bool/ambient toggle.",
+    "fields": {
+      "schema": "literal 1",
+      "receipt_handle": "opaque root registry lookup",
+      "consent_id": "root random unique ID",
+      "principal_id": "actual verified selected owner",
+      "profile_id": "actual selected private profile",
+      "namespace_id": "actual selected owner namespace",
+      "memory_owner_generation": "positive current owner epoch",
+      "service_enrollment_id": "exact selected memory service",
+      "service_generation": "opaque selected service generation",
+      "provider": "closed openviking|claude-mem|agentmemory",
+      "route_ids": "finite exact approved capture/extraction/embedding route IDs",
+      "private_recipient_ids": "finite actual private route recipients; no public/wildcard",
+      "policy_revision": "actual root selected current memory policy",
+      "choice_receipt_handle": "actual retained explicit profile-specific opt-in observation",
+      "source_selection_digest": "actual selected memory/provider/profile/route/consent policy closure digest",
+      "state": "enabled|revoked",
+      "issued_monotonic": "root float",
+      "revocation_epoch": "positive root persisted consent epoch",
+      "signature": "existing authority signed domain-separated canonical record"
+    },
+    "source": "Current root authenticated setup/owner TTY explicit choice observation binds exact selected owner/private profile/provider/capture+optional private extraction/embedding scope. Default absent/false remains disabled. Enabling capture never automatically grants extraction/embedding or account/metered permission. The choice is retained under existing root-owned journal, bound setup actor/current selected principal receipt/plan and profile selection. Not caller-owned journal state or arbitrary token.",
+    "persistence": "Root memory authority_state_root_id selection and owner0 mode0700 nofollow root journal store retains immutable consent record plus mutable revocation/current-owner index under existing transactional protection. Enablement is persistent policy preference, not a long-lived effect grant. Every turn capture resolves actual current consent/owner/service/policy and complete retained turn source closure; then issues fresh per-job BackgroundConsent/context/effect grants bounded by current source/profile/route lease. Persistent opt-in contains no stale source receipts to impersonate later events.",
+    "revocation": "Authorized selected owner/root setup revoke atomically increments revocation epoch; current lookup denies immediately; queued/inflight memory reservations and child issuance must recheck epoch before each effect and cancel/wipe payload as existing memory ledger semantics require. Receipt audit retains no transcript or secret. No retroactive erase claim for already committed backend memory without separately authorized delete.",
+    "wire": "background_consent_handle is opaque pathless preference lookup only, not SourceReceipt/HostContext/EffectAuthorization. RootMemoryCaptureCoordinator consumes only resolved current registry object plus actual completed turn receipt, never caller consent fields. Authority signature excludes signature field, domain root-memory-capture-consent-v1. Enabled object must resolve current registry state, signature alone cannot bypass revocation."
+  }
 }

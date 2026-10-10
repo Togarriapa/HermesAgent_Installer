@@ -415,3 +415,5 @@ The installer SHALL derive HTTP/audio input provenance from root-retained actual
 #### Scenario: Caller input or status used as proof
 - **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
 - **THEN** admission denies the substitution
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.
