@@ -15,6 +15,7 @@ from hermes_installer.authority.setup_policy_publication import (
     _canonical, _sha, POLICY_GENERATIONS, _choice_adoption_from_record,
     _choice_adoption_value, PolicyPublicationReceiptResolver,
     RootSetupPolicyGenerationPublisher, RootSetupPublicationReceipt, _SEAL,
+    _CHOICE_PROJECTION_FIELDS, _validate_choice_adoption_time,
 )
 
 
@@ -117,6 +118,8 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                 if self.attempts <= 2:
                     raise OSError("injected completion journal failure")
                 completed.append(value)
+            def recover_active_publication_receipt(self, value):
+                self.complete_active_publication(value)
             def release_active_policy(self, value): released.append(value)
 
         registry = Registry()
@@ -296,6 +299,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             "key_id": "selected-key-1", "signed_record_sha256": "a" * 64,
             "choice_payload_sha256": "b" * 64, "choice_epoch": 1, "revocation_epoch": 2,
             "issued_at_unix": 1000.0, "setup_deadline_unix": 1100.0,
+            "adopted_at_unix": 1050.0,
             "release_deployment_receipt_sha256": "c" * 64,
             "setup_session_handle": "d" * 64, "transaction_handle": "t" * 64,
             "plan_id": "installer-root-setup-plan-v1", "prepared_generation": "prepared-v1",
@@ -367,16 +371,54 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
 
     def test_choice_adoption_currentness_rejects_changed_signed_row_digest(self):
         adoption = _choice_adoption_from_record(self._choice_adoption_record())
+        from hermes_installer.authority.root_setup_choices import RootSetupChoiceRegistry
+        registry = object.__new__(RootSetupChoiceRegistry)
+        checked = []
+        registry.verify_published_adoption_current = lambda value: checked.append(value)
         with patch.object(PolicyPublicationReceiptResolver,
                           "resolve_current_choice_adoption", return_value=adoption):
-            self.assertIs(adoption.verify_current(), adoption)
+            self.assertIs(adoption.verify_current(registry), adoption)
+        self.assertEqual(checked, [adoption])
         changed_record = self._choice_adoption_record()
         changed_record["signed_record_sha256"] = "8" * 64
         changed = _choice_adoption_from_record(changed_record)
         with patch.object(PolicyPublicationReceiptResolver,
                           "resolve_current_choice_adoption", return_value=changed):
             with self.assertRaises(BootstrapEnrollmentPending):
-                adoption.verify_current()
+                adoption.verify_current(registry)
+
+    def test_choice_adoption_rejects_timestamp_after_original_setup_deadline(self):
+        record = self._choice_adoption_record()
+        record["adopted_at_unix"] = record["setup_deadline_unix"] + 0.001
+        with self.assertRaises(BootstrapEnrollmentError):
+            _choice_adoption_from_record(record)
+
+    def test_publisher_rejects_choice_that_expires_while_generation_is_staged(self):
+        record = self._choice_adoption_record()
+        projection_values = {key: value for key, value in record.items()
+                             if key in _CHOICE_PROJECTION_FIELDS}
+        projection = SimpleNamespace(**projection_values)
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "original setup deadline"):
+            _validate_choice_adoption_time((projection,), record["setup_deadline_unix"] + 0.001)
+
+    def test_choice_adoption_currentness_rechecks_signed_source_and_revocation_each_call(self):
+        adoption = _choice_adoption_from_record(self._choice_adoption_record())
+        from hermes_installer.authority.root_setup_choices import RootSetupChoiceRegistry
+        registry = object.__new__(RootSetupChoiceRegistry)
+        checks = []
+
+        def verify_source(value):
+            checks.append(value)
+            if len(checks) == 2:
+                raise BootstrapEnrollmentPending("signed source row was revoked or its epoch changed")
+
+        registry.verify_published_adoption_current = verify_source
+        with patch.object(PolicyPublicationReceiptResolver,
+                          "resolve_current_choice_adoption", return_value=adoption):
+            self.assertIs(adoption.verify_current(registry), adoption)
+            with self.assertRaisesRegex(BootstrapEnrollmentPending, "revoked or its epoch changed"):
+                adoption.verify_current(registry)
+        self.assertEqual(checks, [adoption, adoption])
 
     def test_current_selection_reconstructs_exact_compiler_catalog_document(self):
         compiled = {
