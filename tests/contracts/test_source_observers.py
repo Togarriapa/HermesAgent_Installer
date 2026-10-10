@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hermes_installer.authority.source_observers import (
     LiveSourceProducer,
     NativeInitialInputDelivery,
+    RootNativeExecutionSelectionRegistry,
     RootSelectedNativeExecution,
     SourceObserverEnrollment,
     SourceObserverRegistry,
@@ -142,6 +143,25 @@ class _Service:
         if not isinstance(observation, VerifiedSourceObservation):
             raise AssertionError("service received unverified source DTO")
         self.observation_registry.consume_observation_proof(observation)
+        return self._issue_fixture_receipt(observation)
+
+    def issue_selected_input_source(self, observation):
+        if not isinstance(observation, VerifiedSourceObservation):
+            raise AssertionError("service received unverified selected input DTO")
+        if not self.observation_registry.verify_current_selected_input_proof(
+                observation, observation.selected_execution):
+            raise AssertionError("selected input proof was not current before consent resolution")
+        if self.observation_registry.resolve_selected_input_execution_registry(
+                observation, observation.selected_execution) is None:
+            raise AssertionError("consent resolver could not recover the retained selection registry")
+        self.observation_registry.consume_selected_input_observation(
+            observation, observation.selected_execution)
+        if self.observation_registry.verify_current_selected_input_proof(
+                observation, observation.selected_execution):
+            raise AssertionError("selected input proof remained current after one-use consumption")
+        return self._issue_fixture_receipt(observation)
+
+    def _issue_fixture_receipt(self, observation):
         self.observations.append(observation)
         if self.fail_issuance:
             raise AuthorityDenied("source.issuer", "fixture authority issuance failed")
@@ -237,6 +257,28 @@ def _consumer_context(service, receipt, *, profile="gateway-profile", uid=2002):
 
 
 class SourceObserverContracts(unittest.TestCase):
+    def test_private_provider_route_candidates_are_finite_and_protected(self):
+        fields = dict(
+            observer_enrollment_id="observer.native.primary", source_kind="native-input",
+            origin_id="hermes.primary", profile_id="producer-profile",
+            principal_id="producer-principal", namespace_id="producer-namespace",
+            enrollment_id="producer-enrollment", generation="gen-4", producer_uid=2001,
+            producer_executable_sha256=_digest("b"), package_id="hermes-package",
+            package_sha256=_digest("a"), role_id="hermes-main", role_artifact_id="hermes-main",
+            role_sha256=_digest("b"), channel_id="chat.request",
+            capture_schema_id="schema.capture.request", source_action_id="authenticated-input",
+            target_id="provider.fixed", recipient="public-provider",
+            allowed_parent_source_kinds=[], private_provider_route_ids=["route.private.codex"],
+        )
+        selected = SourceObserverEnrollment.from_protected_record(fields)
+        self.assertEqual(selected.private_provider_route_ids, ("route.private.codex",))
+        legacy = dict(fields)
+        legacy.pop("private_provider_route_ids")
+        self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).private_provider_route_ids, ())
+        with self.assertRaises(AuthorityDenied):
+            SourceObserverEnrollment.from_protected_record(
+                {**fields, "private_provider_route_ids": ["route.private.codex", "route.private.codex"]})
+
     def setUp(self):
         self.service = _Service()
         self.enrollment = _enrollment()
@@ -262,6 +304,41 @@ class SourceObserverContracts(unittest.TestCase):
             loaded_package_proof_resolver=self.loaded_package_proof,
         )
         self.service.observation_registry = self.registry
+
+    def test_private_consent_selection_comes_from_current_root_principal_choice(self):
+        handle = "c" * 43
+        principal = SimpleNamespace(
+            uid=self.enrollment.producer_uid,
+            profile_id=self.enrollment.profile_id,
+            principal_id=self.enrollment.principal_id,
+            namespace_id=self.enrollment.namespace_id,
+        )
+
+        class _ConsentRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("consent.selection", "wrong principal")
+                return handle
+
+        self.service.private_input_consent_registry = _ConsentRegistry()
+        self.service.bindings_by_uid = {principal.uid: principal}
+        selections = object.__new__(RootNativeExecutionSelectionRegistry)
+        selections.service = self.service
+        running = SimpleNamespace(source=SimpleNamespace(
+            profile_id=principal.profile_id,
+            principal_id=principal.principal_id,
+            namespace_id=principal.namespace_id,
+        ), private_consent_selection_handle="worker-must-not-be-read")
+        self.assertEqual(
+            selections._private_consent_selection_handle(self.enrollment, running), handle)
+        self.service.bindings_by_uid = {principal.uid: SimpleNamespace(
+            uid=principal.uid, profile_id="other",
+            principal_id=principal.principal_id, namespace_id=principal.namespace_id,
+        )}
+        with self.assertRaises(AuthorityDenied):
+            selections._private_consent_selection_handle(self.enrollment, running)
         self.addCleanup(self.registry.close)
 
     def test_native_input_delivery_wire_is_bounded_and_contains_no_payload(self):
@@ -391,6 +468,9 @@ class SourceObserverContracts(unittest.TestCase):
 
     def test_selected_native_input_capture_uses_root_issued_task_target_without_hi11_pair(self):
         self.registry.target_peer_resolver = None
+        self.enrollment = replace(
+            self.enrollment, private_provider_route_ids=("provider.codex.private",))
+        self.registry.observers[self.enrollment.observer_enrollment_id] = self.enrollment
         package_generation = "package-generation-9"
         self.enrollment = replace(
             self.enrollment, native_package_generation=package_generation)
@@ -410,6 +490,7 @@ class SourceObserverContracts(unittest.TestCase):
             native_package_generation=package_generation,
             source_action_id=self.enrollment.source_action_id,
             service_generation_digest=_digest("2"), expires_monotonic=39.0,
+            private_consent_selection_handle=None,
         )
         target = SimpleNamespace(
             process_id="managed-task-process", profile_id=self.identity.profile_id,
@@ -439,9 +520,17 @@ class SourceObserverContracts(unittest.TestCase):
             selection_registry=_Selection(),
         )
         self.assertIsInstance(result, SourceReceiptHandle)
+        self.assertIs(self.service.observations[-1].selected_execution, selected)
+        self.assertEqual(self.service.observations[-1].private_provider_route_ids,
+                         ("provider.codex.private",))
+        self.assertEqual(self.service.observations[-1].private_consent_selection_handle,
+                         None)
         self.assertEqual(self.registry._pending, {})
         self.assertEqual(self.registry._capsule_bytes, len(b"exact stdin prompt"))
         self.assertIn((733, 901), self.proof_peers)
+        self.assertIs(
+            self.registry.resolve_retained_selected_input_execution(result), selected)
+        self.assertFalse(self.service._source_receipt_handles[result].recipient_ceiling)
 
         from hermes_installer.authority.native_input_observer import RootNativeInputEvent
         from hermes_installer.authority.source_observers import RootNativeInputDeliveryRegistry
