@@ -947,10 +947,17 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native policy registry is not owned by this setup session")
         return self._session._resolve_current_native_policy_registry()
 
-    def observe_native_policy_configuration(self) -> Any:
+    def observe_native_policy_configuration(
+            self, worker_recipe_candidates: tuple[Any, ...] = ()) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native policy choice is not owned by this setup session")
-        return self._session.observe_native_policy_configuration()
+        return self._session.observe_native_policy_configuration(worker_recipe_candidates)
+
+    def resolve_prepared_native_worker_recipe_candidates(
+            self, prepared_bundle: Any) -> tuple[Any, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native recipe candidates are not owned by this setup session")
+        return self._session.resolve_prepared_native_worker_recipe_candidates(prepared_bundle)
 
     def resolve_current_native_policy_configuration_choice(self, choice_handle: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -4664,7 +4671,10 @@ class RootBootstrapSession:
         self._native_policy_records_by_selection: dict[str, Any] = {}
         self._native_worker_recipe_registry: Any | None = None
         self._native_worker_service_generation_producer: Any | None = None
+        self._native_worker_runtime_materialization_registry: Any | None = None
         self._native_worker_endpoint_custodian: Any | None = None
+        self._prepared_authority_runtime_root_custodian: Any | None = None
+        self._prepared_authority_runtime_root_receipt: Any | None = None
         self._native_worker_service_identity_receipt: Any | None = None
         self._native_worker_endpoint_receipt: Any | None = None
         self._prepared_build_identity: SystemIdentityAdapter | None = None
@@ -4919,7 +4929,8 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return generation, closure_digest, compiler
 
-    def observe_native_policy_configuration(self) -> Any:
+    def observe_native_policy_configuration(
+            self, worker_recipe_candidates: tuple[Any, ...] = ()) -> Any:
         """Capture root-TTY intent for finite native component families.
 
         The choice selects source families only. The registry separately
@@ -4932,6 +4943,15 @@ class RootBootstrapSession:
                 or not prepared.provision_receipt_handle):
             raise BootstrapEnrollmentPending("native policy choice requires current empty prepared custody")
         registry = self._resolve_current_native_policy_registry()
+        from .native_worker_recipes import RootPreparedNativeWorkerRecipe
+        if (type(worker_recipe_candidates) is not tuple or len(worker_recipe_candidates) > 1
+                or any(type(item) is not RootPreparedNativeWorkerRecipe
+                       for item in worker_recipe_candidates)):
+            raise BootstrapEnrollmentPending("worker recipe candidates are not the exact bounded root receipts")
+        candidate_registry = (self.resolve_current_native_worker_recipe_registry()
+                              if worker_recipe_candidates else None)
+        for candidate in worker_recipe_candidates:
+            candidate_registry.verify_prechoice_candidate(candidate)
         if not (sys.stdin.isatty() and sys.stderr.isatty()):
             raise BootstrapEnrollmentPending("native policy configuration requires the root controlling TTY")
         from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
@@ -5023,6 +5043,19 @@ class RootBootstrapSession:
                             "owner overlay selection contains a duplicate or unknown operation")
                     selected_owner_overlay = tuple(
                         overlay_registration_ids[number - 1] for number in overlay_numbers)
+            selected_worker_recipe_handles: tuple[str, ...] = ()
+            selected_worker_recipe_digests: tuple[str, ...] = ()
+            selected_worker_recipe_records: tuple[Mapping[str, Any], ...] = ()
+            if selected_owner_overlay:
+                if len(worker_recipe_candidates) != 1:
+                    raise BootstrapEnrollmentPending(
+                        "selected owner-overlay operations require the one held AF_UNIX worker source recipe")
+                candidate = worker_recipe_candidates[0]
+                print("\nSelected worker source recipe: native-owner-overlay-worker-v1")
+                print("Role: AF_UNIX only; fixed root-owned authority listener; no TCP client or listener.")
+                selected_worker_recipe_handles = (candidate.receipt_handle,)
+                selected_worker_recipe_digests = (candidate.complete_recipe_sha256,)
+                selected_worker_recipe_records = (candidate.public_projection(),)
             now = time.monotonic()
             deadline = self._factory.session_store.current_deadline(self._handle)
             expires = min(deadline, current.expires_monotonic, now + 300.0)
@@ -5051,6 +5084,9 @@ class RootBootstrapSession:
                 selected_registration_ids=tuple(selected_registrations),
                 selected_action_binding_ids=tuple(selected_actions),
                 selected_owner_overlay_registration_ids=selected_owner_overlay,
+                selected_worker_recipe_handles=selected_worker_recipe_handles,
+                selected_worker_recipe_digests=selected_worker_recipe_digests,
+                selected_worker_recipe_records=selected_worker_recipe_records,
                 controller_binding_handle=controller_handle,
                 private_input_consent_selection_handle=None,
                 issued_monotonic=now, expires_monotonic=expires, revocation_epoch=0,
@@ -5061,6 +5097,8 @@ class RootBootstrapSession:
             records = registry.prepare_selected_policy(selection.selection_handle)
             self._native_policy_records_by_selection[selection.selection_handle] = records
             self._current_native_policy_selection_handle = selection.selection_handle
+            if selected_worker_recipe_handles:
+                candidate_registry.bind_selected_candidates(selection)
             proof = None
             return registry.resolve_selection_current(selection.selection_handle)
         except BootstrapEnrollmentPending:
@@ -7852,25 +7890,29 @@ class RootBootstrapSession:
         if set(receipts) != set(self._runtime_receipts) or any(
                 receipts.get(role) is not self._runtime_receipts[role] for role in self._runtime_receipts):
             raise BootstrapEnrollmentError("activation receipts were not minted by this live root setup session")
-        native_worker_generation = None
+        native_worker_recipe_handles: tuple[str, ...] = ()
+        native_policy_selection = None
         native_worker_generation_producer = None
         policy_handle = self._current_native_policy_selection_handle
         if policy_handle is not None:
-            selection = self.resolve_current_native_policy_selection(policy_handle)
-            selected_recipes = getattr(selection, "selected_worker_recipe_handles", ())
-            if selected_recipes:
+            native_policy_selection = self.resolve_current_native_policy_selection(policy_handle)
+            native_worker_recipe_handles = getattr(
+                native_policy_selection, "selected_worker_recipe_handles", ())
+            if native_worker_recipe_handles:
                 native_worker_generation_producer = \
                     self.resolve_current_native_worker_service_generation_producer()
-                native_worker_generation = native_worker_generation_producer.build_selected(
-                    selected_recipes, selection)
-                if native_worker_generation_producer.verify_current(native_worker_generation) \
-                        is not native_worker_generation:
-                    raise BootstrapEnrollmentPending(
-                        "native worker generation is not the exact current producer receipt")
         policy = self._factory.policy_factory.activate_runnable(
             self._authorization, self._identity.ensure(), receipts, seal=self._factory._seal,
-            native_worker_generation=native_worker_generation,
+            native_worker_recipe_handles=native_worker_recipe_handles,
+            native_policy_selection=native_policy_selection,
             native_worker_generation_producer=native_worker_generation_producer)
+        policy = self._attach_current_owner_overlay_observer_records(policy)
+        prepared_native_generation = None
+        prepared_native_materializer = None
+        if native_worker_generation_producer is not None:
+            prepared_native_generation = native_worker_generation_producer.resolve_current_selected_generation(
+                native_policy_selection.selection_handle)
+            prepared_native_materializer = self.resolve_current_native_worker_runtime_materialization_registry()
         self._runtime_receipts = dict(receipts)
         # Root policy and record construction remain captured in this trusted
         # transaction. The phase switch occurs only after verified receipts.
@@ -7882,6 +7924,15 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("root selected runtime receipts did not create a runnable generation")
         self._last_receipt = receipt
         self._refresh_authorization()
+        if prepared_native_generation is not None:
+            committed = self._transaction.verify_committed_receipt(receipt, self._authorization)
+            runtime_row = prepared_native_generation.native_worker_runtime_records[0]
+            prepared_native_materializer.mark_active_committed(
+                prepared_native_generation._runtime_materialization, committed, runtime_row["id"])
+            root_receipt = self._prepared_authority_runtime_root_receipt
+            if root_receipt is None:
+                raise BootstrapEnrollmentPending("committed native worker lacks held authority-root custody")
+            root_receipt.adopt_current_active_publication()
         return receipt
 
     def resolve_current_native_worker_recipe_registry(self) -> Any:
@@ -7907,6 +7958,25 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("retained native worker recipe issuer dependencies changed")
         return registry
 
+    def resolve_prepared_native_worker_recipe_candidates(
+            self, prepared_bundle: Any) -> tuple[Any, ...]:
+        """Issue source-only worker candidates before the signed TTY choice."""
+        self._check_live()
+        if self._current_native_policy_selection_handle is not None:
+            raise BootstrapEnrollmentPending(
+                "native worker recipe candidates must be resolved before the signed source choice")
+        registry = self.resolve_current_native_worker_recipe_registry()
+        try:
+            candidates = registry.resolve_prepared_candidates(prepared_bundle)
+            for candidate in candidates:
+                registry.verify_prechoice_candidate(candidate)
+            return candidates
+        except BootstrapEnrollmentPending:
+            raise
+        except Exception:
+            raise BootstrapEnrollmentPending(
+                "held source-only native worker recipe candidates are unavailable") from None
+
     def ensure_current_prepared_native_worker_endpoint(self) -> Any:
         """Bind the fixed no-effects endpoint before the recipe TTY choice."""
         self._check_live()
@@ -7914,10 +7984,12 @@ class RootBootstrapSession:
         from .native_worker_recipes import observe_prepared_service_identity
         binding = self.selected_installation
         prepared = self._resolve_current_prepared_enrollment()
+        authority_root = self.ensure_current_prepared_authority_runtime_root()
         if self._native_worker_endpoint_custodian is None:
             self._native_worker_endpoint_custodian = \
                 RootPreparedAuthorityEndpointCustodian.from_root_setup(
-                    binding, prepared, self._factory._release, self._factory._actor)
+                    binding, prepared, self._factory._release, self._factory._actor,
+                    prepared_authority_root_receipt=authority_root)
         custodian = self._native_worker_endpoint_custodian
         if (not isinstance(custodian, RootPreparedAuthorityEndpointCustodian)
                 or custodian.binding is not binding
@@ -7940,6 +8012,32 @@ class RootBootstrapSession:
             identity_handle, identity.profile_id)
         return self._native_worker_endpoint_receipt
 
+    def ensure_current_prepared_authority_runtime_root(self) -> Any:
+        """Retain the runtime-root owner's actual no-follow authority directory receipt."""
+        self._check_live()
+        from .runtime_root_custody import (
+            RootAuthorityRuntimeRootCustodian, RootPreparedAuthorityRootReceipt,
+        )
+        binding = self.selected_installation
+        release = self._factory._release
+        actor = self._factory._actor
+        if self._prepared_authority_runtime_root_custodian is None:
+            custodian = RootAuthorityRuntimeRootCustodian.from_root_setup(
+                binding, release, actor)
+            receipt = custodian.ensure_prepared_authority_root(binding, release, actor)
+            self._prepared_authority_runtime_root_custodian = custodian
+            self._prepared_authority_runtime_root_receipt = receipt
+        custodian = self._prepared_authority_runtime_root_custodian
+        receipt = self._prepared_authority_runtime_root_receipt
+        if (type(custodian) is not RootAuthorityRuntimeRootCustodian
+                or type(receipt) is not RootPreparedAuthorityRootReceipt
+                or custodian.binding is not binding
+                or custodian.release is not release
+                or custodian.actor is not actor):
+            raise BootstrapEnrollmentPending("prepared authority runtime root custody changed")
+        receipt.verify_current()
+        return receipt
+
     def resolve_current_native_worker_service_generation_producer(self) -> Any:
         """Resolve the exact setup-owned producer of schema-2 worker rows."""
         self._check_live()
@@ -7958,6 +8056,28 @@ class RootBootstrapSession:
                 or producer.prepared_enrollment_store is not self._transaction):
             raise BootstrapEnrollmentPending("retained native worker generation producer dependencies changed")
         return producer
+
+    def resolve_current_native_worker_runtime_materialization_registry(self) -> Any:
+        """Resolve the exact setup-owned root output-member materializer."""
+        self._check_live()
+        from .native_worker_runtime_materialization import \
+            RootPreparedNativeWorkerRuntimeMaterializationRegistry
+        recipes = self.resolve_current_native_worker_recipe_registry()
+        if self._native_worker_runtime_materialization_registry is None:
+            if self._pm_runtime_registry is None:
+                raise BootstrapEnrollmentPending("native runtime materializer lacks the current PM receipt registry")
+            self._native_worker_runtime_materialization_registry = \
+                RootPreparedNativeWorkerRuntimeMaterializationRegistry.from_root_setup(
+                    self.selected_installation, recipes, self._pm_runtime_registry,
+                    recipes.native_outputs)
+        registry = self._native_worker_runtime_materialization_registry
+        if (type(registry) is not RootPreparedNativeWorkerRuntimeMaterializationRegistry
+                or registry.binding is not self.selected_installation
+                or registry.recipe_registry is not recipes
+                or registry.runtime_receipts is not self._pm_runtime_registry
+                or registry.output_receipts is not recipes.native_outputs):
+            raise BootstrapEnrollmentPending("retained native runtime materializer dependencies changed")
+        return registry
 
     @property
     def native_worker_service_generation_producer(self) -> Any:
@@ -9575,12 +9695,36 @@ class RootBootstrapSession:
             except Exception:
                 pass
             self._native_worker_endpoint_custodian = None
+        if self._prepared_authority_runtime_root_receipt is not None:
+            root_receipt = self._prepared_authority_runtime_root_receipt
+            try:
+                root_receipt.cleanup_created_empty()
+            except Exception:
+                pass
+            root_custodian = self._prepared_authority_runtime_root_custodian
+            if root_custodian is not None:
+                try:
+                    root_custodian.close()
+                except Exception:
+                    pass
+            try:
+                root_receipt.close()
+            except Exception:
+                pass
+            self._prepared_authority_runtime_root_receipt = None
+            self._prepared_authority_runtime_root_custodian = None
         if self._native_worker_recipe_registry is not None:
             try:
                 self._native_worker_recipe_registry.close()
             except Exception:
                 pass
             self._native_worker_recipe_registry = None
+        if self._native_worker_runtime_materialization_registry is not None:
+            try:
+                self._native_worker_runtime_materialization_registry.close()
+            except Exception:
+                pass
+            self._native_worker_runtime_materialization_registry = None
         if self._native_worker_service_identity_receipt is not None:
             try:
                 self._native_worker_service_identity_receipt.close()

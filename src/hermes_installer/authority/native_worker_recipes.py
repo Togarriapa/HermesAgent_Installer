@@ -252,9 +252,11 @@ class RootPreparedUnixAuthorityEndpointObserver:
         session = binding._session
         custodian = getattr(session, "_native_worker_endpoint_custodian", None)
         if custodian is None:
+            authority_root = session.ensure_current_prepared_authority_runtime_root()
             custodian = RootPreparedAuthorityEndpointCustodian.from_root_setup(
                 binding, session._resolve_current_prepared_enrollment(),
-                session._factory._release, session._factory._actor)
+                session._factory._release, session._factory._actor,
+                prepared_authority_root_receipt=authority_root)
             session._native_worker_endpoint_custodian = custodian
         if (not isinstance(custodian, RootPreparedAuthorityEndpointCustodian)
                 or custodian.binding is not binding):
@@ -343,6 +345,8 @@ class RootSetupNativeWorkerRecipeRegistry:
         self._recipes: dict[str, RootPreparedNativeWorkerRecipe] = {}
         self._working_roots: dict[str, RootPreparedWorkingRootReceipt] = {}
         self._service_identity: RootPreparedServiceIdentityReceipt | None = None
+        self._current_selection_handle: str | None = None
+        self._current_runnable_closure: Any | None = None
 
     @classmethod
     def from_root_setup(cls, binding: Any, pm_registry: Any, runnable_roles: Any,
@@ -350,26 +354,30 @@ class RootSetupNativeWorkerRecipeRegistry:
         return cls(binding, pm_registry, runnable_roles, native_outputs, root_journal)
 
     def resolve_prepared_candidates(self, prepared_bundle: Any,
-                                    runnable_closure: Any) -> tuple[RootPreparedNativeWorkerRecipe, ...]:
+                                    runnable_closure: Any | None = None
+                                    ) -> tuple[RootPreparedNativeWorkerRecipe, ...]:
         from .bootstrap_runtime_factory import RootPreparedNativeBundle, RootSelectedRunnableRoleClosure
-        if type(prepared_bundle) is not RootPreparedNativeBundle or type(runnable_closure) is not RootSelectedRunnableRoleClosure:
-            raise NativeWorkerRecipeUnavailable("native worker recipes require the current prepared bundle and runnable-role closure")
+        if (type(prepared_bundle) is not RootPreparedNativeBundle
+                or (runnable_closure is not None
+                    and type(runnable_closure) is not RootSelectedRunnableRoleClosure)):
+            raise NativeWorkerRecipeUnavailable("native worker recipe candidates require the exact prepared bundle")
         session = self.binding._session
         session._check_live()
         current_bundle = self.binding.resolve_current_prepared_native_bundle(prepared_bundle)
-        current_roles = self.runnable_roles.verify_current(runnable_closure)
+        current_roles = (self.runnable_roles.verify_current(runnable_closure)
+                         if runnable_closure is not None else None)
+        self._current_selection_handle = None
+        self._current_runnable_closure = None
         prepared = session._resolve_current_prepared_enrollment()
-        policy_handle = getattr(session, "_current_native_policy_selection_handle", None)
-        if not isinstance(policy_handle, str):
-            raise NativeWorkerRecipeUnavailable("current native policy TTY selection is unavailable")
-        policy_selection = self.binding.resolve_current_native_policy_selection(policy_handle)
+        self._current_runnable_closure = current_roles
         if session._native_worker_endpoint_receipt is None:
             raise NativeWorkerRecipeUnavailable(
                 "root setup did not prepare the no-effects listener before signing the native source choice")
         if (current_bundle is not prepared_bundle
-                or current_roles.setup_session_id != prepared_bundle.setup_session_id
-                or current_roles.transaction_handle != prepared_bundle.transaction_handle
-                or current_roles.prepared_generation_id != prepared_bundle.prepared_generation_id
+                or (current_roles is not None and (
+                    current_roles.setup_session_id != prepared_bundle.setup_session_id
+                    or current_roles.transaction_handle != prepared_bundle.transaction_handle
+                    or current_roles.prepared_generation_id != prepared_bundle.prepared_generation_id))
                 or prepared_bundle.prepared_generation_id != prepared.generation_id
                 or prepared_bundle.prepared_generation_digest != prepared.generation_digest):
             raise NativeWorkerRecipeUnavailable("prepared worker inputs do not share the current setup generation")
@@ -414,16 +422,15 @@ class RootSetupNativeWorkerRecipeRegistry:
         if any(not isinstance(handle, str) or not handle for handle in source_handles):
             endpoint.close()
             raise NativeWorkerRecipeUnavailable("held worker recipe has an incomplete source receipt closure")
-        expires = min(
-            prepared.expires_monotonic,
-            current_roles.expires_monotonic,
-            endpoint.expires_monotonic,
-            time.monotonic() + _MAX_LEASE,
-        )
+        expiry_inputs = [prepared.expires_monotonic, endpoint.expires_monotonic,
+                         time.monotonic() + _MAX_LEASE]
+        if current_roles is not None:
+            expiry_inputs.append(current_roles.expires_monotonic)
+        expires = min(expiry_inputs)
         if expires <= time.monotonic():
             endpoint.close()
             raise NativeWorkerRecipeUnavailable("prepared worker recipe source lease expired")
-        service_generation = policy_selection.service_generation
+        service_generation = prepared.generation_id
         resource_profile_id = session.resolve_selected_resource_profile(
             prepared_bundle.resource_profile_selection_receipt_handle).profile_id
         pm = self.pm_registry.resolve_runtime_projection(
@@ -438,8 +445,6 @@ class RootSetupNativeWorkerRecipeRegistry:
                 "bindings": list(start_recipe.environment_binding_names),
                 "network": "af-unix-only",
             })
-            assembly = self.binding.resolve_current_native_bootstrap_assembly_for_bundle(prepared_bundle)
-            definitions = self.binding.resolve_native_assembly_definitions(assembly.definitions_handle)
             # Use the start adapter's exact source-owned member IDs. Do not
             # infer entrypoint or boundary roles from filenames or manifests.
             from .bootstrap_runtime_factory import RootPreparedReleaseMemberReceipt
@@ -464,6 +469,13 @@ class RootSetupNativeWorkerRecipeRegistry:
                 boundary_path, source_by_path[boundary_path].sha256)
             entrypoint_receipt.read_current()
             boundary_receipt.read_current()
+            definition_rows = [
+                {"artifact_id": receipt.artifact_id, "relative_path": receipt.relative_path,
+                 "sha256": receipt.sha256, "size_bytes": receipt.size_bytes,
+                 "receipt_handle": receipt.source_receipt_handle}
+                for receipt in (entrypoint_receipt, boundary_receipt)
+            ]
+            definitions_sha256 = _sha(sorted(definition_rows, key=lambda row: row["relative_path"]))
             input_source = {
                 "source_recipe_sha256": start_recipe.recipe_sha256,
                 "definition_member_sha256": definition.sha256,
@@ -480,7 +492,7 @@ class RootSetupNativeWorkerRecipeRegistry:
                 "entrypoint_source": [entrypoint_receipt.receipt_handle, entrypoint_receipt.sha256],
                 "boundary_source": [boundary_receipt.receipt_handle, boundary_receipt.sha256],
                 "pm_runtime_sha256": pm.base_closure_sha256,
-                "source_role_definition_closure_sha256": definitions.definitions_sha256,
+                "source_role_definition_closure_sha256": definitions_sha256,
                 "argv_token_recipe_sha256": argv_recipe_digest,
                 "sanitized_environment_recipe_sha256": environment_recipe_digest,
             }
@@ -513,7 +525,7 @@ class RootSetupNativeWorkerRecipeRegistry:
                 executable_sha256=pm.executable_member.sha256,
                 pm_runtime_receipt_handle=pm.selection.receipt_handle,
                 pm_base_closure_sha256=pm.base_closure_sha256,
-                source_role_definition_closure_sha256=definitions.definitions_sha256,
+                source_role_definition_closure_sha256=definitions_sha256,
                 native_entrypoint_source_receipt_handle=entrypoint_receipt.receipt_handle,
                 native_entrypoint_source_sha256=entrypoint_receipt.sha256,
                 native_boundary_source_receipt_handle=boundary_receipt.receipt_handle,
@@ -522,7 +534,7 @@ class RootSetupNativeWorkerRecipeRegistry:
                 argv_token_recipe_sha256=argv_recipe_digest,
                 sanitized_environment_recipe_sha256=environment_recipe_digest,
                 working_root_receipt_handle=work_root.receipt_handle,
-                controller_binding_handle=assembly.selection_handle,
+                controller_binding_handle=prepared_bundle.materialization_receipt_handle,
                 complete_recipe_sha256=_sha(input_source),
                 issued_monotonic=now, expires_monotonic=expires,
                 _issuer=self._issuer, _start_recipe=start_recipe,
@@ -550,14 +562,28 @@ class RootSetupNativeWorkerRecipeRegistry:
         verify_prepared_service_identity(self.binding, recipe._identity)
         self._verify_work_root(recipe._working_root, recipe._identity)
         policy_handle = getattr(self.binding._session, "_current_native_policy_selection_handle", None)
-        if not isinstance(policy_handle, str):
-            raise NativeWorkerRecipeUnavailable("current native policy TTY selection is unavailable")
-        current = self.binding.resolve_current_native_policy_selection(policy_handle)
-        if (current.principal_binding_sha256 != recipe.principal_binding_sha256
-                or current.namespace_binding_sha256 != recipe.namespace_binding_sha256
-                or current.service_generation != recipe.profile_generation):
-            self._recipes.pop(recipe.receipt_handle, None)
-            raise NativeWorkerRecipeUnavailable("worker recipe setup selection changed")
+        if policy_handle is None:
+            # A pre-choice source candidate is current under the prepared
+            # identity and held source graph; it has no signed-choice authority yet.
+            if self._current_selection_handle is not None:
+                raise NativeWorkerRecipeUnavailable("selected worker recipe lost its signed choice")
+            prepared = self.binding._session._resolve_current_prepared_enrollment()
+            identity = self.binding.resolve_current_setup_identity()
+            if (prepared.generation_id != recipe.prepared_generation_id
+                    or prepared.generation_digest != recipe.prepared_generation_digest
+                    or identity.principal_binding_sha256 != recipe.principal_binding_sha256
+                    or identity.namespace_binding_sha256 != recipe.namespace_binding_sha256):
+                self._recipes.pop(recipe.receipt_handle, None)
+                raise NativeWorkerRecipeUnavailable("worker source candidate setup identity changed")
+        else:
+            current = self.binding.resolve_current_native_policy_selection(policy_handle)
+            if (policy_handle != self._current_selection_handle
+                    or recipe.receipt_handle not in current.selected_worker_recipe_handles
+                    or current.principal_binding_sha256 != recipe.principal_binding_sha256
+                    or current.namespace_binding_sha256 != recipe.namespace_binding_sha256
+                    or current.service_generation != recipe.profile_generation):
+                self._recipes.pop(recipe.receipt_handle, None)
+                raise NativeWorkerRecipeUnavailable("worker recipe setup selection changed")
         return recipe
 
     def resolve_current_recipe(self, receipt_handle: str) -> RootPreparedNativeWorkerRecipe:
@@ -566,12 +592,80 @@ class RootSetupNativeWorkerRecipeRegistry:
             raise NativeWorkerRecipeUnavailable("worker recipe handle is not retained by this issuer")
         return self.verify_current(recipe)
 
+    def verify_prechoice_candidate(self, recipe: RootPreparedNativeWorkerRecipe
+                                   ) -> RootPreparedNativeWorkerRecipe:
+        """Revalidate an unselected source candidate before the TTY signs its choice."""
+        session = self.binding._session
+        if (type(recipe) is not RootPreparedNativeWorkerRecipe
+                or session._current_native_policy_selection_handle is not None
+                or self._current_selection_handle is not None):
+            raise NativeWorkerRecipeUnavailable("worker source candidate is not in the pre-choice setup phase")
+        return self.verify_current(recipe)
+
+    def resolve_current_runnable_closure(self, selection: Any) -> Any:
+        """Return the exact held role closure joined when selected recipes were issued."""
+        from .native_policy_preparation import RootNativePolicyPreparationSelection
+        if (type(selection) is not RootNativePolicyPreparationSelection
+                or selection.selection_handle != self._current_selection_handle
+                or self._current_runnable_closure is None):
+            raise NativeWorkerRecipeUnavailable(
+                "current selected native policy has no retained runnable-role closure")
+        current = self.binding.resolve_current_native_policy_selection(selection.selection_handle)
+        if current is not selection:
+            raise NativeWorkerRecipeUnavailable("native policy selection changed after role closure issuance")
+        return self.runnable_roles.verify_current(self._current_runnable_closure)
+
+    def bind_selected_candidates(self, selection: Any) -> Any:
+        """Bind pre-choice source receipts to the actual signed TTY choice."""
+        from .native_policy_preparation import RootNativePolicyPreparationSelection
+        if type(selection) is not RootNativePolicyPreparationSelection:
+            raise NativeWorkerRecipeUnavailable("recipe binding requires the exact signed policy selection")
+        current = self.binding.resolve_current_native_policy_selection(selection.selection_handle)
+        if current is not selection:
+            raise NativeWorkerRecipeUnavailable("recipe binding selection is not current")
+        handles = selection.selected_worker_recipe_handles
+        digests = selection.selected_worker_recipe_digests
+        records = selection.selected_worker_recipe_records
+        if (len(handles) > 1 or len(handles) != len(digests) or len(handles) != len(records)
+                or tuple(sorted(handles)) != handles):
+            raise NativeWorkerRecipeUnavailable("signed worker recipe choice is not the exact bounded candidate set")
+        for handle, digest, projection in zip(handles, digests, records, strict=True):
+            recipe = self._recipes.get(handle)
+            if (recipe is None or recipe.complete_recipe_sha256 != digest
+                    or _plain(recipe.public_projection()) != _plain(projection)):
+                raise NativeWorkerRecipeUnavailable("signed worker recipe differs from the retained source candidate")
+        self._current_selection_handle = selection.selection_handle
+        # The final six-role output closure is downstream of this signed
+        # source choice and is attached only after compilation/reservation.
+        self._current_runnable_closure = None
+        return selection
+
+    def retain_runnable_closure(self, selection: Any, runnable_closure: Any) -> Any:
+        from .bootstrap_runtime_factory import RootSelectedRunnableRoleClosure
+        from .native_policy_preparation import RootNativePolicyPreparationSelection
+        if (type(selection) is not RootNativePolicyPreparationSelection
+                or type(runnable_closure) is not RootSelectedRunnableRoleClosure
+                or self.binding.resolve_current_native_policy_selection(selection.selection_handle) is not selection
+                or selection.selection_handle != self._current_selection_handle):
+            raise NativeWorkerRecipeUnavailable("final runnable closure is outside the signed recipe selection")
+        current = self.runnable_roles.verify_current(runnable_closure)
+        recipe_handles = selection.selected_worker_recipe_handles
+        if (len(recipe_handles) != 1
+                or current.setup_session_id != selection.setup_session_id
+                or current.transaction_handle != selection.transaction_handle
+                or current.prepared_generation_id != selection.prepared_generation_id):
+            raise NativeWorkerRecipeUnavailable("final runnable closure does not join the exact selected recipe")
+        self._current_runnable_closure = current
+        return current
+
     def close(self) -> None:
         """Release only root-held duplicate work-root descriptors."""
         for receipt in tuple(self._working_roots.values()):
             receipt.close()
         self._working_roots.clear()
         self._recipes.clear()
+        self._current_runnable_closure = None
+        self._current_selection_handle = None
         self._service_identity = None
 
     def _issue_work_root(self, identity: RootPreparedServiceIdentityReceipt) -> RootPreparedWorkingRootReceipt:
@@ -686,16 +780,18 @@ def observe_prepared_service_identity(binding: Any) -> RootPreparedServiceIdenti
 def verify_prepared_service_identity(binding: Any,
                                      receipt: RootPreparedServiceIdentityReceipt) -> RootPreparedServiceIdentityReceipt:
     current = observe_prepared_service_identity(binding)
-    if (type(receipt) is not RootPreparedServiceIdentityReceipt
-            or receipt._issuer is not binding._session._seal
-            or receipt.expires_monotonic <= time.monotonic()
-            or (current.service_user, current.service_uid, current.service_gid,
-                current.identity_marker_sha256, current.roots_device_inode)
-               != (receipt.service_user, receipt.service_uid, receipt.service_gid,
-                   receipt.identity_marker_sha256, receipt.roots_device_inode)):
-        raise NativeWorkerRecipeUnavailable("prepared service identity or root custody changed")
-    current.close()
-    return receipt
+    try:
+        if (type(receipt) is not RootPreparedServiceIdentityReceipt
+                or receipt._issuer is not binding._session._seal
+                or receipt.expires_monotonic <= time.monotonic()
+                or (current.service_user, current.service_uid, current.service_gid,
+                    current.identity_marker_sha256, current.roots_device_inode)
+                   != (receipt.service_user, receipt.service_uid, receipt.service_gid,
+                       receipt.identity_marker_sha256, receipt.roots_device_inode)):
+            raise NativeWorkerRecipeUnavailable("prepared service identity or root custody changed")
+        return receipt
+    finally:
+        current.close()
 
 
 def _issue_identity_handle(receipt: RootPreparedServiceIdentityReceipt) -> str:
