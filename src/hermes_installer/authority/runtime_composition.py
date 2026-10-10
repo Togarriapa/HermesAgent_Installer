@@ -221,14 +221,41 @@ class _ProtectedNativeActionResolver:
                         action_id=adapter.action_id,
                         schema_kind="arguments",
                     )
+                    result_schema_id = protected_action.result_schema_id
+                    result_schema_record = self.bindings.resolve_native_schema_record(
+                        result_schema_id, package.package_id, package.generation,
+                        adapter.adapter_id, protected_action.action_id, "result",
+                    )
+                    if (not isinstance(result_schema_record, Mapping)
+                            or result_schema_record.get("id") != result_schema_id
+                            or result_schema_record.get("native_package_id") != package.package_id
+                            or result_schema_record.get("native_package_generation") != package.generation
+                            or result_schema_record.get("adapter_id") != adapter.adapter_id
+                            or result_schema_record.get("action_id") != protected_action.action_id
+                            or result_schema_record.get("schema_kind") != "result"
+                            or not isinstance(result_schema_record.get("source_receipt_handle"), str)
+                            or not isinstance(result_schema_record.get("sha256"), str)):
+                        raise AuthorityDenied(
+                            "native.action", "selected workflow result schema metadata does not match its protected row",
+                        )
+                    result_schema = self.schema_catalog.resolve(
+                        result_schema_id,
+                        native_package_id=package.package_id,
+                        native_package_generation=package.generation,
+                        adapter_id=adapter.adapter_id,
+                        action_id=protected_action.action_id,
+                        schema_kind="result",
+                    )
                 except Exception:
                     raise AuthorityDenied(
-                        "native.action", "selected workflow argument schema is not source-verified",
+                        "native.action", "selected workflow argument or result schema is not source-verified",
                     ) from None
-                candidates.append((adapter, schema, registration, protected_action))
+                candidates.append((adapter, schema, registration, protected_action,
+                                   result_schema_id, result_schema_record["sha256"], result_schema))
         if len(candidates) != 1:
             raise AuthorityDenied("native.action", "provider tool name is absent or ambiguous in selected workflows")
-        adapter, schema, registration, protected_action = candidates[0]
+        (adapter, schema, registration, protected_action, result_schema_id,
+         result_schema_sha256, result_schema) = candidates[0]
 
         def validate_arguments(raw: bytes) -> bool:
             if not isinstance(raw, bytes) or not 1 <= len(raw) <= 65_536:
@@ -241,6 +268,15 @@ class _ProtectedNativeActionResolver:
                 return False
             return canonical == raw and _native_json_schema_matches(value, schema)
 
+        def validate_result(raw: bytes) -> bool:
+            if not isinstance(raw, bytes) or not 1 <= len(raw) <= 1_048_576:
+                return False
+            try:
+                value = strict_json_loads(raw.decode("utf-8", errors="strict"))
+            except (TypeError, ValueError, UnicodeError, RecursionError):
+                return False
+            return _native_json_schema_matches(value, result_schema)
+
         return NativeActionSelection(
             package_id=package.package_id, profile_id=package.profile_id,
             generation=package.profile_generation, adapter_id=adapter.adapter_id,
@@ -249,6 +285,9 @@ class _ProtectedNativeActionResolver:
             package_generation=package.generation,
             operation=protected_action.operation,
             validate_arguments=validate_arguments,
+            result_schema_id=result_schema_id,
+            result_schema_sha256=result_schema_sha256,
+            validate_result=validate_result,
         )
 
 
@@ -1964,29 +2003,15 @@ def compose_root_authority_runtime(
             "a fully attached active provider invocation and bridge graph is required for root TTY choices"
         )
 
+    # Lifecycle evidence depends on the durable setup-choice registry, whose
+    # signer is available only after this core runtime has been attached to the
+    # service. The daemon performs the one-time lifecycle composition in its
+    # post-choice phase; composing it here would permanently omit enablement.
     memory_runtime_composition = None
-    memory_lifecycle_unavailable_reason = None
-    if enrollment.memory_enrollments:
-        try:
-            from .memory_runtime_composition import compose_root_memory_runtime
-
-            memory_runtime_composition = compose_root_memory_runtime(
-                bindings=bindings, enrollment=enrollment,
-                memory_runtime=memory_runtime, service=service,
-                vault=vault,
-                network_lease_resolver=memory_network_lease_resolver,
-                monotonic=service.monotonic,
-            )
-            memory_lifecycle_unavailable_reason = (
-                memory_runtime_composition.unavailable_reason
-            )
-        except Exception as exc:
-            # Lifecycle, provider-route, capture, and network authorities are
-            # independent. A missing lifecycle dependency must not substitute
-            # another consent registry or create a success-shaped runtime.
-            memory_lifecycle_unavailable_reason = (
-                f"root memory lifecycle composition rejected ({type(exc).__name__})"
-            )
+    memory_lifecycle_unavailable_reason = (
+        "memory lifecycle composition is pending post-runtime setup-choice attachment"
+        if enrollment.memory_enrollments else None
+    )
 
     return RootAuthorityRuntime(
         service=service, enrollment=enrollment, bindings=bindings,

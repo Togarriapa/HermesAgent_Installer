@@ -211,6 +211,14 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     schema_bytes = json.dumps(schema, sort_keys=True, separators=(",", ":"),
                               ensure_ascii=False).encode("utf-8")
     schema_digest = hashlib.sha256(schema_bytes).hexdigest()
+    result_schema = {
+        "type": "object",
+        "properties": {"matches": {"type": "integer", "minimum": 0}},
+        "required": ["matches"], "additionalProperties": False,
+    }
+    result_schema_bytes = json.dumps(result_schema, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode("utf-8")
+    result_schema_digest = hashlib.sha256(result_schema_bytes).hexdigest()
     adapter = SimpleNamespace(
         adapter_id="adapter:lookup", action_id="action:lookup",
         operation="plugin.lookup", capability="plugins.lookup", target_id="lookup-target",
@@ -283,6 +291,7 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         "artifact:resolver": SimpleNamespace(sha256="e" * 64),
         "artifact:adapter": SimpleNamespace(sha256="c" * 64),
         "artifact:schema": SimpleNamespace(sha256=schema_digest),
+        "artifact:result-schema": SimpleNamespace(sha256=result_schema_digest),
         "workflow:lookup": SimpleNamespace(sha256="b" * 64),
         "registration:source": SimpleNamespace(sha256="a" * 64),
     }
@@ -302,7 +311,15 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
             "native_package_generation": package.generation,
             "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
             "source_receipt_handle": "source-receipt:lookup",
-        },),
+        }, {
+                "id": "schema:lookup:result", "artifact_id": "artifact:result-schema",
+                "sha256": result_schema_digest, "size_bytes": len(result_schema_bytes),
+                "derivation_receipt_handle": None, "schema_kind": "result",
+            "native_package_id": package.package_id,
+            "native_package_generation": package.generation,
+            "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+            "source_receipt_handle": "source-receipt:lookup-result",
+        }),
     )
     schema_records = ({
             "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
@@ -312,9 +329,19 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         "native_package_generation": package.generation,
         "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
         "source_receipt_handle": "source-receipt:lookup",
-    },)
+    }, {
+            "id": "schema:lookup:result", "artifact_id": "artifact:result-schema",
+            "sha256": result_schema_digest, "size_bytes": len(result_schema_bytes),
+            "derivation_receipt_handle": None, "schema_kind": "result",
+        "native_package_id": package.package_id,
+        "native_package_generation": package.generation,
+        "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+        "source_receipt_handle": "source-receipt:lookup-result",
+    })
     schema_catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
-        schema_records, read_artifact=lambda _artifact_id, _digest: schema_bytes,
+        schema_records, read_artifact=lambda artifact_id, _digest: (
+            result_schema_bytes if artifact_id == "artifact:result-schema" else schema_bytes
+        ),
         verify_source_receipt=lambda _handle, _identity: True,
     )
     assert dict(root_bindings.resolve_native_schema_record(
@@ -337,6 +364,10 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     )
     assert selected.validate_arguments(b'{"query":"status"}') is True
     assert selected.validate_arguments(b'{"query":""}') is False
+    assert selected.result_schema_id == "schema:lookup:result"
+    assert selected.result_schema_sha256 == result_schema_digest
+    assert selected.validate_result(b'{"matches":1}') is True
+    assert selected.validate_result(b'{"matches":"one"}') is False
     with pytest.raises(AuthorityDenied, match="absent or ambiguous"):
         resolver(bridge, identity, "unselected_tool")
 
