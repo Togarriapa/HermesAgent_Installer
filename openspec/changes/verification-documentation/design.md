@@ -163,3 +163,6 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md refines actual Core2026.10.0 complete metadata reads and genuine explicitly selected whole GetLiveContext alternative with finite TLS/DNS-pinned WS dependency/credential custody. No HA exposure mutation, metadata/functional/source/enablement evidence separate; all acceptance OPEN.
 
 Jarvis214 corrects213 source-home/live-task field split: exact16 published facts; task process/resource/profilegen/context epochs are joined only at actual grant. Core/restart/207delegates/mount scope unchanged; planning/jarvis-published-home-live-task-split-v214.json.
+
+
+HA setup receipt refinement v216: plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md supplies concrete live root-session signer/journal/transport sink/schema-to-functional-call ownership; setup evidence is distinct from daemon SourceReceipt/HostContext and cannot restore authority. All acceptance OPEN.

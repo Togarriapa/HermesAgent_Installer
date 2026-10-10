@@ -3210,5 +3210,19 @@
     ],
     "corrects": "v213 row field split",
     "acceptance": "All AC OPEN"
+  },
+  "ha_setup_observation_receipts_v216": {
+    "contract": "planning/ha-setup-observation-receipts-v216.json",
+    "tasks": [
+      "MC-R0101.5",
+      "MC-R0101.6"
+    ],
+    "order": [
+      "current session/key/source/credential",
+      "actual transport/discovery schema",
+      "one-use exact functional call",
+      "validated receipt/choice adoption"
+    ],
+    "acceptance": "AC01..AC18 OPEN"
   }
 }
