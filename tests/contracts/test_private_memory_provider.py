@@ -67,7 +67,8 @@ def test_worker_cannot_construct_a_root_selected_route_dto():
     with pytest.raises(TypeError, match="minted by the root resolver"):
         RootSelectedPrivateMemoryEngineRoutes(
             _issuer=object(), selection_id="selection", profile_id="profile",
-            namespace_id="namespace", memory_provider="openviking",
+            namespace_id="namespace", memory_enrollment_id="memory-enrollment",
+            memory_provider="openviking",
             memory_owner_generation=1, service_generation_digest="a" * 64,
             extract_route_id="extract", embed_route_id="embed",
             extraction_served_model_id="zai-org/GLM-5.2",
@@ -105,11 +106,11 @@ def test_selection_joins_separate_model_receipts_and_is_revalidated():
     route_rows = {
         "extract-private-v1": VerifiedPrivateProviderRoute(
             "extract-private-v1", "text-generation", "local-private", "memory:local",
-            endpoint, None, 100.0, 0.0,
+            endpoint, "private-memory-extract-v1", None, 100.0, 0.0,
         ),
         "embed-private-v1": VerifiedPrivateProviderRoute(
             "embed-private-v1", "embedding", "local-private", "memory:local",
-            endpoint, None, 100.0, 0.0,
+            endpoint, "private-memory-embed-v1", None, 100.0, 0.0,
         ),
     }
     model_rows = {
@@ -188,6 +189,7 @@ def test_selection_joins_separate_model_receipts_and_is_revalidated():
     assert selected.extraction_served_model_id == "glm52-served"
     assert selected.embedding_served_model_id == "embed-served"
     assert selected.embedding_dimensions == 768
+    assert selected.memory_enrollment_id == "memory-enrollment-one"
     assert resolver.is_current(selected)
     assert model_rows[extract_deploy].source_model_id == "zai-org/GLM-5.2"
 
@@ -212,12 +214,32 @@ def test_selection_joins_separate_model_receipts_and_is_revalidated():
         "stream": False, "temperature": 0, "max_tokens": 4096,
     }
     payload = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    dispatch = resolver.resolve_dispatch_selection("j" * 43, payload)
+    assert dispatch.selected is selected
+    assert dispatch.route is route_rows["extract-private-v1"]
+    assert dispatch.deployment is model_rows[extract_deploy]
+    assert dispatch.action == "extract"
+    assert dispatch.purpose == "memory-extraction"
+    assert dispatch.stage_operation == "memory.extract"
+    assert dispatch.capability == "provider-inference"
+    assert dispatch.operation == "provider.dispatch"
+    assert dispatch.target == "private-memory-extract-v1"
+    assert dispatch.recipient == "memory:local"
     result = resolver.dispatch_memory_request(
         context, job_handle="j" * 43, route_id="extract-private-v1",
         model_id="glm52-served", payload=payload, timeout=10.0, cancelled=lambda: False,
     )
     assert result == b'{"ok":true}'
     assert len(effects.calls) == 1
+
+    embedding_payload = json.dumps(
+        {"model": "embed-served", "input": ["private fact"], "encoding_format": "float"},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode()
+    embedding_dispatch = resolver.resolve_dispatch_selection("j" * 43, embedding_payload)
+    assert embedding_dispatch.action == "embed"
+    assert embedding_dispatch.capability == "provider-inference"
+    assert embedding_dispatch.target == "private-memory-embed-v1"
     assert set(effects.calls[0]) == {"job_handle", "payload", "timeout", "cancelled"}
     assert effects.calls[0]["job_handle"] == "j" * 43
     assert effects.calls[0]["payload"] == payload
@@ -234,6 +256,6 @@ def test_selection_joins_separate_model_receipts_and_is_revalidated():
 
     route_rows["extract-private-v1"] = VerifiedPrivateProviderRoute(
         "extract-private-v1", "text-generation", "local-private", "memory:local",
-        endpoint, None, 100.0, 0.01,
+        endpoint, "private-memory-extract-v1", None, 100.0, 0.01,
     )
     assert not resolver.is_current(selected)
