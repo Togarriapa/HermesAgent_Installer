@@ -1902,7 +1902,19 @@ class ManagedProcessEffectHandler:
         process.start grant against these exact selection bytes. No path, argv,
         executable, environment, PID, namespace, or socket comes from the peer.
         """
+        if _root_selected_effect is not None:
+            from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+            if (type(_root_selected_effect) is not VerifiedRootSelectedServiceEffect
+                    or not _root_selected_effect.is_current()):
+                raise AuthorityDenied("root-selected.authority", "sealed current root service effect is required")
         request = self._json(payload)
+        if (_root_selected_effect is not None
+                and _root_selected_effect.role in {
+                    "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                and (context is not None or authorization is not None
+                     or peer_pid is not None or peer_pidfd is not None
+                     or _daemon_liveness_pidfd is None)):
+            raise AuthorityDenied("root-selected.authority", "memory lifecycle launch must use the typed root admission path")
         expected_fields = {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
         if _task_admission is not None:
             expected_fields |= {"admission_handle", "node_id", "task_payload_sha256",
@@ -2055,6 +2067,7 @@ class ManagedProcessEffectHandler:
                                    start_guard=_start_guard,
                                    lease_expires_monotonic=float(lifecycle_deadline),
                                    process_expires_monotonic=_root_selected_lifecycle_deadline,
+                                   root_selected_effect=_root_selected_effect,
                                    xauthority_mount_source=_xauthority_mount_source,
                                    daemon_liveness_pidfd=_daemon_liveness_pidfd)
 
@@ -2330,7 +2343,6 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("root-selected.memory", "memory lifecycle binding is unavailable")
         if (not memory_admission.is_current(now=self.monotonic())
                 or not controller_proof.is_current()
-                or not effect.is_current()
                 or self.monotonic() >= min(effect.expires_monotonic, controller_proof.expires_monotonic)):
             raise AuthorityDenied("root-selected.currentness", "memory lifecycle authorization expired")
         self._verify_root_controller_identity(controller_proof, effect)
@@ -2347,23 +2359,18 @@ class ManagedProcessEffectHandler:
                 if (_pidfd_exited(parent_pidfd) or cancelled() or not effect.is_current()
                         or not controller_proof.is_current()):
                     raise AuthorityDenied("root-selected.currentness", "memory start admission became stale")
-                root_context = SimpleNamespace(
-                    principal_id=effect.selected_principal_id,
-                    namespace_id=effect.selected_namespace_identity,
-                )
-                root_auth = SimpleNamespace(monotonic_expires_at=effect.expires_monotonic)
                 guard = lambda: (memory_admission.is_current(now=self.monotonic())
                                  and controller_proof.is_current()
-                                 and effect.is_current()
                                  and self.monotonic() < memory_admission.original_deadline)
                 remaining = min(float(timeout), float(memory_admission.original_deadline) - self.monotonic())
                 if remaining <= 0:
                     raise AuthorityDenied("root-selected.deadline", "memory start grant expired")
                 response = self.start_selected_operation(
-                    profile, root_context, root_auth, payload, timeout=remaining,
-                    peer_pid=os.getpid(), peer_pidfd=parent_pidfd, cancelled=cancelled,
+                    profile, None, None, payload, timeout=remaining,
+                    peer_pid=None, peer_pidfd=None, cancelled=cancelled,
                     _start_guard=guard, _root_selected_effect=effect,
                     _root_selected_lifecycle_deadline=memory_admission.original_deadline,
+                    _daemon_liveness_pidfd=parent_pidfd,
                 )
                 body = response.get("body") if isinstance(response, Mapping) else None
                 decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
@@ -2419,41 +2426,46 @@ class ManagedProcessEffectHandler:
         if len(candidates) != 1:
             raise AuthorityDenied("root-selected.process", "memory action lacks one exact retained start receipt")
         process_receipt = candidates[0]
+        if (process_receipt.enrollment_id != memory_admission.service_enrollment_id
+                or process_receipt.generation != memory_admission.generation
+                or process_receipt.profile_id != memory_admission.profile_id
+                or process_receipt.principal_id != memory_admission.principal_id
+                or process_receipt.namespace_identity != memory_admission.namespace_identity
+                or process_receipt.service_generation_digest != memory_admission.service_generation_digest
+                or process_receipt.selected_subject_uid != memory_admission.subject_uid
+                or process_receipt.selected_subject_gid != memory_admission.subject_gid):
+            raise AuthorityDenied("root-selected.process", "memory process receipt differs from its retained admission")
         lease = self.resolve_selected_service_process(process_receipt)
         if lease is None:
             raise AuthorityDenied("root-selected.identity", "retained memory service process is no longer current")
         try:
-            context = SimpleNamespace(principal_id=effect.selected_principal_id,
-                                      namespace_id=effect.selected_namespace_identity)
-            fields: dict[str, Any] = {}
-            if effect.action == "stop":
-                fields = {"reason": request["reason"], "grace_seconds": 5}
-            control_payload = json.dumps({
-                "schema": 1, "operation": effect.operation, "process_id": process_id,
-                "generation": effect.generation, "fields": fields,
-            }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
-            if cancelled() or not effect.is_current() or not controller_proof.is_current():
+            if (cancelled() or not memory_admission.is_current(now=self.monotonic())
+                    or not effect.is_current() or not controller_proof.is_current()):
                 raise AuthorityDenied("root-selected.currentness", "memory control admission became stale")
-            response = self._control(profile, context, effect.operation, control_payload,
-                                     min(float(timeout), max(.001, effect.expires_monotonic-self.monotonic())),
-                                     cancelled)
-            body = response.get("body") if isinstance(response, Mapping) else None
-            decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
-            result = decoded.get("result") if isinstance(decoded, dict) else None
-            if not isinstance(result, dict):
-                raise AuthorityDenied("root-selected.control", "memory control result is malformed")
+            with self._lock:
+                retained = self._root_selected_process_receipts.get(process_receipt.receipt_handle)
+                handle = retained[1] if retained is not None and retained[0] is process_receipt else None
+            if (handle is None or handle.stopped or handle.profile is not profile
+                    or handle.process_id != process_receipt.process_id
+                    or handle.profile.generation != memory_admission.generation
+                    or self.monotonic() >= min(memory_admission.original_deadline, handle.expires)
+                    or _pidfd_exited(handle.child_pidfd) or cancelled()):
+                raise AuthorityDenied("root-selected.process", "memory lifecycle process is stale or outside its admission")
             if effect.action == "stop":
-                if result.get("closed") is not True or result.get("reap_state") != "reaped":
+                proof = self._stop(handle, timeout=min(float(timeout), 5.0))
+                if not proof.cleanup_verified:
                     raise AuthorityDenied("process.cleanup_ambiguous", "memory service stop cleanup is unproven")
                 with self._lock:
                     for handle, (receipt, _owned) in tuple(self._root_selected_process_receipts.items()):
                         if receipt is process_receipt:
                             self._root_selected_process_receipts.pop(handle, None)
-                return response
-            state = decoded.get("state")
-            exit_code = result.get("exit_code")
-            if state not in {"running", "exited"} or exit_code is not None and type(exit_code) is not int:
-                raise AuthorityDenied("root-selected.status", "memory service status is malformed")
+                return _response(200, {"schema": 1, "process_id": process_receipt.process_id,
+                    "generation": process_receipt.generation, "operation": "process.stop",
+                    "state": "stopped", "result": {"closed": True, "reap_state": "reaped"}})
+            exit_code = handle.launcher.poll()
+            if exit_code is not None and type(exit_code) is not int:
+                raise AuthorityDenied("root-selected.status", "memory service exit status is malformed")
+            state = "running" if exit_code is None else "exited"
             status = RootSelectedServiceStatusReceipt(
                 1, uuid.uuid4().hex, process_receipt, state, exit_code, self.monotonic(),
                 process_receipt.process_identity_digest, effect.service_generation_digest,
@@ -3418,10 +3430,26 @@ class ManagedProcessEffectHandler:
                         start_guard: Callable[[], bool] | None = None,
                         lease_expires_monotonic: float | None = None,
                         process_expires_monotonic: float | None = None,
+                        root_selected_effect: Any | None = None,
                         xauthority_mount_source: Path | None = None,
                         daemon_liveness_pidfd: int | None = None) -> Mapping[str, Any]:
-        effect_expiry = (authorization.monotonic_expires_at if lease_expires_monotonic is None
-                         else lease_expires_monotonic)
+        if root_selected_effect is None:
+            if authorization is None:
+                raise AuthorityDenied("process.authority", "ordinary process start authority is malformed")
+            effect_expiry = (authorization.monotonic_expires_at if lease_expires_monotonic is None
+                             else lease_expires_monotonic)
+        else:
+            memory_root = root_selected_effect.role in {
+                "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+            if (root_selected_effect.action != "start"
+                    or (memory_root and (context is not None or authorization is not None
+                                         or lease_expires_monotonic is None))
+                    or (not memory_root and (context is None or authorization is None))):
+                raise AuthorityDenied("root-selected.authority", "root-selected launch must use its typed admission")
+            effect_expiry = (lease_expires_monotonic if lease_expires_monotonic is not None
+                             else getattr(authorization, "monotonic_expires_at", None))
+            if not isinstance(effect_expiry, (int, float)) or isinstance(effect_expiry, bool):
+                raise AuthorityDenied("root-selected.authority", "root-selected launch deadline is malformed")
         launch_deadline = min(self.monotonic() + max(0.0, timeout), effect_expiry)
 
         def require_live_start(parent_fd: int | None = None) -> None:
@@ -3989,8 +4017,12 @@ class ManagedProcessEffectHandler:
                         or process_expires_monotonic <= started):
                     raise AuthorityDenied("process.start_expired", "selected process lifetime deadline is invalid")
                 process_expiry = min(process_expiry, float(process_expires_monotonic))
+            selected_principal = (root_selected_effect.selected_principal_id
+                                  if root_selected_effect is not None else context.principal_id)
+            selected_namespace = (root_selected_effect.selected_namespace_identity
+                                  if root_selected_effect is not None else context.namespace_id)
             handle = _Handle(process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid,
-                ticks, f"mnt:{mnt};net:{net}", context.principal_id, context.namespace_id,
+                ticks, f"mnt:{mnt};net:{net}", selected_principal, selected_namespace,
                 started, process_expiry, output_cap, artifact_mount_dir,
                 native_mount_source=native_mount_source,
                 native_mount_receipt=native_mount_receipt,
