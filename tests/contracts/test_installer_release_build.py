@@ -277,6 +277,7 @@ def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
 def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_path):
     root = tmp_path / "python"
     (root / "bin").mkdir(parents=True)
+    root.chmod(0o555)
     (root / "bin").chmod(0o555)
     os.symlink("../lib/target", root / "bin/alias")
     rows = release_build._runtime_archive_rows(root)
@@ -323,6 +324,11 @@ def test_root_runtime_tree_seals_before_closure_and_rejects_writable_mode(tmp_pa
 
     executable.chmod(0o666)
     with pytest.raises(release_build.InstallerReleaseBuildError, match="not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+    executable.chmod(0o555)
+
+    root.chmod(0o777)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="directory mode is not read-only sealed"):
         release_build._verify_runtime_materialization(root, closure)
 
 

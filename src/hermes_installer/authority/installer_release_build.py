@@ -1289,6 +1289,10 @@ def _elf_machine(path: Path) -> int:
 
 def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | None]]:
     rows: list[tuple[str, str, int, int, str | None]] = []
+    root_info = root.lstat()
+    if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0 or root_info.st_gid != 0
+            or stat.S_IMODE(root_info.st_mode) != 0o555):
+        raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
     for directory, dirs, files in os.walk(root, topdown=True, followlinks=False):
         base = Path(directory)
         for name in list(dirs):
