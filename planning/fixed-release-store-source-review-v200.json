@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md",
+  "reference_commit": "4f84b909cc1b3b17adf2629fbace0d87e0254f32",
+  "reference_tree": "035bf5886a77a2f2de7f6fa90a75569066ad3a06",
+  "member": {
+    "source_commit": "4f84b909cc1b3b17adf2629fbace0d87e0254f32",
+    "source_tree": "035bf5886a77a2f2de7f6fa90a75569066ad3a06",
+    "source_path": "src/hermes_installer/authority/installed_stage_publisher.py",
+    "module_name": "hermes_installer.authority.installed_stage_publisher",
+    "installed_artifact_id": "installer-module:hermes_installer.authority.installed_stage_publisher",
+    "installed_member": "lib/python/hermes_installer/authority/installed_stage_publisher.py",
+    "role": "module",
+    "mode": "0444",
+    "sha256": "a8752a8714e4f2729638c116a475dccab8da8c2d2bcf6d7f3f421f6b386f987f",
+    "size_bytes": 43574,
+    "source_artifact_id": null,
+    "requirement_ids": [
+      "BD-F01",
+      "HI-T149.1"
+    ],
+    "application": "actual candidate/source-CAS/held import module metadata; not a new REVIEWED_SOURCE_MODULES or catalog row"
+  },
+  "superseded_proposed_commit": "6e6e5831d93e147eb072f6afedab640d38a610fe",
+  "evidence": {
+    "owner_focused": {
+      "passed": 106,
+      "skipped": 8
+    },
+    "independent_publisher": {
+      "passed": 13,
+      "skipped": 0
+    }
+  },
+  "expected_pin_updates": [],
+  "implementation_source_review": "approved exact committed candidate metadata",
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}
