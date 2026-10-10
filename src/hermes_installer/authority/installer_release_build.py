@@ -320,12 +320,12 @@ class DistributionFile:
 
 
 class VerifiedInstallerDistributionReceipt:
-    """Sealed, held view of one exact root-owned candidate source tree."""
+    """Sealed view of one root-owned tree, held by root FD and immutable manifest."""
 
     __slots__ = ("candidate_git_sha", "git_tree_sha1", "source_tree_sha256",
                  "baseline_tree_sha256", "amendment_manifest_sha256",
                  "source_catalog_sha256", "files", "root_device", "root_inode",
-                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle", "_file_fds")
+                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle")
 
     def __init__(self, seal: object, *, candidate_git_sha: str, git_tree_sha1: str,
                  source_tree_sha256: str, baseline_tree_sha256: str,
@@ -345,21 +345,15 @@ class VerifiedInstallerDistributionReceipt:
         self.root_device, self.root_inode = info.st_dev, info.st_ino
         self._root_fd, self._seal, self._expected_uid = root_fd, seal, expected_uid
         self._closed, self._handle = False, handle
-        held: dict[str, int] = {}
-        try:
-            for row in files:
-                fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+        for row in files:
+            fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+            try:
                 current = os.fstat(fd)
                 if (current.st_dev != row.device or current.st_ino != row.inode
                         or current.st_ctime_ns != row.ctime_ns):
-                    os.close(fd)
                     raise InstallerReleaseBuildError("candidate source changed while sealing its file custody")
-                held[row.relative_path] = fd
-        except BaseException:
-            for fd in held.values():
+            finally:
                 os.close(fd)
-            raise
-        self._file_fds = held
 
     @property
     def receipt_handle(self) -> str:
@@ -382,51 +376,42 @@ class VerifiedInstallerDistributionReceipt:
             raise InstallerReleaseBuildError("candidate source CAS directory custody changed")
 
     def _verify_row(self, row: DistributionFile) -> None:
-        held_fd = self._file_fds.get(row.relative_path)
-        if held_fd is None:
-            raise InstallerReleaseBuildError("candidate source file custody is not retained")
-        held = os.fstat(held_fd)
-        if (held.st_dev != row.device or held.st_ino != row.inode
-                or held.st_ctime_ns != row.ctime_ns):
-            raise InstallerReleaseBuildError("retained candidate source file identity changed")
+        fd = self._open_verified_file(row)
+        os.close(fd)
+
+    def _open_verified_file(self, row: DistributionFile) -> int:
+        """Open one immutable-manifest member and verify it while holding that FD."""
         fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
         try:
             info = os.fstat(fd)
-            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                     or info.st_uid != self._expected_uid or info.st_dev != row.device
                     or info.st_ino != row.inode or stat.S_IMODE(info.st_mode) != row.mode
-                    or info.st_ctime_ns != row.ctime_ns
+                    or info.st_ctime_ns != row.ctime_ns or info.st_size != row.size_bytes):
+                raise InstallerReleaseBuildError("candidate source CAS file identity changed")
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            if (not stat.S_ISREG(after.st_mode) or after.st_nlink != 1
+                    or after.st_uid != self._expected_uid or after.st_dev != row.device
+                    or after.st_ino != row.inode or stat.S_IMODE(after.st_mode) != row.mode
+                    or after.st_ctime_ns != row.ctime_ns or after.st_size != row.size_bytes
                     or digest != row.sha256 or size != row.size_bytes):
                 raise InstallerReleaseBuildError("candidate source CAS file bytes or ownership changed")
-        finally:
-            os.close(fd)
-
-    def open_file(self, relative_path: str) -> int:
-        self._verify_root_current()
-        row = next((entry for entry in self.files if entry.relative_path == relative_path), None)
-        if row is None:
-            raise InstallerReleaseBuildError("requested source path is outside the verified candidate closure")
-        self._verify_row(row)
-        fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
-        try:
-            info = os.fstat(fd)
-            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-            if (digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device
-                    or info.st_ino != row.inode or info.st_ctime_ns != row.ctime_ns
-                    or info.st_uid != self._expected_uid):
-                raise InstallerReleaseBuildError("candidate source changed while opening a verified file")
             os.lseek(fd, 0, os.SEEK_SET)
             return fd
         except BaseException:
             os.close(fd)
             raise
 
+    def open_file(self, relative_path: str) -> int:
+        self._verify_root_current()
+        row = next((entry for entry in self.files if entry.relative_path == relative_path), None)
+        if row is None:
+            raise InstallerReleaseBuildError("requested source path is outside the verified candidate closure")
+        return self._open_verified_file(row)
+
     def close(self) -> None:
         if not self._closed:
-            for fd in self._file_fds.values():
-                os.close(fd)
-            self._file_fds.clear()
             os.close(self._root_fd)
             self._root_fd, self._closed = -1, True
 

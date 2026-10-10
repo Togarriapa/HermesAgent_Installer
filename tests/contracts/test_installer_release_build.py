@@ -60,6 +60,72 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
         receipt.close()
 
 
+def test_distribution_receipt_materializes_and_verifies_many_files_under_low_nofile(tmp_path):
+    script = r'''
+import hashlib
+import os
+import resource
+import sys
+from pathlib import Path
+
+resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+from hermes_installer.authority import installer_release_build as rb
+
+root = Path(sys.argv[1]) / "source"
+root.mkdir(mode=0o700)
+exported = []
+for index in range(140):
+    name = f"modules/member-{index:03d}.py"
+    path = root / name
+    path.parent.mkdir(exist_ok=True)
+    body = (f"member {index}" + chr(10)).encode()
+    path.write_bytes(body)
+    os.chmod(path, 0o444)
+    exported.append((name, hashlib.sha256(body).hexdigest(), len(body)))
+os.chmod(root / "modules", 0o555)
+os.chmod(root, 0o555)
+root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+rows = rb._inspect_source_tree(root_fd, tuple(exported))
+receipt = rb.VerifiedInstallerDistributionReceipt(
+    rb._SEAL, candidate_git_sha="a" * 40, git_tree_sha1="b" * 40,
+    source_tree_sha256="c" * 64, baseline_tree_sha256="d" * 64,
+    amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+    files=tuple(rows), root_fd=root_fd, expected_uid=os.geteuid(), handle="h" * 43)
+try:
+    receipt.verify_current()
+    for row in rows:
+        fd = receipt.open_file(row.relative_path)
+        try:
+            member_index = int(row.relative_path.split("-")[-1].split(".")[0])
+            assert os.read(fd, row.size_bytes) == (f"member {member_index}" + chr(10)).encode()
+        finally:
+            os.close(fd)
+    replaced = root / rows[0].relative_path
+    os.chmod(replaced.parent, 0o755)
+    backup = replaced.parent / "replacement.tmp"
+    backup.write_bytes(replaced.read_bytes())
+    os.chmod(backup, 0o444)
+    os.replace(backup, replaced)
+    os.chmod(replaced.parent, 0o555)
+    try:
+        receipt.verify_current()
+    except rb.InstallerReleaseBuildError:
+        print("LOW_NOFILE_OK_TRUST_REJECTION_PRESERVED")
+    else:
+        raise AssertionError("identical-byte replacement was accepted")
+finally:
+    receipt.close()
+'''
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        check=False, capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "LOW_NOFILE_OK_TRUST_REJECTION_PRESERVED"
+
+
 def test_initial_setup_prefixes_create_only_fixed_owned_directories_and_fsync(tmp_path, monkeypatch):
     parent = tmp_path / "etc"
     parent.mkdir(mode=0o755)
