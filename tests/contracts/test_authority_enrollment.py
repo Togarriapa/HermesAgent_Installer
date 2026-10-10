@@ -17,12 +17,79 @@ from hermes_installer.authority.enrollment import (
     write_protected_file, _validate_service_generations, _parse_observer_delivery_bindings,
     _parse_source_issuers, _parse_native_schema_artifact_records,
     _parse_composio_channel_enrollment_records, _parse_channel_delivery_binding_records,
-    _validate_root_key_selection,
+    _validate_root_key_selection, _parse_active_generation_record_collections,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
 
 class ProtectedEnrollmentContracts(unittest.TestCase):
+    def test_active_generation_catalogs_are_projected_from_digest_verified_rows(self):
+        schema = {
+            "id": "arguments-v1", "artifact_id": "schema-arguments-v1",
+            "sha256": "a" * 64, "schema_kind": "arguments",
+            "native_package_id": "package-a", "native_package_generation": "pkg-gen-a",
+            "adapter_id": "adapter-a", "action_id": "action-a",
+            "source_receipt_handle": "source-receipt-a", "size_bytes": 123,
+            "derivation_receipt_handle": None,
+        }
+        composio = {
+            "id": "channel-enrollment", "channel_resource_id": "resource-a",
+            "resource_generation": "resource-generation", "profile_id": "profile-a",
+            "controller_role_id": "controller-a", "source_issuer_id": "observer-a",
+            "composio_enrollment_id": "composio-a", "composio_user_id": "user-a",
+            "connected_account_id": "account-a", "auth_config_id": "auth-a",
+            "toolkit_version": "20260721_00", "trigger_artifact_id": "trigger-a",
+            "trigger_artifact_sha256": "b" * 64, "trigger_slug": "messages.received",
+            "trigger_instance_id": "instance-a", "webhook_subscription_id": "subscription-a",
+            "webhook_route_enrollment_id": "route-a", "webhook_secret_reference_id": "secret-a",
+            "allowed_user_numbers": ["+14155550123"],
+            "payload_field_bindings": {name: [name] for name in
+                                        ("sender_number", "message_id", "message_text", "event_timestamp")},
+            "max_event_age_seconds": 120, "account_receipt_handle": "account-receipt-a",
+            "setup_receipt_handle": "setup-receipt-a",
+        }
+        delivery = {
+            "id": "delivery-a", "profile_id": "profile-a",
+            "process_generation": "process-gen-a", "native_package_id": "package-a",
+            "native_package_generation": "pkg-gen-a", "authority_endpoint_id": "endpoint-a",
+            "allowed_channel_ingress_ids": ["channel-a"],
+            "source_observer_enrollment_ids": ["observer-a"], "generation": "root-gen-a",
+        }
+        snapshot = {
+            "schema": 1, "generation_id": "root-gen-a", "service_records": [],
+            "protected_devices": [], "protected_build_records": [], "native_packages": [],
+            "memory_enrollments": [], "operation_parameter_schemas": [], "source_issuers": [],
+            "resource_jobs": [], "remote_session_enrollments": [],
+            "resource_backend_enrollments": [], "resource_body_recipes": [],
+            "resource_scope_bindings": [], "resource_validators": [], "root_journal_roots": [],
+            "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [schema],
+            "composio_channel_enrollments": [composio], "channel_delivery_bindings": [delivery],
+            "remote_startup_enrollments": [], "private_loopback_networks": [],
+            "selected_resource_executions": [], "selected_application_runtimes": [],
+            "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "public_web_scopes": [],
+        }
+        snapshot["generation_digest"] = hashlib.sha256(json.dumps(
+            snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        verified = _validate_service_generations(snapshot)
+        schema_rows, composio_rows, delivery_rows = _parse_active_generation_record_collections(verified)
+        self.assertEqual(schema_rows[0]["source_receipt_handle"], "source-receipt-a")
+        self.assertEqual(composio_rows[0]["account_receipt_handle"], "account-receipt-a")
+        self.assertEqual(delivery_rows[0]["source_observer_enrollment_ids"], ("observer-a",))
+        with self.assertRaises(TypeError):
+            schema_rows[0]["sha256"] = "c" * 64
+
+        tampered = dict(snapshot)
+        tampered["composio_channel_enrollments"] = [{**composio, "toolkit_version": "latest"}]
+        tampered["generation_digest"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in tampered.items() if key != "generation_digest"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(tampered)
+
     def test_composio_channel_enrollment_is_exact_and_bounded(self):
         row = {
             "id": "channel-enrollment", "channel_resource_id": "resource-a",

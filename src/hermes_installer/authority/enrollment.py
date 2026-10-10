@@ -1403,6 +1403,28 @@ def _parse_channel_delivery_binding_records(value: Any) -> tuple[Mapping[str, An
     return tuple(result)
 
 
+def _parse_active_generation_record_collections(
+        service_generations: Mapping[str, Any]) -> tuple[
+            tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...],
+            tuple[Mapping[str, Any], ...]]:
+    """Project three active catalogs only after the enclosing snapshot is verified.
+
+    `_validate_service_generations` authenticates the enclosing digest and
+    validates these row shapes. This second stage converts each exact raw
+    catalog into its immutable retained representation for ProtectedEnrollment.
+    """
+    try:
+        return (
+            _parse_native_schema_artifact_records(service_generations["native_schema_artifacts"]),
+            _parse_composio_channel_enrollment_records(service_generations["composio_channel_enrollments"]),
+            _parse_channel_delivery_binding_records(service_generations["channel_delivery_bindings"]),
+        )
+    except (KeyError, TypeError) as exc:
+        raise AuthorityDenied(
+            "enrollment.generation", "active generation record catalogs are unavailable",
+        ) from exc
+
+
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
@@ -2369,6 +2391,12 @@ def _parse_protected_enrollment_document(
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
     service_generations = _validate_service_generations(root["service_generations"])
+    # These catalogs have already passed the closed-schema and active-snapshot
+    # digest checks above. Parse them here as immutable typed rows for the
+    # ProtectedEnrollment projection; the parser temporaries inside
+    # _validate_service_generations are intentionally not in this scope.
+    (native_schema_records, composio_channel_records,
+     channel_delivery_records) = _parse_active_generation_record_collections(service_generations)
     key_id = _read_id(root["key_id"], "key_id")
     if not isinstance(root["principals"], list) or not root["principals"] or len(root["principals"]) > 256:
         raise AuthorityDenied("enrollment.schema", "protected principal catalog is invalid")
