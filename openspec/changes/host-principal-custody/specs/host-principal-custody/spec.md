@@ -441,3 +441,12 @@ Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
 
 Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Finite installed host tool observation
+The system SHALL use the v105 root-only HostToolObservationRegistry and exact measured variant catalog to authenticate installed nft and complete loader/dependency closure against signed distribution package evidence before network effects. It SHALL revalidate held bytes, current installed state, selected generation and lease; source package measurements and Coral package receipts SHALL NOT prove host execution.
+
+#### Scenario: Installed dependency changes
+- **WHEN** a held dependency, installed package state, keyring or selected generation changes or expires
+- **THEN** nft execution and network launch are denied until a fresh valid observation and required kernel probes succeed.

@@ -274,3 +274,10 @@ Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-lo
 Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
 
 Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+### Requirement: Current installed network tool proof
+The system SHALL use v105 HostToolObservationRegistry to authenticate exact installed nft and its complete dependency closure against signed package evidence, retaining root-owned descriptors and revalidating current selection and expiry before each effect.
+
+#### Scenario: Source measurement alone
+- **WHEN** only an archived package measurement exists without actual host and kernel proof
+- **THEN** private network execution remains unavailable.
