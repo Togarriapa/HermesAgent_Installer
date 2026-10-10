@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable, Mapping, Protocol
 
 from hermes_installer.authority.types import HostContext, strict_json_loads
+from hermes_installer.memory.broker import BrokerDenied, BrokerUnavailable
 
 
 MAX_INPUT_BYTES = 1_048_576
@@ -28,14 +29,15 @@ MAX_TIMEOUT = 120.0
 PROTOCOL_SHA256 = "0158fa3c3b8dcc6befb008f3b617ca084f0470b05eb9b99f2f12b27735eca2d4"
 _ROUTE = re.compile(r"[A-Za-z0-9_.:@/-]{1,256}\Z", re.ASCII)
 _MODEL = re.compile(r"[A-Za-z0-9_.:/@+-]{1,256}\Z", re.ASCII)
+_JOB_HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z", re.ASCII)
 
 
-class PrivateMemoryEngineUnavailable(RuntimeError):
+class PrivateMemoryEngineUnavailable(BrokerUnavailable):
     """No current protected private route or bounded compatible response."""
 
 
 class PrivateMemoryDispatcher(Protocol):
-    def dispatch_memory_request(self, context: HostContext, *, route_id: str,
+    def dispatch_memory_request(self, context: HostContext, *, job_handle: str, route_id: str,
                                 model_id: str, payload: bytes, timeout: float,
                                 cancelled: Callable[[], bool]) -> bytes: ...
 
@@ -112,24 +114,26 @@ class RootPrivateMemoryEngine:
                 or routes.expires_monotonic <= self._monotonic()):
             raise PrivateMemoryEngineUnavailable("selected private memory engine route is incomplete or stale")
 
-    def _check(self, context: HostContext, action: str, timeout: float,
+    def _check(self, context: HostContext, action: str, job_handle: str, timeout: float,
                cancelled: Callable[[], bool]) -> float:
         self._validate_selection()
         # The worker passes the signed stage context through unchanged. Current
         # source privacy, consent, owner, and effect admission belong to the
         # root provider dispatcher at each attempt, not to adapter assertions.
         if type(context) is not HostContext:
-            raise PermissionError("root-issued host context is required")
+            raise BrokerDenied("root-issued host context is required")
+        if not isinstance(job_handle, str) or not _JOB_HANDLE.fullmatch(job_handle):
+            raise BrokerDenied("root durable memory job handle is required")
         expected_purpose = "memory-extraction" if action == "extract" else "memory-embedding"
         expected_operation = "memory.extract" if action == "extract" else "memory.embed"
         if context.purpose != expected_purpose or context.operation != expected_operation:
-            raise PermissionError("private memory stage context does not match the selected route action")
+            raise BrokerDenied("private memory stage context does not match the selected route action")
         if (context.profile_id != self._routes.profile_id
                 or context.namespace_id != self._routes.namespace_id):
-            raise PermissionError("private memory route belongs to another profile or namespace")
+            raise BrokerDenied("private memory route belongs to another profile or namespace")
         return _bounded_timeout(timeout, cancelled)
 
-    def _dispatch(self, context: HostContext, *, route_id: str, model_id: str,
+    def _dispatch(self, context: HostContext, *, job_handle: str, route_id: str, model_id: str,
                   request: Mapping[str, Any], timeout: float,
                   cancelled: Callable[[], bool]) -> Any:
         payload = _canonical(request)
@@ -138,16 +142,19 @@ class RootPrivateMemoryEngine:
         if cancelled():
             raise PrivateMemoryEngineUnavailable("private memory request was cancelled")
         raw = self._dispatcher.dispatch_memory_request(
-            context, route_id=route_id, model_id=model_id, payload=payload,
+            context, job_handle=job_handle, route_id=route_id, model_id=model_id, payload=payload,
             timeout=timeout, cancelled=cancelled,
         )
         if not isinstance(raw, bytes) or len(raw) > MAX_RESPONSE_BYTES:
             raise PrivateMemoryEngineUnavailable("private memory endpoint response exceeds its bound")
-        return strict_json_loads(raw.decode("utf-8", errors="strict"))
+        try:
+            return strict_json_loads(raw.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, ValueError):
+            raise PrivateMemoryEngineUnavailable("private memory endpoint returned invalid JSON") from None
 
-    def extract(self, *, text: str, context: HostContext, timeout: float,
+    def extract(self, *, text: str, context: HostContext, job_handle: str, timeout: float,
                 cancelled: Callable[[], bool]) -> list[str]:
-        timeout = self._check(context, "extract", timeout, cancelled)
+        timeout = self._check(context, "extract", job_handle, timeout, cancelled)
         if not isinstance(text, str) or not text or len(text.encode("utf-8")) > MAX_INPUT_BYTES:
             raise ValueError("private transcript is empty or exceeds its UTF-8 bound")
         request = {
@@ -163,7 +170,7 @@ class RootPrivateMemoryEngine:
             "stream": False, "temperature": 0, "max_tokens": 4096,
         }
         response = self._dispatch(
-            context, route_id=self._routes.extract_route_id,
+            context, job_handle=job_handle, route_id=self._routes.extract_route_id,
             model_id=self._routes.extraction_served_model_id,
             request=request, timeout=timeout, cancelled=cancelled,
         )
@@ -202,9 +209,9 @@ class RootPrivateMemoryEngine:
                 raise PrivateMemoryEngineUnavailable("private extraction facts exceed their UTF-8 bounds")
         return facts
 
-    def embed(self, *, facts: list[str], context: HostContext, timeout: float,
+    def embed(self, *, facts: list[str], context: HostContext, job_handle: str, timeout: float,
               cancelled: Callable[[], bool]) -> list[list[float]]:
-        timeout = self._check(context, "embed", timeout, cancelled)
+        timeout = self._check(context, "embed", job_handle, timeout, cancelled)
         if not isinstance(facts, list) or len(facts) > MAX_FACTS:
             raise ValueError("private embedding input must be a bounded ordered fact list")
         total = 0
@@ -222,7 +229,7 @@ class RootPrivateMemoryEngine:
             "encoding_format": "float",
         }
         response = self._dispatch(
-            context, route_id=self._routes.embed_route_id,
+            context, job_handle=job_handle, route_id=self._routes.embed_route_id,
             model_id=self._routes.embedding_served_model_id,
             request=request, timeout=timeout, cancelled=cancelled,
         )
