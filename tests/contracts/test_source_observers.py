@@ -488,7 +488,7 @@ class SourceObserverContracts(unittest.TestCase):
             native_package_generation=package_generation,
             source_action_id=self.enrollment.source_action_id,
             service_generation_digest=_digest("2"), expires_monotonic=39.0,
-            private_consent_selection_handle="k" * 43,
+            private_consent_selection_handle=None,
         )
         target = SimpleNamespace(
             process_id="managed-task-process", profile_id=self.identity.profile_id,
@@ -522,7 +522,7 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertEqual(self.service.observations[-1].private_provider_route_ids,
                          ("provider.codex.private",))
         self.assertEqual(self.service.observations[-1].private_consent_selection_handle,
-                         "k" * 43)
+                         None)
         self.assertEqual(self.registry._pending, {})
         self.assertEqual(self.registry._capsule_bytes, len(b"exact stdin prompt"))
         self.assertIn((733, 901), self.proof_peers)

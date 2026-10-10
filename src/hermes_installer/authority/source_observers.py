@@ -412,6 +412,7 @@ class SourceObserverRegistry:
         self._proofs_pending: dict[str, int] = {}
         self._selected_input_proofs: dict[str, tuple[Any, Any]] = {}
         self._consumed_selected_input_proofs: dict[str, tuple[int, Any, Any, float, str]] = {}
+        self._selected_input_selections: dict[str, tuple[Any, Any, float, str]] = {}
         self._selected_input_consents: dict[str, RetainedSelectedInputConsent] = {}
         self._lock = threading.RLock()
         self._closed = False
@@ -784,6 +785,18 @@ class SourceObserverRegistry:
                     os.close(receipt_fd)
                 if delivery_fd >= 0:
                     os.close(delivery_fd)
+            if proof is not None and proof.selected_execution is not None:
+                key = str(result)
+                with self._lock:
+                    has_consent = key in self._selected_input_consents
+                    has_selection = key in self._selected_input_selections
+                if proof.private_consent_selection_handle is None and not has_selection:
+                    self.retain_selected_input_without_egress_consent(
+                        proof, proof.selected_execution, result)
+                elif proof.private_consent_selection_handle is not None and not has_consent:
+                    self.revoke_source_handle(result)
+                    raise AuthorityDenied(
+                        "source.native_input", "selected private consent was not retained with its receipt")
             return result
         except BaseException:
             # A failed authority call must never make the event proof reusable.
@@ -1142,6 +1155,7 @@ class SourceObserverRegistry:
         """Remove authority lookup and peer-delivery state for one receipt."""
         self._forget_invocation_handle_locked(handle)
         self._selected_input_consents.pop(handle, None)
+        self._selected_input_selections.pop(handle, None)
         row = self._payload_capsules.pop(handle, None)
         if row is not None:
             self._capsule_bytes -= len(row[2])
@@ -1319,15 +1333,15 @@ class SourceObserverRegistry:
             raise AuthorityDenied("source.native_input", "private input consent proof type is invalid")
         with self._lock:
             consumed = self._consumed_selected_input_proofs.get(observation.proof_nonce)
-            capsule_entry = self._payload_capsules.get(str(source_receipt_handle))
+            with self.service._lock:
+                receipt = self.service._source_receipt_handles.get(source_receipt_handle)
             if (consumed is None or consumed[0] != id(observation)
                     or consumed[1] is not selected_execution
                     or consumed[4] != self.service.authority_epoch
                     or self.service.monotonic() >= consumed[3]
-                    or capsule_entry is None
-                    or capsule_entry[3] != self.service.authority_epoch):
+                    or not isinstance(receipt, SourceReceipt)
+                    or receipt.monotonic_expires_at <= self.service.monotonic()):
                 raise AuthorityDenied("source.native_input", "selected input receipt is stale or unissued")
-            receipt, _capsule, _payload, _epoch = capsule_entry
             route_ids = self.observers[observation.observer_enrollment_id].private_provider_route_ids
             if (getattr(consent, "selection_handle", None)
                     != observation.private_consent_selection_handle
@@ -1362,8 +1376,43 @@ class SourceObserverRegistry:
             if key in self._selected_input_consents:
                 raise AuthorityDenied("source.native_input", "input consent was already retained")
             self._selected_input_consents[key] = binding
+            self._selected_input_selections[key] = (
+                selected_execution, consumed[2], binding.expires_monotonic,
+                self.service.authority_epoch,
+            )
             self._consumed_selected_input_proofs.pop(observation.proof_nonce, None)
             return binding
+
+    def retain_selected_input_without_egress_consent(
+        self, observation: VerifiedSourceObservation,
+        selected_execution: Any, source_receipt_handle: SourceReceiptHandle,
+    ) -> None:
+        """Retain a local-only input receipt while guaranteeing zero egress ceiling."""
+        if (type(observation) is not VerifiedSourceObservation
+                or type(source_receipt_handle) is not SourceReceiptHandle
+                or selected_execution is not observation.selected_execution
+                or observation.private_consent_selection_handle is not None
+                or observation._issuer_token is not self._proof_token):
+            raise AuthorityDenied("source.native_input", "local-only input selection is invalid")
+        with self._lock:
+            consumed = self._consumed_selected_input_proofs.get(observation.proof_nonce)
+            with self.service._lock:
+                receipt = self.service._source_receipt_handles.get(source_receipt_handle)
+            if (consumed is None or consumed[0] != id(observation)
+                    or consumed[1] is not selected_execution
+                    or consumed[4] != self.service.authority_epoch
+                    or self.service.monotonic() >= consumed[3]
+                    or not isinstance(receipt, SourceReceipt)
+                    or receipt.monotonic_expires_at <= self.service.monotonic()):
+                raise AuthorityDenied("source.native_input", "local input receipt is stale or unissued")
+            if receipt.source_kind != "native-input" or receipt.recipient_ceiling:
+                raise AuthorityDenied("source.native_input", "local-only input receipt unexpectedly permits egress")
+            key = str(source_receipt_handle)
+            self._selected_input_selections[key] = (
+                selected_execution, consumed[2], receipt.monotonic_expires_at,
+                self.service.authority_epoch,
+            )
+            self._consumed_selected_input_proofs.pop(observation.proof_nonce, None)
 
     def resolve_selected_input_consent(
         self, source_receipt_handle: SourceReceiptHandle,
@@ -1406,15 +1455,14 @@ class SourceObserverRegistry:
         if type(source_receipt_handle) is not SourceReceiptHandle:
             raise AuthorityDenied("source.native_input", "source receipt handle is invalid")
         with self._lock:
-            binding = self._selected_input_consents.get(str(source_receipt_handle))
-            if (binding is None or binding.authority_epoch != self.service.authority_epoch
-                    or binding.expires_monotonic <= self.service.monotonic()):
+            binding = self._selected_input_selections.get(str(source_receipt_handle))
+            if (binding is None or binding[3] != self.service.authority_epoch
+                    or binding[2] <= self.service.monotonic()):
                 raise AuthorityDenied("source.native_input", "input consent binding is stale")
-            current = binding.selection_registry.resolve_current_execution(
-                binding.selected_execution)
-            if current is not binding.selected_execution:
+            current = binding[1].resolve_current_execution(binding[0])
+            if current is not binding[0]:
                 raise AuthorityDenied("source.native_input", "selected input execution changed")
-            return binding.selected_execution
+            return binding[0]
 
     def _resolve_parent_closure(self, observer: SourceObserverEnrollment,
                                 handles: Sequence[str], context: HostContext,
@@ -1630,6 +1678,7 @@ class SourceObserverRegistry:
             if capsule.expires_monotonic <= now or epoch != self.service.authority_epoch:
                 self._payload_capsules.pop(handle, None)
                 self._selected_input_consents.pop(handle, None)
+                self._selected_input_selections.pop(handle, None)
                 self._capsule_bytes -= len(payload)
                 payload[:] = b"\x00" * len(payload)
 
@@ -1647,6 +1696,7 @@ class SourceObserverRegistry:
             self._proofs_pending.clear()
             self._selected_input_proofs.clear()
             self._consumed_selected_input_proofs.clear()
+            self._selected_input_selections.clear()
             self._selected_input_consents.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
