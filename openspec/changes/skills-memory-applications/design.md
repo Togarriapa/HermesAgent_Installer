@@ -96,3 +96,23 @@ Private memory endpoint adapter v108: `plans/amendments/2026-10-10-private-memor
 Preactive application source and qualification consent v117: `plans/amendments/2026-10-10-preactive-application-source-consent-v117.md`; actual setupsource/lock receipts beforeactive and same explicitchoice finite purposeconsent, operational authorization untouched. Existing application/AC12 gates open.
 
 Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecycle-active-closure-v119.md`; existing lifecycle/capture/semantic acceptance obligations remain open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
+
+Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
+
+Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.
+
+Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
+
+Application offline runtime build v132: `plans/amendments/2026-10-10-application-offline-runtime-build-v132.md`; exact four setup-only source/build targets and actual offline package/environment/probe receipts, separate Python versus Bun/Node; reviewed resource ceilings are not measured compatibility. All AC remain open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.
+
+GLM source/license pins v135: `plans/amendments/2026-10-10-glm-source-license-pins-v135.md`; actual finite source blobs and held model inventory verification remain separate from deployment, no weight acquisition or AC promotion.
+
+Locked package/license receipts v136: `plans/amendments/2026-10-10-locked-package-source-license-receipts-v136.md`; finite actual acquisition phase, root-held artifacts/license evidence and noneditable isolated deployment; license/platform/deployment acceptance remains pending.
+
+Existing model-store source v139: `plans/amendments/2026-10-10-existing-model-store-selection-source-v139.md`; actual fixed root/child FD selection and source observations distinct private profile/deployment. No model acquisition or acceptance promotion.
