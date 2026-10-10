@@ -159,3 +159,10 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v214): Implement exact published source-home vs live selected-task split, current core claim/readback and actual delegate grant/mount evidence.
 
 - [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v215): Implement distinct protected source mapping, typed live admission/home binding, unchanged service identity and genuine prepared/publication claim joins.
+
+- [ ] HI-T221.1: Implement exactfreshpublishedhomePMadapter/projectionmetadata/FDverification.
+- [ ] HI-T221.2: Wire currentPMproof into activehome/taskbinding aftersetup/restart.
+- [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actualeffects separately.
+- [ ] HI-T231.1: Implement actual retained active authority aggregate, pure root rendering and strict local-owner/Authentik identity-domain parsing using exact current source/runtime/NSS/effect receipts.
+- [ ] BD-T231.2: Consume the sealed aggregate in active compiler/publisher and reuse its exact generation in activation; preserve separate v214 crosswalk and absent optional remote.
+- [ ] VD-T231.3: Verify complete genuine receipt-to-core-to-publication/enrollment pipeline and tamper/currentness/deadline/retry/restart failures; target acceptance separately OPEN.

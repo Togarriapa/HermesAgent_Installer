@@ -354,3 +354,99 @@ The installer SHALL implement v212's corrected v209 member schema and independen
 #### Scenario: Unknown or escaping AppDir link
 - **WHEN** a link is unknown, absolute, escaping, cyclic, dangling, a directory target or differs from the reviewed literal target/member identity
 - **THEN** package admission SHALL deny without broadening generic symlink authority or disabling Electron sandbox
+
+## ADDED Requirements
+
+### Requirement: Actual remote role source definition producer
+The installer SHALL use planning/official-remote-role-definition-producer-v222.json to select exact source-held roledefinitions and genuine current role receipts before activepromotion.
+
+#### Scenario: Prepared enrollment has no runnable records
+- **WHEN** initial remote role preparation occurs with empty preparedrecords
+- **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted
+
+
+### Requirement: Actual Xpra native dependency and toolchain producer v219
+The installer SHALL implement the exact retained signed-native/isolated-PM314/transform/config/build/qualification producer contract in `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; permanently missing producer handlers SHALL NOT count as completion.
+
+#### Scenario: Native source or transform proof substituted
+- **WHEN** unsigned/stale/wrong-architecture native data, distribution-Python bindings, a transform module alias or caller acquisition/qualification rows replace genuine current owner receipts
+- **THEN** build/runtime issuance SHALL deny without global install, feature weakening, ambient tool fallback or fabricated readiness
+
+#### Scenario: Fixed isolated build qualified
+- **WHEN** exact current source/transform/PM/native dependency/recipe joins and actual manager-observed ELF/server-session effects are verified
+- **THEN** the owner SHALL publish only independently inspected package/build evidence, retaining separate CAS/materialization/role/loaded/target gates
+
+
+### Requirement: Exact tested gateway source members and finite runtime joins v223
+The installer SHALL apply only exact tested source/schema tuples and complete config/import/toolchain/output/link contracts in `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md`, preserving separate fixture and production authority.
+
+#### Scenario: Actual fixture build mistaken for production runtime
+- **WHEN** the Docker package/import result or synthetic DTO/complete flag is presented without genuine current source-CAS/PM/native receipts, one-use managed grant and final materialization
+- **THEN** runnable role issuance SHALL deny while retaining only that exact fixture evidence
+
+#### Scenario: CPython or link closure substituted
+- **WHEN** libpython/stdlib/native loader closure is missing, source/schema bytes differ or any link differs from the exact gateway lib64-to-lib held-directory case
+- **THEN** build/package/runtime admission SHALL deny without generic directory-link permission or ambient dependency substitution
+
+
+### Requirement: Durable current three-role adoption and fresh network authority v225
+The installer SHALL implement `planning/current-remote-identity-adoption-v225.json` using actual current three-role source/runtime receipts, selected immutable publication member/core and signed existing transaction journal adoption before activation.
+
+#### Scenario: Restart or publication without adoption
+- **WHEN** a daemon restarts or a publication exists without exact signed adoption and current NSS/root facts
+- **THEN** it SHALL resolve fresh current protected source/journal observations or deny activation, never restore expired setup seals or reinterpret prepared identities as active
+
+#### Scenario: Network authority requested
+- **WHEN** active remote startup requires listener/client identity or lease renewal
+- **THEN** the resolver SHALL join exact fresh three-role identities to current protected namespace/network rows and actual nft/kernel lease proof, preserving private14500/8765 and Desktop AF_UNIX restrictions and refusing stale or foreign cleanup
+
+
+### Requirement: Actual bounded Desktop native build source and output v226
+The installer SHALL implement `planning/official-desktop-native-build-inputs-v226.json` with actual official header/Electron ABI, signed private ARM64 compiler/sysroot/dependency receipts and exact original workspace/native/prepared AppDir build; an unavailable placeholder or npm inventory SHALL NOT count as completion.
+
+#### Scenario: Native source or staging fallback missing
+- **WHEN** header/ABI/compiler/dependency/workspace or required helper proof is absent or prepared native state is degraded
+- **THEN** build/runtime issuance SHALL deny without network fallback, skipped typecheck, arbitrary install, global downgrade or reduced sandbox
+
+#### Scenario: Real AppDir built
+- **WHEN** exact current held inputs yield a full AppDir under fixed offline managed build
+- **THEN** independent observers SHALL verify complete package/native/library/link and actual sandbox-enabled Electron PTY effects while keeping source/build/CAS/materialized/active/Pi acceptance separate
+
+
+### Requirement: Exact remote identity source schema placement
+The installer SHALL preserve authority envelope schema1 and validate service-generations schema3 as exact schema2 plus v225 source selectors, retaining all existing validators and digest coverage.
+
+#### Scenario: Remote disabled or source missing
+- **WHEN** no protected remote startup is enabled
+- **THEN** the source array SHALL be empty, member absent and descriptor null with fixed source SHA null/size0, issuing no adoption receipt
+
+#### Scenario: Enabled source representation incomplete
+- **WHEN** enabled remote publication has missing member or mismatched/null digest/size/core selector fields
+- **THEN** publication and active resolution SHALL deny without inventing empty role or choice records
+
+
+### Requirement: Actual setup acquisition and preactive transform authority v227
+The installer SHALL implement `planning/preactive-xpra-acquisition-build-v227.json` using exact live setup/NSS/PM/source/controller one-use HTTPS grants, quarantined dynamic bytes, genuine signature/dependency/license admission and actual preactive transform manager output before runtime builds.
+
+#### Scenario: Download or active overlay substituted
+- **WHEN** quarantined metadata, caller URL/proof, copied CAS receipt, transform module or active-only overlay lookup substitutes for required preactive source authority
+- **THEN** admission SHALL deny without actor replacement, fictional catalog enrollment or enabling network in offline role builds
+
+### Requirement: Acyclic exact input closure and finite role build plan
+The installer SHALL compute separate finalized member and recipe-bound input digests and implement source-owned sealed managed role plans with the exact v227 argv/mount/output/cap/custody contracts.
+
+#### Scenario: Config or plan authority mutated
+- **WHEN** config embeds its own final digest, caller config becomes argv, a link/recipe changes without correct digest changes, or role plan exceeds source-owned bounds or original controller deadline
+- **THEN** managed build and runtime issuance SHALL deny and terminate only owned expired/cancelled jobs, preserving foreign state and independent output qualification
+
+
+### Requirement: Exact auxiliary Desktop ws declarations
+The installer SHALL implement `planning/official-desktop-ws-types-repair-v229.json` as an explicitly separate types-only held toolchain/workspace input, preserving original source/lock and ws runtime identity.
+
+#### Scenario: Type dependency or compiler proof substituted
+- **WHEN** wildcard fetching, ambient install, fake declarations, skipped compiler flags, altered original lock/source or typecheck-only readiness is presented
+- **THEN** admission SHALL deny and preserve original/foreign state rather than issue native AppDir/runtime acceptance
+
+#### Scenario: Exact declarations applied
+- **WHEN** current auxiliary receipt and original dependency/compiler/source joins materialize the exact fixed declarations in an owned disposable workspace
+- **THEN** the owner SHALL verify the original actual ARM64 typecheck and record the distinct auxiliary projection before proceeding to required native/AppDir qualification

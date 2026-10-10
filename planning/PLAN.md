@@ -168,9 +168,44 @@ HA v216 plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md refine
 
 SealedFD3source review220: plans/amendments/2026-10-10-sealed-bootstrap-fd3-source-review-v220.md; structural482source/effectproof only, unchanged211leafpins/authority/TTLs; BD-T208.1/VD-T208.2 target/allACOPEN.
 
+Officialremote roledefinition222: plans/amendments/2026-10-10-official-remote-role-definition-producer-v222.md; RT-T222.1/.2 VD-T222.3 OPEN; exact3roleheldsource/separateidentitytransaction nofutureactiveclaims/allACOPEN.
+
+CurrentpublishedPMhome runtime221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existingfreshresolver exactprojection/FDcustody nooldseal/all207/allACOPEN.
+
+
+Xpra native source producers v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; RT-T219.1 → RT-T219.2 → VD-T219.3 OPEN, actual signed native+isolatedPM314 acquisition and independent session qualification; no gap-only completion/all AC OPEN.
+
+
+Gateway tested source v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md`; RT-T223.1 → RT-T223.2 → VD-T223.3 OPEN. Exact tested leaf/schema pins/heldlibpython/finitegatewaylink and synthetic-authorityARM64fixture distinguished; productionruntime/AC OPEN.
+
+
+Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN. HI-T217.1/.2 and VD-T217.3 remain OPEN.
+
+
+Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.
+
+
+Current remote identity adoption v225: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225.md`; RT-T225.1 → RT-T225.2 → VD-T225.3 OPEN. Actual publication/core/member + immutable signed existing journal adoption, fresh restart NSS/root/network proof; no old setup seal/all AC OPEN.
+
+
+Official Desktop native inputs v226: `plans/amendments/2026-10-10-official-desktop-native-build-inputs-v226.md`; RT-T226.1 → RT-T226.2 → VD-T226.3 OPEN. Actual official Electron headers/ABI, signedARM64 compiler/sysroot, exact workspace/native/packaging/AppDir producer and independent sandbox effects; all pins/AC OPEN.
+
+
+v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225-schema-clarification.md`; authority envelope1 / service-generations3 exact schema2+selector rows, disabled absent member/null SHA+0 size; existing tasks/all AC OPEN.
+
+
+Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`; RT-T227.1 → RT-T227.2 → RT-T227.3 → VD-T227.4 OPEN. Actual one-use fixedHTTPS/dynamic sourceCAS, preactive transform and acyclic member/recipe input digests; finite role managed plans, all pins/AC OPEN.
+
+
+Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; RT-T229.1 → RT-T229.2 → VD-T229.3 OPEN. Exact separately reviewed types-only auxiliary artifact and owned workspace projection, unchanged originalsource/lock; actualARM64compiler/native/AppDir/AC separate.
+## v230 Qualification source-before-custody ordering
+
+`planning/qualification-source-before-process-custody-v230.json` resolves the actual handler/lease/source-session construction cycle. HI-T230.1/VD-T230.2 remain open; source-only lease grants no effects, actual prepared custody requires current genuine bindings, and all AC remain open.
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.
 Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-bootstrap-fd3-exec-20261010.json`. Python3.14/Linux ARM64 reproduced the CLOEXEC memfd-at-FD3 self-dup failure and verified explicit clear/readback plus sealed descriptor survival across exec. Unit/isolated-container checks pass; actual Pi handoff remains open.
 Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
 
 Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.
 
 BD-T232.1 source-fixture evidence: `evidence/development/EV-BD-T232.1-bootstrap-pending-diagnostics-20261010.json`; target stage/cause unknown, source review and all acceptance remain OPEN.
+Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.

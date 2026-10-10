@@ -109,3 +109,57 @@ Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-pr
 - [ ] `RT-T212.2` Integrate exact current publisher adoption and manager-verified-dead journaled owned rollback under v212; all target acceptance remains OPEN.
 
 - [ ] `VD-T212.3` Exercise real isolated Linux NSS/root effects and current choice/receipt/adoption plus collision/replay/cleanup failure contracts under v212; all target acceptance remains OPEN.
+
+- [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
+- [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
+- [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.
+
+
+Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md` / `planning/xpra-native-build-acquisition-v219.json`; owner implements actual signed native/PM314 backend/transform receipt producers, corrected fixed offline recipe and independent qualification. New source pins and all AC OPEN.
+
+- [ ] `RT-T219.1` Implement genuine signed native package and isolated CP314 Python backend acquisition/receipt producer under v219; all acceptance OPEN.
+
+- [ ] `RT-T219.2` Wire exact source/transform/PM/member/config joins and corrected offline native build/qualification under v219; all acceptance OPEN.
+
+- [ ] `VD-T219.3` Verify isolated ARM64 real build/session and specified signature/ABI/source/currentness/RPATH/cleanup failures under v219; all acceptance OPEN.
+
+
+Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+- [ ] `RT-T223.1` Apply exact tested gateway source/schema tuples and complete runtime import/sourcegroup closure under v223; all runtime/target acceptance OPEN.
+
+- [ ] `RT-T223.2` Complete genuine current source/PM/wheel/native config/CAS/final-runtime joins and exact gateway-only directory-link policy under v223; all runtime/target acceptance OPEN.
+
+- [ ] `VD-T223.3` Verify real sealed source/build/materialization joins and specified source/ELF/link/currentness/fake-authority failures under v223; all runtime/target acceptance OPEN.
+
+
+## Current remote identity adoption v225
+
+- [ ] `RT-T225.1` Implement actual retained source projection, compiler member/core selectors and typed signed immutable existing transaction-journal adoption writer.
+- [ ] `RT-T225.2` Implement fresh active identity/private role observations and genuine current root network lease resolver under exact v225 APIs.
+- [ ] `VD-T225.3` Verify actual publication/journal restart joins and specified missing proof/replay/signature/currentness/NSS/kernel/cleanup failures; target acceptance OPEN.
+
+
+## Official Desktop native build inputs v226
+
+- [ ] `RT-T226.1` Implement actual current official header/native/signedARM64 sysroot source acquisition and held native input registry under v226.
+- [ ] `RT-T226.2` Complete actual offline ElectronABI node-pty/helpers, original workspace typecheck/build and prepared AppDir with independent ELF/PTY/sandbox observer.
+- [ ] `VD-T226.3` Verify real isolated ARM64 build and specified header/ABI/dependency/egress/degraded/currentness/link/sandbox/cancel failures; all target acceptance OPEN.
+
+
+- [ ] `VD-T225.3` Also test exact schema3 placement/legacy validator preservation and disabled absent/null/zero versus enabled complete-member representation; reject mixed states.
+
+
+## Pre-active Xpra acquisition and managed role plan v227
+
+- [ ] `RT-T227.1` Implement actual selected fixedHTTPS request/grant/native verifier/dynamic component sourceCAS producer and root binding.
+- [ ] `RT-T227.2` Implement actual preactive transform manager/CAS/independent overlay receipt and acyclic member/config/final input digest projections.
+- [ ] `RT-T227.3` Implement sealed exact managed role plan/current output-controller custody, fixed driver argv/mounts and role-specific caps under v227.
+- [ ] `VD-T227.4` Verify genuine setup acquisition/CAS/transform/input/manager joins and specified TLS/replay/foreign/closure/expiry/revocation/network/cleanup failures; all target acceptance OPEN.
+
+
+## Official Desktop ws typecheck repair v229
+
+- [ ] `RT-T229.1` Implement exact separately admitted auxiliary declaration receipt and owned disposable workspace projection without originalsource/lock edits.
+- [ ] `RT-T229.2` Run actual original ARM64 typecheck before/after and continue genuine v226 native/workspace/AppDir build.
+- [ ] `VD-T229.3` Verify exact archive/SRI/member/dependency/currentness/foreign conflict/API rejection and real original compiler effects; all target acceptance OPEN.

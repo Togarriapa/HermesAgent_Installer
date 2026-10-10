@@ -81,3 +81,34 @@ Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-re
 
 
 Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md` / `planning/production-remote-role-nss-roots-v212.json`; genuine three distinct accounts/current descriptors/journal/adoption, preserved foreign state and unchanged native-worker receipt. Finite v209 AppDir target fields corrected; source pins and all AC OPEN.
+
+Officialremote roledefinition222: source-only held3roledescriptor→currentchoice/transaction-generated identityselection→actualNSS/roots/runtime/network→strictactiveadoption. planning/official-remote-role-definition-producer-v222.json; no preparedrecords/futureaccountauthority.
+
+
+Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md` / `planning/xpra-native-build-acquisition-v219.json`; owner implements actual signed native/PM314 backend/transform receipt producers, corrected fixed offline recipe and independent qualification. New source pins and all AC OPEN.
+
+
+Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+
+## Current remote identity adoption v225
+
+Add actual precommit three-role source member, current core selectors and postpublication signed enrollment-journal adoption; fresh active identity/network resolvers follow `plans/amendments/2026-10-10-current-remote-identity-adoption-v225.md`. RT-T225.1/.2 and VD-T225.3 remain OPEN.
+
+
+## Actual official Desktop native inputs v226
+
+Implement bounded official Electron headers/ABI, signed ARM64 compiler/sysroot/runtime dependencies, exact workspace/native preparation and independent AppDir build/qualification under `plans/amendments/2026-10-10-official-desktop-native-build-inputs-v226.md`; missing producers must be implemented. RT-T226.1/.2 and VD-T226.3 OPEN.
+
+
+v225 compiler clarification: append-only schema clarification fixes authority envelope1/service-generations3 placement and disabled absent-member/null digest/zero size without fictional adoption records; existing tasks OPEN.
+
+
+## Preactive Xpra producers and role plans v227
+
+Implement actual one-use fixedHTTPS setup acquisition/dynamic sourceCAS, existing preactive transform executor and acyclic member/config/final receipt projections plus fixed managed role plans under `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`. RT-T227.1/.2/.3 and VD-T227.4 remain OPEN.
+
+
+## Official Desktop ws type repair v229
+
+Add exact MIT @types/ws8.18.2 as separately reviewed types-only auxiliarytoolchain/workspace projection under `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; original source/lock and runtimews unchanged. Actual ARM64 original compiler/nativeAppDir effects remain required; tasks OPEN.
