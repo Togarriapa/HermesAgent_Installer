@@ -1463,11 +1463,18 @@ def _validate_native_worker_generation_rows(item: Mapping[str, Any]) -> None:
     validate_row(network, "native_worker_network_record", path="native_worker_network_record")
     validate_row(active, "active_network_generation_record", path="active_network_generation_record")
     validate_row(runtime, "native_worker_runtime_record", path="native_worker_runtime_record")
+    committed_venv = runtime["committed_venv_identity"]
     generation_id = item["generation_id"]
     if (network["generation"] not in {row.get("generation") for row in item["service_records"]}
             or active["generation_id"] != generation_id
             or runtime["generation_id"] != generation_id):
         raise ValueError("native worker generation foreign key is stale")
+    committed_venv = runtime["committed_venv_identity"]
+    if (runtime["execution_mode"] != "native-hermes-cli-module-v1"
+            or committed_venv["identity_kind"] != "pm-committed-hermes-venv-v1"
+            or committed_venv["executable_identity_id"] != "observed:pm-committed-venv-python"
+            or committed_venv["pm_runtime_receipt_handle"] != runtime["pm_runtime_receipt_handle"]):
+        raise ValueError("native worker runtime does not carry its exact committed PM executable identity")
     if (_row_digest(network) != active["network_row_sha256"]
             or _row_digest(runtime) != active["worker_runtime_record_sha256"]):
         raise ValueError("active network row digest does not match the complete child body")
@@ -1504,7 +1511,10 @@ _OWNER_OVERLAY_OBSERVER_FIELDS = frozenset({
     "role_closure_member_path", "role_source_revision", "role_source_tree_sha256",
     "source_issuer_id", "channel_id", "invocation_capture_schema_id", "result_capture_schema_id",
     "argument_schema_id", "argument_schema_sha256", "result_schema_id", "result_schema_sha256",
-    "lease_seconds",
+    "lease_seconds", "result_observer_enrollment_id", "result_source_issuer_id",
+    "result_channel_id", "result_handler_artifact_id", "result_handler_sha256",
+    "result_handler_source_receipt_handle", "result_handler_module_name",
+    "result_handler_closure_member_path",
 })
 _OWNER_OVERLAY_METHOD_REGISTRATIONS = {
     "read": "resource-overlay-store:tool:resource_overlay_read",
@@ -1515,7 +1525,7 @@ _OWNER_OVERLAY_METHOD_REGISTRATIONS = {
 
 
 def _validate_owner_overlay_observer_records(item: Mapping[str, Any]) -> None:
-    """Validate the exact v185 owner-registration observer generation rows."""
+    """Validate the exact v188 paired owner-result observer generation rows."""
     rows = item["owner_overlay_observer_records"]
     if not isinstance(rows, list) or len(rows) > 4:
         raise ValueError("owner-overlay observer catalog is malformed")
@@ -1528,7 +1538,7 @@ def _validate_owner_overlay_observer_records(item: Mapping[str, Any]) -> None:
     seen_registration_methods: set[tuple[str, str, str, str]] = set()
     for raw in rows:
         if not isinstance(raw, dict) or set(raw) != _OWNER_OVERLAY_OBSERVER_FIELDS:
-            raise ValueError("owner-overlay observer row differs from the closed v185 wire")
+            raise ValueError("owner-overlay observer row differs from the closed v188 wire")
         if type(raw["schema"]) is not int or raw["schema"] != 1:
             raise ValueError("owner-overlay observer schema is unsupported")
         if raw["observer_kind"] != "owner-overlay-registration-v1":
@@ -1552,12 +1562,22 @@ def _validate_owner_overlay_observer_records(item: Mapping[str, Any]) -> None:
                      "role_source_receipt_handle", "role_module_name", "role_closure_member_path",
                      "role_source_revision", "source_issuer_id", "channel_id",
                      "invocation_capture_schema_id", "result_capture_schema_id",
-                     "argument_schema_id", "result_schema_id"):
+                     "argument_schema_id", "result_schema_id", "result_observer_enrollment_id",
+                     "result_source_issuer_id", "result_channel_id", "result_handler_artifact_id",
+                     "result_handler_source_receipt_handle", "result_handler_module_name",
+                     "result_handler_closure_member_path"):
             value = raw[name]
             if not isinstance(value, str) or not 1 <= len(value) <= 512 or any(ord(char) < 0x20 for char in value):
                 raise ValueError(f"owner-overlay observer {name} is malformed")
         if (not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
                              raw["role_module_name"], re.ASCII)
+                or raw["result_observer_enrollment_id"] == observer_id
+                or raw["result_handler_artifact_id"]
+                   != "installer-module:hermes_installer.authority.local_resource_effects"
+                or raw["result_handler_module_name"]
+                   != "hermes_installer.authority.local_resource_effects"
+                or raw["result_handler_closure_member_path"]
+                   != "lib/python/hermes_installer/authority/local_resource_effects.py"
                 or raw["invocation_capture_schema_id"] != "native-owner-overlay-invocation-v1"
                 or raw["result_capture_schema_id"] != "native-owner-overlay-result-v1"
                 or type(raw["choice_epoch"]) is not int or raw["choice_epoch"] < 0
@@ -1565,7 +1585,8 @@ def _validate_owner_overlay_observer_records(item: Mapping[str, Any]) -> None:
                 or type(raw["lease_seconds"]) is not int or raw["lease_seconds"] != 30):
             raise ValueError("owner-overlay observer schema IDs, epochs, module or lease are invalid")
         for name in ("operation_row_sha256", "source_choice_signed_record_sha256", "role_sha256",
-                     "role_source_tree_sha256", "argument_schema_sha256", "result_schema_sha256"):
+                     "role_source_tree_sha256", "argument_schema_sha256", "result_schema_sha256",
+                     "result_handler_sha256"):
             if not isinstance(raw[name], str) or not re.fullmatch(r"[0-9a-f]{64}", raw[name]):
                 raise ValueError(f"owner-overlay observer {name} is malformed")
         package_matches = [package for package in packages
