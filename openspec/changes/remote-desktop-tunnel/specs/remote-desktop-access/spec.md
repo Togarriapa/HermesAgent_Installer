@@ -295,3 +295,10 @@ The system SHALL use the v109 source-verified transform module and exact origina
 #### Scenario: Missing source topology
 - **WHEN** staging omits a required original manifest directory or changes the selected source links
 - **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.

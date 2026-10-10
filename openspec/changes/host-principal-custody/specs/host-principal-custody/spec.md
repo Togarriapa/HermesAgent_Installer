@@ -471,3 +471,10 @@ The system SHALL use exact v110 local handler result envelopes and recursive pub
 #### Scenario: Protected backend schema missing
 - **WHEN** finance, wallet or source-receipt output lacks its actual bounded typed backend result schema
 - **THEN** that executable candidate remains unavailable without omitting the original family acceptance obligation.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.

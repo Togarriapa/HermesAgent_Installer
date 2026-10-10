@@ -546,8 +546,8 @@
       "artifact_id": "installer-xpra-root-xauthority-transform-module-v1",
       "installed_release_role": "xpra-root-xauthority-transform-module",
       "source_relative_path": "src/hermes_installer/remote/xpra_root_xauthority.py",
-      "sha256": "183900aa12d4d871569d6b86509e06e6961eefaf2d99ea3d1e7c007b507d4cf4",
-      "size_bytes": 58622,
+      "sha256": "3342afa5311fef5008a35317a526c75b3d1531d21e92d1f8aae87dba38b0a7d1",
+      "size_bytes": 59621,
       "member": "xpra_root_xauthority.py",
       "imports": "stdlib only from exact PM runtime closure; installed release verifies actual module/origin pin, no caller code"
     },
@@ -598,6 +598,7 @@
     "authority": "Existing root build execution admission consumes sealed current RootSelectedXpraBuildSelection once; issues independent finite process.start setup build effect, verifies separate retained root setup controller PIDFD/current actor/transaction and dedicated selected build subject. Reuse existing root-selected build custody issuer; do not impersonate setup PID as build worker, use display service grant or generic worker delegated RPC. Fixed parameters {} and exact recipe digest only. Terminal bookkeeping root manager internal; parent consumed grant audit-only, no reuse.",
     "result": "Actual ManagedBuildResult/BuildAttestation terminal plus held ContentAddressedBuildStore.publish observation. Dynamic BuildOutput ID build-output:<actual archive SHA>:file:d and current source/toolchain/builder/recipe/generation/manifest facts join; no preknown output SHA. Overlay patch receipt consumes actual attestation and archive manifest. Local f964 fixture output is measurement only, not managed success.",
     "status": "Implementation and actual ARM build/runtime/display/kernel acceptance pending; all18ACopen",
-    "source_regular_staging_v109": "Exact v101 regular files and required original directories, including empty fs/share/doc parent. Reconstruct only five original verified links in private work. Builder is a mounted executable file: argv0 mount_id builder relative_path empty. Non-executable output role data (file:d), not null. Actual managed proof still required."
+    "source_regular_staging_v109": "Exact v101 regular files and required original directories, including empty fs/share/doc parent. Reconstruct only five original verified links in private work. Builder is a mounted executable file: argv0 mount_id builder relative_path empty. Non-executable output role data (file:d), not null. Actual managed proof still required.",
+    "source_target_bytes_v111": "Before reconstructing any of five links, verify UTF8 target string SHA256 and size exactly against original v101 full manifest mode120000 rows. No target-string-only match. Current source committed b50c291e; actual full source staging/overlay verifier exercised, managed attestation still mandatory."
   }
 }
