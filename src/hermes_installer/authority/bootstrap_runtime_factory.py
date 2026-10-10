@@ -4546,6 +4546,73 @@ class RootBootstrapSession:
         self._verify_current_setup_controller()
         return self._native_policy_preparation_registry
 
+    def _resolve_prepared_native_package_generation(
+            self, prepared: EnrollmentReceipt, bundle: RootPreparedNativeBundle,
+    ) -> tuple[str, str, RootReleaseModuleReceipt]:
+        """Derive the native package generation from already-held inputs.
+
+        This deliberately runs before the native policy TTY choice.  The
+        package generation is source identity (prepared service generation,
+        selected Resources closure, and reviewed compiler closure), not an
+        output hash and not a future active-package row.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        self._resolve_current_prepared_native_bundle(bundle)
+        if (self._last_receipt is not prepared or prepared.state != "prepared"
+                or prepared.enrollment_ids or bundle.prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending("native package identity requires the current empty prepared generation")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        support: list[RootReleaseModuleReceipt] = []
+        for artifact_id in _NATIVE_ASSEMBLY_SUPPORT_MODULES:
+            rows = [row for row in release.files if row.artifact_id == artifact_id]
+            if (len(rows) != 1 or "module" not in rows[0].roles
+                    or artifact_id not in plan.allowed_artifact_ids):
+                raise BootstrapEnrollmentPending("native package identity lacks its reviewed compiler module closure")
+            row = rows[0]
+            origins = [origin for origin in actor.module_origins
+                       if origin[1] == str(release.release_root / row.relative_path)
+                       and origin[4] == row.sha256]
+            if len(origins) != 1:
+                raise BootstrapEnrollmentPending("native package compiler is outside the current root import closure")
+            prior = next((item for item in self._prepared_release_member_receipts.values()
+                          if item.artifact_id == artifact_id
+                          and item._prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                prior = RootReleaseModuleReceipt(
+                    row.artifact_id, row.relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    secrets.token_urlsafe(36), self._handle.session_id, self._seal,
+                    self, prepared.generation_id)
+                self._prepared_release_member_receipts[prior.source_receipt_handle] = prior
+            prior.read_current()
+            support.append(prior)
+        compiler = next((item for item in support
+                         if item.artifact_id == _NATIVE_ASSEMBLY_COMPILER_ARTIFACT), None)
+        if compiler is None:
+            raise BootstrapEnrollmentPending("native package compiler receipt is absent")
+        closure_digest = hashlib.sha256(_canonical([
+            {"artifact_id": item.artifact_id, "sha256": item.sha256,
+             "size_bytes": item.size_bytes, "source_receipt_handle": item.source_receipt_handle}
+            for item in sorted(support, key=lambda value: value.artifact_id)
+        ])).hexdigest()
+        materialization = bundle.materialization_receipt
+        generation = hashlib.sha256(_canonical({
+            "package_id": "hermes-agent-native-package-v1",
+            "profile_id": self._policy.identity_policy.get("service_profile_id"),
+            "service_generation": prepared.generation_id,
+            "service_digest": prepared.generation_digest,
+            "resource_profile_id": materialization.resource_profile_id,
+            "resource_closure_digest": materialization.selected_closure_digest,
+            "hermes_revision": materialization.hermes_revision,
+            "compiler_sha256": compiler.sha256,
+            "compiler_closure_sha256": closure_digest,
+        })).hexdigest()
+        actor.verify_current(release)
+        return generation, closure_digest, compiler
+
     def observe_native_policy_configuration(self) -> Any:
         """Capture root-TTY intent for finite native component families.
 
@@ -4619,6 +4686,37 @@ class RootBootstrapSession:
             service_profile_id = self._policy.identity_policy.get("service_profile_id")
             if not isinstance(service_profile_id, str) or not service_profile_id:
                 raise BootstrapEnrollmentPending("native policy choice lacks its selected service profile")
+            bundle = self.prepare_selected_native_bundle()
+            package_generation, _compiler_closure_digest, _compiler_receipt = (
+                self._resolve_prepared_native_package_generation(prepared, bundle))
+            overlay_registration_ids = (
+                "resource-overlay-store:tool:resource_overlay_read",
+                "resource-overlay-store:tool:resource_overlay_history",
+                "resource-overlay-store:tool:resource_overlay_write",
+                "resource-overlay-store:tool:resource_overlay_delete",
+            )
+            selected_owner_overlay: tuple[str, ...] = ()
+            if "resource-overlay-store" in selected_set:
+                print("\nOwner-private overlay operation intent (separate from native action bindings):")
+                for index, registration_id in enumerate(overlay_registration_ids, 1):
+                    print(f"  {index}. {registration_id.rsplit(':', 1)[-1]}")
+                print("Choose operation numbers separated by commas; blank selects none.")
+                overlay_answer = input("Owner overlay operations: ").strip()
+                _verify_root_tty_proof(proof)
+                if overlay_answer:
+                    try:
+                        overlay_numbers = tuple(int(item.strip(), 10)
+                                                for item in overlay_answer.split(","))
+                    except ValueError:
+                        raise BootstrapEnrollmentPending(
+                            "owner overlay selection must use listed numbers or blank") from None
+                    if (not overlay_numbers or len(set(overlay_numbers)) != len(overlay_numbers)
+                            or any(number < 1 or number > len(overlay_registration_ids)
+                                   for number in overlay_numbers)):
+                        raise BootstrapEnrollmentPending(
+                            "owner overlay selection contains a duplicate or unknown operation")
+                    selected_owner_overlay = tuple(
+                        overlay_registration_ids[number - 1] for number in overlay_numbers)
             now = time.monotonic()
             deadline = self._factory.session_store.current_deadline(self._handle)
             expires = min(deadline, current.expires_monotonic, now + 300.0)
@@ -4642,10 +4740,11 @@ class RootBootstrapSession:
                 service_generation=prepared.generation_id,
                 resource_profile_selection_handle=resource_handle,
                 package_id="hermes-agent-native-package-v1",
-                native_package_generation=None,
+                native_package_generation=package_generation,
                 selected_component_ids=tuple(selected),
                 selected_registration_ids=tuple(selected_registrations),
                 selected_action_binding_ids=tuple(selected_actions),
+                selected_owner_overlay_registration_ids=selected_owner_overlay,
                 controller_binding_handle=controller_handle,
                 private_input_consent_selection_handle=None,
                 issued_monotonic=now, expires_monotonic=expires, revocation_epoch=0,
@@ -6515,6 +6614,9 @@ class RootBootstrapSession:
             "compiler_sha256": compiler.sha256,
             "compiler_closure_sha256": closure_digest,
         })).hexdigest()
+        if package_generation != policy_selection.native_package_generation:
+            raise BootstrapEnrollmentPending(
+                "native package generation changed between root TTY choice and assembly")
         now = time.monotonic()
         expires = min(prepared.expires_monotonic,
                       self._factory.session_store.current_deadline(self._handle), now + 300.0)
