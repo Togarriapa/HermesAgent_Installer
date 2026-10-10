@@ -174,3 +174,7 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease
 
 - [ ] SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies
+
+- [ ] SK-T135.1 artifact broker: Enroll exact three blob catalog/source rows, actual release-member receipt association and held-byte observer tests; no weights rows or broad catalog namespace.
+
+- [ ] SK-T135.2 models/factory: Consume exact source/license/README observations in existing-model selection and current directory verification; preserve absent tree/runtime/load/embedding/account evidence as pending.

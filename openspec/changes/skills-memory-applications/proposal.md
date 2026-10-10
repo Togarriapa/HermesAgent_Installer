@@ -93,3 +93,5 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 Application offline runtime build v132: `plans/amendments/2026-10-10-application-offline-runtime-build-v132.md`; exact four setup-only source/build targets and actual offline package/environment/probe receipts, separate Python versus Bun/Node; reviewed resource ceilings are not measured compatibility. All AC remain open.
 
 Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.
+
+GLM source/license pins v135: `plans/amendments/2026-10-10-glm-source-license-pins-v135.md`; actual finite source blobs and held model inventory verification remain separate from deployment, no weight acquisition or AC promotion.

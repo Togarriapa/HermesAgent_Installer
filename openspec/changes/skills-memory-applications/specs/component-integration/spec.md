@@ -753,3 +753,10 @@ The system SHALL distinguish stable root setup principal/namespace/private-purpo
 #### Scenario: Identity changes during preparation
 - **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
 - **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Source-bound GLM inventory and independent license observations v135
+The installer SHALL observe the exact bounded inventory, upstream MIT license and selected quantizer declaration pinned by v135 before model-source selection; metadata SHALL NOT substitute for actual immutable model member/runtime/load evidence.
+
+#### Scenario: Source metadata is available but model is absent
+- **WHEN** the three small source blobs verify but no complete selected model directory or owned deployment is observed
+- **THEN** source provenance is retained and deployment remains pending; no weights are downloaded and no acceptance is promoted
