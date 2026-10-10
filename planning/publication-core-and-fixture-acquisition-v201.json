@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md",
+  "extends": "v199",
+  "tasks": [
+    "HI-T160.1",
+    "HI-T197.2",
+    "HI-T197.3",
+    "VD-T197.4"
+  ],
+  "active_descriptor_schema": 2,
+  "core_member": {
+    "relative_path": "authority/enrollment.json",
+    "mode": "0444",
+    "owner_uid": 0,
+    "owner_gid": 0,
+    "descriptor_fields": [
+      "relative_path",
+      "sha256",
+      "size_bytes",
+      "authority_schema"
+    ]
+  },
+  "claim_additions": [
+    "authority_core_bytes",
+    "authority_core_sha256",
+    "authority_core_size_bytes",
+    "authority_core_schema"
+  ],
+  "core_projection_fields": [
+    "publication_receipt_handle",
+    "transaction_handle",
+    "generation_id",
+    "service_generation_digest",
+    "claim_digest",
+    "publication_sha256",
+    "descriptor_sha256",
+    "relative_path",
+    "sha256",
+    "size_bytes",
+    "authority_schema",
+    "generation_device",
+    "generation_inode",
+    "member_device",
+    "member_inode"
+  ],
+  "new_acquisition_max_seconds": 3600,
+  "effect_caps": "unchanged; already-issued acquisition deadline cannot renew",
+  "source_hashes": "pending actual committed implementations",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}

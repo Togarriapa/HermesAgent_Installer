@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F02",
+    "BD-T196.1",
+    "VD-T196.2"
+  ],
+  "why": "Actual DD00 target failed with type-only RuntimeError after source prompt; this establishes no exact failing stage. A narrow source-owned constant-stage boundary diagnostic improves observation without printing arbitrary trust error messages or changing any authority check.",
+  "evidence_limit": "DD00/dd00fdcefa44e25b00911f07e76d0ffc58480400 generic failure and absent runtime store do not prove a source/runtime/TTY/root actor cause. Future staged output is actual caught boundary evidence only, never install/auth/acceptance proof.",
+  "source_review": "Actual uncommitted implementation diff inspected in /private/tmp/hermes-pi-authority-runtime-diagnostic-dd00, root_setup.py/bootstrap_enrollment.py/installer_release_build.py. No new expected hash declared until tested committed source bytes are measured. v196 original source pins/history unchanged; future source cohort review required before release enrollment.",
+  "type": {
+    "module": "hermes_installer.authority.bootstrap_enrollment",
+    "class": "BootstrapRuntimeStepFailure",
+    "base": "RuntimeError",
+    "fields": [
+      "step",
+      "error_kind"
+    ],
+    "step_values": [
+      "bootstrap.tty_selection",
+      "source_cas.construct",
+      "source_cas.registry",
+      "source_cas.acquire",
+      "source_cas.resolve",
+      "installer_runtime.registry",
+      "installer_runtime.provision",
+      "bootstrap.handoff",
+      "bootstrap.reexec",
+      "installed_release.predecessor",
+      "installed_release.import_closure",
+      "installed_release.actor_observation",
+      "installed_release.actor_verification"
+    ],
+    "error_kind_values": [
+      "RuntimeError"
+    ],
+    "constructor": "Both fields exact built-in str and finite literals only; fixed generic base message installer bootstrap runtime step failed. No original exception/message/path/secret/args copied into a custom field."
+  },
+  "wrapper": "bootstrap_runtime_error_step(step)->context manager; used only at listed fixed installed/bootstrap source call sites. Catch RuntimeError then wrap only if type(exc) is RuntimeError; subclasses re-raise unchanged. Raise new exact BootstrapRuntimeStepFailure with fixed stage and RuntimeError from None. Preserve exception/state/exit semantics and call ordering; no retry/recovery/trust override. This is not a caller-provided stage parameter or generic runtime logging helper.",
+  "call_boundaries": {
+    "bootstrap.tty_selection": [
+      "run_root_setup_action: issue_explicit_tty_choice",
+      "bootstrap_selected_release: candidate_selection_registry.resolve"
+    ],
+    "source_cas.construct": [
+      "bootstrap_selected_release: RootInstallerDistributionSourceCAS.from_root_bootstrap"
+    ],
+    "source_cas.registry": [
+      "bootstrap_selected_release: RootInstallerDistributionRegistry.from_owned_source_CAS"
+    ],
+    "source_cas.acquire": [
+      "bootstrap_selected_release: source_cas.acquire_selected"
+    ],
+    "source_cas.resolve": [
+      "bootstrap_selected_release: distribution_registry.resolve"
+    ],
+    "installer_runtime.registry": [
+      "bootstrap_selected_release: RootInstallerRuntimeArtifactRegistry + RootInstallerInterpreterRegistry.from_owned_source_CAS"
+    ],
+    "installer_runtime.provision": [
+      "bootstrap_selected_release: provision_selected_bootstrap_interpreter"
+    ],
+    "bootstrap.handoff": [
+      "bootstrap_selected_release: RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap + create_for_current_process"
+    ],
+    "bootstrap.reexec": [
+      "bootstrap_selected_release: reexec_selected_bootstrap"
+    ],
+    "installed_release.predecessor": [
+      "run_root_setup_action: observe_deployment_predecessor + predecessor.verify_current"
+    ],
+    "installed_release.import_closure": [
+      "run_root_setup_action: fixed _import_v180_native_support_closure/_import_v187_listener_activation_closure and fixed factory imports"
+    ],
+    "installed_release.actor_observation": [
+      "run_root_setup_action: InstalledRootReleaseVerifier.from_current_root_process"
+    ],
+    "installed_release.actor_verification": [
+      "run_root_setup_action: actor.verify_current(release)"
+    ]
+  },
+  "source_paths": {
+    "bootstrap_selected_release": "src/hermes_installer/authority/installer_release_build.py",
+    "run_root_setup_action": "src/hermes_installer/root_setup.py",
+    "diagnostic_type": "src/hermes_installer/authority/bootstrap_enrollment.py"
+  },
+  "formatter": "root_setup._safe_reason accepts only type(error) is BootstrapRuntimeStepFailure, revalidates both field types and finite membership, then emits exactly Root setup failed at <fixed step> (RuntimeError). Malformed fields fall back to existing Root setup could not verify its required authority (RuntimeError). Never call str/repr/error.args/traceback/context/cause on the original error, arbitrary subclass getter or caller diagnostic value. Existing ordinary RuntimeError and all trust-denial RuntimeError subclasses remain type-only. Existing BootstrapEnrollmentPending and typed bounded OSError diagnostics remain unchanged.",
+  "limits": "No dynamic operation/path/module/principal/source/token/account/exception class-name in output; fixed stage + built-in RuntimeError category only. Python from None suppresses rendered chaining, not proof of absence of implicit exception context in memory. Existing top-level safe formatting/exit paths must remain bounded; do not dump tracebacks or enable debug output. bootstrap.reexec means an observed failure returned before successful same-process exec transition; it does not classify a later new interpreter failure.",
+  "tests": [
+    "Exact built-in RuntimeError with path/token/control-char/message secret canaries at every listed wrapper returns exact constant diagnostic and original failing exit/state",
+    "Ordinary RuntimeError outside listed wrappers remains previous type-only output",
+    "RuntimeError subclass including malicious str/repr/args/getters is not wrapped/formatted beyond existing safe type-only behavior",
+    "Exact diagnostic with mutated nonstr/unknown stage/error kind falls back without arbitrary formatting",
+    "No OSError/BootstrapEnrollmentPending/other exceptions are reclassified; existing guarded preservation/authority-denial behavior remains unchanged",
+    "Target failure evidence retains exact candidate/source and observed fixed diagnostic only; no stage inference or acceptance promotion"
+  ],
+  "tasks": [
+    {
+      "id": "BD-T203.1",
+      "owner": "ARM64 bootstrap recheck/source owner",
+      "work": "Implement exact typed finite call-boundary diagnostics and redaction/state/subclass/malformed-field regression tests, preserving source trust checks and ordinary type-only failures."
+    },
+    {
+      "id": "VD-T203.2",
+      "owner": "Sol/source broker/recheck",
+      "work": "Review tested committed source bytes/pins and actual next isolated candidate diagnostic evidence; keep DD00 cause unassigned and all live acceptance open."
+    }
+  ],
+  "acceptance": "All original requirements and AC01..18 OPEN; baseline unchanged; diagnostic does not authorize runtime installation/repair or imply actual target readiness."
+}
