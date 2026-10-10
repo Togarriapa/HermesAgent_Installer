@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,16 @@ class ActiveNativeWorkerRuntimeUnavailable(AuthorityDenied):
 
     def __init__(self, message: str):
         super().__init__("native_worker.runtime", message)
+
+
+def _registry_locked(method):
+    def invoke(self, *args, **kwargs):
+        lock = getattr(self, "_lock", None)
+        if lock is None:
+            return method(self, *args, **kwargs)
+        with lock:
+            return method(self, *args, **kwargs)
+    return invoke
 
 
 class _ProjectionFDCustody:
@@ -62,8 +73,17 @@ class RootActiveNativeWorkerRuntimeProjection:
     pm_runtime_receipt_handle: str
     pm_runtime_root_device: int
     pm_runtime_root_inode: int
+    pm_venv_root_path: Path
+    pm_venv_root_device: int
+    pm_venv_root_inode: int
+    pm_base_root_path: Path
+    pm_base_root_device: int
+    pm_base_root_inode: int
     native_output_root_device: int
     native_output_root_inode: int
+    native_output_root_path: Path
+    native_output_root_receipt_handle: str
+    native_output_root_receipt_sha256: str
     expires_monotonic: float
     member_fds: tuple[int, ...] = field(repr=False)
     _custody: _ProjectionFDCustody = field(repr=False, compare=False)
@@ -98,12 +118,14 @@ class RootActiveNativeWorkerRuntimeRegistry:
         self._issued: dict[str, RootActiveNativeWorkerRuntimeProjection] = {}
         self._network_inputs: dict[str, Any] = {}
         self._closed = False
+        self._lock = threading.RLock()
 
     @classmethod
     def from_root_runtime(cls, runtime: Any, generation_owner: Any
                           ) -> "RootActiveNativeWorkerRuntimeRegistry":
         return cls(runtime, generation_owner, _seal=_RUNTIME_SEAL)
 
+    @_registry_locked
     def resolve_current(self, network_projection: Any) -> RootActiveNativeWorkerRuntimeProjection:
         from .active_network_generation import RootActiveNetworkGenerationProjection
         self._require_live()
@@ -119,10 +141,12 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     or row.get("profile_id") != network_projection.process_profile_id
                     or row.get("profile_generation") != network_projection.profile_generation):
                 raise ValueError("runtime row does not join selected active profile")
-            fds, root_identity = self._open_pm_members(row, network_projection.active_record)
+            fds, root_identity, venv_root, venv_identity, base_root, base_identity = self._open_pm_members(
+                row, network_projection.active_record)
             try:
                 fds.extend(self._open_source_definition_members(row))
-                output_fds, output_root_identity = self._open_native_output_members(row)
+                (output_fds, output_root_identity, output_root_path,
+                 output_root_receipt_handle, output_root_receipt_sha256) = self._open_native_output_members(row)
                 fds.extend(output_fds)
                 self.generation_owner.verify_current(network_projection)
                 projection = RootActiveNativeWorkerRuntimeProjection(
@@ -133,8 +157,15 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     runtime_record_sha256=network_projection.active_record["worker_runtime_record_sha256"],
                     pm_runtime_receipt_handle=row["pm_runtime_receipt_handle"],
                     pm_runtime_root_device=root_identity[0], pm_runtime_root_inode=root_identity[1],
+                    pm_venv_root_path=venv_root,
+                    pm_venv_root_device=venv_identity[0], pm_venv_root_inode=venv_identity[1],
+                    pm_base_root_path=base_root,
+                    pm_base_root_device=base_identity[0], pm_base_root_inode=base_identity[1],
                     native_output_root_device=output_root_identity[0],
                     native_output_root_inode=output_root_identity[1],
+                    native_output_root_path=output_root_path,
+                    native_output_root_receipt_handle=output_root_receipt_handle,
+                    native_output_root_receipt_sha256=output_root_receipt_sha256,
                     expires_monotonic=min(time.monotonic() + 30.0,
                                           network_projection.expires_monotonic),
                     member_fds=tuple(fds), _custody=_ProjectionFDCustody(tuple(fds)),
@@ -160,6 +191,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
             raise ActiveNativeWorkerRuntimeUnavailable(
                 "active selected PM runtime closure could not be independently re-observed") from None
 
+    @_registry_locked
     def verify_current(self, projection: RootActiveNativeWorkerRuntimeProjection
                        ) -> RootActiveNativeWorkerRuntimeProjection:
         self._require_live()
@@ -178,6 +210,19 @@ class RootActiveNativeWorkerRuntimeRegistry:
             if (current.runtime_record_id != projection.runtime_record_id
                     or current.runtime_record_sha256 != projection.runtime_record_sha256
                     or current.pm_runtime_receipt_handle != projection.pm_runtime_receipt_handle
+                    or (current.pm_venv_root_path, current.pm_venv_root_device,
+                        current.pm_venv_root_inode)
+                       != (projection.pm_venv_root_path, projection.pm_venv_root_device,
+                           projection.pm_venv_root_inode)
+                    or (current.pm_base_root_path, current.pm_base_root_device,
+                        current.pm_base_root_inode)
+                       != (projection.pm_base_root_path, projection.pm_base_root_device,
+                           projection.pm_base_root_inode)
+                    or current.native_output_root_path != projection.native_output_root_path
+                    or current.native_output_root_receipt_handle
+                       != projection.native_output_root_receipt_handle
+                    or current.native_output_root_receipt_sha256
+                       != projection.native_output_root_receipt_sha256
                     or (current.pm_runtime_root_device, current.pm_runtime_root_inode)
                     != (projection.pm_runtime_root_device, projection.pm_runtime_root_inode)
                     or (current.native_output_root_device, current.native_output_root_inode)
@@ -188,17 +233,20 @@ class RootActiveNativeWorkerRuntimeRegistry:
             self._retire(current.projection_handle)
         return projection
 
+    @_registry_locked
     def close(self) -> None:
         self._closed = True
         for handle in tuple(self._issued):
             self._retire(handle)
 
+    @_registry_locked
     def _retire(self, handle: str) -> None:
         projection = self._issued.pop(handle, None)
         self._network_inputs.pop(handle, None)
         if projection is not None:
             projection._custody.close()
 
+    @_registry_locked
     def _retire_projection(self, projection: RootActiveNativeWorkerRuntimeProjection) -> None:
         if (type(projection) is RootActiveNativeWorkerRuntimeProjection
                 and projection._owner is self
@@ -207,6 +255,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
         else:
             projection._custody.close()
 
+    @_registry_locked
     def _prune_expired(self) -> None:
         now = time.monotonic()
         for handle, projection in tuple(self._issued.items()):
@@ -221,7 +270,9 @@ class RootActiveNativeWorkerRuntimeRegistry:
             self.close()
             raise ActiveNativeWorkerRuntimeUnavailable("active root runtime identity changed")
 
-    def _open_pm_members(self, row: Any, active: Any) -> tuple[list[int], tuple[int, int]]:
+    def _open_pm_members(self, row: Any, active: Any
+                         ) -> tuple[list[int], tuple[int, int], Path, tuple[int, int],
+                                    Path, tuple[int, int]]:
         from .pm_runtime import SOURCE_COMMIT, PYTHON_ID, PYTHON_SHA256
         bindings = self.runtime.bindings
         journal = bindings.resolve_root_journal(
@@ -278,7 +329,8 @@ class RootActiveNativeWorkerRuntimeRegistry:
             )
             identity = _observe_runtime(executable, expected_uid=0, expected_root=base)
             _match_receipt(receipt, executable, identity, runtime_root)
-            self._match_committed_venv_identity(row, receipt, raw, identity, base, fds)
+            venv_identity = self._match_committed_venv_identity(
+                row, receipt, raw, identity, base, fds)
             base_tree = bindings.artifact_catalog.materialize_tree(
                 PYTHON_ID, PYTHON_SHA256, self.runtime.enrollment.artifact_staging_directory,
                 expected_uid=0,
@@ -293,6 +345,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 expected_closure_sha256=receipt["base_python_closure_sha256"],
             )
             fds.append(root_fd)
+            base_info = os.fstat(root_fd)
             fds.extend(member.fd for member in members if member.fd is not None)
             observed = {member.relative_path: member for member in members}
             expected = row["pm_runtime_member_records"]
@@ -324,7 +377,9 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 raise ValueError("active native output member custody is absent")
             fds.append(root)
             keep_root = True
-            return fds, (root_info.st_dev, root_info.st_ino)
+            venv_root = base / receipt["runtime_venv_relative"]
+            return (fds, (root_info.st_dev, root_info.st_ino), venv_root,
+                    venv_identity, base_tree.path, (base_info.st_dev, base_info.st_ino))
         except BaseException:
             for fd in set(fds + [root]):
                 try:
@@ -341,7 +396,8 @@ class RootActiveNativeWorkerRuntimeRegistry:
 
     @staticmethod
     def _match_committed_venv_identity(row: Any, receipt: Any, raw_receipt: bytes,
-                                       identity: Any, base: Path, held_fds: list[int]) -> None:
+                                       identity: Any, base: Path, held_fds: list[int]
+                                       ) -> tuple[int, int]:
         """Recheck the v189 identity against receipt bytes and held full venv."""
         from .pm_runtime import observe_committed_pm_venv_tree
 
@@ -380,6 +436,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
         observation = observe_committed_pm_venv_tree(
             venv_root, expected_closure_sha256=receipt["runtime_closure_sha256"],
         )
+        venv_info = os.fstat(observation.root_fd)
         held_fds.append(observation.root_fd)
         held_fds.extend(item.fd for item in observation.members if item.fd is not None)
         resolved = (base / receipt["runtime_relative"]).resolve(strict=True)
@@ -394,8 +451,10 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 != (identity["device"], identity["inode"], identity["uid"], identity["gid"],
                     identity["mode"], identity["sha256"])):
             raise ValueError("committed PM executable is absent from held venv member closure")
+        return venv_info.st_dev, venv_info.st_ino
 
-    def _open_native_output_members(self, row: Any) -> tuple[list[int], tuple[int, int]]:
+    def _open_native_output_members(self, row: Any
+                                    ) -> tuple[list[int], tuple[int, int], Path, str, str]:
         """Reopen generated members from the root-private active materialization."""
         root_fd = parent_fd = generation_fd = receipt_fd = -1
         member_fds: list[int] = []
@@ -416,6 +475,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
             receipt_handle = row["owned_runtime_root_receipt_handle"]
             if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", receipt_handle):
                 raise ValueError("native runtime root receipt handle is malformed")
+            generation_path = staging_root / "native-worker-runtime" / receipt_handle
             generation_fd = os.open(receipt_handle, os.O_RDONLY | os.O_DIRECTORY
                                     | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
             root_info = os.fstat(generation_fd)
@@ -493,13 +553,14 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 member_fds.append(fd)
             os.close(receipt_fd)
             receipt_fd = -1
-            os.close(generation_fd)
+            member_fds.append(generation_fd)
             generation_fd = -1
             os.close(parent_fd)
             parent_fd = -1
             os.close(root_fd)
             root_fd = -1
-            return member_fds, (root_info.st_dev, root_info.st_ino)
+            return (member_fds, (root_info.st_dev, root_info.st_ino), generation_path,
+                    receipt_handle, parsed["body_sha256"])
         except BaseException:
             for fd in member_fds:
                 try:
