@@ -284,3 +284,6 @@ Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 s
 
 - [ ] `BD-T196.1` Implement/revalidate closed safe bootstrap step/errno output and redaction/trust failure regressions; exact source reviewed in `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md`, pin application/target outcome OPEN.
 - [ ] `VD-T196.2` Apply exact two source tuple updates and verify focused source/installed metadata plus actual redacted target outcome; no skipped/old-pin failure becomes acceptance. All AC01..AC18 OPEN.
+
+
+Existing `HI-T149.1`/`VD-T196.2` and source integration evidence include `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md`; actual Pi publication/installed-runtime acceptance remains OPEN.

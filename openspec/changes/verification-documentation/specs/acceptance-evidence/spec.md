@@ -951,3 +951,18 @@ The installer SHALL produce the v199 current setup startup projection from actua
 
 - **WHEN** caller rows, copied session handles, stale receipts, production activation under fixture authority or publication as source-session prerequisite is attempted
 - **THEN** the operation is denied without a capability proof or acceptance promotion
+
+
+### Requirement: Fixed release-store publication custody
+
+The installer SHALL create missing fixed release-store children only under the v200 verified root ancestor/predecessor/lock and identity-preserving conflict rules, using actual candidate-held publisher source metadata.
+
+#### Scenario: Fresh fixed publication store
+
+- **WHEN** the actual selected publisher holds current source/build/predecessor custody and only fixed safe release-store children are absent
+- **THEN** it creates and fsyncs those children and continues existing pointer-last publication without changing unrelated paths
+
+#### Scenario: Conflicting or replaced directory
+
+- **WHEN** a fixed ancestor/child is unsafe, linked, foreign or replaced during creation/rollback
+- **THEN** publication denies and preserves the conflict rather than normalizing or deleting a foreign identity

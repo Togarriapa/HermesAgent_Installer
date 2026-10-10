@@ -2995,6 +2995,14 @@
         "VD-T197.4"
       ],
       "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md",
+      "tasks": [
+        "HI-T149.1",
+        "VD-T196.2"
+      ],
+      "acceptance": "OPEN"
     }
   ],
   "home_assistant_root_enrollment_mc_r0101": {

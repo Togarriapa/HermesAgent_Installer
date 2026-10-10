@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_root_bootstrap_failure",
+  "state": "failed_before_installation",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery"],
+  "task_ids": ["BD-F01", "BD-F03", "LC-F03"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "distribution": "Debian 13.6",
+    "executor_uid": 0,
+    "executor_gid": 0
+  },
+  "candidate": {
+    "commit": "31049e11c357b32a7db1a979b0b8d83d777a0ab3",
+    "tree": "cd4e4391f7cf84a2f8b66a8e0fdc4ba46171b3c2",
+    "frozen_tag": "hermes-installer-plan-2026-10-09-v1",
+    "frozen_tag_object": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",
+    "frozen_tag_peeled_commit": "653ac5fbc7a02613c9951859a7d794599603459b",
+    "source_commit_submitted_at_prompt": "31049e11c357b32a7db1a979b0b8d83d777a0ab3"
+  },
+  "attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "observed_output": "Root setup failed at source_cas.materialize [EMFILE].",
+    "outcome": "source CAS materialization failed; no completed install or acceptance result",
+    "root_process_limits": {"nofile_soft": 1024, "nofile_hard": 524288},
+    "installer_cas_root": {"owner": "root:root", "mode": "0700"}
+  },
+  "regression_resolution": {
+    "fix_commit": "0ae09870d543dc27f50b43ac728426c9d24d2f95",
+    "fix_scope": "bound source-CAS receipt descriptor usage while preserving the original dependency DAG",
+    "validated_candidate": "33f235df47c0ee6a9d66912fdd3ce536e799c0ad",
+    "validated_tree": "fa590579e8af91db706db76c948fbd7751d49573",
+    "full_suite_summary": {"passed": 2203, "skipped": 163, "warnings": 17, "duration_seconds": 173.55},
+    "log_path_reported": "/tmp/hermes-pi-fd-limit-full-py314-final.log",
+    "openspec_validation": "13/13 passed",
+    "plan_validation": "passed; all 160 baseline hashes verified; runtime acceptance not established"
+  },
+  "not_observed": [
+    "successful source-CAS materialization for this candidate",
+    "verified deployment receipt or completed install",
+    "active generation or protected enrollment",
+    "Hermes Desktop or PM enrollment",
+    "native profile/plugin operation or full target qualification"
+  ],
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "This records one operator-reported EMFILE bootstrap failure and a later source-CAS descriptor fix with successful CI. It does not prove Pi installation, and all AC01-AC18 remain open."
+}
