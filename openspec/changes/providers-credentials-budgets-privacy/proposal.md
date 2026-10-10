@@ -45,3 +45,11 @@ Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-
 Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
 
 Public input/web permission v138: `plans/amendments/2026-10-10-public-input-web-permission-v138.md`; actual PUBLIC input plus purpose-specific finite scope permission, zero budget and per-retry currentness; no private consent widening or profile-based classification. All AC remain open.
+
+Concrete bootstrap/source/public disclosure v149: `plans/amendments/2026-10-10-runtime-member-role-public-disclosure-v149.md`; exact runtime member layout, prepared held source distinct live import, genuine per-input public disclosure. All AC open.
+
+Stable private endpoint/model binding v151: `plans/amendments/2026-10-10-stable-private-endpoint-binding-v151.md`; source-selected IDs before process observation, genuine runtime receipt proofs after startup. All AC open.
+
+Runtime public choice currentness v153: `plans/amendments/2026-10-10-runtime-public-choice-currentness-v153.md`; durable adopted preference/current signed source epoch distinct fresh runtime effect/input proof, no setupTTL extension. All AC open.
+
+Runtime choice revocation source v156: `plans/amendments/2026-10-10-runtime-choice-revocation-source-v156.md`; genuine current installed actor/one-use displayed-choice TTY action, no expired setup authority.

@@ -66,10 +66,18 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_SHA256 == (
         "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f")
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_BYTES == 712
-    for _name, source_path, target_path, digest, size in release_build.REVIEWED_SOURCE_MODULES:
+    targets = {name: target for name, _source, target, _digest, _size, _role
+               in release_build.REVIEWED_SOURCE_MODULES}
+    assert targets["hermes_installer.native_invocations"] == (
+        "src/hermes_installer/native_invocations.py")
+    assert targets["hermes_installer.native_boundary"] == (
+        "src/hermes_installer/native_boundary.py")
+    assert targets["hermes_installer.authority.native_source_definitions"] == (
+        "lib/python/hermes_installer/authority/native_source_definitions.py")
+    for _name, source_path, target_path, digest, size, _role in release_build.REVIEWED_SOURCE_MODULES:
         source = Path(__file__).parents[2] / source_path
         body = source.read_bytes()
-        assert target_path.startswith("lib/python/hermes_installer/components/")
+        assert target_path.startswith(("src/hermes_installer/", "lib/python/hermes_installer/"))
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 

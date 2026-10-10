@@ -152,6 +152,7 @@ _COMPOSIO_POLICY = {
 _GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
+_PREPARED_RELEASE_MEMBER_SEAL = object()
 
 
 def _fail(message: str) -> None:
@@ -241,6 +242,36 @@ class RootReleaseModuleReceipt:
     def read_current(self) -> bytes:
         """Read the exact installed module through the held release FD."""
         return self._session._read_release_member_receipt(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedReleaseMemberReceipt:
+    """Held-release source membership for code loaded later by a managed worker.
+
+    This proves release membership and bytes only. It deliberately does not
+    claim that the current setup actor imported the module; worker loader
+    evidence is a separate join.
+    """
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    release_commit: str
+    deployment_receipt_sha256: str
+    source_receipt_handle: str
+    setup_session_id: str = field(repr=False)
+    prepared_generation_id: str = field(repr=False)
+    _receipt_seal: object = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._receipt_seal is not _PREPARED_RELEASE_MEMBER_SEAL:
+            raise TypeError("prepared release members are minted by the current root setup session")
+
+    def read_current(self) -> bytes:
+        return self._session._read_prepared_release_member(self)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -673,6 +704,16 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native target source modules are not owned by this setup session")
         return self._session._resolve_prepared_native_target_module_receipts()
+
+    def resolve_prepared_worker_role_module_receipts(self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("worker role source receipts are not owned by this setup session")
+        return self._session._resolve_prepared_worker_role_module_receipts()
+
+    def resolve_prepared_native_source_definition_module_receipt(self) -> RootReleaseModuleReceipt:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native source definition receipt is not owned by this setup session")
+        return self._session._resolve_prepared_native_source_definition_module_receipt()
 
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
@@ -3880,6 +3921,7 @@ class RootBootstrapSession:
         self._native_assembly_definitions: dict[str, RootNativeAssemblyDefinitions] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._prepared_release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
+        self._prepared_release_file_receipts: dict[str, RootPreparedReleaseMemberReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
         self._native_schema_receipts: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
@@ -5922,6 +5964,96 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return tuple(output)
 
+    def _resolve_prepared_worker_role_module_receipts(
+            self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        """Retain release-pinned worker role modules without claiming actor imports.
+
+        The role modules are loaded in their eventual managed worker. Their
+        membership is checked here; a later worker-start receipt must prove the
+        actual loader closure before any role becomes executable.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("worker role modules require current empty prepared custody")
+        pins = (
+            ("src/hermes_installer/native_invocations.py",
+             "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226"),
+            ("src/hermes_installer/native_boundary.py",
+             "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb"),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootPreparedReleaseMemberReceipt] = []
+        for relative_path, digest in pins:
+            rows = [row for row in release.files
+                    if row.relative_path == relative_path and row.sha256 == digest
+                    and "module" in row.roles and row.artifact_id in plan.allowed_artifact_ids]
+            if len(rows) != 1:
+                raise BootstrapEnrollmentPending(
+                    "worker role module is not uniquely pinned in the selected installed release")
+            row = rows[0]
+            prior = next((item for item in self._prepared_release_file_receipts.values()
+                          if item.artifact_id == row.artifact_id
+                          and item.prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootPreparedReleaseMemberReceipt(
+                    row.artifact_id, row.relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, prepared.generation_id,
+                    _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self)
+                self._prepared_release_file_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
+    def _resolve_prepared_native_source_definition_module_receipt(self) -> RootReleaseModuleReceipt:
+        """Resolve the root-imported source adapter with module-origin proof."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "native source definition adapter requires current empty prepared custody")
+        relative_path = "src/hermes_installer/authority/native_source_definitions.py"
+        digest = "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7"
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        rows = [row for row in release.files if row.relative_path == relative_path
+                and row.sha256 == digest and "module" in row.roles
+                and row.artifact_id in plan.allowed_artifact_ids]
+        if len(rows) != 1:
+            raise BootstrapEnrollmentPending(
+                "native source definition adapter is not uniquely pinned in the installed release")
+        row = rows[0]
+        origins = [origin for origin in actor.module_origins
+                   if origin[1] == str(release.release_root / relative_path)
+                   and origin[4] == digest]
+        if len(origins) != 1:
+            raise BootstrapEnrollmentPending(
+                "native source definition adapter is outside the current root actor import closure")
+        prior = next((item for item in self._prepared_release_member_receipts.values()
+                      if item.artifact_id == row.artifact_id
+                      and item._prepared_generation_id == prepared.generation_id), None)
+        if prior is None:
+            handle = secrets.token_urlsafe(36)
+            prior = RootReleaseModuleReceipt(
+                row.artifact_id, relative_path, digest, row.size_bytes,
+                release.release_commit, release.deployment_receipt_sha256,
+                handle, self._handle.session_id, self._seal, self,
+                prepared.generation_id)
+            self._prepared_release_member_receipts[handle] = prior
+        prior.read_current()
+        actor.verify_current(release)
+        return prior
+
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Mint one of the fixed local-result schema receipts from the held root catalog.
@@ -6498,6 +6630,44 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return bytes(content)
 
+    def _read_prepared_release_member(
+            self, receipt: RootPreparedReleaseMemberReceipt) -> bytes:
+        self._check_live()
+        if (type(receipt) is not RootPreparedReleaseMemberReceipt
+                or receipt._session is not self
+                or receipt.setup_session_id != self._handle.session_id
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or self._prepared_release_file_receipts.get(receipt.source_receipt_handle) is not receipt):
+            raise BootstrapEnrollmentPending("prepared release member is not retained by this live setup session")
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or prepared.generation_id != receipt.prepared_generation_id):
+            raise BootstrapEnrollmentPending("prepared release member is stale for current custody")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
+        if (row is None or row.artifact_id not in plan.allowed_artifact_ids
+                or "module" not in row.roles or row.relative_path != receipt.relative_path
+                or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
+                or release.release_commit != receipt.release_commit
+                or release.deployment_receipt_sha256 != receipt.deployment_receipt_sha256):
+            raise BootstrapEnrollmentPending("prepared release member differs from its fixed receipt")
+        fd = release.open_file(receipt.artifact_id)
+        try:
+            content = bytearray()
+            while len(content) <= receipt.size_bytes:
+                block = os.read(fd, min(64 * 1024, receipt.size_bytes + 1 - len(content)))
+                if not block:
+                    break
+                content.extend(block)
+        finally:
+            os.close(fd)
+        if len(content) != receipt.size_bytes or hashlib.sha256(content).hexdigest() != receipt.sha256:
+            raise BootstrapEnrollmentPending("prepared release member bytes changed")
+        actor.verify_current(release)
+        return bytes(content)
+
     def _revalidate_native_assembly_selection(
             self, selection: RootNativeBootstrapAssemblySelection) -> None:
         """Revalidate a retained selection; no caller-created DTO can pass."""
@@ -6945,7 +7115,8 @@ __all__ = [
     "RootInitialCompilationRegistry", "RootInitialCompilationSession",
     "RootInitialPublicationHandoff", "RootInitialSetupAggregate",
     "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember", "RootReleaseModuleReceipt",
-    "RootInstalledReleaseMemberReceipt", "RootSelectedApplicationQualificationChoice",
+    "RootPreparedReleaseMemberReceipt", "RootInstalledReleaseMemberReceipt",
+    "RootSelectedApplicationQualificationChoice",
     "RootApplicationQualificationConsent",
     "RootApplicationSetupControllerBinding",
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",

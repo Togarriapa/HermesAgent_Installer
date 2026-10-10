@@ -175,3 +175,7 @@ Prepared build service selection v115: `plans/amendments/2026-10-10-prepared-bui
 Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-runtime-release-asset-redirect-v116.md`; one exact publicCPython GitHub302 officialasset hop with TLS/header/query/integrity checks, all other NoRedirect unchanged. Existing actualbootstrap/acceptance tasks remain open.
 
 Pinned PyYAML extraction correction v131: `plans/amendments/2026-10-10-pinned-pyyaml-wheel-members-v131.md`; unchanged exact pinned wheel additionally includes `_yaml/` and `_yaml/__init__.py`. Full RECORD/archive/isolation/probe checks remain mandatory; actual installation and acceptance remain pending.
+
+Concrete bootstrap/source/public disclosure v149: `plans/amendments/2026-10-10-runtime-member-role-public-disclosure-v149.md`; exact runtime member layout, prepared held source distinct live import, genuine per-input public disclosure. All AC open.
+
+Prepared source module layout v154: `plans/amendments/2026-10-10-prepared-source-module-layout-v154.md`; exact source-module members distinct root-imported module and later worker evidence. All AC open.

@@ -199,6 +199,7 @@ class RootNativePolicyPreparationRegistry:
         self._journal = root_journal
         self._authority = authority_service
         self._source_definitions: Any | None = None
+        self._source_definition_bundles: dict[str, Any] = {}
         self._seal = secrets.token_bytes(32)
         self._selections: dict[str, RootNativePolicyPreparationSelection] = {}
         self._records: dict[str, RootPreparedNativePolicyRecords] = {}
@@ -319,13 +320,40 @@ class RootNativePolicyPreparationRegistry:
         if callable(bind_selection):
             bind_selection(selection)
 
+        source_bundle: Any | None = None
+        source_missing: tuple[str, ...] = ()
+        if self._source_definitions is None:
+            source_missing = ("native-source-definition-registry",)
+        else:
+            try:
+                source_bundle = self._source_definitions.prepare_for_policy(selection)
+                if self._source_definitions.resolve_current(source_bundle) is not source_bundle:
+                    raise NativePolicyPreparationDenied("source definition bundle changed during preparation")
+                if (getattr(source_bundle, "selection_handle", None) != selection.selection_handle
+                        or getattr(source_bundle, "selection_sha256", None) != selection.selection_sha256):
+                    raise NativePolicyPreparationDenied("source definition bundle belongs to another policy choice")
+                source_missing = tuple(getattr(source_bundle, "missing_prerequisite_ids", ()))
+            except PermissionError:
+                source_missing = ("native-source-definition-evidence",)
+        if source_missing:
+            for component_id in selection.selected_component_ids:
+                missing_by_component[component_id] = tuple(sorted(
+                    set(missing_by_component.get(component_id, ())) | set(source_missing)))
+
         # Read the fixed source map only to retain complete coverage. It never
         # supplies executable action, permission, source, or result records.
         coverage = _source_coverage(selection, missing_by_component)
         records_handle = secrets.token_hex(32)
+        definition_source_receipt_handles: tuple[str, ...] = ()
+        if source_bundle is not None:
+            source_receipts = ((source_bundle.definition_source_receipt,)
+                               + tuple(source_bundle.role_module_receipts))
+            definition_source_receipt_handles = tuple(
+                row.source_receipt_handle for row in source_receipts if row is not None)
         body = {
             "selection": selection.selection_sha256,
             "targets": target_handles,
+            "definitions": definition_source_receipt_handles,
             "coverage": [_coverage_payload(row) for row in coverage],
             "actions": [], "registrations": [], "workflows": [], "roles": [],
             "issuers": [], "observers": [], "schemas": [], "schema_bytes": [],
@@ -333,11 +361,14 @@ class RootNativePolicyPreparationRegistry:
         digest = hashlib.sha256(_canonical(body)).hexdigest()
         now = time.monotonic()
         records = RootPreparedNativePolicyRecords(
-            records_handle, selection_handle, selection.selection_sha256, (),
+            records_handle, selection_handle, selection.selection_sha256,
+            definition_source_receipt_handles,
             tuple(target_handles), (), (), (), (), (), (), (), (), tuple(coverage),
             digest, now, min(now + _TTL_SECONDS, selection.expires_monotonic),
             _RECORDS_SEAL)
         self._records[records_handle] = records
+        if source_bundle is not None:
+            self._source_definition_bundles[records_handle] = source_bundle
         self._persist("records", records_handle, {**body, "records_sha256": digest,
                                                     "selection_handle": selection_handle,
                                                     "expires_monotonic": records.expires_monotonic})
@@ -354,6 +385,15 @@ class RootNativePolicyPreparationRegistry:
         selection = self.resolve_selection_current(records.native_policy_selection_handle)
         if records.selection_sha256 != selection.selection_sha256:
             raise NativePolicyPreparationDenied("prepared native policy selection digest changed")
+        source_bundle = self._source_definition_bundles.get(records_handle)
+        if self._source_definitions is not None and source_bundle is not None:
+            if self._source_definitions.resolve_current(source_bundle) is not source_bundle:
+                raise NativePolicyPreparationDenied("prepared native source definition bundle changed")
+            source_receipts = ((source_bundle.definition_source_receipt,)
+                               + tuple(source_bundle.role_module_receipts))
+            current_handles = tuple(row.source_receipt_handle for row in source_receipts if row is not None)
+            if current_handles != records.definition_source_receipt_handles:
+                raise NativePolicyPreparationDenied("prepared native source receipt set changed")
         for target_handle in records.target_selection_handles:
             target = self._targets.resolve_current_target(target_handle, selection.selection_handle)
             if getattr(target, "selection_handle", None) != target_handle:
