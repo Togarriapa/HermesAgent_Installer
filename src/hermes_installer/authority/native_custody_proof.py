@@ -1534,13 +1534,21 @@ def _verify_mounted_role_module(pid: int, mount_path: str,
         # that one anchor, then prohibit symlinks for every package component.
         current_fd = os.open(f"/proc/{pid}/root", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         opened.append(current_fd)
-        for component in (*mount_parts, *member_parts[:-1]):
+        # A native package mount contains a fixed package envelope (manifest,
+        # resolver, dependencies) and places the verified compiled closure at
+        # ``closure/``. ``closure_member_path`` is relative to that closure,
+        # as pinned by NativeProcessRoleRecord; resolving it at the package
+        # root would inspect a different path and make valid role proofs
+        # impossible.
+        for component in (*mount_parts, "closure", *member_parts[:-1]):
             current_fd = os.open(component, flags_dir, dir_fd=current_fd)
             opened.append(current_fd)
         file_fd = os.open(member_parts[-1], flags_file, dir_fd=current_fd)
         opened.append(file_fd)
         info = os.fstat(file_fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 16 * 1024 * 1024:
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o222 or info.st_nlink != 1
+                or info.st_size > 16 * 1024 * 1024):
             return None
         digest = hashlib.sha256()
         remaining = info.st_size
