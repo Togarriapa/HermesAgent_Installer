@@ -27,10 +27,61 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
     _jarvis_primary_source_row,
+    _service_identity_can_traverse,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_native_home_target_requires_real_service_identity_traversal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / "service" / "native-profiles" / "delegate"
+            root.mkdir(parents=True, mode=0o700)
+            identity = SimpleNamespace(uid=os.getuid(), gid=os.getgid())
+            self.assertTrue(_service_identity_can_traverse(root, identity))
+            # A private root-owned ancestor cannot be treated as traversable
+            # merely because root-side discovery succeeded.
+            parent = root.parents[1]
+            parent.chmod(0o700)
+            other = SimpleNamespace(uid=os.getuid() + 10000, gid=os.getgid() + 10000)
+            self.assertFalse(_service_identity_can_traverse(root, other))
+
+    @unittest.skipUnless(os.name == "posix" and os.geteuid() == 0 and __import__("sys").platform.startswith("linux"),
+                         "requires Linux root to exercise a real unprivileged service UID")
+    def test_native_home_files_are_openable_by_unprivileged_service_uid(self):
+        import pwd
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            outer = Path(temporary)
+            outer.chmod(0o711)
+            parent = outer / "native-profiles"
+            parent.mkdir(mode=0o711)
+            parent.chmod(0o711)
+            home = parent / "delegate"
+            home.mkdir(mode=0o700)
+            account = pwd.getpwnam("nobody")
+            os.chown(home, account.pw_uid, account.pw_gid)
+            profile = home / "profile.yaml"
+            profile.write_text("display_name: Delegate\n", encoding="utf-8")
+            os.chown(profile, account.pw_uid, account.pw_gid)
+            profile.chmod(0o600)
+            assert _service_identity_can_traverse(
+                home, SimpleNamespace(uid=account.pw_uid, gid=account.pw_gid))
+
+            def drop_privileges():
+                os.setgroups([])
+                os.setgid(account.pw_gid)
+                os.setuid(account.pw_uid)
+
+            subprocess.run(
+                [sys.executable, "-c", "from pathlib import Path; p=Path(__import__('sys').argv[1]); assert p.read_text(encoding='utf-8') == 'display_name: Delegate\\n'",
+                 str(profile)],
+                check=True, capture_output=True, text=True, preexec_fn=drop_privileges,
+                timeout=10,
+            )
+
     def test_resources_user_entry_is_fixed_to_unique_jarvis_row(self):
         profiles = [(f"specialist-{index}", f"profiles/specialist-{index}.yaml", "a" * 64)
                     for index in range(207)]

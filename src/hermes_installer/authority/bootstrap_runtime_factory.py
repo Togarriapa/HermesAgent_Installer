@@ -7564,6 +7564,13 @@ class RootBootstrapSession:
                     else root / "native-profiles" / source_profile_id)
             service_identity = self._identity.ensure()
             _verify_service_root(home, service_identity)
+            # Root-side discover/load is not evidence that the selected
+            # service identity can reach the returned host path. Until an
+            # enrolled namespace home-bind receipt supplies a service-visible
+            # fixed mount path, expose a target only when every host ancestor
+            # is actually traversable by the exact service uid/gid.
+            if not _service_identity_can_traverse(home, service_identity):
+                return None
             if self._source_handoff is None:
                 return None
             from ..registry.native_install import NativeInstallError, discover_and_load_selected
@@ -10863,6 +10870,36 @@ def _open_root_owned_profile_overlay_directory(
         for descriptor in (marker_fd, current_fd, data_fd):
             if descriptor >= 0:
                 os.close(descriptor)
+
+
+def _service_identity_can_traverse(path: Path, identity: ServiceIdentity) -> bool:
+    """Check real execute/search permission for every component of a host path.
+
+    This is intentionally conservative: supplementary groups are not guessed.
+    A namespace bind receipt may provide a different fixed service-visible
+    path in the future; a root-side path alone cannot bypass a private parent.
+    """
+    if not isinstance(path, Path) or not path.is_absolute():
+        return False
+    cursor = Path(path.anchor)
+    for component in path.parts[1:]:
+        cursor = cursor / component
+        try:
+            info = cursor.lstat()
+        except OSError:
+            return False
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            return False
+        mode = stat.S_IMODE(info.st_mode)
+        if info.st_uid == identity.uid:
+            searchable = bool(mode & stat.S_IXUSR)
+        elif info.st_gid == identity.gid:
+            searchable = bool(mode & stat.S_IXGRP)
+        else:
+            searchable = bool(mode & stat.S_IXOTH)
+        if not searchable:
+            return False
+    return True
 
 
 def _ensure_root_owned_profile_overlay_directory(

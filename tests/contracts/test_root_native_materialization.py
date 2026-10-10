@@ -5,6 +5,7 @@ import json
 import hashlib
 import os
 import sqlite3
+import stat
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -97,6 +98,93 @@ def test_specialist_profile_projects_to_default_only_in_an_isolated_home() -> No
     assert all(path.startswith("skills/") or path in {"SOUL.md", "profile.yaml", "config.yaml"}
                for path in selected)
     assert b"display_name: Jarvis" not in selected["profile.yaml"]
+
+
+def _legacy_migration_fixture(tmp_path: Path):
+    home = tmp_path / "home"
+    journal = tmp_path / "journal"
+    home.mkdir(mode=0o700)
+    journal.mkdir(mode=0o700)
+    legacy = home / "profiles" / "hermes"
+    legacy.mkdir(parents=True, mode=0o700)
+    values = {
+        "SOUL.md": b"# Hermes\nowned legacy profile\n",
+        "profile.yaml": b"display_name: Hermes\n",
+        "config.yaml": b"credential_reference: existing-only\n",
+    }
+    for name, content in values.items():
+        path = legacy / name
+        path.write_bytes(content)
+        path.chmod(0o600)
+    database = journal / "native-materialization.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE managed_files(relative_path TEXT PRIMARY KEY, source_digest TEXT, installed_digest TEXT, resource_profile_id TEXT, state TEXT)")
+        for name, content in values.items():
+            relative = f"profiles/hermes/{name}"
+            digest = hashlib.sha256(content).hexdigest()
+            db.execute("INSERT INTO managed_files VALUES(?,?,?,?,?)",
+                       (relative, digest, digest, "hermes", "installed"))
+        db.execute("""CREATE TABLE home_migration_members(
+            migration_id TEXT,source_path TEXT,archive_path TEXT,sha256 TEXT,
+            device INTEGER,inode INTEGER,owner_uid INTEGER,owner_gid INTEGER,
+            mode INTEGER,state TEXT,PRIMARY KEY(migration_id,source_path))""")
+    operation = RootNativeMaterialization.__new__(RootNativeMaterialization)
+    operation._home_root = home
+    operation._database = database
+    operation._monotonic = __import__("time").monotonic
+    selection = SimpleNamespace(
+        service_generation="generation-fixture", protected_enrollment_digest="a" * 64,
+        service_uid=os.getuid(), service_gid=os.getgid())
+    return operation, selection, values
+
+
+def test_owned_legacy_hermes_files_move_verbatim_to_journaled_hidden_archive(tmp_path: Path) -> None:
+    operation, selection, values = _legacy_migration_fixture(tmp_path)
+    operation._migrate_owned_legacy_primary(selection)
+    with sqlite3.connect(operation._database) as db:
+        rows = db.execute("SELECT source_path,archive_path,state FROM home_migration_members").fetchall()
+    assert len(rows) == 3
+    for source, archive, state in rows:
+        assert state == "moved"
+        assert not (operation._home_root / source).exists()
+        assert (operation._home_root / archive).read_bytes() == values[source.rsplit("/", 1)[1]]
+    # A retry confirms the exact archived inode/bytes and does not duplicate or
+    # rewrite the legacy credential-bearing config file.
+    before = {row["archive_path"]: (operation._home_root / row["archive_path"]).stat().st_ino
+              for row in (dict(zip(("source_path", "archive_path", "state"), item)) for item in rows)}
+    operation._migrate_owned_legacy_primary(selection)
+    assert before == {archive: (operation._home_root / archive).stat().st_ino
+                      for archive in before}
+
+
+def test_unowned_or_modified_legacy_hermes_home_fails_before_any_move(tmp_path: Path) -> None:
+    operation, selection, _values = _legacy_migration_fixture(tmp_path)
+    with sqlite3.connect(operation._database) as db:
+        db.execute("DELETE FROM managed_files WHERE relative_path='profiles/hermes/profile.yaml'")
+    with pytest.raises(NativeMaterializationDenied):
+        operation._migrate_owned_legacy_primary(selection)
+    assert (operation._home_root / "profiles/hermes/profile.yaml").exists()
+    assert not (operation._home_root / "native-migration").exists()
+
+
+def test_partial_legacy_home_move_rolls_back_on_failure(tmp_path: Path, monkeypatch) -> None:
+    operation, selection, _values = _legacy_migration_fixture(tmp_path)
+    original_rename = os.rename
+    calls = 0
+
+    def failing_rename(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected rename failure")
+        return original_rename(*args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", failing_rename)
+    with pytest.raises(OSError):
+        operation._migrate_owned_legacy_primary(selection)
+    assert all((operation._home_root / f"profiles/hermes/{name}").exists()
+               for name in ("SOUL.md", "profile.yaml", "config.yaml"))
+    assert not (operation._home_root / "native-migration").exists()
 
 
 def test_all_bundled_profiles_compile_to_their_exact_profile_local_skill_closures() -> None:

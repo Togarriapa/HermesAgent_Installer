@@ -211,7 +211,8 @@ class RootNativeMaterialization:
         selection = self._selection(enrollment_id, service_generation, resource_profile_id)
         _verify_root(self._home_root, owner_uid=selection.service_uid, owner_gid=selection.service_gid)
         _verify_root(self._data_root, owner_uid=selection.service_uid, owner_gid=selection.service_gid)
-        _deny_legacy_user_profile_identity(self._home_root)
+        if is_primary:
+            self._migrate_owned_legacy_primary(selection)
         discovery = self._registry.discover([f"profiles/{resource_profile_id}@*"])
         profile_items = [item for item in discovery.resources
                          if item.resource.kind.value == "profiles"]
@@ -502,6 +503,13 @@ class RootNativeMaterialization:
                     relative_path TEXT PRIMARY KEY, source_digest TEXT NOT NULL,
                     installed_digest TEXT NOT NULL, resource_profile_id TEXT NOT NULL,
                     state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS home_migration_members(
+                    migration_id TEXT NOT NULL, source_path TEXT NOT NULL,
+                    archive_path TEXT NOT NULL, sha256 TEXT NOT NULL,
+                    device INTEGER NOT NULL, inode INTEGER NOT NULL,
+                    owner_uid INTEGER NOT NULL, owner_gid INTEGER NOT NULL,
+                    mode INTEGER NOT NULL, state TEXT NOT NULL,
+                    PRIMARY KEY(migration_id,source_path));
                 CREATE TABLE IF NOT EXISTS receipts(
                     handle TEXT PRIMARY KEY, enrollment_id TEXT NOT NULL,
                     service_generation TEXT NOT NULL, protected_enrollment_digest TEXT NOT NULL,
@@ -635,6 +643,175 @@ class RootNativeMaterialization:
             with self._connect() as db:
                 db.execute("UPDATE plans SET state='recovered',updated=? WHERE operation_id=? AND state='applying'",
                            (self._monotonic(), plan["operation_id"]))
+
+    def _migrate_owned_legacy_primary(self, selection: NativeMaterializationSelection) -> None:
+        """Move only journal-owned legacy Hermes identity files into a hidden archive.
+
+        The rename preserves bytes and inode; no credentials are copied into the
+        new Jarvis identity. Unowned, modified, linked, or conflicting files
+        stop the migration before any move. The root journal makes interrupted
+        moves idempotently resumable and records exact custody observations.
+        """
+        legacy = self._home_root / "profiles" / PRIMARY_USER_SOURCE_PROFILE_ID
+        if not legacy.exists() and not legacy.is_symlink():
+            return
+        info = legacy.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise NativeMaterializationDenied("legacy Hermes profile identity is not a directory")
+
+        def member_digest(relative: str) -> str:
+            with _open_parent(self._home_root, relative, uid=selection.service_uid,
+                              gid=selection.service_gid, create_parents=False) as (fd, leaf):
+                return _hash_file_at(fd, leaf)
+        candidates = [f"profiles/hermes/{name}" for name in
+                      ("SOUL.md", "profile.yaml", "config.yaml")]
+        skills_root = legacy / "skills"
+        if skills_root.exists() or skills_root.is_symlink():
+            if skills_root.is_symlink() or not skills_root.is_dir():
+                raise NativeMaterializationDenied("legacy Hermes skill directory is unsafe")
+            for directory, dirs, names in os.walk(skills_root, followlinks=False):
+                base = Path(directory)
+                if any((base / name).is_symlink() for name in dirs):
+                    raise NativeMaterializationDenied("legacy Hermes skill tree contains linked directories")
+                for name in names:
+                    path = base / name
+                    if path.is_symlink():
+                        raise NativeMaterializationDenied("legacy Hermes skill tree contains linked files")
+                    if name == "SKILL.md":
+                        candidates.append(path.relative_to(self._home_root).as_posix())
+        present = [relative for relative in candidates
+                   if (self._home_root / relative).exists() or (self._home_root / relative).is_symlink()]
+        migration_id = hashlib.sha256(
+            ("jarvis-v205-legacy-home\0" + selection.service_generation + "\0"
+             + selection.protected_enrollment_digest).encode("utf-8")
+        ).hexdigest()
+        with self._connect() as db:
+            prior_migrations = [dict(row) for row in db.execute(
+                "SELECT * FROM home_migration_members WHERE migration_id=?", (migration_id,)
+            ).fetchall()]
+        for saved in prior_migrations:
+            source_exists = os.path.lexists(self._home_root / saved["source_path"])
+            archive_exists = os.path.lexists(self._home_root / saved["archive_path"])
+            if not source_exists and archive_exists:
+                archived = (self._home_root / saved["archive_path"]).lstat()
+                if ((archived.st_dev, archived.st_ino) != (saved["device"], saved["inode"])
+                        or member_digest(saved["archive_path"]) != saved["sha256"]):
+                    raise NativeMaterializationDenied("archived Hermes migration member changed after interruption")
+            elif not source_exists and not archive_exists:
+                raise NativeMaterializationDenied("journaled legacy Hermes bytes are missing from source and archive")
+        if not present:
+            return
+        plans: list[tuple[str, str, str, os.stat_result]] = []
+        with self._connect() as db:
+            managed = {row["relative_path"]: dict(row) for row in db.execute(
+                "SELECT relative_path,installed_digest,resource_profile_id,state FROM managed_files"
+            ).fetchall()}
+        for source_path in sorted(set(present)):
+            row = managed.get(source_path)
+            path = self._home_root / source_path
+            current = path.lstat()
+            if (row is None or row["resource_profile_id"] != PRIMARY_USER_SOURCE_PROFILE_ID
+                    or stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode)
+                    or current.st_uid != selection.service_uid or current.st_gid != selection.service_gid
+                    or stat.S_IMODE(current.st_mode) & 0o077
+                    or member_digest(source_path) != row["installed_digest"]):
+                raise NativeMaterializationDenied(
+                    "legacy Hermes identity is unowned or modified; preserve it and resolve ownership before migration"
+                )
+            archive = (f"native-migration/{migration_id}/"
+                       + source_path.removeprefix("profiles/hermes/"))
+            plans.append((source_path, archive, row["installed_digest"], current))
+
+        with self._connect() as db:
+            prior = {row["source_path"]: dict(row) for row in db.execute(
+                "SELECT * FROM home_migration_members WHERE migration_id=?", (migration_id,)
+            ).fetchall()}
+            for source_path, archive, digest, current in plans:
+                saved = prior.get(source_path)
+                expected = (archive, digest, current.st_dev, current.st_ino,
+                            current.st_uid, current.st_gid, stat.S_IMODE(current.st_mode))
+                if saved is None:
+                    db.execute("INSERT INTO home_migration_members VALUES(?,?,?,?,?,?,?,?,?,?)",
+                               (migration_id, source_path, archive, digest, current.st_dev,
+                                current.st_ino, current.st_uid, current.st_gid,
+                                stat.S_IMODE(current.st_mode), "planned"))
+                elif (saved["archive_path"], saved["sha256"], saved["device"], saved["inode"],
+                      saved["owner_uid"], saved["owner_gid"], saved["mode"]) != expected:
+                    # A moved member is no longer in its source location; its
+                    # durable inode/hash entry is checked in the apply pass.
+                    if os.path.lexists(self._home_root / source_path):
+                        raise NativeMaterializationDenied("legacy migration journal conflicts with current file identity")
+
+        moved: list[tuple[str, str, dict[str, Any]]] = []
+        try:
+            for source_path, archive, digest, _current in plans:
+                with self._connect() as db:
+                    saved_row = db.execute(
+                        "SELECT * FROM home_migration_members WHERE migration_id=? AND source_path=?",
+                        (migration_id, source_path)).fetchone()
+                if saved_row is None:
+                    raise NativeMaterializationDenied("legacy migration journal row disappeared")
+                saved = dict(saved_row)
+                source_exists = os.path.lexists(self._home_root / source_path)
+                archive_exists = os.path.lexists(self._home_root / archive)
+                if not source_exists and archive_exists:
+                    archived = (self._home_root / archive).lstat()
+                    if ((archived.st_dev, archived.st_ino) != (saved["device"], saved["inode"])
+                            or member_digest(archive) != digest):
+                        raise NativeMaterializationDenied("archived Hermes identity changed after interruption")
+                    moved.append((source_path, archive, saved))
+                    continue
+                if not source_exists or archive_exists:
+                    raise NativeMaterializationDenied("legacy Hermes source/archive path conflicts")
+                current = (self._home_root / source_path).lstat()
+                if ((current.st_dev, current.st_ino) != (saved["device"], saved["inode"])
+                        or current.st_uid != saved["owner_uid"] or current.st_gid != saved["owner_gid"]
+                        or stat.S_IMODE(current.st_mode) != saved["mode"]
+                        or member_digest(source_path) != digest):
+                    raise NativeMaterializationDenied("legacy Hermes identity changed before migration")
+                with _open_parent(self._home_root, source_path, uid=selection.service_uid,
+                                  gid=selection.service_gid, create_parents=False) as (source_fd, source_name):
+                    with _open_parent(self._home_root, archive, uid=selection.service_uid,
+                                      gid=selection.service_gid, create_parents=True) as (archive_fd, archive_name):
+                        os.rename(source_name, archive_name, src_dir_fd=source_fd, dst_dir_fd=archive_fd)
+                        os.fsync(source_fd)
+                        os.fsync(archive_fd)
+                with self._connect() as db:
+                    db.execute("UPDATE home_migration_members SET state='moved' WHERE migration_id=? AND source_path=?",
+                               (migration_id, source_path))
+                moved.append((source_path, archive, saved))
+        except BaseException:
+            for source_path, archive, saved in reversed(moved):
+                try:
+                    with _open_parent(self._home_root, archive, uid=selection.service_uid,
+                                      gid=selection.service_gid, create_parents=False) as (archive_fd, archive_name):
+                        current = os.stat(archive_name, dir_fd=archive_fd, follow_symlinks=False)
+                    if ((current.st_dev, current.st_ino) != (saved["device"], saved["inode"])
+                            or member_digest(archive) != saved["sha256"]):
+                        continue
+                    with _open_parent(self._home_root, source_path, uid=selection.service_uid,
+                                      gid=selection.service_gid, create_parents=True) as (source_fd, source_name):
+                        with _open_parent(self._home_root, archive, uid=selection.service_uid,
+                                          gid=selection.service_gid, create_parents=False) as (archive_fd, archive_name):
+                            os.rename(archive_name, source_name, src_dir_fd=archive_fd, dst_dir_fd=source_fd)
+                            os.fsync(archive_fd)
+                            os.fsync(source_fd)
+                    with self._connect() as db:
+                        db.execute("UPDATE home_migration_members SET state='rolled-back' WHERE migration_id=? AND source_path=?",
+                                   (migration_id, source_path))
+                except (OSError, NativeMaterializationDenied):
+                    pass
+            # Remove only the now-empty directories this interrupted attempt
+            # created.  The migration journal remains as the recovery record.
+            for directory in (
+                self._home_root / "native-migration" / migration_id,
+                self._home_root / "native-migration",
+            ):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            raise
 
     def _receipt(self, handle: str) -> dict[str, Any]:
         if not isinstance(handle, str) or len(handle) < 32:
