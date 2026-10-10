@@ -210,3 +210,4 @@ v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source
 ## v233 Retained oneshot terminal
 
 `planning/retained-qualification-oneshot-terminal-v233.json` preserves exact active/exited evidence and permits purpose-owned quiescent unit collection only under original current custody. HI-T233.1/VD-T233.2 and all AC remain open. Installed predecessor update remains a separate unimplemented path.
+v234: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` / `planning/gateway-digests-owned-network-cleanup-v234.json`; RT-T234.1 → RT-T234.2 → VD-T234.3 OPEN. Gateway acyclic field correction and original-owned journaled cleanup after expiry/revocation; no new pins/all AC OPEN.

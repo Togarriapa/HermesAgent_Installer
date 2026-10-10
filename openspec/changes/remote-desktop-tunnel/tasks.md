@@ -163,3 +163,12 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 - [ ] `RT-T229.1` Implement exact separately admitted auxiliary declaration receipt and owned disposable workspace projection without originalsource/lock edits.
 - [ ] `RT-T229.2` Run actual original ARM64 typecheck before/after and continue genuine v226 native/workspace/AppDir build.
 - [ ] `VD-T229.3` Verify exact archive/SRI/member/dependency/currentness/foreign conflict/API rejection and real original compiler effects; all target acceptance OPEN.
+
+
+## v234 Gateway digests and owned cleanup
+
+- [ ] RT-T234.1 Implement exact Gateway member/config/output/observer digest split; independently recheck ARM64 fixture.
+- [ ] RT-T234.2 Implement private reserved creation/cleanup journal and custody; remove only original owned resources after expiry/revocation.
+- [ ] VD-T234.3 Test digest mutations, foreign resources, nonempty members, missing tool and durable phase/CAS failure preservation.
+
+Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` and `planning/gateway-digests-owned-network-cleanup-v234.json`; all AC OPEN.

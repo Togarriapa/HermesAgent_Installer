@@ -3257,21 +3257,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "current_published_pm_home_runtime_v221": {
-    "contract": "planning/current-published-pm-home-runtime-v221.json",
-    "tasks": {
-      "HI-T221.1": [
-        "RB-T213.1"
-      ],
-      "HI-T221.2": [
-        "HI-T221.1"
-      ],
-      "VD-T221.3": [
-        "HI-T221.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "official_remote_role_definition_producer_v222": {
     "contract": "planning/official-remote-role-definition-producer-v222.json",
     "tasks": {
@@ -3283,6 +3268,21 @@
       ],
       "VD-T222.3": [
         "RT-T222.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "current_published_pm_home_runtime_v221": {
+    "contract": "planning/current-published-pm-home-runtime-v221.json",
+    "tasks": {
+      "HI-T221.1": [
+        "RB-T213.1"
+      ],
+      "HI-T221.2": [
+        "HI-T221.1"
+      ],
+      "VD-T221.3": [
+        "HI-T221.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3517,6 +3517,22 @@
       ]
     },
     "owner": "luna_linux_task_display_contracts",
+    "acceptance": "All AC OPEN"
+  },
+  "gateway_digests_owned_network_cleanup_v234": {
+    "contract": "planning/gateway-digests-owned-network-cleanup-v234.json",
+    "tasks": {
+      "RT-T234.1": [
+        "RT-T227.3"
+      ],
+      "RT-T234.2": [
+        "RT-T225.2"
+      ],
+      "VD-T234.3": [
+        "RT-T234.1",
+        "RT-T234.2"
+      ]
+    },
     "acceptance": "All AC OPEN"
   }
 }

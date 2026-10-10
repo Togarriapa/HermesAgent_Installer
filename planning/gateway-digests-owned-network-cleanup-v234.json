@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md",
+  "extends": [
+    "v225",
+    "v227",
+    "v223"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "owners": {
+    "gateway": "luna_access_gateway_runtime",
+    "cleanup": "luna_active_service_lifetime"
+  },
+  "source_audit": {
+    "gateway_commit": "a03aa8e50628eeffc04f7937c485bf35dc601abe",
+    "network_commit": "654e7058f92ca40b1f9b26b17c6a5651554f3c98",
+    "evidence_scope": "Read actual config/output/observer, active resolver and private namespace primitives; no runtime/source pin approval."
+  },
+  "gateway": {
+    "input_schema_id": "access-gateway-build-input-v1",
+    "input_fields": [
+      "schema",
+      "role",
+      "selection_handle",
+      "member_closure_sha256",
+      "source_closure_sha256",
+      "toolchain_receipt_handle",
+      "toolchain_closure_sha256",
+      "python_relative_path",
+      "python_sha256",
+      "python_library_relative_path",
+      "python_library_sha256",
+      "python_library_size_bytes",
+      "lock_member_sha256",
+      "lock_member_size_bytes",
+      "dependency_closure_sha256",
+      "source_members",
+      "wheel_members",
+      "output_schema_id",
+      "output_schema_sha256"
+    ],
+    "output_schema_id": "root-selected-gateway-runtime-output-v1",
+    "output_fields": [
+      "schema",
+      "role",
+      "selection_handle",
+      "member_closure_sha256",
+      "target",
+      "package_members",
+      "executable_member",
+      "dependency_members",
+      "qualification"
+    ],
+    "output_member_fields": [
+      "path",
+      "kind",
+      "mode",
+      "size_bytes",
+      "sha256",
+      "executable_role",
+      "target",
+      "target_sha256",
+      "target_size_bytes",
+      "owner_uid",
+      "owner_gid"
+    ],
+    "closed_schema_rule": "Reject legacy input_closure_sha256 in config/output and reject unknown/missing fields. Preserve all other v223 row validators and exact lib64 -> lib policy. Updated schema SHA is pending measured committed code review, not the old v223 digest.",
+    "member_projection": "Exactly v227 remote_build_member_closure_sha256 canonical projection, from finalized sealed selection retained member descriptors including kind/target; excludes config, generated output, receipt envelope and final digest. Source/toolchain/dependency subclosure fields keep their existing independent canonical row meanings.",
+    "recipe_projection": "Recipe SHA is SHA256 exact canonical config bytes after member_closure_sha256 is populated. remote_build_recipe_bound_input_closure_sha256 uses the exact v227 final projection, including member digest, recipe SHA, setup/NSS/output-schema joins. Existing remote_build_input_closure_sha256 delegates final digest.",
+    "observer": "GatewayObservedOutput replaces input_closure_sha256 with member_closure_sha256 and adds recipe_bound_input_closure_sha256 computed independently from inputs. Builder envelope carries member digest only. Observer recomputes member digest from retained FDs and compares envelope/config; separately verifies final input digest. Grant/terminal/CAS/package/runtime receipt joins use final recipe-bound digest; no field is SHA(config) masquerading as member closure.",
+    "ordering": [
+      "finalize held member selection",
+      "compute member digest",
+      "serialize fixed config with member digest",
+      "compute recipe SHA and recipe-bound input digest",
+      "seal inputs/grant/managed plan",
+      "independently observe output and bind both digests"
+    ]
+  },
+  "cleanup": {
+    "module": "authority/remote_network_lease.py",
+    "primitive_module": "authority/private_loopback_network.py",
+    "identity_hook": "RootRemoteServiceActiveIdentityResolver.retain_cleanup_journal_for_remote(remote_enrollment_id) -> RootRemoteNetworkCleanupJournal",
+    "journal_methods": [
+      "reserve_cleanup(network) -> RootRemoteNetworkCleanupReservation",
+      "record_created_placeholder(reservation, observation: RootRemoteNetworkCreatorObservation) -> None",
+      "bind_created_lease(reservation, lease) -> RootOwnedRemoteNetworkCleanupCustody",
+      "resolve_current_cleanup(custody) -> RootOwnedRemoteNetworkCleanupCustody",
+      "update_cleanup(custody, phase: RootRemoteNetworkCleanupPhase, observation: RootRemoteNetworkCleanupObservation) -> None"
+    ],
+    "creator_api": "create_root_namespace(network, nft_tool, *, cleanup_reservation=None); optional for legacy callers, mandatory for active remote producer. Reservation must belong to exact original issuer/network. Creator captures and journals exact parent FD identity and exclusive placeholder FD device/inode before bind mount; then exact mount ID and namespace FD device/inode before returning.",
+    "primitive_api": "close_owned_root_network_lease(lease, fresh_nft_tool, *, custody) -> None",
+    "record_schema_id": "root-owned-remote-network-cleanup-v1",
+    "record_fields": [
+      "schema",
+      "purpose",
+      "cleanup_handle",
+      "remote_enrollment_id",
+      "adoption_handle",
+      "publication_handle",
+      "source_sha256",
+      "journal_root_id",
+      "journal_root_device",
+      "journal_root_inode",
+      "network_id",
+      "generation",
+      "service_generation_digest",
+      "namespace_basename",
+      "namespace_parent_device",
+      "namespace_parent_inode",
+      "placeholder_device",
+      "placeholder_inode",
+      "namespace_device",
+      "namespace_inode",
+      "mount_id",
+      "table_family",
+      "table_name",
+      "nft_ruleset_sha256",
+      "created_at_unix",
+      "phase",
+      "last_completed_phase",
+      "fresh_tool_observation_handle",
+      "fresh_readback_sha256",
+      "error_code",
+      "updated_at_unix"
+    ],
+    "record_constants": {
+      "schema": 1,
+      "purpose": "cleanup-only",
+      "table_family": "inet",
+      "table_name": "hermes_installer_private"
+    },
+    "phases": [
+      "reserved",
+      "placeholder-created",
+      "created",
+      "cleanup-requested",
+      "table-removed",
+      "mount-detached",
+      "complete",
+      "recovery-pending"
+    ],
+    "record_path": "Original v225 source-selected held RootJournalSelection directory / remote-network-cleanup / <root-issued 32 lowercase hex cleanup_handle>.json; subdir root-owned0700, record root-owned0600, no caller path. Held journal root FD/device/inode and fixed namespace parent FD are retained.",
+    "record_validation": "Closed canonical JSON, duplicate keys rejected; identity/provenance/network fields immutable. Creation observations null only before their producing phase; fresh tool/readback fields null before cleanup observation. Phase CAS compares prior bytes digest under owned lock, atomic nofollow replacement + file/directory fsync. Record cannot restore live custody or authorize active use after restart. Error codes bounded identifiers without secrets.",
+    "custody": "RootOwnedRemoteNetworkCleanupCustody sealed by original resolver; privately retains exact original lease object/issuer registry, journal root and parent FDs, original network/topology, namespace FD/device/inode, mount ID, placeholder device/inode, exact table/readback digest, adopted source provenance and phase. RootRemoteNetworkCleanupReservation is sealed and registered before effects. Caller maps, copied leases, durable JSON alone, guessed handles/paths or foreign NSS cannot mint custody.",
+    "creation_order": [
+      "retain journal through current genuine v225 source/adoption/core join",
+      "reserve durable intent before namespace effect",
+      "exclusive placeholder create and capture/journal its actual inode before bind",
+      "create namespace and bind actual mounted inode/mount ID",
+      "journal created lease and retain sealed cleanup custody before active lease exposure"
+    ],
+    "cleanup_checks": [
+      "Resolve exact retained original custody and current protected journal/root/parent facts; no fresh active adoption required.",
+      "Require member_processes empty after ordinary owned unit/PIDFD verified-dead releases. Never stop or kill members in cleanup; unknown/busy processes preserve resource and journal pending.",
+      "Acquire fresh HostToolObservationRegistry.observe_selected_nft_tool(original network) then resolve_selected_nft_tool(handle, original network); verify fresh signed package/release, held installed bytes/dependency facts and original network key. Missing/currentness failure remains recovery-pending.",
+      "Check exact held namespace FD/device/inode, exact mount ID/path under held parent and fixed basename, original placeholder identity, host namespace separation.",
+      "Read current nft state with fresh tool and require exact original purpose-owned table/ruleset digest before deletion; never infer namespace path or delete foreign table.",
+      "Journal cleanup-requested before effect; delete only table inet hermes_installer_private; journal table-removed. Detach only exact owned mount; journal mount-detached; verify revealed placeholder equals captured device/inode before unlink; then close owned FDs and journal complete.",
+      "Retry after partial effects only from same retained custody and durable prior phase: absence of table/mount acceptable only if prior own completed phase proves removal. Any unexplained mismatch preserves resources/recovery-pending."
+    ],
+    "forbidden": "Do not call verify_root_network_lease or its stop-on-failure wrapper; do not require old lease expiry/current role proofs, renew TTL, overwrite old lease/tool evidence, create namespace, activate role, grant port, flush foreign nft, or kill foreign processes. Current ownership and fresh cleanup tool proof authorize removal only.",
+    "restart": "Lost original retained custody means journaled recovery-pending, not cold import of lease/adoption seals. A separate explicitly reviewed recovery authority would be required; this amendment does not invent one.",
+    "private_observation_types": {
+      "RootRemoteNetworkCreatorObservation": "Creator-sealed exact parent FD device/inode, exclusive placeholder device/inode and namespace basename; no caller observations. After mount, namespace FD device/inode and mount ID added by creator.",
+      "RootRemoteNetworkCleanupObservation": "Cleanup-owner sealed current tool observation handle/readback digest, exact prior phase and bounded error code; no caller maps. RootRemoteNetworkCleanupPhase is limited to listed phases."
+    }
+  },
+  "tasks": {
+    "RT-T234.1": "Implement Gateway exact digest/config/output/observer split and actual ARM64 fixture recheck.",
+    "RT-T234.2": "Implement creator reservation/journal/cleanup custody and primitive, preserve ordinary active verifier.",
+    "VD-T234.3": "Exercise config mutation/cycle rejection, expiry/revocation cleanup, foreign namespace/table/placeholder, nonempty members, missing tool, crash phase and CAS failure preservation."
+  },
+  "pins": null,
+  "acceptance": "All runtime/Pi/AC acceptance OPEN; planning validation is not effect evidence.",
+  "validation_evidence": {
+    "planning_only": "Actual AST config field set equals prior Gateway fields; new input appends only member_closure_sha256. Canonical mutation exercise shows recipe change leaves member digest unchanged and member byte hash change changes member digest. This is contract/digest validation, not runtime effect proof."
+  }
+}
