@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +19,8 @@ from hermes_installer.authority.committed_pm_executable import (
     _require_not_revoked,
     _select_exact_adoption,
     _valid_active_adoption_window,
+    _IdentityCustody,
+    RootVerifiedCommittedPMExecutableIdentity,
     _verify_revocation_index,
     _verify_signed_choice,
 )
@@ -149,3 +154,65 @@ def test_missing_duplicate_or_replaced_publication_adoption_is_denied():
     current.publication_receipt_handle = "publication-b"
     with pytest.raises(ValueError, match="adoption changed"):
         _require_same_current_adoption(current, adoption, "publication-a")
+
+
+def test_identity_custody_is_idempotent_and_does_not_close_reused_fd(tmp_path, monkeypatch):
+    target = tmp_path / "reused-fd.txt"
+    target.write_text("keep-open")
+    original = os.open(target, os.O_RDONLY)
+    issued = {}
+    owner_lock = threading.RLock()
+    handle = "d" * 64
+    resolver = object.__new__(RootActiveCommittedPMExecutableResolver)
+    resolver._closed = False
+    resolver._issuer = object()
+    resolver._issued = issued
+    resolver._identity_lock = owner_lock
+    resolver._pending_resolutions = 0
+    identity = RootVerifiedCommittedPMExecutableIdentity(
+        identity_handle=handle, service_generation_digest="1" * 64,
+        publication_receipt_handle="publication", publication_sha256="2" * 64,
+        active_generation_id="generation", network_id="network", profile_id="profile",
+        service_generation="service-generation", runtime_record_id="runtime",
+        runtime_record_sha256="3" * 64, source_choice_selection_handle="choice",
+        source_choice_signed_record_sha256="4" * 64,
+        source_original_setup_deadline_unix=20.0, pm_runtime_receipt_handle="receipt",
+        pm_receipt_sha256="5" * 64, pm_generation="pm-" + "a" * 32,
+        source_commit="commit", runtime_relative="bin/python",
+        runtime_venv_relative="venv", runtime_closure_sha256="6" * 64,
+        executable_path=target, executable_sha256="7" * 64, executable_device=1,
+        executable_inode=2, executable_uid=0, executable_gid=0, executable_mode=0o500,
+        expires_monotonic=1000.0, member_fds=(original,),
+        _custody=_IdentityCustody(handle, (original,), issued, owner_lock),
+        _issuer=resolver._issuer,
+    )
+    issued[handle] = identity
+
+    identity.close()
+    assert handle not in issued
+    reused = os.open(target, os.O_RDONLY)
+    assert reused == original
+    identity.close()
+    resolver.close()
+    assert os.read(reused, 1) == b"k"
+
+    monkeypatch.setattr(RootActiveCommittedPMExecutableResolver, "_require_live", lambda _self: None)
+    with pytest.raises(CommittedPMExecutableUnavailable, match="foreign or stale"):
+        resolver.verify_current(identity)
+    os.close(reused)
+
+
+def test_resolver_bounds_outstanding_identity_observations(monkeypatch):
+    resolver = object.__new__(RootActiveCommittedPMExecutableResolver)
+    resolver._closed = False
+    resolver._identity_lock = threading.RLock()
+    resolver._pending_resolutions = 0
+    resolver._issued = {
+        str(index): SimpleNamespace(expires_monotonic=time.monotonic() + 60.0,
+                                    close=lambda: None)
+        for index in range(4)
+    }
+    monkeypatch.setattr(RootActiveCommittedPMExecutableResolver, "_require_live", lambda _self: None)
+    with pytest.raises(CommittedPMExecutableUnavailable, match="too many outstanding"):
+        resolver._begin_resolution()
+    assert resolver._pending_resolutions == 0
