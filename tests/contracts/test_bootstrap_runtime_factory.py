@@ -97,6 +97,14 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "active policy compiler"):
             binding.resolve_current_active_policy_compilation_registry()
 
+    def test_runnable_role_projection_binding_checks_session_seal(self):
+        from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
+
+        session = SimpleNamespace(_seal="right")
+        binding = RootSelectedInstallationBinding(session, "wrong")
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "runnable role projection"):
+            binding.resolve_current_runnable_role_projection_registry()
+
     def test_prepared_native_policy_records_are_reopened_by_exact_selection_and_identity(self):
         session = object.__new__(RootBootstrapSession)
         selection = SimpleNamespace(selection_handle="selection", selection_sha256="a" * 64)

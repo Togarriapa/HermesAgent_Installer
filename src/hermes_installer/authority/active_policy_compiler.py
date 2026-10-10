@@ -608,6 +608,11 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("active claim has no canonical predecessor selection digest")
         return claim.expected_selection_catalog_sha256
 
+    def resolve_current_active_policy_claim(self, publication_handle: str) -> RootActivePolicyCompilationClaim:
+        """Resolve a sealed current claim for root-owned adjacent projections."""
+        claim = self._get_claim(publication_handle)
+        return self.verify_current_active_policy_claim(claim)
+
     def verify_current_active_policy_claim(
             self, claim: RootActivePolicyCompilationClaim) -> RootActivePolicyCompilationClaim:
         if (not isinstance(claim, RootActivePolicyCompilationClaim)
