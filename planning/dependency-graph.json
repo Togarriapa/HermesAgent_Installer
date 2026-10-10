@@ -3068,5 +3068,19 @@
       "VD-T203.2"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "jarvis_sole_user_profile_v205": {
+    "contract": "planning/jarvis-sole-user-profile-contract-v205.json",
+    "tasks": {
+      "RB-T205.1": [],
+      "RB-T205.2": [
+        "RB-T205.1"
+      ],
+      "VD-T205.3": [
+        "RB-T205.1",
+        "RB-T205.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

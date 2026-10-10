@@ -1012,3 +1012,16 @@ The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/t
 #### Scenario: Old expected leaf rejects new source
 - **WHEN** the old pin test rejects the reviewed new bytes
 - **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance
+
+## ADDED Requirements
+
+### Requirement: Jarvis sole native user entry
+The installer SHALL provide Jarvis as the sole user-facing default profile while preserving all208 imported Resources source profiles as native usable identities through the protected isolated-home mapping in planning/jarvis-sole-user-profile-contract-v205.json.
+
+#### Scenario: Pinned backend lists primary profiles
+- **WHEN** the Jarvis Desktop backend lists its selected owned HERMES_HOME
+- **THEN** only canonical default labelled Jarvis is listed, specialists resolve separately through protected coordinator routing, and no presentation-only filtering claim is used
+
+#### Scenario: Existing unowned identity conflicts
+- **WHEN** migration encounters an unowned Jarvis identity or modified owned state
+- **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles

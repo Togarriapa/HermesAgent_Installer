@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "requirements": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0060"
+  ],
+  "source_review": {
+    "installer_commit": "dd00fdcefa44e25b00911f07e76d0ffc58480400",
+    "resources_revision": "113f42d33be9e0c8f0f47f5ca998e687323dec83",
+    "resources_tree": "c0c994b5e0b96b90cfd2fc564ea8632dff124308",
+    "hermes_revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "profile_count": 208,
+    "sole_user_source_id": "hermes",
+    "sole_user_source_path": "profiles/hermes.yaml",
+    "interaction_fields": "spec.interaction.userFacing=true and soleUserEntryPoint=true; exactly one of208.",
+    "inspected_sources": [
+      "registry/native.py::_profile_files and homes/profiles mapping",
+      "native_install.py::selected_profile_materialization",
+      "hermes_cli/profiles.py::read_profile_meta/list_profiles/rename_profile default branch",
+      "apps/desktop/src/store/profile.ts::profileLabel",
+      "Desktop profile-switcher"
+    ]
+  },
+  "primary": {
+    "source_profile_id": "hermes",
+    "native_profile_key": "default",
+    "display_name": "Jarvis",
+    "home_role": "jarvis-primary-home",
+    "default_route": "Every user/channel/Desktop work-bearing request enters this sole source profile and its source-defined protected Orchestrator route; preserve source behavior/instructions, adapting only primary identity labels/references via digest-covered transformation."
+  },
+  "delegates": {
+    "preserve_source_profiles": 208,
+    "specialist_count": 207,
+    "home_role": "resource-delegate-home",
+    "layout": "Each nonprimary source profile materializes as its own owned native HERMES_HOME root outside the Jarvis Desktop/backend served HERMES_HOME, using canonical default identity inside that separate home. Retain all208 original source IDs/revisions and native behavioral resources in lossless mapping. Do not place specialist identity directories under Jarvis primary/profiles.",
+    "routing": "Only current root-selected internal Orchestrator dispatch resolves source_profile_id through protected map and current owned root/runtime/source/recipient/profile/namespace grants. No caller path/environment/profile selector; no automatic authority from userFacing metadata. Existing required capabilities and provider budget boundaries remain."
+  },
+  "crosswalk": {
+    "type": "RootSelectedNativeProfileHome",
+    "fields": [
+      "source_profile_id",
+      "source_revision",
+      "source_manifest_sha256",
+      "role",
+      "native_profile_key",
+      "display_name",
+      "home_selection_handle",
+      "materialization_receipt_handle",
+      "profile_generation",
+      "namespace_id",
+      "runtime_receipt_handle",
+      "mapping_sha256"
+    ],
+    "role_values": [
+      "jarvis-primary-home",
+      "resource-delegate-home"
+    ],
+    "producer": "Existing root-owned native materialization/selected profile producer extended to issue exact source-to-owned-home crosswalk; active compiler binds digest and source/runtime/ownership receipts. Resolver returns only current root-held home capability, never caller path. Primary sourcehermes=>default/Jarvis; specialists keep exact lexical source IDs in internal lookup."
+  },
+  "visibility": "Pinned Hermes list_profiles enumerates all identity-bearing children; no supported userFacing filter exists. Desktop must be served only the primary home and observe one profile default labelled Jarvis in rail/dropdown/Manage Profiles/default routing. No fake frontend filter or renaming upstream Hermes CLI/packages. Internal homes remain native usable via protected delegates; unrelated existing user homes are preserved outside this installed selected backend, never deleted or silently hidden from their own backend.",
+  "migration": "Inventory current journal-owned source mappings and actual inode/owner/mode/hash before planning. Stage only installer-owned new layout, journal expected-old/new map and switch atomically after validation. Preserve homes/memories/history/overlays/secrets and unrelated services. Never duplicate credentials into delegate profile files. Existing unowned Jarvis/jarvis home/identity conflicts deny migration with precise recovery; no adoption by name. Owned prior Hermes primary retains state in place when safe or migrates by verified journal with rollback, no destructive rename/delete. Idempotent rerun must not overwrite user-modified files.",
+  "tasks": [
+    {
+      "id": "RB-T205.1",
+      "owner": "Jarvis profile implementation",
+      "work": "Implement primary/default Jarvis identity, lossless208 source map and207 isolated specialist homes with real protected coordinator/default routing and source-derived instructions."
+    },
+    {
+      "id": "RB-T205.2",
+      "owner": "Jarvis profile implementation",
+      "work": "Implement ownership-safe journaled idempotent migration and unowned conflicts; verify preserved state/secrets and native delegate usability."
+    },
+    {
+      "id": "VD-T205.3",
+      "owner": "verification",
+      "work": "Meaningful importer/routing/migration tests plus actual pinned backend/Desktop profile listing/default identity evidence; source pins pending tested committed bytes, runtime/target acceptance separate."
+    }
+  ],
+  "acceptance": "All original scope and AC01..AC18 OPEN; source audit proves supported shape only, not implemented Desktop/Pi visibility or operation."
+}

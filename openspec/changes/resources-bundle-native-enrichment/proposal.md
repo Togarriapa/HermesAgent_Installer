@@ -163,3 +163,5 @@ Owner overlay operations v172: `plans/amendments/2026-10-10-owner-overlay-operat
 Fixture resource materialization v173: `plans/amendments/2026-10-10-fixture-resource-materialization-v173.md`; actual separately generated fixture source/materialization/discovery, never production-row relabeling.
 
 Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
+
+Jarvis sole user-facing profile v205: direct user requirement and audited supported default/display_name mapping; all208 source profiles preserved,207 protected isolated delegate homes, actual native/UI/default routing and ownership-safe migration required. Contract planning/jarvis-sole-user-profile-contract-v205.json; all acceptance open.
