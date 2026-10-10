@@ -223,7 +223,8 @@ class RootApplicationRuntimePreparationSelectionRegistry:
         if (type(source_selection) is not RootApplicationSourcePreparationSelection
                 or source_selection.qualification_choice_handle != qualification_choice_handle
                 or source_selection.application_id != application_id
-                or source_selection.workflow_id != profile[0]):
+                or source_selection.workflow_id != profile[0]
+                or source_selection.target_profile_id != "hermes-agent-native-v1"):
             raise ApplicationRuntimeSelectionDenied("current root factory returned no matching source selection")
         source_selection = self.source_registry.resolve_selection(source_selection.selection_handle)
         source = self.source_registry.resolve_current_prepared_source_for_selection(
@@ -257,9 +258,17 @@ class RootApplicationRuntimePreparationSelectionRegistry:
         if (source_selection != self.source_registry.resolve_selection(source_selection.selection_handle)
                 or source.selection_handle != source_selection.selection_handle
                 or source.application_id != application_id
+                or source.prepared_generation_id != source_selection.prepared_generation_id
+                or source.prepared_generation_digest != source_selection.prepared_generation_digest
+                or source.target_profile_id != source_selection.target_profile_id
+                or source.controller_binding_handle != source_selection.controller_binding_handle
+                or source.qualification_consent_receipt_handle
+                   != source_selection.qualification_consent_receipt_handle
+                or lock.application_id != application_id
                 or lock.selection_handle != source_selection.selection_handle
                 or lock.prepared_source_receipt_handle != source.receipt_handle
                 or getattr(consent, "qualification_choice_handle", None) != qualification_choice_handle
+                or getattr(consent, "choice_observation_id", None) != choice.choice_observation_id
                 or getattr(consent, "application_id", None) != application_id
                 or getattr(consent, "workflow_id", None) != profile[0]
                 or getattr(consent, "purpose", None) != "installer-application-local-qualification"
@@ -290,7 +299,13 @@ class RootApplicationRuntimePreparationSelectionRegistry:
                 or choice.plan_sha256 != source_selection.plan_sha256
                 or choice.prepared_generation_id != source_selection.prepared_generation_id
                 or choice.prepared_generation_digest != source_selection.prepared_generation_digest
-                or choice.controller_binding_handle != source_selection.controller_binding_handle):
+                or choice.target_profile_id != source_selection.target_profile_id
+                or choice.qualification_consent_receipt_handle
+                   != source_selection.qualification_consent_receipt_handle
+                or choice.controller_binding_handle != source_selection.controller_binding_handle
+                or controller.setup_session_id != source_selection.setup_session_id
+                or controller.qualification_choice_handle != qualification_choice_handle
+                or controller.principal_id != current_identity.principal.principal_id):
             raise ApplicationRuntimeSelectionDenied("current source/lock, controller or selector joins changed")
         key = (qualification_choice_handle, application_id)
         handle = self._input_by_choice.get(key)
