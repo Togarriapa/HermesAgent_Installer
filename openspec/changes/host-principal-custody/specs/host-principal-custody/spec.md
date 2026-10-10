@@ -478,3 +478,10 @@ The system SHALL verify all five selected Xpra link target strings, SHA256 and b
 #### Scenario: Link target hash mismatch
 - **WHEN** any target byte digest or size differs
 - **THEN** build staging denies without broadening symlink authority.
+
+### Requirement: Actual local schema artifact receipt join
+The system SHALL bind each v112 local result schema ID to exact packaged bytes and actual root source receipt plus installed bounded validator before executable registration. It SHALL preserve pre-active assembly receipt staging distinct from active generation publication.
+
+#### Scenario: Source table presented as receipt
+- **WHEN** a source-reviewed schema table lacks actual packaged artifact and installed validator proof
+- **THEN** executable registration remains unavailable.
