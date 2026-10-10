@@ -516,6 +516,24 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("prepared enrollment is not owned by this setup session")
         return self._session._resolve_current_prepared_enrollment()
 
+    def resolve_current_active_policy_compilation_registry(self) -> Any:
+        """Resolve the exact live-session active compiler and its typed inputs."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("active policy compiler is not owned by this setup session")
+        return self._session._resolve_current_active_policy_compilation_registry()
+
+    def resolve_current_active_policy_publisher(self) -> Any:
+        """Resolve the publisher composed from this session's current compiler."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("active policy publisher is not owned by this setup session")
+        return self._session._resolve_current_active_policy_publisher()
+
+    def resolve_current_active_policy_publication(self) -> Any:
+        """Read the root-selected active publication through its journal resolver."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("active policy publication is not owned by this setup session")
+        return self._session._resolve_current_active_policy_publication()
+
     def resolve_adopted_principal_selector(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("principal selector is not owned by this setup session")
@@ -3923,6 +3941,8 @@ class RootBootstrapSession:
         self._durable_memory_choice_handles: dict[str, str] = {}
         self._release_receipt_handle: str | None = None
         self._native_output_receipts: Any | None = None
+        self._active_policy_compilation_registry: Any | None = None
+        self._active_policy_publisher: Any | None = None
         self._pm_runtime_registry: Any | None = None
         self._pm_runtime_handle: str | None = None
         self._native_pm_bindings: set[tuple[str, str, str]] = set()
@@ -5992,6 +6012,93 @@ class RootBootstrapSession:
                 binding=self._selected_installation, cas_root=cas_root,
                 journal_root=receipt_root)
         return self._native_output_receipts
+
+    def _resolve_current_active_policy_compilation_registry(self) -> Any:
+        """Compose the active compiler from this session's retained authorities.
+
+        This is deliberately a resolver, not a constructor accepting registries:
+        the PM runtime, principal selection, output receipt store, release and
+        journal must all be the objects already owned by this live root session.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._resolve_current_prepared_enrollment()
+        if prepared.state != "prepared" or prepared.enrollment_ids:
+            raise BootstrapEnrollmentPending("active compilation requires the current empty prepared generation")
+        if self._adopted_principal_registry is None:
+            raise BootstrapEnrollmentPending("active compilation has no adopted normal-session principal registry")
+        if self._pm_runtime_registry is None or not self._pm_runtime_handle:
+            raise BootstrapEnrollmentPending("active compilation requires the retained official PM runtime registry")
+        # Refresh short-lived identity and process evidence on every access. The
+        # compiler retains the stable registry, never this short-lived snapshot.
+        self.resolve_current_setup_identity()
+        self._resolve_current_pm_runtime()
+        self._factory._actor.verify_current(self._factory._release)
+        self._factory._release.verify_current()
+        journal = self._current_root_journal_selection()
+        if journal.path != Path("/var/lib/hermes-installer/authority-journal"):
+            raise BootstrapEnrollmentPending("active compiler journal is not the fixed root authority journal")
+        from .active_policy_compiler import (
+            RootActivePolicyCompilationRegistry,
+            RootActivePolicyTemplateResolver,
+        )
+        from .native_output_receipts import RootMaterializationReceiptRegistry
+        from .pm_runtime import RootPMRuntimeReceiptRegistry
+        if not isinstance(self._pm_runtime_registry, RootPMRuntimeReceiptRegistry):
+            raise BootstrapEnrollmentPending("current PM runtime registry has an unsupported concrete type")
+        outputs = self._root_native_output_receipts()
+        if (not isinstance(outputs, RootMaterializationReceiptRegistry)
+                or getattr(outputs, "_binding", None) is not self._selected_installation
+                or getattr(getattr(outputs, "_binding", None), "_session", None) is not self):
+            raise BootstrapEnrollmentPending("native output receipt registry is outside this exact setup session")
+        if self._active_policy_compilation_registry is None:
+            resolver = RootActivePolicyTemplateResolver(
+                self._factory.resolver, self._adopted_principal_registry)
+            self._active_policy_compilation_registry = RootActivePolicyCompilationRegistry.from_root_setup(
+                self._factory, resolver, self._pm_runtime_registry, outputs, journal.path)
+        registry = self._active_policy_compilation_registry
+        if (not isinstance(registry, RootActivePolicyCompilationRegistry)
+                or registry.factory is not self._factory
+                or registry.sessions is not self._factory.session_store
+                or registry.principal_registry is not self._adopted_principal_registry
+                or registry.runtime_receipts is not self._pm_runtime_registry
+                or registry.materialization_receipts is not outputs
+                or registry.root_journal != journal.path):
+            raise BootstrapEnrollmentPending("retained active compiler dependencies changed")
+        return registry
+
+    def _resolve_current_active_policy_publisher(self) -> Any:
+        self._check_live()
+        compiler = self._resolve_current_active_policy_compilation_registry()
+        from .setup_policy_publication import RootSetupPolicyGenerationPublisher
+        if self._active_policy_publisher is None:
+            self._active_policy_publisher = RootSetupPolicyGenerationPublisher.from_root_setup(
+                self._factory._release, self._factory.session_store,
+                self._current_root_journal_selection().path, compiler)
+        publisher = self._active_policy_publisher
+        if (not isinstance(publisher, RootSetupPolicyGenerationPublisher)
+                or publisher.release is not self._factory._release
+                or publisher.session_store is not self._factory.session_store
+                or publisher.registry is not compiler
+                or publisher.root_journal != self._current_root_journal_selection().path):
+            raise BootstrapEnrollmentPending("retained active publisher dependencies changed")
+        self._factory._release.verify_current()
+        self._factory._actor.verify_current(self._factory._release)
+        return publisher
+
+    def _resolve_current_active_policy_publication(self) -> Any:
+        """Reopen the durable active selection; never infer it from a session receipt."""
+        self._check_live()
+        self._factory._release.verify_current()
+        self._factory._actor.verify_current(self._factory._release)
+        try:
+            from .setup_policy_publication import PolicyPublicationReceiptResolver
+            receipt = PolicyPublicationReceiptResolver.resolve_current()
+        except Exception:
+            raise BootstrapEnrollmentPending("there is no revalidated current active publication") from None
+        if receipt.state != "active-committed":
+            raise BootstrapEnrollmentPending("current root publication is not active")
+        return receipt
 
     def resolve_runtime_receipt(self, role: str, receipt_handle: str,
                                 generation: str) -> RootRuntimeArtifactReceipt:
