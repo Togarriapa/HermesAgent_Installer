@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "amendment": "v230",
+  "baseline_requirements": [
+    "HI-T173.1",
+    "HI-T197.3",
+    "HI-T217.1",
+    "HI-T217.2",
+    "VD-T217.3"
+  ],
+  "refines": [
+    "v173",
+    "v224"
+  ],
+  "source_audit": {
+    "clone": "/private/tmp/luna-resource-runtime-452",
+    "cycle": "fixture registry requires ManagedProcessEffectHandler before lease; source session requires lease; PM/NSS/home inputs for genuine handler follow source session"
+  },
+  "source_constructor": "RootOwnedQualificationFixtureRegistry.from_current_installed_actor(verified_installer_release, current_actor_observation, selected_fixture_source_catalog, root_journal, controller_selection)",
+  "source_phase": [
+    "verify exact installed release/own actor/current controller PIDFD and suite",
+    "observe_owned_fixture(suite_id) retains exact owned root, recipe/schema/source descriptor and original controller deadline",
+    "resolve_current_selection(selection) returns the same current RootOwnedQualificationFixtureLease",
+    "RootBootstrapRuntimeFactory.begin_fixture_source_session(lease, controller_selection)",
+    "observe official source/PM, actual NSS identity, fixed owned roots, materialization/discovery and selected task recipe",
+    "strict v224 compiler/publication/session and genuine runtime bindings builder"
+  ],
+  "source_authority": "Source lease authorizes only existing finite source/session/owned-root observation operations. It grants no process start, input delivery, effect, ready task or fake policy. Existing source acquisition bound and controller original deadlines are unchanged.",
+  "attachment_api": "attach_prepared_process_custody(selection, *, source_session, selected_task_recipe, fixture_identity, runtime_bindings) -> RootQualificationPreparedProcessCustody",
+  "attachment_types": {
+    "source_session": "RootQualificationSourceSession",
+    "selected_task_recipe": "RootQualificationSelectedTaskRecipe",
+    "fixture_identity": "RootQualificationServiceIdentity",
+    "runtime_bindings": "RootQualificationRuntimeBindings: concrete fixture-only output issued by RootQualificationRuntimeBindingsBuilder.from_current_enrollment; retains exact ManagedProcessEffectHandler and current authenticated fixture enrollment/session/PM/member/identity owners",
+    "result": "RootQualificationPreparedProcessCustody: private issuer-sealed same-registry/same-lease attachment, not a caller handler or boolean"
+  },
+  "attachment_checks": [
+    "exact issuer membership and same lease/release/actor/controller/source session",
+    "current source/PM executable and complete runtime closure, actual NSS principal/namespace and owned home/work/data receipts",
+    "current strict fixture publication/enrollment/session, selected task recipe/package/operation/module/schema and v224 source proof",
+    "handler is exact ManagedProcessEffectHandler produced by that genuine builder, with selected executable/profile/roots matching retained receipts",
+    "attachment expires at minimum of all original inputs; no source lease renewal or restored seal",
+    "atomic one-time attachment; idempotent lookup only for same retained object; foreign/replacement attachment denies"
+  ],
+  "effect_api": "resolve_prepared_process_custody(selection) -> RootQualificationPreparedProcessCustody; revalidate all retained owners before every effect admission; absent/expired attachment denies",
+  "cleanup": "Before attachment, abort closes source/session/member/root/controller observations and removes only registry-owned empty/generated members via existing ownership ledger. After attachment, existing v173/v217/v224 process termination, terminal witness and owned cleanup apply. No caller path cleanup, deletion of foreign entries or fabricated publication receipt. Cleanup remains required on incomplete/failure.",
+  "tasks": [
+    "HI-T230.1",
+    "VD-T230.2"
+  ],
+  "tests": [
+    "source observation succeeds with real held release/controller and no handler",
+    "effect lookup before attachment denies",
+    "actual source/PM/NSS/roots and builder attachment positive",
+    "foreign issuer/session/lease/handler/PM/NSS/root/profile and second attachment deny",
+    "expiry/controller drift preserves original deadline and denies",
+    "pre-attachment abort and post-attachment terminal cleanup preserve foreign files"
+  ],
+  "acceptance": "All AC01..AC18 remain OPEN; no runtime source pins or target acceptance claimed."
+}

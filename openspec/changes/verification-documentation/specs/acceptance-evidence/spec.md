@@ -1199,3 +1199,17 @@ The installer SHALL apply planning/qualification-protected-row-serializer-v224.j
 #### Scenario: Fixture has no Authentik or native task proof
 - **WHEN** only genuine fixture NSS/materialization exists
 - **THEN** no Authentik identity or runnable package is fabricated and missing task source produces an explicit incomplete outcome
+
+
+## ADDED Requirements
+
+### Requirement: Qualification source precedes process custody
+The installer SHALL observe a current source-only owned fixture lease before acquiring source-session PM/NSS/home inputs, and SHALL deny process effects until exact genuine fixture runtime bindings attach once under v230.
+
+#### Scenario: Source lease has no process handler
+- **WHEN** the current installed actor and controller observe the fixed owned fixture
+- **THEN** source acquisition MAY proceed under original bounds while process effects remain denied
+
+#### Scenario: Prepared custody becomes current
+- **WHEN** the same lease has genuine current source, PM, NSS, roots, task recipe and authenticated fixture runtime bindings
+- **THEN** one-time attachment MAY admit only existing selected effects while preserving original deadlines and cleanup

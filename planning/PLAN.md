@@ -190,3 +190,8 @@ Official Desktop native inputs v226: `plans/amendments/2026-10-10-official-deskt
 
 
 v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225-schema-clarification.md`; authority envelope1 / service-generations3 exact schema2+selector rows, disabled absent member/null SHA+0 size; existing tasks/all AC OPEN.
+
+
+## v230 Qualification source-before-custody ordering
+
+`planning/qualification-source-before-process-custody-v230.json` resolves the actual handler/lease/source-session construction cycle. HI-T230.1/VD-T230.2 remain open; source-only lease grants no effects, actual prepared custody requires current genuine bindings, and all AC remain open.
