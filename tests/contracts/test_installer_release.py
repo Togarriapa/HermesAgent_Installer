@@ -13,6 +13,7 @@ from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
+    _artifact_id_for, _module_name, _validate_fixed_layout_role,
 )
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
 
@@ -61,6 +62,56 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         for path in ("../etc/passwd", "a/../../x", "a\\b", "/absolute", "", "a//b"):
             self.assertFalse(_safe_relative(path), path)
         self.assertTrue(_safe_relative("plans/bootstrap-policy.json"))
+
+    def test_installed_release_roles_use_exact_paths_and_module_ids(self):
+        self.assertEqual(_module_name("lib/python/hermes_installer/authority/daemon.py"),
+                         "hermes_installer.authority.daemon")
+        self.assertEqual(_module_name("lib/python/hermes_installer/__init__.py"),
+                         "hermes_installer")
+        for malformed in (
+            "src/hermes_installer/authority/daemon.py",
+            "lib/python/a..b.py",
+            "lib/python/trailing..py",
+            "lib/python/__init__.py",
+            "lib/python/a/b.pyc",
+        ):
+            with self.subTest(path=malformed), self.assertRaises(InstallerReleaseError):
+                _module_name(malformed)
+        self.assertEqual(_artifact_id_for("lib/python/hermes_installer/authority/daemon.py", ["module"]),
+                         "installer-module:hermes_installer.authority.daemon")
+        _validate_fixed_layout_role("runtime/bin/python", "1" * 64, 10, ["interpreter"])
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("runtime/bin/python3", "1" * 64, 10, ["interpreter"])
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("templates/bootstrap-compiler-template-v1.json",
+                                        "0" * 64, 4281, ["template"])
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("plans/bootstrap-policy-v1.json",
+                                        "1" * 64, 10, ["bootstrap-policy"])
+
+    def test_current_fixed_template_closure_matches_v72_v77_v81_pins(self):
+        from hermes_installer.authority.installer_release import FIXED_TEMPLATES
+        expected = {
+            "templates/root-setup-plan-template-v1.json":
+                ("installer-root-setup-plan-template-v1",
+                 "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5", 920),
+            "templates/bootstrap-receipt-bindings-template-v1.json":
+                ("installer-bootstrap-receipt-bindings-template-v1",
+                 "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609", 10195),
+            "templates/composio-whatsapp-catalog-read-policy-v1.json":
+                ("installer-composio-whatsapp-catalog-read-policy-v1",
+                 "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5", 528),
+        }
+        actual = {path: (artifact_id, digest, size)
+                  for artifact_id, path, digest, size in FIXED_TEMPLATES}
+        for path, value in expected.items():
+            self.assertEqual(actual[path], value)
+        self.assertEqual(len(actual), 6)
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role(
+                "templates/composio-whatsapp-catalog-read-policy-v1.json",
+                "0" * 64, 528, ["template"],
+            )
 
     def test_open_verified_file_checks_digest_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as td:
