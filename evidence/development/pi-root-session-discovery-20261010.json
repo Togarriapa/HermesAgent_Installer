@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_read_only_root_session_discovery",
+  "state": "report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "target": {
+    "target_name": "PI-HERMES",
+    "owner_at_prior_nonroot_sessions": "admin",
+    "architecture": "aarch64",
+    "model": "Raspberry Pi 5 Model B",
+    "distribution": "Debian 13.6"
+  },
+  "observation": {
+    "purpose": "bounded read-only discovery in a root session after user-enabled sudo",
+    "observed_at": "2026-10-10T10:14:14Z",
+    "started_at": "2026-10-10T10:14:14Z",
+    "ended_at": "2026-10-10T10:14:14Z",
+    "identity": {"user": "root", "uid": 0, "gid": 0},
+    "exit_code": 0,
+    "timed_out": false,
+    "command_detail": "A bounded read-only discovery command completed successfully. Exact argv was not returned and is not reconstructed.",
+    "stdout": {
+      "bytes": 2096,
+      "sha256": "6f263ad7b459f4dd9a3bfa5d8fb8a958795a68c65f177d9be5705d08c3afff19"
+    },
+    "stderr": {
+      "bytes": 256,
+      "sha256": "637100de8aa52c8784c0f43cf980bbf113f571d774558613b9ff755f2be2e601"
+    },
+    "result": {
+      "release_root_absent": "/usr/lib/hermes-installer/releases",
+      "state_root_absent": "/var/lib/hermes-installer",
+      "current_deployment_pointer_absent": "/var/lib/hermes-installer/deployments/current.json",
+      "foreign_services_preserved": [
+        {"unit": "cloudflared-hermes.service", "active_state": "inactive"},
+        {"unit": "hermes-pi-testd.service", "active_state": "inactive"}
+      ]
+    },
+    "retained_evidence": {
+      "directory": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/root-session-discovery-20261010",
+      "directory_owner": "root:root",
+      "file_mode": "0600",
+      "files_retained": true,
+      "filenames_reported": false,
+      "raw_outputs_copied": false
+    },
+    "effect_limit": "Read-only discovery only. No installer, service, account, listener, or filesystem mutation was performed."
+  },
+  "chronology": {
+    "earlier_privileged_check": "The separate 2026-10-10T09:16:45Z sudo stat/namei attempt failed before the protected paths could be inspected.",
+    "intervening_unprivileged_check": "The separate 2026-10-10T09:17:17Z unprivileged stat/namei check reported the installer paths absent.",
+    "later_sudo_availability_check": "The 2026-10-10T09:48:11Z sudo -n /usr/bin/true check failed with password-required after the latest user-reported enablement.",
+    "interpretation": "This root-session observation is a later distinct read-only event. It does not change the recorded earlier sudo failures or prove an installed deployment."
+  },
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "not_observed": [
+    "privileged installer execution or deployment",
+    "release artifact closure or root deployment receipt",
+    "active protected enrollment or authenticated target Result",
+    "service activation, adoption, or mutation",
+    "Cloudflare or other account mutation",
+    "native profile/plugin operation or model inference"
+  ],
+  "claim_limit": "This operator-reported root session establishes only the reported read-only filesystem and existing-service observations at 2026-10-10T10:14:14Z. All AC01-AC18 remain open."
+}
