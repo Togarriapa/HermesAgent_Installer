@@ -8,6 +8,9 @@ from hermes_installer.authority.memory_runtime_composition import (
     compose_root_memory_runtime,
 )
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+from hermes_installer.memory.namespace_connector import (
+    MemoryNamespaceConnector, MemoryNamespaceUnavailable,
+)
 
 
 def _bindings(catalog, process_manager):
@@ -40,6 +43,43 @@ def test_network_resolver_rejects_malformed_selector_before_catalog_access():
 
     with pytest.raises(RootMemoryNetworkUnavailable, match="selector is malformed"):
         resolver.resolve("")
+
+
+def test_memory_connector_uses_protected_resolver_without_generic_lease_fallback():
+    catalog = SimpleNamespace(digest="a" * 64)
+    generic_custody = SimpleNamespace(
+        resolve_namespace_lease=lambda _binding: (_ for _ in ()).throw(
+            AssertionError("generic namespace lease must not be used")),
+    )
+    bindings = _bindings(catalog, generic_custody)
+    resolver = RootMemoryNetworkLeaseResolver(bindings)
+    enrollment = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="generation-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="ns-a",
+        target_id="memory-agentmemory:profile-a", literal_loopback_port=8000,
+        fixed_route_map={"agentmemory-search": object()}, limits={"request_bytes": 2048},
+    )
+    route_binding = SimpleNamespace(
+        target_id=enrollment.target_id, route_id="agentmemory-search",
+        profile_id=enrollment.profile_id, generation=enrollment.service_generation,
+        namespace_identity=enrollment.namespace_identity,
+        literal_loopback_port=enrollment.literal_loopback_port,
+        memory_enrollment=enrollment,
+    )
+    connector = MemoryNamespaceConnector(
+        catalog=catalog, process_manager=generic_custody,
+        vault=SimpleNamespace(resolve_reference=lambda *_args, **_kwargs: "secret"),
+        route_resolver=lambda *_args: route_binding,
+        private_network_lease_resolver=resolver,
+    )
+
+    with pytest.raises(MemoryNamespaceUnavailable, match="private memory network lease"):
+        connector.request(
+            enrollment=enrollment, route_id="agentmemory-search", request=object(),
+            before_connect=lambda _digest: None, timeout=1.0,
+            deadline=__import__("time").monotonic() + 1.0,
+            cancelled=lambda: False,
+        )
 
 
 def test_runtime_composition_keeps_lifecycle_unavailable_without_active_proofs():

@@ -8,6 +8,7 @@ lease, start a model, or turn the selection into a usable provider route.
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass
 from collections.abc import Mapping
@@ -85,6 +86,87 @@ class RootMemoryNetworkLeaseResolver:
             raise RootMemoryNetworkUnavailable(
                 "selected endpoint has no current custody-owned private network lease") from None
 
+    def resolve_for_enrollment(self, enrollment: Any) -> "RootMemoryNetworkNamespaceLease":
+        """Resolve the selected endpoint for one protected memory enrollment.
+
+        This joins the service identity through the active catalog getter. It
+        never scans raw rows or accepts a network selector from a caller.
+        """
+        from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+        if type(enrollment) is not MemoryServiceEnrollment:
+            raise RootMemoryNetworkUnavailable("a protected memory enrollment is required")
+        try:
+            endpoint = self._bindings.resolve_private_memory_endpoint_for_service(
+                enrollment.service_enrollment_id, enrollment.service_generation,
+                enrollment.profile_id, enrollment.principal_id,
+            )
+            if (endpoint.service_enrollment_id != enrollment.service_enrollment_id
+                    or endpoint.service_generation != enrollment.service_generation
+                    or endpoint.profile_id != enrollment.profile_id
+                    or endpoint.principal_id != enrollment.principal_id
+                    or endpoint.namespace_id != enrollment.namespace_identity
+                    or endpoint.endpoint_target_id != enrollment.target_id):
+                raise ValueError("endpoint selection does not match memory enrollment")
+            lease = self.resolve(endpoint.network_binding_handle)
+            identity = lease.network.member(endpoint.service_enrollment_id)
+            if (identity.profile_id != endpoint.process_profile_id
+                    or identity.generation != endpoint.process_profile_generation):
+                raise ValueError("network lease has no exact selected process member")
+            view = RootMemoryNetworkNamespaceLease(
+                bindings=self._bindings, endpoint=endpoint, lease=lease,
+                uid=identity.uid,
+            )
+            view.verify_current()
+            return view
+        except RootMemoryNetworkUnavailable:
+            raise
+        except Exception:
+            raise RootMemoryNetworkUnavailable(
+                "memory enrollment has no exact current endpoint network lease") from None
+
+
+class RootMemoryNetworkNamespaceLease:
+    """Borrowed, FD-duplicated view of the retained root network lease."""
+
+    __slots__ = ("_bindings", "_endpoint", "_lease", "_namespace_fd", "uid",
+                 "generation", "namespace_identity", "closed")
+
+    def __init__(self, *, bindings: RootRuntimeBindings, endpoint: Any,
+                 lease: RootPrivateLoopbackNetworkLease, uid: int):
+        if type(lease) is not RootPrivateLoopbackNetworkLease or type(uid) is not int or uid < 0:
+            raise RootMemoryNetworkUnavailable("typed private network lease is required")
+        self._bindings = bindings
+        self._endpoint = endpoint
+        self._lease = lease
+        self._namespace_fd = os.dup(lease.namespace_fd)
+        self.uid = uid
+        self.generation = endpoint.service_generation
+        self.namespace_identity = endpoint.namespace_id
+        self.closed = False
+
+    @property
+    def namespace_fd(self) -> int:
+        return self._namespace_fd
+
+    def verify_current(self) -> None:
+        if self.closed or self._namespace_fd < 0:
+            raise RootMemoryNetworkUnavailable("private memory namespace lease view is closed")
+        verify_root_network_lease(self._lease)
+        endpoint = self._bindings.resolve_private_memory_endpoint_binding(
+            self._endpoint.binding_id)
+        lease = self._bindings.resolve_private_loopback_network_lease(
+            endpoint.network_binding_handle)
+        if (endpoint is not self._endpoint or lease is not self._lease
+                or self._lease.network.member(endpoint.service_enrollment_id).uid != self.uid
+                or self._lease.namespace_fd < 0):
+            raise RootMemoryNetworkUnavailable("private memory namespace lease is no longer current")
+
+    def close(self) -> None:
+        if self._namespace_fd >= 0:
+            os.close(self._namespace_fd)
+            self._namespace_fd = -1
+        self.closed = True
+
 
 @dataclass(frozen=True, slots=True)
 class RootMemoryRuntimeComposition:
@@ -111,6 +193,7 @@ class RootMemoryRuntimeComposition:
 def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
                                 enrollment: Any, memory_runtime: Any,
                                 service: Any,
+                                vault: Any = None,
                                 monotonic: Callable[[], float] = time.monotonic
                                 ) -> RootMemoryRuntimeComposition:
     """Compose only concrete active memory registries; otherwise report why.
@@ -164,8 +247,20 @@ def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
         except Exception:
             reasons.append("active service-enable choice does not resolve against the protected generation")
 
-    semantic_connector = (memory_runtime.get("namespace_connector")
-                          if isinstance(memory_runtime, Mapping) else None)
+    semantic_connector = None
+    if network_resolver is not None and vault is not None:
+        try:
+            semantic_connector = MemoryNamespaceConnector(
+                catalog=bindings.enrollment_catalog,
+                process_manager=bindings.process_manager,
+                vault=vault,
+                private_network_lease_resolver=network_resolver,
+                monotonic=monotonic,
+            )
+            if isinstance(memory_runtime, dict):
+                memory_runtime["namespace_connector"] = semantic_connector
+        except Exception:
+            semantic_connector = None
     if type(semantic_connector) is not MemoryNamespaceConnector:
         reasons.append("root memory namespace connector with a retained private-network lease is unavailable")
     elif prestart is not None:

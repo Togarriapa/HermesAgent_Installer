@@ -1955,6 +1955,7 @@ def compose_root_authority_runtime(
             memory_runtime_composition = compose_root_memory_runtime(
                 bindings=bindings, enrollment=enrollment,
                 memory_runtime=memory_runtime, service=service,
+                vault=vault,
                 monotonic=service.monotonic,
             )
             memory_lifecycle_unavailable_reason = (
