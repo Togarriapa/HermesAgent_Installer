@@ -1174,11 +1174,15 @@ def _materialize_pyyaml_wheel(wheel: bytes, site_dir: Path) -> None:
             expanded += info.file_size
             if info.file_size > 4 * 1024 * 1024 or expanded > 16 * 1024 * 1024:
                 raise InstallerReleaseBuildError("dependency wheel exceeds member or expanded bounds")
-            if not (name.startswith("yaml/") or name.startswith("PyYAML-6.0.3.dist-info/")):
+            # The pinned Linux ARM64 wheel splits its native extension package
+            # into the reviewed top-level `_yaml` package as well as `yaml`.
+            # Keep this exact package set closed; do not accept arbitrary
+            # top-level wheel payloads merely because the wheel itself is pinned.
+            if not (name.startswith(("yaml/", "_yaml/", "pyyaml-6.0.3.dist-info/"))):
                 raise InstallerReleaseBuildError("dependency wheel contains an unreviewed package path")
             rows[name] = bundle.read(info)
-        record_name = "PyYAML-6.0.3.dist-info/RECORD"
-        wheel_meta = rows.get("PyYAML-6.0.3.dist-info/WHEEL", b"").decode("utf-8", "strict")
+        record_name = "pyyaml-6.0.3.dist-info/RECORD"
+        wheel_meta = rows.get("pyyaml-6.0.3.dist-info/WHEEL", b"").decode("utf-8", "strict")
         if "Tag: cp314-cp314-manylinux_2_28_aarch64" not in wheel_meta and "Tag: cp314-cp314-manylinux2014_aarch64" not in wheel_meta:
             raise InstallerReleaseBuildError("dependency wheel does not carry the reviewed CPython ARM64 tag")
         _verify_wheel_record(rows, record_name)

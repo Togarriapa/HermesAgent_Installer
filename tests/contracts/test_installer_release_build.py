@@ -278,18 +278,91 @@ def test_wheel_record_rejects_digest_and_unlisted_member_changes():
     body = b"package bytes"
     record = "yaml/__init__.py,sha256={},{}\n".format(
         base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("="), len(body))
-    record += "PyYAML-6.0.3.dist-info/RECORD,,\n"
-    rows = {"yaml/__init__.py": body, "PyYAML-6.0.3.dist-info/RECORD": record.encode()}
-    release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+    record += "pyyaml-6.0.3.dist-info/RECORD,,\n"
+    rows = {"yaml/__init__.py": body, "pyyaml-6.0.3.dist-info/RECORD": record.encode()}
+    release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
 
     rows["yaml/__init__.py"] = b"changed"
     with pytest.raises(release_build.InstallerReleaseBuildError):
-        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
-
+        release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
     rows["yaml/__init__.py"] = body
     rows["yaml/unlisted.py"] = b"extra"
     with pytest.raises(release_build.InstallerReleaseBuildError):
-        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+        release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
+
+
+def _fixture_pyyaml_wheel(files, *, symlink_member=None):
+    import base64
+    import csv
+    import io
+    import stat
+    import zipfile
+
+    members = dict(files)
+    record_name = "pyyaml-6.0.3.dist-info/RECORD"
+    output = io.BytesIO()
+    rows = []
+    for name, body in members.items():
+        rows.append((name, "sha256=" + base64.urlsafe_b64encode(
+            hashlib.sha256(body).digest()).decode().rstrip("="), str(len(body))))
+    rows.append((record_name, "", ""))
+    record = io.StringIO(newline="")
+    csv.writer(record, lineterminator="\n").writerows(rows)
+    members[record_name] = record.getvalue().encode()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, body in members.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = ((stat.S_IFLNK | 0o777) if name == symlink_member
+                                  else (stat.S_IFREG | 0o644)) << 16
+            archive.writestr(info, body)
+    return output.getvalue()
+
+
+def test_materialize_pinned_wheel_accepts_only_the_closed_pyyaml_package_set(monkeypatch, tmp_path):
+    import zipfile
+
+    files = {
+        "_yaml/__init__.py": b"# native extension package\n",
+        "yaml/__init__.py": b"__version__ = '6.0.3'\n",
+        "yaml/_yaml.cpython-314-aarch64-linux-gnu.so": b"fixture extension bytes",
+        "pyyaml-6.0.3.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nTag: cp314-cp314-manylinux_2_28_aarch64\n"),
+        "pyyaml-6.0.3.dist-info/METADATA": b"Name: PyYAML\nVersion: 6.0.3\n",
+    }
+    wheel = _fixture_pyyaml_wheel(files)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(wheel).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(wheel))
+    target = tmp_path / "site-packages"
+    target.mkdir()
+    release_build._materialize_pyyaml_wheel(wheel, target)
+    assert (target / "_yaml/__init__.py").read_bytes() == files["_yaml/__init__.py"]
+    assert (target / "yaml/_yaml.cpython-314-aarch64-linux-gnu.so").read_bytes() == files[
+        "yaml/_yaml.cpython-314-aarch64-linux-gnu.so"]
+
+    malicious = _fixture_pyyaml_wheel({**files, "unreviewed/__init__.py": b"no"})
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(malicious).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(malicious))
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="unreviewed package path"):
+        release_build._materialize_pyyaml_wheel(malicious, tmp_path / "other")
+
+    linked = _fixture_pyyaml_wheel(files, symlink_member="_yaml/__init__.py")
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(linked).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(linked))
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="link or special"):
+        release_build._materialize_pyyaml_wheel(linked, tmp_path / "linked")
+
+    for escaped_name in ("_yaml/../evil.py", "../evil.py", "/yaml/evil.py", "yaml\\evil.py"):
+        escaped = _fixture_pyyaml_wheel({**files, escaped_name: b"escape"})
+        monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(escaped).hexdigest())
+        monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(escaped))
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._materialize_pyyaml_wheel(escaped, tmp_path / ("escape-" + str(len(escaped_name))))
+
+    malformed = b"not a zip archive"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(malformed).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(malformed))
+    with pytest.raises(zipfile.BadZipFile):
+        release_build._materialize_pyyaml_wheel(malformed, tmp_path / "malformed")
 
 
 def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
