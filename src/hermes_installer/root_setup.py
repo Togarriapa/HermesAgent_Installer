@@ -588,12 +588,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
     parser.add_argument("action", choices=tuple(item.value for item in RootSetupAction))
     parser.add_argument("--suite", choices=tuple(item.value for item in RootInstalledQualificationSuite))
-    args = parser.parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(arguments)
     if args.action == RootSetupAction.QUALIFY.value:
-        if args.suite is None:
-            parser.error("qualify requires --suite with a fixed installed qualification suite")
-    elif args.suite is not None:
-        parser.error("--suite is available only with qualify")
+        if (args.suite is None or len(arguments) != 3
+                or arguments[0] != RootSetupAction.QUALIFY.value
+                or arguments[1] != "--suite"):
+            parser.error("use exactly: qualify --suite <fixed-suite-id>")
+    elif args.suite is not None or arguments != [args.action]:
+        parser.error("lifecycle actions accept no additional arguments")
     if not sys.stdin.isatty() or not sys.stderr.isatty():
         if args.action == RootSetupAction.QUALIFY.value:
             print("Qualification requires the root controlling terminal.", file=sys.stderr)

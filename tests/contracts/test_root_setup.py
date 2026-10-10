@@ -246,6 +246,10 @@ class RootSetupBoundaryTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main(["qualify", "--suite", "caller-selected-suite"])
         with self.assertRaises(SystemExit):
+            main(["qualify", "--suite", "resource-cron-task-v1", "--suite", "display-xauthority-v1"])
+        with self.assertRaises(SystemExit):
+            main(["--suite", "resource-cron-task-v1", "qualify"])
+        with self.assertRaises(SystemExit):
             main(["install", "--suite", "resource-cron-task-v1"])
 
 
