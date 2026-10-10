@@ -749,5 +749,74 @@
       "operational_projection": false,
       "meaning": "Actual recording register_tool source facts only, never handler execution or selected result/observer/source receipt authority. Null result/source receipts and empty observers stay unqualified; root selected producer resolves actual proofs before executable candidates."
     }
+  },
+  "private_input_recipient_consent": {
+    "schema": 1,
+    "requirements": [
+      "HI11",
+      "PR-F03",
+      "RB07",
+      "SK-F02"
+    ],
+    "tasks": [
+      "HI-T11",
+      "HI-T12",
+      "RB-T08",
+      "PR-F03"
+    ],
+    "owner_module": "hermes_installer.authority.root_private_input_consent",
+    "registry": "RootPrivateInputConsentRegistry",
+    "type": "RootPrivateInputConsent",
+    "constructor": "from_authority_service(service,root_setup_choice_registry,selected_provider_catalog,root_journal)->RootPrivateInputConsentRegistry root-only; all dependencies actual root selected objects, same signing key/current epoch/profile registry.",
+    "choice_source": "Existing root setup/owner TTY choice registry adds observe_selected_private_provider_routes(current_profile_selection_handle)->opaque RootPrivateProviderRouteChoice receipt. Actual current verified root actor/TTY explicitly records selected finite private route choice from protected catalog; root resolves owner principal/profile/namespace/current policy itself. No caller boolean/dict, worker config, raw route enum in RPC, inferred consent from private classification or group membership. This is one setup/profile preference, no repeated per-turn prompt. Default no selected choice means disabled. Choice records actual actor/session/transaction/TTY observation ID/profile selection receipt/selected route IDs/policy digest/issued time and same protected journal link.",
+    "issue": "issue_selected_private_input_consent(current_explicit_choice_receipt_handle,selected_private_profile_binding)->opaque private_consent_selection_handle. Root independently resolves live choice record and current principal/private profile/namespace/provider route selection, finite recipient IDs, policy/current enrollment. Persists purpose-specific preference under root journal owner0/0700/no-follow. Memory capture consent never substitutes for provider egress.",
+    "persistent_record_fields": [
+      "schema",
+      "selection_handle",
+      "consent_id",
+      "purpose",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "profile_generation",
+      "provider_route_ids",
+      "private_recipient_ids",
+      "additional_metered_budget_usd",
+      "policy_revision",
+      "policy_selection_sha256",
+      "choice_receipt_handle",
+      "state",
+      "revocation_epoch",
+      "signature"
+    ],
+    "persistent_types": "schema1; purpose private-provider-egress; exact current IDs and opaque profile_generation, provider_route_ids/private_recipient_ids sorted unique<=1024 actual selected private route/recipient IDs, no public/wildcard; additional_metered_budget_usd literal0 (a separate current account/metered authorization still required for any charge); state enabled|revoked; positive persisted revocation_epoch; existing root signed canonical domain root-private-input-consent-selection-v1. No containing snapshot digest field inside its own digest preimage.",
+    "resolve": "resolve_for_selected_input(private_consent_selection_handle,*,observed_input_proof,selected_input_binding)->RootPrivateInputConsent. Both typed input proof and binding independently looked up in actual root retained selected execution/ingress registry before first input SourceReceipt; not a SourceReceipt prerequisite or caller asserted source. Verify current principal/profile/namespace/profile generation/current policy/current provider private route receipts/revocation epoch and actual source input selection digest. Genuine first ingress may have no parents; existing parents are retained.",
+    "dto_fields": [
+      "schema",
+      "receipt_handle",
+      "consent_id",
+      "purpose",
+      "selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "profile_generation",
+      "service_generation_digest",
+      "input_selection_digest",
+      "input_observation_handle",
+      "provider_route_ids",
+      "private_recipient_ids",
+      "additional_metered_budget_usd",
+      "policy_revision",
+      "policy_selection_sha256",
+      "revocation_epoch",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "dto_types": "Root-only sealed immutable DTO; schema1 and purpose/private recipients/zero budget as above. receipt_handle independent random actual registry lookup. input_selection_digest is actual root canonical selected input closure, input_observation_handle root retained actual input record before source capture, never source-text classification. service_generation_digest verified containing current runtime snapshot supplied externally, no recursive active row. Fresh lease min(input proof,selected execution,policy/route/principal leases,now+30s); signed domain root-private-input-consent-v1. Copied DTO/signature alone cannot bypass actual lookup/current revocation.",
+    "selected_input_join": "RootNativeInputSelection gains root-derived private_consent_selection_handle (null means no egress consent). Root selected task/health/Desktop/HTTP/audio selection resolver obtains it from registry current profile preference, never worker request. AuthorityService.issue_selected_input_source resolves fresh consent against EXACT same observed_input_proof/selected_input_binding and intersects selected source_issuer.private_provider_route_ids, current consent route recipients and EVERY parent recipient ceiling. UNKNOWN/private sensitivity stays unchanged. Empty intersection remains empty/deny; do not strip ancestry or grant public route. This permits authentic selected private input only when actual current root-held explicit preference exists.",
+    "revoke": "revoke_selected_private_input_consent(selection_handle,current_authorized_owner_request)->RootPrivateInputConsentRevocationReceipt {schema,selection_handle,consent_id,revocation_epoch,revoked_monotonic,signature}. Actual current owner request bound root actor/principal/private profile, atomically increments durable epoch/state. Recheck before source issuance and every dispatch/retry/background child. Old receipt ceilings are necessary but not sufficient: current consent epoch checked separately. Previously emitted/committed bytes are not claimed undone.",
+    "evidence": "Explicit selected private route choice then authentic initial input and private provider request positive; absent/public/wrong owner/profile/generation/unknown route/stale policy/revoked epoch/parent empty ceiling/replayed lookup/forged choice/worker authorized flag negatives. No public promotion or account/budget readiness inferred. All acceptance pending."
   }
 }

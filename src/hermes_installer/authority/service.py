@@ -1307,7 +1307,9 @@ class AuthorityService:
         if not callable(start) or coordinator is None:
             raise AuthorityDenied("resource.task_start", "root selected task custodian is unavailable")
         result = start(
-            profile, proof, payload, task_admission=task, exact_stdin=exact_stdin,
+            profile, proof, payload, task_admission=task,
+            admission_handle=admission, node_id=task.node_id, admitted_source=source,
+            exact_stdin=exact_stdin,
             expected_stdin_sha256=task.stdin_sha256,
             timeout=min(float(timeout), max(0.001, proof.authorization.expires_monotonic - self.monotonic())),
             cancelled=cancelled, initial_input_coordinator=coordinator,
