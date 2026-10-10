@@ -457,3 +457,10 @@ The system SHALL execute only the v106 selected empty-parameter Xpra build recip
 #### Scenario: Archive hash presented as executable identity
 - **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
 - **THEN** build admission or publication is denied.
+
+### Requirement: Exact regular Xpra build topology
+The system SHALL use the v109 source-verified transform module and exact original regular staging directory topology, mount the PM builder executable as a file and publish the archive as non-executable data.
+
+#### Scenario: Missing source topology
+- **WHEN** staging omits a required original manifest directory or changes the selected source links
+- **THEN** transformation denies instead of changing source identity.
