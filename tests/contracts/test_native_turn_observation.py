@@ -14,6 +14,7 @@ from hermes_installer.authority.native_turn_observation import (
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.authority.types import canonical_digest
+from hermes_installer.authority.types import RootCompletedNativeTurnPresentation
 
 
 def _handle(char: str) -> str:
@@ -126,6 +127,36 @@ class NativeTurnObservationContracts(unittest.TestCase):
         response = _response(source_handles=(_handle("i"), _handle("s")))
         with self.assertRaises(ValueError):
             replace(response, final_response_delivery_handle=_handle("f"))
+
+    def test_authority_service_dispatches_only_the_typed_root_finish_presentation(self):
+        from hermes_installer.authority.service import AuthorityService
+
+        service = object.__new__(AuthorityService)
+        service.monotonic = lambda: 10.0
+        service.native_turn_observation_registry = None
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry.service = service
+        presentation = RootCompletedNativeTurnPresentation(
+            schema=1, receipt_handle=_handle("p"), turn_handle=_handle("t"),
+            state="completed", expires_monotonic=70.0,
+        )
+        calls = []
+        registry.finish_selected_native_turn = lambda *args: (calls.append(args) or presentation)
+        service.attach_native_turn_observation_registry(registry)
+        payload = {
+            "schema": 1, "turn_handle": _handle("t"),
+            "final_response_delivery_handle": _handle("f"),
+        }
+        result = service._dispatch_native_turn_finish(
+            2001, 733, 901, payload, cancelled=lambda: False,
+        )
+        self.assertEqual(result["receipt_handle"], _handle("p"))
+        self.assertEqual(calls, [(2001, 733, 901, _handle("t"), _handle("f"))])
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch_native_turn_finish(
+                2001, 733, 901, {**payload, "worker_claim": "completed"},
+                cancelled=lambda: False,
+            )
 
     def test_foreign_response_cannot_attach_to_turn(self):
         response = replace(_response(source_handles=(_handle("i"), _handle("s"))),
