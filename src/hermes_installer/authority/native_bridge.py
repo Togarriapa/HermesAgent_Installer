@@ -21,6 +21,7 @@ from typing import Any, Callable, Mapping
 
 from .types import (AuthorityDenied, EffectAuthorization, HostContext, Sensitivity,
                     SourceReceipt, canonical_digest)
+from .native_request_observation import RootNativeRequestObservation
 
 MAX_EVENT_BYTES = 1_048_576
 MAX_NORMALIZED_BYTES = 4 * 1024 * 1024
@@ -39,7 +40,8 @@ class _PendingEvent:
     producer_pidfd: int
     producer_identity: Any
     capability: str
-    event_receipt_id: str
+    request_observation_handle: str
+    turn_handle: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +100,7 @@ class NativeBridgeBroker:
                  root_selected_enrollments: Mapping[str, Mapping[tuple[str, str], Any]],
                  canonicalizer_sha256: str,
                  provider_response_registry: Any | None = None,
+                 native_request_observer: Any | None = None,
                  observer_delivery_bindings: Mapping[str, tuple[RootObserverDeliveryBinding, ...]] | None = None,
                  peer_role_artifact_resolver: Callable[[Any, str], tuple[str, str]] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
@@ -121,6 +124,8 @@ class NativeBridgeBroker:
                                           for key, value in root_selected_enrollments.items()}
         self.canonicalizer_sha256 = canonicalizer_sha256
         self.provider_response_registry = provider_response_registry
+        self.native_request_observer = native_request_observer
+        self.native_turn_observer = None
         if (observer_delivery_bindings is not None
                 and (not isinstance(observer_delivery_bindings, Mapping)
                      or set(observer_delivery_bindings) != set(bridges))):
@@ -153,13 +158,172 @@ class NativeBridgeBroker:
                 raise AuthorityDenied("native.bridge_registry", "provider response registry is already attached")
             self.provider_response_registry = registry
 
+    def attach_native_request_observer(self, registry: Any) -> None:
+        """Attach the typed root request recorder after selected input wiring."""
+        from .native_request_observation import NativeRequestObservationRegistry
+
+        if (type(registry) is not NativeRequestObservationRegistry
+                or registry.service is not self.service
+                or registry.bridges != self.bridges
+                or registry.process_resolver != self.process_resolver
+                or registry.source_observers is not self.service.source_observer_registry):
+            raise AuthorityDenied("native.request_observer", "root native request observer is invalid")
+        with self._lock:
+            if self.native_request_observer is not None:
+                raise AuthorityDenied("native.request_observer", "root native request observer is already attached")
+            self.native_request_observer = registry
+
+    def attach_native_turn_observer(self, registry: Any) -> None:
+        """Attach the exact root turn join once the selected input graph exists."""
+        from .native_observer_wiring import RootNativeTurnObservationRegistry
+
+        if type(registry) is not RootNativeTurnObservationRegistry:
+            raise AuthorityDenied("native.request_turn", "root native turn observer has an invalid type")
+        with self._lock:
+            if self.native_turn_observer is not None:
+                raise AuthorityDenied("native.request_turn", "root native turn observer is already attached")
+            if self.native_request_observer is None or registry.service is not self.service:
+                raise AuthorityDenied("native.request_turn", "request and turn observers do not join this service")
+            attach_broker = getattr(registry, "attach_native_request_broker", None)
+            if not callable(attach_broker):
+                raise AuthorityDenied("native.request_turn", "turn observer has no typed broker attachment")
+            attach_broker(self)
+            self.native_turn_observer = registry
+
+    def resolve_native_request_observation(self, receipt_handle: str, *,
+                                          turn_handle: Any) -> Any:
+        """Resolve a request record only while its producer and turn remain current."""
+        observer, turns = self.native_request_observer, self.native_turn_observer
+        if observer is None or turns is None:
+            raise AuthorityDenied("native.request_observation", "root request and turn observers are unavailable")
+        return observer.resolve_for_turn(
+            receipt_handle, turn_handle=turn_handle, turn_registry=turns)
+
+    def request_bytes(self, receipt_handle: str, producer_identity: Any) -> bytes:
+        """Expose exact retained canonical bytes only to root in-process observers."""
+        observer = self.native_request_observer
+        if observer is None:
+            raise AuthorityDenied("native.request_observation", "root request observer is unavailable")
+        return observer.request_bytes(receipt_handle, producer_identity)
+
     def prepare(self, *, uid: int, peer_pid: int, peer_pidfd: int,
                 payload: Any, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-        """Reject worker capture until an actual root-observed event exists."""
-        raise AuthorityDenied(
-            "native.observer_unavailable",
-            "native request capture requires an active root source observer",
+        """Root-observe, canonicalize, and atomically admit one provider attempt."""
+        request = self._decode_request(payload, "prepare")
+        raw = self._decode_b64(request["payload"], MAX_EVENT_BYTES)
+        handles = request["parent_receipt_handles"]
+        if (not isinstance(handles, list) or len(handles) > 64
+                or any(not isinstance(item, str) or not item for item in handles)
+                or len(set(handles)) != len(handles)
+                or type(request["retry_index"]) is not int
+                or not 0 <= request["retry_index"] <= 100):
+            raise AuthorityDenied("native.request", "native source ancestry or retry is invalid")
+        if cancelled():
+            raise AuthorityDenied("effect.cancelled", "native request observation was cancelled")
+        binding = self.service._binding(uid)
+        candidates = [bridge for bridge in self.bridges.values()
+                      if bridge.producer_uid == uid
+                      and bridge.producer_profile_id == binding.profile_id
+                      and bridge.producer_generation == self.service.profile_generations.get(binding.profile_id)
+                      and bridge.producer_executable_sha256]
+        if len(candidates) != 1:
+            raise AuthorityDenied("native.producer", "authenticated peer has no unique selected provider producer")
+        bridge = candidates[0]
+        producer_identity = self._resolve_peer(
+            peer_pid, peer_pidfd, bridge.producer_profile_id, bridge.producer_generation,
+            bridge.producer_uid, bridge.producer_executable_sha256)
+        parent_receipts = self._take_parent_closure(handles, uid, peer_pid)
+        if not parent_receipts:
+            raise AuthorityDenied("native.lineage", "provider request has no retained root-observed input ancestry")
+        try:
+            canonical, target, recipient, capability, _model = self.canonicalizer(
+                self.root_selected_enrollments[bridge.bridge_id], raw,
+                normalization_policy={
+                    "id": bridge.normalization_policy_id,
+                    "revision": bridge.normalization_policy_revision,
+                    "route_schema_id": bridge.route_schema_id,
+                    "output_limit_mode": bridge.output_limit_mode,
+                    "output_limit_ceiling": bridge.output_limit_ceiling,
+                })
+        except Exception:
+            raise AuthorityDenied("native.canonicalizer", "root provider request normalization failed") from None
+        rule = self.service.rules.get((capability, bridge.approved_operation, target))
+        if (not isinstance(canonical, bytes) or not 1 <= len(canonical) <= MAX_NORMALIZED_BYTES
+                or target != bridge.target or recipient != bridge.recipient
+                or rule is None or rule.recipient != recipient
+                or (rule.operation, rule.target) not in self.service.handlers):
+            raise AuthorityDenied("native.route", "canonical provider route is not the selected bridge route")
+        if cancelled():
+            raise AuthorityDenied("effect.cancelled", "native request observation was cancelled")
+        now = self.monotonic()
+        lease = min(now + HANDLE_TTL, *(row.monotonic_expires_at for row in parent_receipts))
+        if lease <= now:
+            raise AuthorityDenied("native.expired", "native source ancestry expired before request admission")
+        context = HostContext.from_wire(self.service._issue_context(uid, {
+            "purpose": "native-provider-request",
+            "intent": canonical_digest({"bridge": bridge.bridge_id,
+                                         "parents": sorted(row.receipt_id for row in parent_receipts),
+                                         "retry": request["retry_index"]}),
+            "trace_id": secrets.token_urlsafe(24),
+            "lease_seconds": max(1, int(lease - now)),
+            "source_contexts": [],
+            "source_receipts": [row.to_wire() for row in parent_receipts],
+            "final_payload_digest": canonical_digest(canonical),
+            "operation": bridge.approved_operation,
+        }, peer_pid=peer_pid))
+        observer = self.native_request_observer
+        if observer is None:
+            raise AuthorityDenied("native.observer_unavailable", "root native request observation registry is unavailable")
+        handle = secrets.token_urlsafe(32)
+        observation = observer.record_request(
+            bridge=bridge, native_request_handle=handle,
+            producer_pid=peer_pid, producer_pidfd=peer_pidfd,
+            producer_identity=producer_identity, canonical_request_bytes=canonical,
+            retry_index=request["retry_index"], parent_receipt_handles=tuple(handles),
+            parent_receipts=parent_receipts, parent_context=context,
+            expires_monotonic=lease,
         )
+        turn_registry = self.native_turn_observer
+        if turn_registry is None:
+            observer.revoke_native_request(observation.receipt_handle)
+            raise AuthorityDenied("native.request_turn", "root native turn observer is unavailable")
+        try:
+            turn_handles = [turn_registry.resolve_turn_for_source(item, producer_identity)
+                            for item in handles]
+            if not turn_handles or any(item != turn_handles[0] for item in turn_handles):
+                raise AuthorityDenied("native.request_turn", "request ancestry does not join one active turn")
+            turn_registry.register_native_request(
+                turn_handles[0], handle, observation.receipt_handle,
+                tuple(handles), producer_identity, observation.request_sha256,
+                observation.retry_index)
+        except BaseException:
+            observer.revoke_native_request(observation.receipt_handle)
+            raise
+        pending_fd = os.dup(peer_pidfd)
+        pending = _PendingEvent(
+            bridge_id=bridge.bridge_id, handle=handle, context=context,
+            normalized_payload=canonical, retry_index=request["retry_index"],
+            expires=lease, producer_pid=peer_pid, producer_pidfd=pending_fd,
+            producer_identity=producer_identity, capability=capability,
+            request_observation_handle=observation.receipt_handle,
+            turn_handle=turn_handles[0],
+        )
+        with self._lock:
+            self._prune(now)
+            if cancelled():
+                os.close(pending_fd)
+                observer.revoke_native_request(observation.receipt_handle)
+                raise AuthorityDenied("effect.cancelled", "native request admission was cancelled")
+            if handle in self._pending:
+                os.close(pending_fd)
+                observer.revoke_native_request(observation.receipt_handle)
+                raise AuthorityDenied("native.replay", "native request handle collision")
+            if len(self._pending) >= 256:
+                os.close(pending_fd)
+                observer.revoke_native_request(observation.receipt_handle)
+                raise AuthorityDenied("native.capacity", "native request admission table is full")
+            self._pending[handle] = pending
+        return {"native_event_handle": handle, "expires_monotonic": lease}
 
     def dispatch(self, *, uid: int, peer_pid: int, peer_pidfd: int,
                  payload: Any, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
@@ -191,10 +355,16 @@ class NativeBridgeBroker:
             current_producer = self._resolve_peer(pending.producer_pid, pending.producer_pidfd,
                                                   bridge.producer_profile_id, bridge.producer_generation,
                                                   bridge.producer_uid, bridge.producer_executable_sha256)
+            request_observation = self.resolve_native_request_observation(
+                pending.request_observation_handle, turn_handle=pending.turn_handle)
             if (gateway_identity is None or current_producer is None
                     or current_producer != pending.producer_identity
                     or normalized != pending.normalized_payload
                     or canonical_digest(normalized) != pending.context.final_payload_digest
+                    or request_observation.native_request_handle != pending.handle
+                    or request_observation.request_sha256 != canonical_digest(normalized)
+                    or request_observation.retry_index != pending.retry_index
+                    or request_observation.context_digest != canonical_digest(pending.context.to_wire())
                     or cancelled()):
                 raise AuthorityDenied("native.binding", "native producer, gateway, digest, or lease changed")
             pair_id = self._register_pending_pair(
@@ -214,7 +384,7 @@ class NativeBridgeBroker:
                     "timeout": max(0.001, pending.expires - self.service.monotonic()),
                 }, cancelled=cancelled, peer_pidfd=peer_pidfd,
                 enforce_peer_identity=False,
-                source_receipt_ids_to_consume=frozenset({pending.event_receipt_id}))
+                source_receipt_ids_to_consume=frozenset())
             if 200 <= result["status"] < 300:
                 registry = self.provider_response_registry
                 if registry is None:
@@ -528,3 +698,5 @@ class NativeBridgeBroker:
                 pass
         for pair_id in pairs:
             self._retire_pending_pair(pair_id)
+        if self.native_request_observer is not None:
+            self.native_request_observer.close()
