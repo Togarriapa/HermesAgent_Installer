@@ -296,6 +296,9 @@ class RootPreparedBuildOutputRoot:
     def open_current(self) -> int:
         return self._session._open_prepared_build_output_root(self)
 
+    def remove_contents_current(self) -> None:
+        self._session._remove_prepared_build_output_contents(self)
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RootSelectedInstallationBinding:
@@ -4558,6 +4561,42 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("prepared build output descriptor identity changed")
         self._verify_current_setup_controller()
         return os.dup(receipt._directory_fd)
+
+    def _remove_prepared_build_output_contents(self, receipt: RootPreparedBuildOutputRoot) -> None:
+        fd = self._open_prepared_build_output_root(receipt)
+
+        def remove_children(directory_fd: int) -> None:
+            for name in os.listdir(directory_fd):
+                if name in {".", ".."} or "/" in name or "\\" in name:
+                    raise BootstrapEnrollmentPending("prepared build output contains an invalid entry name")
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    child_fd = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                       | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                                       dir_fd=directory_fd)
+                    try:
+                        child_info = os.fstat(child_fd)
+                        if (child_info.st_dev != info.st_dev or child_info.st_ino != info.st_ino
+                                or child_info.st_uid != receipt.service_uid
+                                or child_info.st_gid != receipt.service_gid):
+                            raise BootstrapEnrollmentPending("prepared build output directory changed during cleanup")
+                        remove_children(child_fd)
+                    finally:
+                        os.close(child_fd)
+                    os.rmdir(name, dir_fd=directory_fd)
+                elif stat.S_ISREG(info.st_mode):
+                    if info.st_uid != receipt.service_uid or info.st_gid != receipt.service_gid:
+                        raise BootstrapEnrollmentPending("prepared build output file has unexpected ownership")
+                    os.unlink(name, dir_fd=directory_fd)
+                else:
+                    raise BootstrapEnrollmentPending("prepared build output contains a link or special file")
+            os.fsync(directory_fd)
+
+        try:
+            remove_children(fd)
+            self._verify_current_setup_controller()
+        finally:
+            os.close(fd)
 
     def _read_installed_release_member_receipt(
             self, receipt: RootInstalledReleaseMemberReceipt) -> bytes:
