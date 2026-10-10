@@ -87,6 +87,19 @@ REVIEWED_SOURCE_MODULES = (
      "lib/python/hermes_installer/components/public_registries.py",
      "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
 )
+# These modules are imported by the fixed installed launcher before it can
+# verify the current release and dispatch a lifecycle action. Their bytes are
+# bound to the selected source release (rather than mutable pins here), but
+# their exact IDs and paths are part of every usable installed release.
+REQUIRED_LAUNCHER_MODULES = (
+    ("installer-module:hermes_installer", "lib/python/hermes_installer/__init__.py"),
+    ("installer-module:hermes_installer.authority", "lib/python/hermes_installer/authority/__init__.py"),
+    ("installer-module:hermes_installer.root_setup", "lib/python/hermes_installer/root_setup.py"),
+    ("installer-module:hermes_installer.authority.installer_release",
+     "lib/python/hermes_installer/authority/installer_release.py"),
+    ("installer-module:hermes_installer.authority.bootstrap_runtime_factory",
+     "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py"),
+)
 REVIEWED_SOURCE_ARTIFACTS = (
     ("glm52-artifact-metadata-v1", "planning/glm52-artifact-metadata.json",
      "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56_232, "baseline"),
@@ -554,6 +567,10 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
                           for row in modules):
         raise InstallerReleaseError("installed module IDs differ from exact lib/python imports")
     module_by_id = {row.artifact_id: row for row in modules}
+    for artifact_id, relative_path in REQUIRED_LAUNCHER_MODULES:
+        row = module_by_id.get(artifact_id)
+        if row is None or row.relative_path != relative_path:
+            raise InstallerReleaseError("installed launcher module closure is incomplete or misbound")
     for artifact_id, relative_path, digest, size in REVIEWED_SOURCE_MODULES:
         row = module_by_id.get(artifact_id)
         if row is None or (row.relative_path, row.sha256, row.size_bytes) != (relative_path, digest, size):
