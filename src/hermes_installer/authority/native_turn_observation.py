@@ -215,8 +215,8 @@ class RootNativeTurnObservationRegistry:
     def __init__(self, *, service: Any, selected_execution_registry: Any,
                  input_observer: Any, source_observers: Any,
                  process_custody: Any, response_resolver: Callable[[str], Any],
-                 native_bridge_broker: Any,
                  transcript_builder: Callable[[tuple[RootTurnTranscriptEvent, ...]], bytes],
+                 native_bridge_broker: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (service is None
                 or not callable(getattr(selected_execution_registry, "resolve_current_execution", None))
@@ -225,7 +225,8 @@ class RootNativeTurnObservationRegistry:
                 or not callable(getattr(source_observers, "resolve_delivered_source_receipt", None))
                 or not callable(getattr(process_custody, "resolve_managed_task_process_handle", None))
                 or not callable(response_resolver)
-                or not callable(getattr(native_bridge_broker, "resolve_native_request_observation", None))
+                or (native_bridge_broker is not None and not callable(
+                    getattr(native_bridge_broker, "resolve_native_request_observation", None)))
                 or not callable(transcript_builder)
                 or not callable(monotonic)):
             raise ValueError("root native turn observation dependencies are incomplete")
@@ -247,6 +248,19 @@ class RootNativeTurnObservationRegistry:
         self._memory_capture_coordinator: Any | None = None
         self._lock = threading.RLock()
         self._closed = False
+
+    def attach_native_request_broker(self, broker: Any) -> None:
+        """Attach the exact HI11 broker once, closing the turn/request cycle."""
+        from .native_bridge import NativeBridgeBroker
+
+        if (type(broker) is not NativeBridgeBroker or broker.service is not self.service
+                or not callable(getattr(broker, "resolve_native_request_observation", None))
+                or not callable(getattr(broker, "request_bytes", None))):
+            raise AuthorityDenied("native.turn.request", "selected native request broker is incompatible")
+        with self._lock:
+            if self.native_bridge_broker is not None:
+                raise AuthorityDenied("native.turn.request", "native request broker is already attached")
+            self.native_bridge_broker = broker
 
     def begin_selected_turn(self, selected_execution_handle: str,
                             actual_native_input_receipt_handle: str) -> str:
@@ -360,6 +374,9 @@ class RootNativeTurnObservationRegistry:
                 or not _DIGEST.fullmatch(request_sha256)
                 or type(retry_index) is not int or not 0 <= retry_index <= 100):
             raise AuthorityDenied("native.turn.request", "root native request binding is malformed")
+        broker = self.native_bridge_broker
+        if broker is None:
+            raise AuthorityDenied("native.turn.request", "root native request broker is unavailable")
         with self._lock:
             self._prune_locked(self.monotonic())
             turn = self._turns.get(turn_handle)
@@ -368,10 +385,10 @@ class RootNativeTurnObservationRegistry:
                     or native_request_handle in turn.request_handles
                     or len(turn.request_handles) >= _MAX_TURN_EVENTS):
                 raise AuthorityDenied("native.turn.request", "native request is foreign, replayed, or unselected")
-            request = self.native_bridge_broker.resolve_native_request_observation(
+            request = broker.resolve_native_request_observation(
                 request_observation_handle, turn_handle=turn_handle)
             from .native_bridge import RootNativeRequestObservation
-            request_bytes = self.native_bridge_broker.request_bytes(
+            request_bytes = broker.request_bytes(
                 request_observation_handle, live_producer_identity)
             for handle in request_source_receipt_handles:
                 receipt = self._retained_source(handle)

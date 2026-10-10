@@ -249,6 +249,34 @@ class NativeTurnObservationContracts(unittest.TestCase):
         self.assertEqual(registry._turns[_handle("t")].request_retry_index_by_handle[_handle("z")], 2)
         self.assertEqual(registry._turns[_handle("t")].request_observations[_handle("z")][1], request_body)
 
+    def test_request_broker_attachment_is_typed_same_service_and_one_time(self):
+        from hermes_installer.authority.native_bridge import NativeBridgeBroker
+
+        service = object()
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry.service = service
+        registry.native_bridge_broker = None
+        registry._lock = threading.RLock()
+        broker = object.__new__(NativeBridgeBroker)
+        broker.service = service
+        broker.resolve_native_request_observation = lambda *_args, **_kwargs: None
+        broker.request_bytes = lambda *_args: b""
+        registry.attach_native_request_broker(broker)
+        self.assertIs(registry.native_bridge_broker, broker)
+        with self.assertRaises(AuthorityDenied):
+            registry.attach_native_request_broker(broker)
+
+        wrong_service = object.__new__(NativeBridgeBroker)
+        wrong_service.service = object()
+        wrong_service.resolve_native_request_observation = broker.resolve_native_request_observation
+        wrong_service.request_bytes = broker.request_bytes
+        other = object.__new__(RootNativeTurnObservationRegistry)
+        other.service = service
+        other.native_bridge_broker = None
+        other._lock = threading.RLock()
+        with self.assertRaises(AuthorityDenied):
+            other.attach_native_request_broker(wrong_service)
+
 
 if __name__ == "__main__":
     unittest.main()
