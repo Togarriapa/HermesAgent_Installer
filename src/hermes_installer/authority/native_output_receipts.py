@@ -954,8 +954,10 @@ def _read_archive_member(payload: bytes, path: str) -> bytes:
 
 def _verify_candidate_index(payload: bytes) -> None:
     value = _parse_canonical_json(payload)
-    expected = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
-    if not isinstance(value, dict) or set(value) != expected or value.get("schema") != 1:
+    legacy = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
+    projected = legacy | {"registration_projection_sha256", "registrations"}
+    if (not isinstance(value, dict) or frozenset(value) not in {frozenset(legacy), frozenset(projected)}
+            or value.get("schema") != 1):
         raise NativeOutputReceiptDenied("native candidate index schema is unsupported")
     if (not isinstance(value["package_id"], str) or not _PACKAGE_GENERATION.fullmatch(value["package_id"])
             or not isinstance(value["profile_id"], str) or not _PACKAGE_GENERATION.fullmatch(value["profile_id"])
@@ -963,11 +965,46 @@ def _verify_candidate_index(payload: bytes) -> None:
             or not isinstance(value["resolver_sha256"], str) or not _HEX.fullmatch(value["resolver_sha256"])
             or not isinstance(value["candidates"], list) or len(value["candidates"]) > 1024):
         raise NativeOutputReceiptDenied("native candidate index identity fields are malformed")
+    is_projected = set(value) == projected
+    registration_rows = value.get("registrations", [])
+    if is_projected:
+        projection_digest = value["registration_projection_sha256"]
+        if (not isinstance(projection_digest, str) or not _HEX.fullmatch(projection_digest)
+                or not isinstance(registration_rows, list) or not 1 <= len(registration_rows) <= 1024
+                or hashlib.sha256(_canonical(registration_rows)).hexdigest() != projection_digest
+                or len(registration_rows) != len(value["candidates"])):
+            raise NativeOutputReceiptDenied("native registration projection digest or cardinality is invalid")
+        registration_fields = {
+            "registration_id", "native_tool_name", "native_server_name", "toolset", "family",
+            "adapter_id", "argument_schema", "result_schema", "native_schema_sha256",
+            "registration_source_artifact_id", "registration_source_sha256",
+            "registration_source_receipt_handle", "handler_kind", "handler_id",
+            "selector_fields", "action_bindings", "observer_enrollment_ids",
+        }
+        registration_ids = set()
+        for row in registration_rows:
+            if not isinstance(row, dict) or set(row) != registration_fields:
+                raise NativeOutputReceiptDenied("native registration projection row is malformed")
+            reg_id = row["registration_id"]
+            if (not isinstance(reg_id, str) or not _valid_identifier(reg_id)
+                    or reg_id in registration_ids or not isinstance(row["argument_schema"], dict)
+                    or not isinstance(row["result_schema"], dict)
+                    or row["native_schema_sha256"] != hashlib.sha256(_canonical(row["argument_schema"])).hexdigest()
+                    or not isinstance(row["registration_source_sha256"], str)
+                    or not _HEX.fullmatch(row["registration_source_sha256"])
+                    or not isinstance(row["registration_source_receipt_handle"], str)
+                    or not _valid_identifier(row["registration_source_receipt_handle"])
+                    or not isinstance(row["observer_enrollment_ids"], list)
+                    or not row["observer_enrollment_ids"]):
+                raise NativeOutputReceiptDenied("native registration identity or root source/observer proof is invalid")
+            registration_ids.add(reg_id)
     candidate_fields = {"native_tool_name", "adapter_id", "action_id", "argument_schema",
                         "result_schema", "native_schema_sha256", "observer_enrollment_ids",
                         "native_server_name", "description"}
+    if is_projected:
+        candidate_fields |= {"registration_id", "toolset", "family", "handler_kind"}
     names, actions = set(), set()
-    for candidate in value["candidates"]:
+    for index, candidate in enumerate(value["candidates"]):
         if not isinstance(candidate, dict) or set(candidate) != candidate_fields:
             raise NativeOutputReceiptDenied("native candidate row schema is malformed")
         string_limits = {"native_tool_name": 256, "adapter_id": 128, "action_id": 128,
@@ -994,6 +1031,14 @@ def _verify_candidate_index(payload: bytes) -> None:
         action = candidate["adapter_id"], candidate["action_id"]
         if name in names or action in actions:
             raise NativeOutputReceiptDenied("native candidate tool and adapter/action identities must be unique")
+        if is_projected:
+            registration = registration_rows[index]
+            if (candidate["registration_id"] != registration["registration_id"]
+                    or any(candidate.get(key) != registration.get(key) for key in (
+                        "native_tool_name", "adapter_id", "native_server_name", "toolset", "family",
+                        "argument_schema", "result_schema", "native_schema_sha256",
+                        "observer_enrollment_ids", "handler_kind"))):
+                raise NativeOutputReceiptDenied("native candidate differs from its projected registration")
         names.add(name)
         actions.add(action)
 
@@ -1049,13 +1094,16 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
     if role == "native-entrypoint-manifest":
         value = _parse_canonical_json(payload)
         expected_top = {"schema", "package_id", "profile_id", "generation",
-                        "closure_files", "adapters", "dependencies", "candidate_index"}
+                        "closure_files", "adapters", "dependencies", "candidate_index",
+                        "process_role_records"}
         if (set(value) != expected_top or value.get("schema") != 1
                 or value.get("package_id") != selection.package_id
                 or value.get("profile_id") != selection.profile_id
                 or value.get("generation") != selection.generation
                 or not isinstance(value.get("adapters"), list)
-                or not isinstance(value.get("dependencies"), list)):
+                or not isinstance(value.get("dependencies"), list)
+                or not isinstance(value.get("process_role_records"), list)
+                or not value["process_role_records"]):
             raise NativeOutputReceiptDenied("entrypoint manifest identity or top-level schema is invalid")
         candidate_pin = value.get("candidate_index")
         if not isinstance(candidate_pin, dict) or set(candidate_pin) != {
@@ -1084,6 +1132,7 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
         _validate_member_rows(normalized)
         if hashlib.sha256(_canonical(closure_files)).hexdigest() != selection.compiled_closure_sha256:
             raise NativeOutputReceiptDenied("entrypoint closure tree differs from selected package binding")
+        _validate_process_role_records(selection, value["process_role_records"], normalized)
     if role == "native-boundary-overlay":
         value = _verify_boundary_overlay(payload)
         if (value["compiler_artifact_id"] != selection.compiler_artifact_id
@@ -1098,6 +1147,52 @@ def _validate_member_rows(rows: Sequence[Mapping[str, Any]]) -> None:
                 or type(row["size_bytes"]) is not int or row["size_bytes"] < 0
                 or type(row["mode"]) is not int or row["mode"] not in {0o644, 0o755}):
             raise NativeOutputReceiptDenied("entrypoint closure member fields are malformed")
+
+
+def _validate_process_role_records(selection: NativeOutputSelection,
+                                   rows: Sequence[Any],
+                                   closure_files: Sequence[Mapping[str, Any]]) -> None:
+    fields = {"role_id", "package_id", "native_package_generation", "profile_id",
+              "profile_generation", "role_artifact_id", "role_sha256",
+              "role_source_receipt_handle", "module_name", "closure_member_path",
+              "role_source_revision", "role_source_tree_sha256", "observer_enrollment_ids",
+              "registration_ids", "action_binding_ids", "workflow_ids"}
+    members = {row["relative_path"]: row for row in closure_files}
+    role_ids: set[str] = set()
+    module_names: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != fields:
+            raise NativeOutputReceiptDenied("process-role record has unknown or missing fields")
+        if (not isinstance(row["role_id"], str) or not _ID.fullmatch(row["role_id"])
+                or row["role_id"] in role_ids
+                or row["package_id"] != selection.package_id
+                or row["native_package_generation"] != selection.generation
+                or row["profile_id"] != selection.profile_id
+                or not isinstance(row["profile_generation"], str) or not _ID.fullmatch(row["profile_generation"])
+                or not isinstance(row["role_artifact_id"], str) or not _ID.fullmatch(row["role_artifact_id"])
+                or not isinstance(row["role_source_receipt_handle"], str) or not _ID.fullmatch(row["role_source_receipt_handle"])
+                or not isinstance(row["module_name"], str)
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", row["module_name"], re.ASCII) is None
+                or not isinstance(row["closure_member_path"], str) or not _safe_relative(row["closure_member_path"])
+                or not isinstance(row["role_sha256"], str) or not _HEX.fullmatch(row["role_sha256"])
+                or not isinstance(row["role_source_tree_sha256"], str) or not _HEX.fullmatch(row["role_source_tree_sha256"])
+                or not isinstance(row["role_source_revision"], str)
+                or re.fullmatch(r"[0-9a-f]{40,64}", row["role_source_revision"], re.ASCII) is None):
+            raise NativeOutputReceiptDenied("process-role record identity is invalid")
+        member = members.get(row["closure_member_path"])
+        if member is None or member["sha256"] != row["role_sha256"]:
+            raise NativeOutputReceiptDenied("process-role record does not pin an exact closure module")
+        for key in ("observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids"):
+            values = row[key]
+            if (not isinstance(values, list) or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in values)
+                    or len(set(values)) != len(values)):
+                raise NativeOutputReceiptDenied("process-role foreign-key list is invalid")
+        if not row["observer_enrollment_ids"] or row["module_name"] in module_names:
+            raise NativeOutputReceiptDenied("process-role observer or module identity is incomplete")
+        role_ids.add(row["role_id"])
+        module_names.add(row["module_name"])
+    if list(rows) != sorted(rows, key=lambda row: row["role_id"]):
+        raise NativeOutputReceiptDenied("process-role records are not canonically ordered")
 
 
 def _stored_member_manifest(role: str, payload: bytes) -> tuple[NativeOutputMember, ...]:

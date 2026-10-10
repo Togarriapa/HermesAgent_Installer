@@ -52,7 +52,8 @@ jobs:
           unit="hermes-root-task-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec \
             --unit="${unit}" \
-            --setenv="PYTHONPATH=${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" \
+            --working-directory="${GITHUB_WORKSPACE}" \
+            --setenv="PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" \
             --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=${unit}.service" \
             --setenv="PYTHONDONTWRITEBYTECODE=1" \
             /run/hermes-custody-python/python -m unittest discover \
@@ -105,4 +106,4 @@ jobs:
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
-          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec --unit="hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --setenv="PYTHONPATH=${GITHUB_WORKSPACE}/src" --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service" /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_root_controller_custody_linux.py' -v
+          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec --unit="hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --working-directory="${GITHUB_WORKSPACE}" --setenv="PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src" --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service" /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_root_controller_custody_linux.py' -v

@@ -98,17 +98,58 @@ def test_voice_rejects_caller_supplied_audio():
 
 def test_web_retrieval_checks_direct_tls_public_ip_size_and_untrusted_result():
     url="https://example.com/doc"
+    body=b"hello"
+    digest=hashlib.sha256(body).hexdigest()
     class DispatchFixture:
         def invoke(self, *, adapter_id, action_id, arguments):
             assert (adapter_id,action_id,arguments)==("web","retrieve",{"url":url})
-            result = {"url":url,"content_type":"text/plain",
+            result = {"url":url,"content_type":"text/plain; charset=utf-8",
                     "content":"hello","untrusted_source":True,"authority":"none",
-                    "redirects":0,"source_receipt":{"receipt_sha256":"fixture"}}
+                    "redirects":[url],"source_receipt":{
+                        "artifact_id":"web-content:"+digest,"sha256":digest,
+                        "size_bytes":len(body),"media_type":"text/plain",
+                        "profile_id":"profile-1","owner_generation":"generation-1",
+                        "operation_id":"operation-web","source_receipt_handle":"receipt-handle-1",
+                        "expires_monotonic":time.monotonic()+30}}
             return {"schema":1,"operation_id":"operation-web","state":"read-complete",
                     "result":result,"verification_status":"verified","resume_action_id":None}
     ok=PublicWebPlugin(DispatchFixture()).retrieve(url=url)
     assert ok["content"] == "hello" and ok["untrusted_source"] and ok["authority"] == "none"
-    assert ok["source_receipt"]["receipt_sha256"] == "fixture"
+    assert ok["source_receipt"]["artifact_id"] == "web-content:"+digest
+
+
+@pytest.mark.parametrize("mutation", ["digest", "operation", "extra", "private_redirect", "trust"])
+def test_web_result_rejects_unbound_receipt_or_promoted_source(mutation):
+    url = "https://example.com/doc"
+    digest = hashlib.sha256(b"hello").hexdigest()
+    receipt = {
+        "artifact_id": "web-content:" + digest, "sha256": digest, "size_bytes": 5,
+        "media_type": "text/plain", "profile_id": "profile-1",
+        "owner_generation": "generation-1", "operation_id": "operation-web",
+        "source_receipt_handle": "receipt-handle-1", "expires_monotonic": time.monotonic() + 30,
+    }
+    result = {"url": url, "content_type": "text/plain", "content": "hello",
+              "untrusted_source": True, "authority": "none", "redirects": [url],
+              "source_receipt": receipt}
+    if mutation == "digest":
+        result["source_receipt"] = {**receipt, "sha256": "0" * 64}
+    elif mutation == "operation":
+        result["source_receipt"] = {**receipt, "operation_id": "other-operation"}
+    elif mutation == "extra":
+        result["source_receipt"] = {**receipt, "caller_source_id": "claimed"}
+    elif mutation == "private_redirect":
+        result["redirects"] = [url, "https://127.0.0.1/secret"]
+        result["url"] = result["redirects"][-1]
+    else:
+        result["authority"] = "trusted"
+
+    class DispatchFixture:
+        def invoke(self, **_kwargs):
+            return {"schema": 1, "operation_id": "operation-web", "state": "read-complete",
+                    "result": result, "verification_status": "verified", "resume_action_id": None}
+
+    with pytest.raises(PluginAdapterError):
+        PublicWebPlugin(DispatchFixture()).retrieve(url=url)
 
 
 def test_web_redirect_is_revalidated_before_next_request_and_rejects_private_hosts():

@@ -28,6 +28,7 @@ def _invocation(*, expiry: float = 100.0, parents: tuple[str, ...] = ("p" * 32,)
         service_generation_digest="d" * 64,
         adapter_id="adapter-a",
         action_id="action-a",
+        registration_id="registration-a",
         tool_name="tool-a",
         arguments_sha256="a" * 64,
         source_receipt_handles=parents,

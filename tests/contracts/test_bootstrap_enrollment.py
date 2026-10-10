@@ -74,6 +74,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             remote_observation_enrollments=(),
         ))
         self.assertEqual(_validate_service_generations(snapshot), snapshot)
+        self.assertEqual(snapshot["private_memory_endpoint_selections"], [])
+        self.assertEqual(snapshot["private_memory_model_selections"], [])
         self.assertEqual(set(snapshot), {
             "schema", "generation_id", "service_records", "protected_devices",
             "protected_build_records", "native_packages", "memory_enrollments",
@@ -86,6 +88,7 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
             "resource_controller_roles", "native_mcp_tool_bindings",
             "remote_observation_enrollments",
+            "private_memory_endpoint_selections", "private_memory_model_selections",
             "native_schema_artifacts", "composio_channel_enrollments",
             "channel_delivery_bindings",
             "generation_digest",
@@ -602,8 +605,11 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
                 "remote_session_enrollments", "resource_backend_enrollments",
                 "resource_body_recipes", "resource_scope_bindings", "resource_validators",
                 "root_journal_roots",
+                "private_memory_endpoint_selections", "private_memory_model_selections",
                 "generation_digest",
             })
+            self.assertEqual(snapshot["service_generations"]["private_memory_endpoint_selections"], [])
+            self.assertEqual(snapshot["service_generations"]["private_memory_model_selections"], [])
             for root in roots:
                 info = root.lstat()
                 self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)),

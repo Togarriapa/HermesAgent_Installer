@@ -78,7 +78,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_native_schema_artifact_records([row, dict(row)])
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**row, "schema_kind": "discovery"}])
-
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**row, "size_bytes": 262145}])
         dynamic = {**row, "artifact_id": "native-mcp-schema:" + "a" * 64,
