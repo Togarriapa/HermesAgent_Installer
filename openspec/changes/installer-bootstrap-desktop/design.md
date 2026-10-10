@@ -212,3 +212,5 @@ Qualification key signer v166: `plans/amendments/2026-10-10-qualification-key-si
 Qualification session storage v167: `plans/amendments/2026-10-10-qualification-session-storage-v167.md`; live session sealed/current only, retained file historical metadata without signature or authority.
 
 Native precompile reservation v169: `plans/amendments/2026-10-10-native-precompile-reservation-v169.md`; source-backed preactive output authorization and same reservation through strict compilation/atomic publication.
+
+Native output role correction v170: `plans/amendments/2026-10-10-native-output-role-correction-v170.md`; exact existing native-boundary-overlay/boundary-overlay, no alias or new role.

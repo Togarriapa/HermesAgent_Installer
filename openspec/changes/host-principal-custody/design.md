@@ -263,3 +263,5 @@ Qualification session storage v167: `plans/amendments/2026-10-10-qualification-s
 Application Python entrypoint relocation v168: `plans/amendments/2026-10-10-application-python-entrypoint-relocation-v168.md`; exact held PM interpreter and finite source script normalization bound final observed tree, no ambient PATH.
 
 Native precompile reservation v169: `plans/amendments/2026-10-10-native-precompile-reservation-v169.md`; source-backed preactive output authorization and same reservation through strict compilation/atomic publication.
+
+Native output role correction v170: `plans/amendments/2026-10-10-native-output-role-correction-v170.md`; exact existing native-boundary-overlay/boundary-overlay, no alias or new role.
