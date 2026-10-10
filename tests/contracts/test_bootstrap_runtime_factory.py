@@ -122,6 +122,30 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(BootstrapEnrollmentPending):
                 InstalledBootstrapPolicyResolver._validate_authority_base_template(invalid)
 
+    def test_active_catalog_rows_must_match_digest_bound_generation(self):
+        root = {"root_id": "installer-authority-journal-v1",
+                "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 1,
+                "inode": 2, "generation": "journal-fixture", "purpose": "authority-journal"}
+        generation = _generation(EnrollmentPolicy(
+            service_profile_id="profile", principal_id="principal", generation_id="active-fixture",
+            source_artifact_id="source", records=(), resource_controller_roles=(),
+            native_mcp_tool_bindings=(), remote_observation_enrollments=(),
+            root_journal_roots=(root,), activation_state="active"))
+        base = {"service_generations": generation}
+        catalogs = {name: tuple(generation[name]) for name in (
+            "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+            "operation_parameter_schemas", "source_issuers", "resource_jobs",
+            "remote_session_enrollments", "resource_backend_enrollments", "resource_body_recipes",
+            "resource_scope_bindings", "resource_validators", "root_journal_roots",
+            "resource_controller_roles", "native_mcp_tool_bindings", "remote_observation_enrollments",
+            "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
+            "selected_resource_executions", "selected_application_runtimes")}
+        InstalledBootstrapPolicyResolver._validate_active_catalog_selections(catalogs, base)
+        catalogs["composio_channel_enrollments"] = ({"unverified": True},)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            InstalledBootstrapPolicyResolver._validate_active_catalog_selections(catalogs, base)
+
     def test_composio_catalog_projection_is_pinned_version_and_strictly_bounded(self):
         authority = object.__new__(RootComposioSetupSelectionAuthority)
         authority._SLUG = RootComposioSetupSelectionAuthority._SLUG
