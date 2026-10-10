@@ -102,9 +102,11 @@ class RootNativeSourceDefinitionRegistry:
     def from_selected_installation(cls, binding: Any, *, monotonic=time.monotonic):
         from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
 
-        provider = getattr(binding, "resolve_prepared_release_module_receipts", None)
+        provider = getattr(binding, "resolve_prepared_native_source_module_receipts", None)
         if type(binding) is not RootSelectedInstallationBinding or not callable(provider):
-            raise NativeSourceDefinitionUnavailable("selected installation cannot resolve held release receipts")
+            raise NativeSourceDefinitionUnavailable(
+                "selected installation cannot resolve the fixed native source module set",
+            )
         # Calling the exact guarded resolver here proves that this binding is
         # still attached to its live selected setup session.
         provider()

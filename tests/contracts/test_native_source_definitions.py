@@ -59,7 +59,14 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
     def test_preparation_is_pending_until_actual_definition_and_role_receipts_exist(self):
         session = _Session()
         binding = RootSelectedInstallationBinding(session, session._seal)
-        registry = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+        module = __import__(
+            "hermes_installer.authority.native_source_definitions",
+            fromlist=["_REGISTRY_SEAL"],
+        )
+        registry = RootNativeSourceDefinitionRegistry(
+            binding, session._resolve_prepared_release_module_receipts,
+            _seal=module._REGISTRY_SEAL,
+        )
 
         bundle = registry.prepare_for_policy(_Selection())
 
@@ -84,7 +91,14 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
         wrong = _receipt(session, declaration.closure_member_path, b"different installed module")
         session.receipts = (wrong,)
         binding = RootSelectedInstallationBinding(session, session._seal)
-        registry = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+        module = __import__(
+            "hermes_installer.authority.native_source_definitions",
+            fromlist=["_REGISTRY_SEAL"],
+        )
+        registry = RootNativeSourceDefinitionRegistry(
+            binding, session._resolve_prepared_release_module_receipts,
+            _seal=module._REGISTRY_SEAL,
+        )
 
         with self.assertRaises(NativeSourceDefinitionUnavailable):
             registry.prepare_for_policy(_Selection())
@@ -92,6 +106,12 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
     def test_constructor_rejects_unsealed_resolver_injection(self):
         with self.assertRaises(TypeError):
             RootNativeSourceDefinitionRegistry(object(), lambda: ())
+
+    def test_setup_binding_requires_dedicated_source_receipt_resolver(self):
+        session = _Session()
+        binding = RootSelectedInstallationBinding(session, session._seal)
+        with self.assertRaises(NativeSourceDefinitionUnavailable):
+            RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
 
 
 if __name__ == "__main__":
