@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "requirements": [
+    "R0101",
+    "MC-R0101",
+    "MC-F01",
+    "HI-T143.2"
+  ],
+  "why": "Official Assist GetLiveContext takes optional name/domain/area filters and returns an exposed-context text overview without entity IDs. Previous selected entity_id argument requirement cannot honestly authorize this built-in API. Existing RootSetupChoiceRegistry also lacks a typed HA purpose/producer.",
+  "sources": [
+    "https://www.home-assistant.io/integrations/mcp_server/",
+    "https://github.com/home-assistant/core/blob/dev/homeassistant/components/mcp_server/server.py",
+    "https://github.com/home-assistant/core/blob/dev/homeassistant/components/homeassistant/llm.py",
+    "https://github.com/home-assistant/core/blob/dev/homeassistant/components/homeassistant/exposed_entities.py"
+  ],
+  "source_facts": "MCP server forwards original LLM API tool name/arguments and schema; actual tool homeassistant__GetLiveContext has optional name:string, domain:string or string[], area:string, read_only true/open_world false. Filters may match duplicate names and multiple entities. No filters returns every Assist-exposed context record; snapshot resource invokes {}. Returned YAML overview uses names/domain/areas/state/attributes, not entity IDs. Current readOnly annotation alone is not root source permission. Source URLs describe observed upstream behavior, not a pinned deployed HA version or source artifact receipt.",
+  "choice": {
+    "module": "hermes_installer.authority.home_assistant_enrollment",
+    "type": "RootSelectedHomeAssistantInstanceChoice",
+    "purpose": "home-assistant-assist-read",
+    "producer": "RootBootstrapSession.observe_home_assistant_instance_choice()->RootSelectedHomeAssistantInstanceChoice",
+    "resolver": "RootBootstrapSession.resolve_current_home_assistant_instance_choice(choice_handle)->RootSelectedHomeAssistantInstanceChoice",
+    "fields": [
+      "schema",
+      "choice_handle",
+      "choice_observation_id",
+      "setup_session_handle",
+      "transaction_handle",
+      "plan_digest",
+      "prepared_generation_id",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "profile_id",
+      "profile_generation",
+      "endpoint_sha256",
+      "endpoint_source_id",
+      "reviewed_revision",
+      "scope_mode",
+      "exposure_selection_handle",
+      "exposure_snapshot_sha256",
+      "read_filter",
+      "credential_reference",
+      "source_module_receipt_handles",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "semantics": "Factory-owned foreground root TTY producer consumes actual current release/actor/controller/session/principal/namespace plus retained instance endpoint and genuine exposure observation. Endpoint/token are repr-hidden private records, not signed payload secret values. User sees exact instance, Assist-only route, exposed resource scope and read-only purpose; normal secure credential reference collection follows. Initial configure-later choice may be pending with no exposure selection and scope_mode=configure-later; it cannot authorize read/publication. User choice is actual observation, never arbitrary map or reused application purpose.",
+    "durable": "Add exact type/purpose/resolver/payload to RootSetupChoiceRegistry closed dispatcher and existing finite signer/adoption/revocation domain. Signed payload covers listed nonsecret fields plus source/choice epoch bindings. Current adoption resolver remains independent of expired setup session; fresh runtime exposure/grant leases are <=30s and never extend original source receipt."
+  },
+  "endpoint": "Built-in Assist mode permits only exact selected HTTPS origin + /api/mcp/assist, existing TLS/no-userinfo/query/fragment/no redirect/credential forwarding rules. Not generic /api/mcp exposing all LLM APIs/admin tools. Existing endpoint source ID stays official integration URL. Do not submit MCP integration defaults or alter expose_all/admin/entities as part of this code/spec review. Any later new HA access/configuration requires actual browser action-time user confirmation; prepare concrete safe settings first.",
+  "exposure": {
+    "class": "RootHomeAssistantExposureRegistry",
+    "constructor": "from_root_runtime(authority_service,active_bindings,verified_installer_release,current_installed_actor_verifier,root_credential_vault,root_journal)",
+    "setup_constructor": "from_root_setup(selected_installation_binding,root_credential_vault,verified_ha_protocol_sources,root_journal)",
+    "observe": "observe_selected_assist_exposure(instance_selection_handle)->RootHomeAssistantExposureObservation",
+    "select": "select_observed_scope(instance_selection_handle,exposure_observation_handle)->opaque exposure_selection_handle",
+    "current": "resolve_current_exposure(exposure_selection_handle)->fresh RootHomeAssistantExposureObservation",
+    "fields": [
+      "schema",
+      "observation_handle",
+      "instance_selection_handle",
+      "endpoint_sha256",
+      "authenticated_ha_user_observation_handle",
+      "ha_version",
+      "protocol_source_receipt_handles",
+      "exposure_policy_sha256",
+      "expose_new_entities",
+      "entity_metadata_rows",
+      "entity_metadata_sha256",
+      "observed_monotonic",
+      "expires_monotonic"
+    ],
+    "entity_row_fields": [
+      "entity_id",
+      "names",
+      "domain",
+      "areas"
+    ],
+    "proof": "Actual authenticated read-only source-backed configuration/metadata observation from the selected instance, same account/Assist scope. Root retains raw request/response/current TLS or independently observed trusted owned UI evidence, not user-entered inventory/source strings. Effective exposure includes default/new-entity policy and aliases/area inheritance. Official homeassistant/expose_entity/list and homeassistant/expose_new_entities/get are admin-only metadata reads; they are not MCP read grants, and alone list is not complete effective exposure proof. Owner reviews actual source/protocol and implements any needed entity/area/alias metadata reads in a separate bounded root metadata grant. Never call expose/set, service/action or fetch unrelated state. Do not request admin solely as a shortcut; missing authenticated observation leaves scope pending.",
+    "bounds": "1..256 selected effective exposure records, unique entity_id existing regex, 1..16 unique names/aliases per record <=256 UTF8 bytes, 0..16 areas/aliases <=256 bytes, domain <=64 lowercase identifier. Strict bounded metadata response <=1MiB, malformed/duplicate/unknown effective policy denies. expose_new_entities must be actual false or equally effective immutable bound; changing/additional exposure denies current selected scope until a new explicit selection. State values not needed for exposure metadata.",
+    "selection": "Root user selects actual observed Assist exposure resource set and/or human resource filter. Do not infer user permission from HA exposure alone or token privilege. Metadata/current policy is checked before each read; no postfiltering converts an unauthorized broad received payload into permitted subset."
+  },
+  "read_modes": [
+    {
+      "id": "assist-filtered-resource",
+      "arguments": "Root-selected nonempty name plus exactly one domain string, optional area. Exact strings from observed aliases/metadata, 1..256 UTF8 bytes, no controls; no entity_id/entity_ids property. Original discovered tool schema must accept actual argument shape unchanged.",
+      "scope": "Observed matching exposed set must contain exactly one metadata row under source-reviewed HA name/domain/area matching semantics. If uniqueness/completeness cannot be established, ambiguous/unknown/unsupported filters remain pending; no guessed equality/fuzzy match or duplicate-name fallback. Selected resource is the observed human tuple plus supporting actual entity ID metadata, not an MCP entity-ID argument claim.",
+      "result": "Exactly one matching overview row; declared names/domain/areas must map unambiguously to the selected observed row. More rows or mismatch denies result publication and records truthful unexpected disclosure, not silently filtered success."
+    },
+    {
+      "id": "assist-exposure-set",
+      "arguments": "{} only",
+      "scope": "Only explicit user selection of the entire observed effective Assist-exposed set as one resource, bound exact current entity_metadata_sha256/exposure policy. Not all-house/admin/all-LLM-API permission. This mode is unavailable without genuine current complete effective exposure proof and informed selection.",
+      "result": "All returned rows must map to the selected observed set with no extras/ambiguity; this is an exposed-context read, not exact entity_ID-subset read. Missing entities handled as truthful unavailable/error; no unverified whole-home read."
+    }
+  ],
+  "tool_gate": "Allow only homeassistant__GetLiveContext with current reviewed source, exact discovered bounded schema, readOnlyHint true and no error. Other names/control/actions/prompts/snapshot-resource/unfiltered fallback denied. Unsupported older schema/filter returns pending with actual next step; never synthesize get_state(entity_id) fixture and call it official HA proof. Custom LLM APIs remain separate source-review scope, not automatic install.",
+  "result_validator": "MCP CallToolResult isError must be false; bounded text content must decode strict JSON {result:<string>} with no error. Result string <=1MiB UTF8, exact reviewed Live Context prefix then safe YAML sequence, <=256 records; reject aliases/anchors/custom tags/nonfinite/duplicates/deep objects. Record keys names/domain/state, optional areas/attributes; text fields <=4096 bytes, attributes <=32 scalar bounded entries. Parser exact deployed/source-reviewed output shape and schema receipt required before functional receipt; missing validator pending. Raw response/result/argument SHA and selected scope metadata current proof retained; never model-authored semantic evidence.",
+  "protected_placement": "Add optional catalogs.mcp_assist_read_scopes array (max1 home-assistant row) to strict protected enrollment, digest-covered immutable active generation. Empty allowed. Row fields scope_binding_id,service_id,transport_binding_id,principal_id,profile_id,profile_generation,scope_mode,exposure_selection_handle,exposure_snapshot_sha256,exposure_policy_sha256,read_filter,tool_name,argument_schema_id,argument_schema_sha256,result_schema_id,result_schema_sha256,choice_adoption_handle,source_receipt_handles. Current transient observation resolves through root exposure registry, never permanent expired setup proof. Exact FK to existing service/binding and current source/private recipient policy.",
+  "broker_extension": "Filtered mode retains selection_arguments for actual name/domain/area; validate original canonical args against exact retained read_filter and scope FK, not existing entity_id matcher. Exposure-set empty selection_arguments permitted only for this exact service/tool/mode with current nonempty scope binding and {} schema/args. Generic empty resource matching remains denied. Root selected grant includes actual scope observation digest/handle/current generation; every dispatch/retry/root setup probe revalidates. Same mcp.request target mcp:home-assistant:http and connect/read capabilities; no writes. RootHomeAssistantEnrollmentProjection gains assist_read_scope_record; previous entity-ID-only gate is superseded only for these two actual Assist modes.",
+  "tasks": [
+    {
+      "id": "MC-R0101.3",
+      "owner": "HA/factory/consent/enrollment/broker",
+      "work": "Implement exact typed TTY HA purpose/resolver/adoption, actual exposure observation and strict mode/FK/schema/result/grant gate; source-first fixtures use actual GetLiveContext schema and text response, no synthetic get_state as HA proof."
+    },
+    {
+      "id": "MC-R0101.4",
+      "owner": "HA",
+      "work": "Verify authenticated harmless Assist filter/exposure scope separately from API auth; negative duplicate aliases/new exposure/missing metadata/unfiltered fallback/action/snapshot/revoke/TLS tests. Actual target/config approval and acceptance remain open."
+    }
+  ],
+  "acceptance": "Original selected-resource/state obligation preserved through actual source API semantics; no broad API/action/admin shortcut or fabricated exact entity read. All AC remain open, baseline unchanged, new access UI submission not performed."
+}

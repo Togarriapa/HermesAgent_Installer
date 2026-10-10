@@ -362,3 +362,14 @@ Durable Xpra startup adoption v198: `plans/amendments/2026-10-10-durable-xpra-st
 Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.
 
 Finite actual setup/fixture source producers v199: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`. Existing HI197/173/178 tasks require genuine setup protected selection/role producer and distinct child-owned qualification acquisition; no copied stores, caller rows or publication cycle. All acceptance OPEN.
+
+HA Assist actual resource scope: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; exact typed home-assistant-assist-read choice and conditional current exposure/resource filter proofs.
+
+Actual publication core/acquisition compatibility v201: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`. Existing HI160/197 compiler emits authenticated core member; workload consumes exact published proof. New fixed acquisition original bound is separate from unchanged short effect leases. All acceptance OPEN.
+
+
+Finite real remote choice/three-role source producer v202: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`. Workload owns actual TTY/source/runtime/NSS/build inputs; compiler consumes exact sealed inputs; original source/account/ARM64/sandbox/network acceptance remains OPEN.
+
+Typed finite bootstrap diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; exact source boundary RuntimeError only, no dynamic trust error text or behavior change.
+
+Typed diagnostic source review v204: exact fd09b11d leaf replacements are in planning/typed-bootstrap-diagnostic-source-review-v204.json under BD-T203.1 / VD-T203.2. Pin application/unexcluded suite/target evidence remain open; all acceptance open.

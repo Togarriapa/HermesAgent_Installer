@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-typed-bootstrap-diagnostic-source-review-v204.md",
+  "parent_review": "planning/typed-bootstrap-runtime-diagnostics-v203.json",
+  "reference_commit": "fd09b11d2335909c9ca354fdb0b4536648b089db",
+  "reference_tree": "d14842c232a4941043bf2d63d0474723fd04eb4b",
+  "replaces_only_members": [
+    {
+      "source_commit": "fd09b11d2335909c9ca354fdb0b4536648b089db",
+      "source_path": "src/hermes_installer/authority/bootstrap_enrollment.py",
+      "module_name": "hermes_installer.authority.bootstrap_enrollment",
+      "source_artifact_id": null,
+      "installed_artifact_id": "installer-module:hermes_installer.authority.bootstrap_enrollment",
+      "installed_member": "lib/python/hermes_installer/authority/bootstrap_enrollment.py",
+      "sha256": "ae307ff841b29322ebd2ad06818e9f56a931f811fe789c1c3369a634188ed404",
+      "size_bytes": 144306,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "BD-F02",
+        "HI-T149.1",
+        "BD-T203.1",
+        "VD-T203.2"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    },
+    {
+      "source_commit": "fd09b11d2335909c9ca354fdb0b4536648b089db",
+      "source_path": "src/hermes_installer/root_setup.py",
+      "module_name": "hermes_installer.root_setup",
+      "source_artifact_id": null,
+      "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+      "installed_member": "lib/python/hermes_installer/root_setup.py",
+      "sha256": "029fcce9573f160bad07fb43e29bf891b36e0e7fea3a7b8e1a04854324390b40",
+      "size_bytes": 58815,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "BD-F02",
+        "HI-T149.1",
+        "BD-T203.1",
+        "VD-T203.2"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    }
+  ],
+  "catalog_rows_to_apply": [],
+  "metadata_structural_reference": {
+    "source_commit": "fd09b11d2335909c9ca354fdb0b4536648b089db",
+    "source_path": "src/hermes_installer/authority/installer_release_build.py",
+    "sha256": "c2d047d4dc8ac6f6635a549d14faedc80a33aa9c1ff2e51a409981fd397cfb99",
+    "size_bytes": 254790,
+    "state": "actual candidate source snapshot/import metadata; no expected self pin"
+  },
+  "source_review_complete": true,
+  "pin_application_complete": false,
+  "runtime_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "reported_tests": {
+    "focused_combined_passed": 92,
+    "skipped": 11,
+    "old_pin_test_deselected": 1,
+    "root_setup_passed": 25,
+    "compileall": "pass",
+    "diff_check": "pass",
+    "stale_pin_failure": "Actual unexcluded test rejects old bootstrap_enrollment tuple; pin application and complete unexcluded rerun required."
+  },
+  "diagnostic_contract": "planning/typed-bootstrap-runtime-diagnostics-v203.json"
+}

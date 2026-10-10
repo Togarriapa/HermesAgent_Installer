@@ -118,5 +118,18 @@ Home Assistant existing-instance root enrollment: `plans/amendments/2026-10-10-h
 
 Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; all OPEN.
 
+Actual HA Assist resource scope/typed TTY selector: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; MC-R0101.3/.4 OPEN. Source-derived filtered or explicitly observed exposed-set reads, no synthetic entity-ID API or admin/action shortcut.
 
 Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
+
+
+Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
+
+
+Existing HI160/197 exact remote TTY choice/3role source/build/compiler inputs: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; all OPEN.
+
+Typed bootstrap RuntimeError boundary diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; BD-T203.1/VD-T203.2 OPEN. Exact type/finite stage only; ordinary type-only trust failures and fail-closed exit unchanged. DD00 cause remains unassigned; all AC OPEN.
+
+Typed diagnostic source review v204: plans/amendments/2026-10-10-typed-bootstrap-diagnostic-source-review-v204.md; exact fd09b11d two-leaf replacement, BD-T203.1 / VD-T203.2 open, no DD00 diagnosis/all AC open.
+
+Jarvis sole user-facing profile v205: plans/amendments/2026-10-10-jarvis-sole-user-profile-v205.md; RB-T205.1/.2, VD-T205.3 OPEN; default/Jarvis +207 isolated native delegates, all208 source profiles preserved, no Desktop filter fiction/all AC OPEN.

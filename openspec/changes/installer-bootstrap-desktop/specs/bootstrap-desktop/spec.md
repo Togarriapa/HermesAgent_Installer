@@ -834,3 +834,62 @@ The installer SHALL create missing fixed release-store children only under the v
 
 - **WHEN** a fixed ancestor/child is unsafe, linked, foreign or replaced during creation/rollback
 - **THEN** publication denies and preserves the conflict rather than normalizing or deleting a foreign identity
+
+
+### Requirement: Current publication-owned protected core
+
+The installer SHALL use the v201 actual active compiler-produced protected core member and concrete publication owner proof, and preserve distinct fixed acquisition and effect deadlines.
+
+#### Scenario: Current core and acquisition authority
+
+- **WHEN** actual typed source selections produce a schema2 active publication or a new fixed-suite controller issues its original acquisition lease
+- **THEN** the concrete consumer validates the complete protected core and original deadline without copying process-local authority or widening effect leases
+
+#### Scenario: Historical snapshot or renewed lease substituted
+
+- **WHEN** fixed /etc or schema1 bytes are relabelled as published core, caller proof is supplied, or an expired acquisition deadline is renewed
+- **THEN** the operation denies and remains incomplete without runtime acceptance
+
+
+### Requirement: Genuine selected remote role source inputs
+
+The installer SHALL issue the v202 root-TTY choice and exactly three source-backed startup role receipts through concrete retained source/runtime/build/NSS owners before compiling protected remote startup authority.
+
+#### Scenario: Actual selected sources form role inputs
+
+- **WHEN** the current fixed choice, principal, source/toolchain/dependency/runtime and build receipts are genuine
+- **THEN** the exact producer may issue compiler inputs, with Xpra patch adoption after core publication and before intent, preserving independent account/native readiness
+
+#### Scenario: Declared identity is substituted for runtime proof
+
+- **WHEN** source archives, future handles, caller rows, missing ARM64 dependencies or unowned Cloudflare configuration are relabelled as ready role receipts
+- **THEN** admission denies without disabling sandbox or wrong-port enforcement or claiming acceptance
+
+### Requirement: Typed finite bootstrap RuntimeError diagnostics v203
+The installer SHALL expose only a reviewed constant stage for exact source-owned typed bootstrap failures while preserving ordinary type-only trust errors and fail-closed behavior.
+
+#### Scenario: Arbitrary RuntimeError or subclass reaches formatter
+- **WHEN** the exception is not the exact validated new diagnostic type
+- **THEN** the previous safe type-only failure behavior remains and no arbitrary message/path/secret is emitted
+
+## ADDED Requirements
+
+### Requirement: Exact typed diagnostic source cohort v204
+The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/typed-bootstrap-diagnostic-source-review-v204.json while preserving v203 fail-closed diagnostics and all other source rows.
+
+#### Scenario: Old expected leaf rejects new source
+- **WHEN** the old pin test rejects the reviewed new bytes
+- **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance
+
+## ADDED Requirements
+
+### Requirement: Jarvis sole native user entry
+The installer SHALL provide Jarvis as the sole user-facing default profile while preserving all208 imported Resources source profiles as native usable identities through the protected isolated-home mapping in planning/jarvis-sole-user-profile-contract-v205.json.
+
+#### Scenario: Pinned backend lists primary profiles
+- **WHEN** the Jarvis Desktop backend lists its selected owned HERMES_HOME
+- **THEN** only canonical default labelled Jarvis is listed, specialists resolve separately through protected coordinator routing, and no presentation-only filtering claim is used
+
+#### Scenario: Existing unowned identity conflicts
+- **WHEN** migration encounters an unowned Jarvis identity or modified owned state
+- **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
