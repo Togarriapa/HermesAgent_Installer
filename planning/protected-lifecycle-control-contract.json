@@ -2204,5 +2204,122 @@
       }
     ],
     "acceptance": "All AC open; baseline unchanged."
+  },
+  "fixture_resource_materialization_v173": {
+    "schema": 1,
+    "requirements": [
+      "HI-T160",
+      "HI-T162",
+      "HI-T164"
+    ],
+    "why": "Production RootNativeMaterialization.stage_selected requires a production selected installation/profile. The owned qualifier generates distinct per-run identities; neither production row relabeling nor an empty run directory supplies genuine resource materialization.",
+    "source_facts": {
+      "registry": "hermes_installer.registry.native.NativeRegistry.from_verified_source; discover; materialize",
+      "production": "hermes_installer.authority.native_materialization.RootNativeMaterialization.stage_selected performs registry discovery/materialization, actual output writes and pinned Hermes discover_and_load_selected; its production selection is not a fixture authority",
+      "recipe": "hermes_installer.authority.qualification_resource_cron_recipe: resource-cron-task-v1, schedule-event, hermes-resource-profile-task-v1, prompt<=256 bytes, zero additional budget. Recipe declaration alone is not a resource receipt."
+    },
+    "producer": {
+      "module": "hermes_installer.authority.qualification_resource_materialization",
+      "class": "RootQualificationResourceMaterializationRegistry",
+      "constructor": "from_owned_fixture(fixture_selection,fixture_registry,verified_release,fixture_source_registry,pm_runtime_receipt_registry,root_journal)",
+      "prepare": "materialize_selected_fixture()->RootQualificationResourceMaterializationReceipt",
+      "current": "resolve_current(receipt_handle,fixture_selection_handle)->RootQualificationResourceMaterializationReceipt",
+      "selection": "Resolve exact retained RootOwnedQualificationFixtureLease from fixture registry; actual held recipe/schema source receipts and per-run observed UID/profile/principal/namespace/unit/root identities. No caller paths/IDs/resource JSON; suite resource-cron-task-v1 only.",
+      "implementation": "Owner implements a fixed release-reviewed fixture source descriptor with exact catalog/quality/profile/skill/schedule/task/backend/source-observer definitions. Only descriptor-declared identity placeholders may be substituted with registry-retained per-run identities. Serialize substituted source bytes and hash them before NativeRegistry.from_verified_source/discover/materialize. This is a new fixture source generation, not rewriting any production source/active row. Retain original descriptor receipt/hash and observed generated source manifest/hash separately. No fabricated upstream source identity; source identity is installer-owned qualification source.",
+      "writes": "Actual compiled files are written only under nofollow held fixture run-root FD and fixed recipe-owned child roots, with exact observed UID/GID/modes/member hashes. Reuse strict materialization/member/path validators and preservation checks. No production home/data root or generic path override.",
+      "discovery": "Actual official pinned Hermes/PM Python3.14 must discover/load the generated selected profile/skill closure from this owned fixture root; retain actual bounded terminal identity, loaded profile/skill results and source/runtime receipts. Missing runtime/discovery yields pending, not declaration-only materialization success."
+    },
+    "receipt_fields": [
+      "schema",
+      "receipt_handle",
+      "fixture_selection_handle",
+      "suite_id",
+      "fixture_generation_id",
+      "profile_id",
+      "principal_id",
+      "namespace_id",
+      "service_uid",
+      "service_gid",
+      "source_descriptor_receipt_handle",
+      "source_descriptor_sha256",
+      "generated_source_manifest_sha256",
+      "compiled_member_manifest_sha256",
+      "materialized_root_observation_handle",
+      "materialized_member_rows",
+      "pm_runtime_receipt_handle",
+      "hermes_source_receipt_handle",
+      "discovery_observation_handle",
+      "source_receipt_handles",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "member_fields": [
+      "relative_path",
+      "kind",
+      "resource_id",
+      "sha256",
+      "size_bytes",
+      "mode",
+      "uid",
+      "gid",
+      "device",
+      "inode"
+    ],
+    "projection": "RootQualificationFixtureSourceProjection must consume this actual registry receipt plus actual source/observer/backend/controller proofs. Compiler serializes only rows derived from these exact generated source definitions and observed identities. No active production materialization row is copied with fixture IDs. Existing v164 strict authority/catalog validators and v166 scoped signer remain required. Receipt is fixture-only, never normal RootSetupSessionHandle or production RuntimeArtifactReceipt.",
+    "lifetime": "Original fixture/controller/source/runtime deadline bounds receipt. Every resolve reopens and hashes actual owned members and verifies current registry membership/runtime/source/discovery facts; do not restore expired leases or files from caller metadata. Cleanup only source-owned fixed fixture children and retains truthful terminal/cleanup evidence.",
+    "tasks": [
+      {
+        "id": "HI-T173.1",
+        "owner": "resource runtime/controller custody/enrollment",
+        "work": "Implement fixed source descriptor and genuine fixture-only native registry/materialization/discovery receipt and current projection; prove failures for production-row relabeling, altered members, expired lease and missing runtime/discovery."
+      }
+    ],
+    "acceptance": "All original scope and AC remain open; fixture qualification does not prove Pi acceptance. Baseline unchanged."
+  },
+  "selected_window_input_observation_v177": {
+    "schema": 1,
+    "requirements": [
+      "HI-T160",
+      "HI-T162"
+    ],
+    "why": "Display qualifier aggregate input-event bool cannot prove one actual F24 press/release on the current selected owned window. XTEST follows server focus, not an XID destination.",
+    "suite_id": "display-xauthority-v1",
+    "source_pins": "No source/library hash invented. Display owner provides final tested committed native_display_input.py/helper/schema source bytes and measured held libXtst/XTest runtime/package/dependency source proof before broker enrollment. Unverified host dlopen/default library is not a source receipt.",
+    "producer": {
+      "class": "RootSelectedWindowInputObservationRegistry",
+      "constructor": "from_root_runtime(active_bindings,selected_display_authority,native_window_observer,verified_input_runtime_source,root_journal)",
+      "observe": "observe_selected_f24(display_control_handle,selected_window_handle)->RootSelectedWindowInputObservation",
+      "current": "verify_input_observation(observation)->bool; actual registry membership/current display/window/focus/event/source/PIDFD proofs, not private signer access",
+      "target_current": "NativeWindowObserver selected target exposes verify_current() or its registry current resolver; returned target is genuine sealed root-private display/XID observation."
+    },
+    "fields": [
+      "schema",
+      "selection_handle",
+      "display_control_handle",
+      "window_observation_handle",
+      "focus_observation_handle",
+      "input_delivery_receipt_handle",
+      "event_observation_handles",
+      "keysym",
+      "press_count",
+      "release_count",
+      "same_selected_window",
+      "profile_generation",
+      "display_generation",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "constraints": "schema1; keysym literalF24; press_count=release_count=1 exact integers not bool; same_selected_window stricttrue; event_observation_handles exactly2 retained distinct event receipts in press/release order. Opaque handles root registry identities, not syntax authority. XID/display connection/exact selected process/window/namespace details retained sealed private; no caller XID/key/window/display path.",
+    "effect": "Actual selected current display and owned window source proof; observe focus and genuinely hold/check focus stability across both XTEST events, then independently observe press and release delivered on SAME selected XID. XTEST does not address XID directly. Injection return/queued event alone not success. If stability cannot be established, deny before injection; any partial event/focus drift reported truthfully with bounded cleanup, never success bool. No arbitrary input, repeats, focus switching to unrelated window or broad session input grant.",
+    "joins": "Window/current PIDFD/package/source identity, display control/Xauthority/namespace/current selected native startup effect, verified input library runtime/source dependency closure, original fixed fixture lease/deadline and event observer proof all current. Keep existing Access JWT/input revocation boundary for remote paths; this owned local fixture observation is not public Desktop acceptance.",
+    "result": "display-xauthority-v1 semantic result single_harmless_input_event_observed may be true only after public registry verify_input_observation returns current true for this exact finite typed receipt. Receipt handle/digest is retained as semantic evidence; worker aggregate boolean never substitutes.",
+    "tasks": [
+      {
+        "id": "HI-T177.1",
+        "owner": "display input/native window observer/broker/custody",
+        "work": "Implement genuine focus-stable one press/release injector and same-window independent observation/current verifier, measured source/runtime pins and negative focus/source/replay/lease tests."
+      }
+    ],
+    "acceptance": "All original display/remote/Pi acceptance remains open; baseline unchanged."
   }
 }

@@ -139,3 +139,9 @@ Private input recipient consent v100: `plans/amendments/2026-10-10-private-input
 Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
 
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+- [ ] HI-T172.1 Local/native/enrollment/factory/observer: genuine owner view/target/current source operations, separate row parser/FKs/grants/root result witness and exact pending coverage.
+
+- [ ] HI-T173.1 Resource runtime/controller/enrollment: implement genuine fixed fixture source generation, native materialization/discovery receipt and strict current projection.
+
+- [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.

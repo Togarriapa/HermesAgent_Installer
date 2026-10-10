@@ -328,3 +328,10 @@ The installer SHALL separately validate and retain actual selected MCP discovery
 #### Scenario: Tools call is labelled discovery
 - **WHEN** actual retained request method is tools/call
 - **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it
+
+### Requirement: Initial public TTY source v174
+The installer SHALL require actual fresh foreground input and per-input public disclosure before initial public source issuance.
+
+#### Scenario: Existing task input is private
+- **WHEN** task stdin already has PRIVATE source ancestry
+- **THEN** the initial public TTY producer SHALL NOT relabel it or issue a public source receipt

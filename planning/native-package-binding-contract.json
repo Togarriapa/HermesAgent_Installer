@@ -2317,5 +2317,207 @@
       }
     ],
     "acceptance": "No live MCP or runtime acceptance implied; all AC open; baseline unchanged."
+  },
+  "owner_overlay_operations_v172": {
+    "schema": 1,
+    "requirements": [
+      "HI-T113",
+      "HI-T137",
+      "HI-T145",
+      "HI-T165"
+    ],
+    "why": "Four owner-overlay registrations have no PluginActionSchema backend actions. Their actual selected profile CAS methods need a separate protected operation/target/source join, preserving 61 backend actions, 42 source registrations and 2 workflows.",
+    "rows_key": "owner_overlay_operation_records",
+    "placement": "Separate optional array on RootPreparedNativePolicyRecords and active native_packages package record, digest-covered by enclosing protected generation. Max4, unique registration_id. Existing action_records count61 and exact registration_records source coverage42/workflow2 stay separate; owner_overlay action_binding_id remains null. Do not fabricate PluginActionSchema/effect action rows or widen backend cardinality.",
+    "mapping": [
+      {
+        "registration_id": "resource-overlay-store:tool:resource_overlay_read",
+        "method": "read",
+        "operation": "plugin.resource-overlay-store.read",
+        "capability": "plugin:resource-overlay-store",
+        "recipient": null,
+        "manifest_permission": "read"
+      },
+      {
+        "registration_id": "resource-overlay-store:tool:resource_overlay_history",
+        "method": "history",
+        "operation": "plugin.resource-overlay-store.read",
+        "capability": "plugin:resource-overlay-store",
+        "recipient": null,
+        "manifest_permission": "read"
+      },
+      {
+        "registration_id": "resource-overlay-store:tool:resource_overlay_write",
+        "method": "write",
+        "operation": "plugin.resource-overlay-store.write",
+        "capability": "plugin:resource-overlay-store",
+        "recipient": null,
+        "manifest_permission": "write"
+      },
+      {
+        "registration_id": "resource-overlay-store:tool:resource_overlay_delete",
+        "method": "delete",
+        "operation": "plugin.resource-overlay-store.write",
+        "capability": "plugin:resource-overlay-store",
+        "recipient": null,
+        "manifest_permission": "write"
+      }
+    ],
+    "semantics": "Read/history only read current selected owner profile CAS; write uses existing optional exact revision compare-and-swap; delete is existing soft-delete with exact required current revision, never recursive filesystem deletion. History is read, not backup; backup remains separately unavailable without genuine encrypted backup/restore API. Preserve private values/old revisions/owner isolation; no network/provider/credentials/metered budget. Record ID actual handler validates ^[a-z0-9][a-z0-9-]{0,95}$ while original captured native argument schemas remain unchanged; decoded value <=1MiB/canonical base64, history<=256 exact64hex revisions. Existing v110/112 bounded result schema exact selected registration remains authoritative.",
+    "row_fields": [
+      "registration_id",
+      "method",
+      "operation",
+      "capability",
+      "target_id",
+      "recipient",
+      "effect_enrollment_id",
+      "profile_id",
+      "profile_generation",
+      "principal_id",
+      "namespace_id",
+      "package_id",
+      "package_generation",
+      "argument_schema_id",
+      "argument_schema_sha256",
+      "argument_schema_receipt_handle",
+      "result_schema_id",
+      "result_schema_sha256",
+      "result_schema_receipt_handle",
+      "handler_artifact_id",
+      "handler_sha256",
+      "handler_source_receipt_handle",
+      "profile_view_selection_handle",
+      "profile_view_receipt_handle",
+      "data_root_selection_handle",
+      "data_root_receipt_handle",
+      "target_selection_handle",
+      "target_receipt_handle",
+      "prepared_source_observer_selection_handle",
+      "source_observer_enrollment_ids",
+      "process_role_id",
+      "source_issuer_id"
+    ],
+    "joins": "Every reference is actual retained root source/target/profile-view/schema/observer selection receipt, not string syntax or captured inventory. Exact current selected setup principal/namespace/private owner profile/package generation/rootTTY native policy choice/transaction; enclosing service generation supplied by verified parser, not recursive row digest. Methods/op/cap/recipient match fixed map. Same owner profile namespace and held root-owned CAS data directory/store identity/current inode/modes/manifest prove view. Arguments/results use original native registration schema IDs/digests and actual artifact receipts; local result source from v112/v115, no backend action schema inferred. Prepared observer/source issuer/process-role definitions are genuinely selected setup source records; actual loaded peer/process proof required only at dispatch, not fabricated before start. Missing joins means no executable row, exact pending reason retained.",
+    "producer": {
+      "owner_module": "hermes_installer.authority.local_resource_effects",
+      "class": "RootOwnerProfileOverlayEffects",
+      "constructor": "from_root_setup(selected_installation_binding,source_registration_registry,schema_source_registry,owned_profile_view_registry,selected_target_registry,source_role_registry,root_journal)",
+      "method": "prepare_selected_operations(native_policy_selection_handle,profile_view_selection_handle)->RootPreparedLocalProfileOperationBundle",
+      "bundle_fields": [
+        "schema",
+        "bundle_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "prepared_generation_id",
+        "native_policy_selection_handle",
+        "profile_view_selection_handle",
+        "operation_records",
+        "operation_records_sha256",
+        "pending_registration_records",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "current": "resolve_current(bundle_handle,native_policy_selection_handle)->RootPreparedLocalProfileOperationBundle; independently reopen source/schema/target/view/data-root/current choice/principal/namespace proof. No caller root paths/operation/recipient/JSON authority. Owner implements actual root-owned view/target producer rather than aliasing another component profile.",
+      "choice": "Native policy rootTTY configuration includes selected_owner_overlay_registration_ids, unique subset of four exact IDs, separate from selected_action_binding_ids for61 backend schemas. Same normal choice/signature/source-intent/adoption path; no repeat consent gate or implicit write authority. Current reviewed capability/System membership gates protected writes as original policy requires; selected source/grants resolve every dispatch.",
+      "policy_api": "RootNativeSelectedActionEnrollmentRegistry.prepare_for_policy(selection,selected_target_receipts,source_registration_coverage,backend_schema_bundle,local_profile_operation_bundle,source_role_capture_bundles)->sealed RootPreparedNativePolicyRecords. resolve_current(bundle,selection) rechecks actual root memberships/current joins; new operation_records populated only from genuine local bundle, never caller rows.",
+      "dispatch": "perform_selected_owner_overlay_operation(native_invocation_handle,canonical_argument_bytes,context,grant)->root-produced bounded canonical result bytes. Resolve actual retained invocation registration/method from current protected row and actual loaded package/role/PIDFD; issue/consume genuine selected local operation grant via root authority path/current source ancestry. Method is root-selected metadata, not caller selector added to original arguments. Validate exact arguments/grant digest/result schema before retaining result event. No direct ungranted worker view.write/delete; same fixed existing profile CAS methods behind root boundary. Root result observation has actual context/grant/invocation/role/observer and source bytes, enabling health overlay-read semantic witness."
+    },
+    "coverage": "Complete source roster42 registrations/61 backend actions/2 workflows remains required planning/source coverage. Executable candidate rows only for completely joined selections; retain exact pending state/reason/prerequisite per other source registration without claiming readiness or deleting original obligations. Protected compiler may publish only genuine available rows and truthful pending coverage metadata; no unbound pending row can become executable. Original all18/full42/full61 obligations and all acceptance remain open until genuinely proven; source inventory is not permission.",
+    "tasks": [
+      {
+        "id": "HI-T172.1",
+        "owner": "local_resource_effects/native policy/enrollment/factory/observer",
+        "work": "Implement root-owned view/target/source/currentness producer, separate4operation parser/FKs, current selected grants and actual root result witness; preserve source roster/backend action count and exact pending reasons."
+      }
+    ],
+    "acceptance": "No local or full native acceptance inferred; all AC open; baseline unchanged."
+  },
+  "initial_public_tty_source_v174": {
+    "schema": 1,
+    "requirements": [
+      "HI-T138",
+      "HI-T149",
+      "HI-T153",
+      "HI-T158"
+    ],
+    "why": "Current resource-task native input exists only after admission and is PRIVATE. First fresh public root TTY input needs a real source before admission, not promotion of task stdin or an invented peer.",
+    "source_schema": {
+      "id": "root-public-tty-observed-event-v1",
+      "artifact_id": "installer-root-public-tty-event-schema-v174",
+      "path": "plans/amendments/2026-10-10-initial-public-tty-source-v174/root-public-tty-observed-event-v1.schema.json",
+      "sha256": "f0dad6bd297e7592f3ab2d09efa7a6e3545b35b477119374ed514a1e3dd6e058",
+      "size_bytes": 309,
+      "role": "amendment",
+      "extra_validation": "Strict UTF8 raw bytes, 1..65536 bytes, no NUL; text is exact decode with no stripping/normalization. Canonical event_data has only text. Raw payload SHA/size bind original observed bytes separately; strict duplicate/nonfinite JSON rules when serialized."
+    },
+    "producer": {
+      "module": "hermes_installer.authority.resource_event_issuance",
+      "class": "RootInitialPublicTTYSourceRegistry",
+      "constructor": "from_root_runtime(authority_service,active_bindings,verified_installer_release,current_installed_actor_verifier,foreground_tty_observer,public_input_permission_registry,source_observer_registry,event_context_issuer,root_journal)",
+      "select": "select_current_initial_recipient(public_permission_selection_handle)->RootInitialPublicInputRecipientSelection",
+      "observe": "observe_selected_foreground_input(recipient_selection_handle)->RootObservedInitialTTYInput",
+      "disclose": "observe_selected_public_disclosure(observed_input_handle)->RootTTYPublicInputDisclosure",
+      "capture": "capture_disclosed_initial_input(observed_input_handle,disclosure_handle)->RootResourceIssuedSourceEvent",
+      "current": "resolve_current_initial_source(event_handle)->RootResourceIssuedSourceEvent",
+      "boundaries": "Root-private registry observes actual foreground root TTY bytes itself, using existing RootRuntimeForegroundTTYObserver and root_setup controlling TTY/PIDFD/session/foreground checks plus actual current installed release/actor. No caller payload/source-kind/PUBLIC flag/recipient/profile metadata authority. No live expired RootBootstrapSession requirement. Active adopted choice/revocation/current policy and short current permission snapshot required every phase."
+    },
+    "recipient_fields": [
+      "schema",
+      "selection_handle",
+      "public_permission_selection_handle",
+      "consent_id",
+      "choice_observation_id",
+      "choice_epoch",
+      "revocation_epoch",
+      "scope_id",
+      "profile_id",
+      "principal_id",
+      "namespace_id",
+      "profile_generation",
+      "service_generation_digest",
+      "source_issuer_id",
+      "source_observer_enrollment_id",
+      "source_action_id",
+      "capture_schema_id",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "recipient_semantics": "Logical initial-source recipient selection binds actual EnrolledPublicWebScope and current public-free-web-read permission, literal recipient public-web, zero additional metered budget, actual adopted source choice. It is not RootSelectedNativeExecution, a managed peer, a job admission or an effect grant. No native worker PIDFD exists yet and none is fabricated. Root generates a unique one-use initial selection handle in its retained registry.",
+    "observation_fields": [
+      "schema",
+      "observation_handle",
+      "recipient_selection_handle",
+      "tty_observation_handle",
+      "actor_observation_sha256",
+      "input_sha256",
+      "input_size_bytes",
+      "observation_id",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "observation_semantics": "Actual raw bytes retained root-private, never in logs or authority argv; observer does not accept arbitrary worker/source-derived bytes. Prompt is finite fresh input capture, then displays exact public disclosure purpose/recipient/input hash+size and bounded text to current foreground TTY. Explicit PUBLIC answer required for these actual bytes. Existing normal config choice does not substitute for per-input disclosure; blank/EOF/other answer denies. No repeated setup config prompt.",
+    "source_controller": "Introduce sealed RootForegroundTTYInputControllerProof produced only by this registry from actual current installed actor plus retained current foreground TTY observation and exact selected source-role/enrollment/schema joins. It is distinct from daemon RootIngressControllerProof: do not fabricate unit/MainPID, convert TTY into a daemon proof, or relax existing daemon validator. Event issuer accepts this exact type only for root-public-tty-observed-event-v1 and root-public-tty-initial-input-v1 source action. Verify original PIDFD/TTY/session/foreground/actor/source/current generation on each use.",
+    "source_fields": "RootForegroundTTYInputControllerProof binds controller_proof_handle, recipient_selection_handle, actor_observation_sha256, tty_observation_handle, source_issuer_id, source_observer_enrollment_id, source_action_id, capture_schema_id, profile_id, namespace_id, profile_generation, service_generation_digest, issued_monotonic, expires_monotonic; issuer owns membership seal and actual held observations.",
+    "issuance": "ResourceEventContextIssuer registers an exact selected producer capability for this controller-proof type and source schema. Canonical source event remains existing schema1 native-input envelope with controller/raw observation hashes, event_data, observed time and replay key. Issue actual signed HostContext and PUBLIC SourceReceipt only after exact disclosure validation. Context uses current selected principal/profile namespace and root foreground controller source proof, native process identity null before later peer selection. This is actual root-observed fresh source, not impersonation of worker.",
+    "ancestry": "Fresh direct TTY capture has empty SourceReceipt parents only because registry attests no worker/history/private-derived bytes were accepted. Artifact/release receipts are supporting source evidence, not forged SourceReceipt parents. Any private/unknown parent or history augmentation denies this PUBLIC initial-source branch. Existing PRIVATE task/native/channel input paths remain unchanged. Source sensitivity PUBLIC, allowed recipient ceiling exactly selected public-web scope and zero budget; never widen RootPrivateInputConsentRegistry.",
+    "replay": "SHA256 strict canonical JSON {recipient_selection_handle,consent_id,choice_epoch,revocation_epoch,tty_observation_handle,observation_id,input_sha256,input_size_bytes}. All values come from retained root records; root CSPRNG observation_id, not caller nonce. Atomic one-use disclosure/capture; replay denies.",
+    "lifetime": "Original foreground TTY proof <=60s and current per-input permission/source lease <=30s, bounded by all current actor/controller/policy/choice expiries. Never extend old snapshot or setup expiry. Raw bytes zeroed on consume/deny/expiry. Durable config adoption alone is not per-effect authority.",
+    "order": [
+      "current active adopted public choice/scope -> logical initial recipient selection",
+      "actual foreground TTY raw capture -> exact explicit per-input disclosure",
+      "root PUBLIC source event/receipt retained BEFORE job admission",
+      "job admission consumes same retained source ancestry and exact input SHA/size",
+      "actual managed native peer/package/loaded role observation -> v129 derive peer-bound delivery context/source handle",
+      "one-use delivery/write/EOF/take binds exact bytes and complete ancestry; any added PRIVATE context blocks public egress"
+    ],
+    "tasks": [
+      {
+        "id": "HI-T174.1",
+        "owner": "resource event issuer/public TTY/consent/source observers/runtime composer",
+        "work": "Implement initial recipient/foreground raw capture/disclosure/controller proof/schema source producer and genuine PUBLIC issuance before admission; test private-derived bytes, false peer, replay, expired TTY, revoked choice and changed input deny."
+      }
+    ],
+    "acceptance": "No positive runtime/Pi acceptance claimed; all original obligations and AC remain open; baseline unchanged."
   }
 }

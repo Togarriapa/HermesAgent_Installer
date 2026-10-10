@@ -738,3 +738,45 @@ The installer SHALL separately validate and retain actual selected MCP discovery
 #### Scenario: Tools call is labelled discovery
 - **WHEN** actual retained request method is tools/call
 - **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it
+
+### Requirement: Owner overlay operations v172
+The installer SHALL authorize source-established owner overlay methods through separate protected operation rows and genuine current owned profile CAS grants.
+
+#### Scenario: Local registration has no selected view receipt
+- **WHEN** source inventory names a local method without a current owned view/target/schema/source join
+- **THEN** it remains precisely pending and never becomes an executable backend action
+
+### Requirement: Fixture resource materialization v173
+The installer SHALL derive owned fixture Resources rows from actual source-bound fixture materialization and discovery.
+
+#### Scenario: Production materialization has different identities
+- **WHEN** a production receipt cannot join the generated fixture namespace and profile
+- **THEN** it SHALL NOT be relabeled, and fixture compilation waits for its own actual materialization receipt
+
+### Requirement: Initial public TTY source v174
+The installer SHALL require actual fresh foreground input and per-input public disclosure before initial public source issuance.
+
+#### Scenario: Existing task input is private
+- **WHEN** task stdin already has PRIVATE source ancestry
+- **THEN** the initial public TTY producer SHALL NOT relabel it or issue a public source receipt
+
+### Requirement: Application effect sources v175
+The installer SHALL admit only the source-reviewed fixed qualification effect stages and separately verify runtime ABI.
+
+#### Scenario: Hyperframes qualification runs
+- **WHEN** the selected fixed Hyperframes effect recipe is admitted
+- **THEN** exactly render, ffprobe and framehash stages are allowed with one-use linked grants and actual cleanup evidence
+
+### Requirement: Python runtime configuration relocation v176
+The installer SHALL bind relocated Python environments to a genuinely held PM base runtime closure.
+
+#### Scenario: Only interpreter executable bytes exist
+- **WHEN** the base standard-library/runtime closure is not currently verified
+- **THEN** the environment remains pending and cannot obtain runnable or ABI acceptance
+
+### Requirement: Selected window input observation v177
+The installer SHALL verify actual press and release on the selected owned window before accepting display input qualification.
+
+#### Scenario: Focus changes or only injector success exists
+- **WHEN** same-window delivery cannot be independently verified
+- **THEN** qualification remains incomplete and any partial effect is reported truthfully

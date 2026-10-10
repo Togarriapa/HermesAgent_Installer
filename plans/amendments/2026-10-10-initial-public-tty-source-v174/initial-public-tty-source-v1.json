@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T138",
+    "HI-T149",
+    "HI-T153",
+    "HI-T158"
+  ],
+  "why": "Current resource-task native input exists only after admission and is PRIVATE. First fresh public root TTY input needs a real source before admission, not promotion of task stdin or an invented peer.",
+  "source_schema": {
+    "id": "root-public-tty-observed-event-v1",
+    "artifact_id": "installer-root-public-tty-event-schema-v174",
+    "path": "plans/amendments/2026-10-10-initial-public-tty-source-v174/root-public-tty-observed-event-v1.schema.json",
+    "sha256": "f0dad6bd297e7592f3ab2d09efa7a6e3545b35b477119374ed514a1e3dd6e058",
+    "size_bytes": 309,
+    "role": "amendment",
+    "extra_validation": "Strict UTF8 raw bytes, 1..65536 bytes, no NUL; text is exact decode with no stripping/normalization. Canonical event_data has only text. Raw payload SHA/size bind original observed bytes separately; strict duplicate/nonfinite JSON rules when serialized."
+  },
+  "producer": {
+    "module": "hermes_installer.authority.resource_event_issuance",
+    "class": "RootInitialPublicTTYSourceRegistry",
+    "constructor": "from_root_runtime(authority_service,active_bindings,verified_installer_release,current_installed_actor_verifier,foreground_tty_observer,public_input_permission_registry,source_observer_registry,event_context_issuer,root_journal)",
+    "select": "select_current_initial_recipient(public_permission_selection_handle)->RootInitialPublicInputRecipientSelection",
+    "observe": "observe_selected_foreground_input(recipient_selection_handle)->RootObservedInitialTTYInput",
+    "disclose": "observe_selected_public_disclosure(observed_input_handle)->RootTTYPublicInputDisclosure",
+    "capture": "capture_disclosed_initial_input(observed_input_handle,disclosure_handle)->RootResourceIssuedSourceEvent",
+    "current": "resolve_current_initial_source(event_handle)->RootResourceIssuedSourceEvent",
+    "boundaries": "Root-private registry observes actual foreground root TTY bytes itself, using existing RootRuntimeForegroundTTYObserver and root_setup controlling TTY/PIDFD/session/foreground checks plus actual current installed release/actor. No caller payload/source-kind/PUBLIC flag/recipient/profile metadata authority. No live expired RootBootstrapSession requirement. Active adopted choice/revocation/current policy and short current permission snapshot required every phase."
+  },
+  "recipient_fields": [
+    "schema",
+    "selection_handle",
+    "public_permission_selection_handle",
+    "consent_id",
+    "choice_observation_id",
+    "choice_epoch",
+    "revocation_epoch",
+    "scope_id",
+    "profile_id",
+    "principal_id",
+    "namespace_id",
+    "profile_generation",
+    "service_generation_digest",
+    "source_issuer_id",
+    "source_observer_enrollment_id",
+    "source_action_id",
+    "capture_schema_id",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "recipient_semantics": "Logical initial-source recipient selection binds actual EnrolledPublicWebScope and current public-free-web-read permission, literal recipient public-web, zero additional metered budget, actual adopted source choice. It is not RootSelectedNativeExecution, a managed peer, a job admission or an effect grant. No native worker PIDFD exists yet and none is fabricated. Root generates a unique one-use initial selection handle in its retained registry.",
+  "observation_fields": [
+    "schema",
+    "observation_handle",
+    "recipient_selection_handle",
+    "tty_observation_handle",
+    "actor_observation_sha256",
+    "input_sha256",
+    "input_size_bytes",
+    "observation_id",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "observation_semantics": "Actual raw bytes retained root-private, never in logs or authority argv; observer does not accept arbitrary worker/source-derived bytes. Prompt is finite fresh input capture, then displays exact public disclosure purpose/recipient/input hash+size and bounded text to current foreground TTY. Explicit PUBLIC answer required for these actual bytes. Existing normal config choice does not substitute for per-input disclosure; blank/EOF/other answer denies. No repeated setup config prompt.",
+  "source_controller": "Introduce sealed RootForegroundTTYInputControllerProof produced only by this registry from actual current installed actor plus retained current foreground TTY observation and exact selected source-role/enrollment/schema joins. It is distinct from daemon RootIngressControllerProof: do not fabricate unit/MainPID, convert TTY into a daemon proof, or relax existing daemon validator. Event issuer accepts this exact type only for root-public-tty-observed-event-v1 and root-public-tty-initial-input-v1 source action. Verify original PIDFD/TTY/session/foreground/actor/source/current generation on each use.",
+  "source_fields": "RootForegroundTTYInputControllerProof binds controller_proof_handle, recipient_selection_handle, actor_observation_sha256, tty_observation_handle, source_issuer_id, source_observer_enrollment_id, source_action_id, capture_schema_id, profile_id, namespace_id, profile_generation, service_generation_digest, issued_monotonic, expires_monotonic; issuer owns membership seal and actual held observations.",
+  "issuance": "ResourceEventContextIssuer registers an exact selected producer capability for this controller-proof type and source schema. Canonical source event remains existing schema1 native-input envelope with controller/raw observation hashes, event_data, observed time and replay key. Issue actual signed HostContext and PUBLIC SourceReceipt only after exact disclosure validation. Context uses current selected principal/profile namespace and root foreground controller source proof, native process identity null before later peer selection. This is actual root-observed fresh source, not impersonation of worker.",
+  "ancestry": "Fresh direct TTY capture has empty SourceReceipt parents only because registry attests no worker/history/private-derived bytes were accepted. Artifact/release receipts are supporting source evidence, not forged SourceReceipt parents. Any private/unknown parent or history augmentation denies this PUBLIC initial-source branch. Existing PRIVATE task/native/channel input paths remain unchanged. Source sensitivity PUBLIC, allowed recipient ceiling exactly selected public-web scope and zero budget; never widen RootPrivateInputConsentRegistry.",
+  "replay": "SHA256 strict canonical JSON {recipient_selection_handle,consent_id,choice_epoch,revocation_epoch,tty_observation_handle,observation_id,input_sha256,input_size_bytes}. All values come from retained root records; root CSPRNG observation_id, not caller nonce. Atomic one-use disclosure/capture; replay denies.",
+  "lifetime": "Original foreground TTY proof <=60s and current per-input permission/source lease <=30s, bounded by all current actor/controller/policy/choice expiries. Never extend old snapshot or setup expiry. Raw bytes zeroed on consume/deny/expiry. Durable config adoption alone is not per-effect authority.",
+  "order": [
+    "current active adopted public choice/scope -> logical initial recipient selection",
+    "actual foreground TTY raw capture -> exact explicit per-input disclosure",
+    "root PUBLIC source event/receipt retained BEFORE job admission",
+    "job admission consumes same retained source ancestry and exact input SHA/size",
+    "actual managed native peer/package/loaded role observation -> v129 derive peer-bound delivery context/source handle",
+    "one-use delivery/write/EOF/take binds exact bytes and complete ancestry; any added PRIVATE context blocks public egress"
+  ],
+  "tasks": [
+    {
+      "id": "HI-T174.1",
+      "owner": "resource event issuer/public TTY/consent/source observers/runtime composer",
+      "work": "Implement initial recipient/foreground raw capture/disclosure/controller proof/schema source producer and genuine PUBLIC issuance before admission; test private-derived bytes, false peer, replay, expired TTY, revoked choice and changed input deny."
+    }
+  ],
+  "acceptance": "No positive runtime/Pi acceptance claimed; all original obligations and AC remain open; baseline unchanged."
+}
