@@ -53,3 +53,6 @@ Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-lo
 Local audio device/consent v118: `plans/amendments/2026-10-10-local-audio-device-consent-v118.md`; original RG-F03/R0060/HI-T08 obligations remain open.
 
 Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retained-peer-delivery-v129.md`; genuine reduced source/context issuer/store required, real channel acceptance open.
+
+
+Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v178.md`. Exact retained setup/source/PM/native definition/member, finite fixture descriptor/service observation and local overlay invocation producers; all AC01..18 OPEN, baseline unchanged. Producer ownership/order and acceptance remain in HI-T178.1..5.

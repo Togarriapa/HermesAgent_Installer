@@ -221,3 +221,9 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 - [ ] HI-T170.1 Factory/native/compiler: exact existing five role/kind pairs and unknown-role negatives.
 
 - [ ] HI-T177.1 Display/window observer/broker/custody: genuine selected-window F24 events and independent current observation/source proof.
+
+- [ ] `HI-T178.1` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.2` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.5` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.

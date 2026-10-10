@@ -329,3 +329,11 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] SK-T176.1 PM/builder/materializer/selector: held base runtime closure and exact measured config/wrapper relocation with current source and original/final digests.
 
 - [ ] HI-T177.1 Display/window observer/broker/custody: genuine selected-window F24 events and independent current observation/source proof.
+
+- [ ] `HI-T178.1` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.2` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.3` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.4` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.

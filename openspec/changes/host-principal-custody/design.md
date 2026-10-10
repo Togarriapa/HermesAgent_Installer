@@ -279,3 +279,6 @@ Application effect sources v175: `plans/amendments/2026-10-10-application-effect
 Python config relocation v176: `plans/amendments/2026-10-10-python-runtime-config-relocation-v176.md`; actual uv-generated config and held PM base closure constrain normalization.
 
 Selected window input v177: `plans/amendments/2026-10-10-selected-window-input-observation-v177.md`; actual focus-stable F24 events/current receipt, no aggregate bool proof.
+
+
+Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v178.md`. Exact retained setup/source/PM/native definition/member, finite fixture descriptor/service observation and local overlay invocation producers; all AC01..18 OPEN, baseline unchanged. Producer ownership/order and acceptance remain in HI-T178.1..5.

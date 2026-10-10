@@ -76,3 +76,7 @@ Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retain
 - [ ] HI-T129.2: source/controller/authority/native-input owner implement fixed root delivery derivation and genuine peer-bound handles with distinct source versus target identity.
 
 - [ ] HI-T129.3: test forged syntactic handles, old peer/epoch/generation, source retarget, missing ancestry/consent/store, duplicate publication and partial issuance rollback; actual all-five channel runtime acceptance open.
+
+- [ ] `HI-T178.3` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.4` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.

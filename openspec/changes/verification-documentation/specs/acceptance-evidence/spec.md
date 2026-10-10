@@ -679,3 +679,15 @@ The executable verifier SHALL bind actual selected installer target/current cand
 - **THEN** acceptance remains pending and no claimed success is exported.
 
 Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+
+### Requirement: Source-join producers v178
+The installer SHALL implement the source-owned receipt joins and closed fixture descriptor in `plans/amendments/2026-10-10-source-join-producers-v178.md` before compiling executable native or fixture authority.
+
+#### Scenario: Genuine current source graph
+- **WHEN** the exact held setup/source/PM, selected definition/member/effect/schema/role and separately observed fixture service receipts are current
+- **THEN** the compiler SHALL consume their retained immutable projection and actual generated/materialized/discovered bytes, keeping fixture evidence separate from production and AC acceptance
+
+#### Scenario: Missing or misjoined producer
+- **WHEN** a required source/effect/member/observer/service receipt is absent, stale, altered or from another namespace
+- **THEN** affected capability remains precisely pending, no caller path or production-row relabeling fills the gap, and no denial-only callback counts as implementation
