@@ -134,7 +134,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
     from hermes_installer.authority.channel_provenance import (
         RootSelectedHttpIngressObserver,
     )
@@ -147,6 +147,11 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
         .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
         .not_valid_before(now-dt.timedelta(minutes=1)).not_valid_after(now+dt.timedelta(hours=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+        .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+            key_encipherment=False, data_encipherment=False, key_agreement=False,
+            key_cert_sign=True, crl_sign=True, encipher_only=None, decipher_only=None), critical=True)
         .sign(ca_key, hashes.SHA256()))
 
     def leaf(name, san):
@@ -156,6 +161,16 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
             .public_key(key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now-dt.timedelta(minutes=1)).not_valid_after(now+dt.timedelta(hours=1))
             .add_extension(x509.SubjectAlternativeName([san]), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value), critical=False)
+            .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+                key_encipherment=True, data_encipherment=False, key_agreement=False,
+                key_cert_sign=False, crl_sign=False, encipher_only=None, decipher_only=None), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([
+                ExtendedKeyUsageOID.SERVER_AUTH if name == "loopback" else ExtendedKeyUsageOID.CLIENT_AUTH
+            ]), critical=False)
             .sign(ca_key, hashes.SHA256()))
         key_path, cert_path = tmp_path/f"{name}.key", tmp_path/f"{name}.crt"
         key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM,
