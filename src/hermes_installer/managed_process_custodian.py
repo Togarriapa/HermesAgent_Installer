@@ -7803,7 +7803,7 @@ class ManagedBuildJobRunner:
     def _validate_application_wheel_config(config: Mapping[str, Any], packages: Any,
                                            backend: Any) -> None:
         """Join driver wheel pins to the exact held artifact member rows."""
-        def check(key: str, prefix: str, members: Any) -> None:
+        def check(key: str, members: Any) -> None:
             rows = config.get(key)
             if (not isinstance(rows, list) or not rows or len(rows) > 8192
                     or not isinstance(members, (tuple, list)) or len(rows) != len(members)):
@@ -7811,10 +7811,10 @@ class ManagedBuildJobRunner:
             by_name = {}
             for member in members:
                 relative = getattr(member, "relative_path", None)
-                if (not isinstance(relative, str) or not relative.startswith(prefix + "/")
-                        or relative.count("/") != 1):
+                if (not isinstance(relative, str)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,199}\.whl", relative)):
                     raise AuthorityDenied("build.application_recipe", "wheel member path is outside its fixed closure")
-                name = relative.split("/", 1)[1]
+                name = relative
                 if name in by_name:
                     raise AuthorityDenied("build.application_recipe", "wheel closure contains a duplicate filename")
                 by_name[name] = member
@@ -7839,8 +7839,8 @@ class ManagedBuildJobRunner:
             if seen != set(by_name):
                 raise AuthorityDenied("build.application_recipe", "offline wheel pin set differs from held artifacts")
 
-        check("packages", "package", packages)
-        check("backend_packages", "backend", backend)
+        check("packages", packages)
+        check("backend_packages", backend)
 
     @staticmethod
     def _protect_build_mount(path: Path, *, readonly: bool) -> None:

@@ -195,6 +195,24 @@ def test_application_input_fingerprint_binds_receipt_and_held_inode(tmp_path):
         os.close(second_fd)
 
 
+def test_application_wheel_config_joins_root_level_held_wheel_filenames():
+    package = SimpleNamespace(relative_path="example_pkg-1.0-py3-none-any.whl",
+        sha256="a" * 64, size_bytes=11)
+    backend = SimpleNamespace(relative_path="build_backend-1.0-py3-none-any.whl",
+        sha256="b" * 64, size_bytes=22)
+    config = {
+        "packages": [{"name": "example-pkg", "version": "1.0",
+            "filename": package.relative_path, "sha256": package.sha256, "size_bytes": package.size_bytes}],
+        "backend_packages": [{"name": "build-backend", "version": "1.0",
+            "filename": backend.relative_path, "sha256": backend.sha256, "size_bytes": backend.size_bytes}],
+    }
+    ManagedBuildJobRunner._validate_application_wheel_config(config, (package,), (backend,))
+
+    config["packages"][0]["filename"] = "../" + package.relative_path
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_wheel_config(config, (package,), (backend,))
+
+
 def _test_temp_parent() -> str:
     # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
     # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
