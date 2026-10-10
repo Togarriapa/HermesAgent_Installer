@@ -16,6 +16,7 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
+    RootPreparedReleaseMemberReceipt,
     RootInitialCompilationRegistry,
     RootBootstrapSession,
     VerifiedReviewedNativeCapabilityMap,
@@ -135,6 +136,60 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         session._policy.receipt_binding_rules[0]["required_phase"] = "prepared-source"
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "current runnable role"):
             session._resolve_current_runtime_receipt("official-pm-runtime", "opaque-cas-handle")
+
+    def test_capture_profile_members_remain_pending_when_release_lacks_exact_amendments(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), provision_receipt_handle="prepared-receipt",
+            generation_id="generation")
+        session._authorization = SimpleNamespace(plan_artifact_id="plan")
+        session._factory = SimpleNamespace(
+            _release=SimpleNamespace(files=()),
+            _actor=SimpleNamespace(verify_current=lambda _release: None),
+            resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(allowed_artifact_ids=())))
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "not uniquely pinned"):
+            session._resolve_prepared_native_capture_profile_receipts()
+
+    def test_prepared_release_member_rechecks_its_exact_role(self):
+        import hashlib
+        import tempfile
+        from hermes_installer.authority.bootstrap_runtime_factory import _PREPARED_RELEASE_MEMBER_SEAL
+
+        with tempfile.NamedTemporaryFile() as file:
+            raw = b"reviewed amendment bytes"
+            file.write(raw)
+            file.flush()
+            digest = hashlib.sha256(raw).hexdigest()
+            release = SimpleNamespace(
+                files=[SimpleNamespace(artifact_id="capture-profile", roles=("amendment",),
+                                       relative_path="plans/capture.json", sha256=digest,
+                                       size_bytes=len(raw))],
+                release_commit="commit", deployment_receipt_sha256="d" * 64,
+                open_file=lambda _artifact_id: os.open(file.name, os.O_RDONLY))
+            session = object.__new__(RootBootstrapSession)
+            session._check_live = lambda: None
+            session._last_receipt = SimpleNamespace(state="prepared", enrollment_ids=(), generation_id="g")
+            session._authorization = SimpleNamespace(plan_artifact_id="plan")
+            session._factory = SimpleNamespace(
+                _release=release,
+                _actor=SimpleNamespace(verify_current=lambda _release: None),
+                resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(
+                    allowed_artifact_ids=("capture-profile",))))
+            session._handle = SimpleNamespace(session_id="session")
+            session._seal = "session-seal"
+            session._prepared_release_file_receipts = {}
+            receipt = RootPreparedReleaseMemberReceipt(
+                "capture-profile", "plans/capture.json", digest, len(raw), "commit",
+                "d" * 64, "receipt-handle", "session", "g",
+                _PREPARED_RELEASE_MEMBER_SEAL, "session-seal", session, "amendment")
+            session._prepared_release_file_receipts[receipt.source_receipt_handle] = receipt
+            self.assertEqual(receipt.read_current(), raw)
+
+            release.files[0].roles = ("module",)
+            with self.assertRaisesRegex(BootstrapEnrollmentPending, "differs from its fixed receipt"):
+                receipt.read_current()
 
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module

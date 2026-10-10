@@ -264,11 +264,13 @@ class RootReleaseModuleReceipt:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RootPreparedReleaseMemberReceipt:
-    """Held-release source membership for code loaded later by a managed worker.
+    """Held-release membership for a fixed setup-prepared source artifact.
 
     This proves release membership and bytes only. It deliberately does not
     claim that the current setup actor imported the module; worker loader
-    evidence is a separate join.
+    evidence is a separate join.  The fixed-role field also permits exact
+    amendment members (such as capture-profile descriptors) to use the same
+    held-FD verifier without pretending they are Python modules.
     """
 
     artifact_id: str
@@ -283,6 +285,7 @@ class RootPreparedReleaseMemberReceipt:
     _receipt_seal: object = field(repr=False, compare=False)
     _session_seal: str = field(repr=False, compare=False)
     _session: Any = field(repr=False, compare=False)
+    role: str = "module"
 
     def __post_init__(self) -> None:
         if self._receipt_seal is not _PREPARED_RELEASE_MEMBER_SEAL:
@@ -739,6 +742,11 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("worker role source receipts are not owned by this setup session")
         return self._session._resolve_prepared_worker_role_module_receipts()
+
+    def resolve_prepared_native_capture_profile_receipts(self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native capture profiles are not owned by this setup session")
+        return self._session._resolve_prepared_native_capture_profile_receipts()
 
     def resolve_prepared_native_source_definition_module_receipt(self) -> RootReleaseModuleReceipt:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -6475,7 +6483,6 @@ class RootBootstrapSession:
             if len(rows) != 1:
                 raise BootstrapEnrollmentPending(
                     "worker role module is not uniquely pinned in the selected installed release")
-            row = rows[0]
             prior = next((item for item in self._prepared_release_file_receipts.values()
                           if item.artifact_id == row.artifact_id
                           and item.prepared_generation_id == prepared.generation_id), None)
@@ -6487,6 +6494,61 @@ class RootBootstrapSession:
                     handle, self._handle.session_id, prepared.generation_id,
                     _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self)
                 self._prepared_release_file_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
+    def _resolve_prepared_native_capture_profile_receipts(
+            self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        """Read the three exact v158 capture profiles from the held release.
+
+        These amendment files define capture validation limits and source IDs;
+        the receipts prove only their selected-release bytes. They do not
+        create action, observer, or process-role authority.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "native capture profiles require current empty prepared custody")
+        pins = (
+            ("installer-native-input-capture-profile-v1",
+             "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
+             "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837),
+            ("installer-native-tool-result-capture-profile-v1",
+             "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
+             "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984),
+            ("installer-native-provider-result-capture-profile-v1",
+             "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
+             "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootPreparedReleaseMemberReceipt] = []
+        for artifact_id, relative_path, digest, size_bytes in pins:
+            rows = [row for row in release.files if row.artifact_id == artifact_id]
+            if (artifact_id not in plan.allowed_artifact_ids or len(rows) != 1
+                    or rows[0].relative_path != relative_path or rows[0].sha256 != digest
+                    or rows[0].size_bytes != size_bytes or "amendment" not in rows[0].roles):
+                raise BootstrapEnrollmentPending(
+                    "native capture profile is not uniquely pinned as a v158 release amendment")
+            prior = next((item for item in self._prepared_release_file_receipts.values()
+                          if item.artifact_id == artifact_id
+                          and item.prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootPreparedReleaseMemberReceipt(
+                    artifact_id, relative_path, digest, size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, prepared.generation_id,
+                    _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self, "amendment")
+                self._prepared_release_file_receipts[handle] = prior
+            if prior.role != "amendment":
+                raise BootstrapEnrollmentPending("capture profile receipt has a different release role")
             prior.read_current()
             output.append(prior)
         actor.verify_current(release)
@@ -7353,7 +7415,7 @@ class RootBootstrapSession:
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
         row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
         if (row is None or row.artifact_id not in plan.allowed_artifact_ids
-                or "module" not in row.roles or row.relative_path != receipt.relative_path
+                or receipt.role not in row.roles or row.relative_path != receipt.relative_path
                 or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
                 or release.release_commit != receipt.release_commit
                 or release.deployment_receipt_sha256 != receipt.deployment_receipt_sha256):
