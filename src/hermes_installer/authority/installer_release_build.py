@@ -2084,7 +2084,7 @@ class RootBootstrapRuntimeHandoffRegistry:
                 except OSError:
                     pass
             code = _fixed_reexec_entry_code()
-            argv = [str(runtime.executable), "-I", "-S", "-c", code]
+            argv = _fixed_reexec_argv(runtime.executable)
             os.execve(runtime.executable, argv, {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
                                                  "LC_ALL": "C.UTF-8"})
         except BaseException:
@@ -3781,6 +3781,11 @@ def _handoff_from_record(record: Mapping[str, Any]) -> RootBootstrapRuntimeHando
         "nonce", "issued_monotonic", "expires_monotonic")}
     fields.update(schema=1, handoff_handle=record["handoff_handle"])
     return RootBootstrapRuntimeHandoff(_HANDOFF_SEAL, **fields)
+
+
+def _fixed_reexec_argv(executable: Path) -> list[str]:
+    """Start the sealed runtime without bytecode writes to its closure."""
+    return [str(executable), "-B", "-I", "-S", "-c", _fixed_reexec_entry_code()]
 
 
 def _fixed_reexec_entry_code() -> str:
