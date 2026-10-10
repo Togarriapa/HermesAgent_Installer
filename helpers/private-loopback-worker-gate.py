@@ -15,14 +15,19 @@ import hashlib
 import json
 import os
 import re
+import select
 import signal
 import socket
+import struct
 import stat
 import sys
 
 
 MAX_CONTRACT = 16 * 1024
 MAX_RESULT = 4 * 1024
+MAX_GRANT = 1024
+GATE_FD = 3
+_FRAME = struct.Struct("!I")
 CONTRACT_PATH = "/run/hermes-installer/private-loopback/contract.json"
 FIELDS = frozenset({
     "schema", "purpose", "nonce", "network_id", "service_generation_digest",
@@ -125,7 +130,8 @@ def _self_identity(contract):
         status = open("/proc/self/status", "rt", encoding="ascii").read().splitlines()
         caps = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
                 for line in status if ":" in line}
-        cap_values = {name: int(caps[name], 16) for name in ("CapEff", "CapPrm", "CapBnd", "CapAmb")}
+        cap_values = {name: int(caps[name], 16) for name in
+                      ("CapEff", "CapPrm", "CapBnd", "CapAmb", "CapInh")}
         if any(cap_values.values()):
             raise GateError("worker gate retains Linux capabilities")
         namespace_inode = os.stat("/proc/self/ns/net").st_ino
@@ -184,6 +190,7 @@ def _probe(contract):
             socket.AF_INET, "127.0.0.1", contract["allowed_bind_port"])
     if contract["allowed_connect_port"] is not None:
         checks["allowed_connect"] = _connect_probe(contract["allowed_connect_port"])
+    checks["af_unix_control"] = _unix_control_probe()
     checks["wrong_port_bind"] = _bind_probe(
         socket.AF_INET, "127.0.0.1", contract["denied_port"])
     checks["ipv6_bind"] = _bind_probe(
@@ -199,7 +206,80 @@ def _probe(contract):
         outcomes.append(checks["allowed_bind"]["outcome"] == "bound")
     if "allowed_connect" in checks:
         outcomes.append(checks["allowed_connect"]["outcome"] == "connected")
+    outcomes.append(checks["af_unix_control"]["outcome"] == "connected")
     return checks, "ready" if outcomes and all(outcomes) else "unsupported"
+
+
+def _unix_control_probe():
+    """Exercise an allowed AF_UNIX operation; denial probes alone are ambiguous."""
+    left = right = None
+    try:
+        left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        left.settimeout(0.5)
+        right.settimeout(0.5)
+        left.sendall(b"hermes-private-loopback-af-unix-v1")
+        observed = right.recv(64)
+        if observed != b"hermes-private-loopback-af-unix-v1":
+            return {"outcome": "error", "errno": None}
+        return {"outcome": "connected", "errno": None}
+    except OSError as exc:
+        return {"outcome": "error", "errno": exc.errno}
+    finally:
+        if left is not None:
+            left.close()
+        if right is not None:
+            right.close()
+
+
+def _gate_channel_from_activation(env):
+    """Resolve the single named manager-owned stream passed by systemd."""
+    if (env.get("LISTEN_PID") != str(os.getpid()) or env.get("LISTEN_FDS") != "1"
+            or env.get("LISTEN_FDNAMES") != "hermes-private-loopback-gate"):
+        raise GateError("root-owned private gate channel is unavailable")
+    channel = socket.socket(fileno=os.dup(GATE_FD))
+    if channel.family != socket.AF_UNIX or channel.type & socket.SOCK_STREAM != socket.SOCK_STREAM:
+        channel.close()
+        raise GateError("root-owned private gate channel has the wrong socket type")
+    return channel
+
+
+def _send_frame(channel, value, ceiling):
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                     ensure_ascii=True).encode("ascii")
+    if len(raw) > ceiling:
+        raise GateError("private gate channel frame exceeds its fixed bound")
+    channel.sendall(_FRAME.pack(len(raw)) + raw)
+
+
+def _recv_exact(channel, count):
+    result = bytearray()
+    while len(result) < count:
+        part = channel.recv(count - len(result))
+        if not part:
+            raise GateError("root gate channel closed before its one-use decision")
+        result.extend(part)
+    return bytes(result)
+
+
+def _await_root_release(channel, *, nonce, contract_sha256):
+    """Block until the manager sends its exact one-use release over the private FD."""
+    header = _recv_exact(channel, _FRAME.size)
+    (length,) = _FRAME.unpack(header)
+    if not 1 <= length <= MAX_GRANT:
+        raise GateError("root gate decision length is invalid")
+    raw = _recv_exact(channel, length)
+    try:
+        grant = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_pairs)
+    except (UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        raise GateError("root gate decision is malformed") from None
+    expected = {
+        "schema": 1, "purpose": "private-loopback-worker-release",
+        "nonce": nonce, "contract_sha256": contract_sha256, "decision": "release",
+    }
+    if (type(grant) is not dict or set(grant) != set(expected) or grant != expected
+            or json.dumps(grant, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=True).encode("ascii") != raw):
+        raise GateError("root gate decision does not match the held worker contract")
 
 
 def _emit(value):
@@ -220,15 +300,16 @@ def main():
         _validate_contract(contract)
         identity = _self_identity(contract)
         checks, state = _probe(contract)
-        _emit({"schema": 1, "state": state, "contract_sha256": digest,
-               "nonce": contract["nonce"], "identity": identity, "checks": checks})
+        channel = _gate_channel_from_activation(os.environ)
+        _send_frame(channel, {"schema": 1, "state": state, "contract_sha256": digest,
+                    "nonce": contract["nonce"], "identity": identity, "checks": checks}, MAX_RESULT)
         if state != "ready":
             return 77
-        # The process manager independently observes this exact MainPID in the
-        # selected worker cgroup while it is stopped. It resumes by pidfd only
-        # after consuming its retained one-use start selection; no grant bytes
-        # or caller-controlled tokens reach the helper.
+        # SIGCONT is only a scheduling action: the helper still blocks on its
+        # manager-owned channel until a contract- and nonce-bound release frame
+        # arrives. A same-UID signal sender cannot authorize application exec.
         os.kill(os.getpid(), signal.SIGSTOP)
+        _await_root_release(channel, nonce=contract["nonce"], contract_sha256=digest)
         os.execve(contract["application_executable"], contract["application_argv"],
                   contract["application_environment"])
     except (GateError, OSError, ValueError, TypeError, KeyError):
