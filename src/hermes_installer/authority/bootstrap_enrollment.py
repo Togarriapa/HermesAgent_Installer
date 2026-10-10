@@ -87,6 +87,16 @@ class EnrollmentPolicy:
     resource_scope_bindings: tuple[Mapping[str, Any], ...] = ()
     resource_validators: tuple[Mapping[str, Any], ...] = ()
     root_journal_roots: tuple[Mapping[str, Any], ...] = ()
+    # These active runtime selections are populated only from root-selected
+    # receipts and catalog joins. Empty means the corresponding capability is
+    # not selected in this generation.
+    remote_startup_enrollments: tuple[Mapping[str, Any], ...] = ()
+    private_loopback_networks: tuple[Mapping[str, Any], ...] = ()
+    selected_resource_executions: tuple[Mapping[str, Any], ...] = ()
+    selected_application_runtimes: tuple[Mapping[str, Any], ...] = ()
+    native_schema_artifacts: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollments: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_bindings: tuple[Mapping[str, Any], ...] = ()
     activation_state: str = "active"
     authority_base: Mapping[str, Any] | None = None
     home_root: Path = Path("/var/lib/hermes-installer/services/default/home")
@@ -1527,6 +1537,13 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "resource_scope_bindings": [dict(row) for row in policy.resource_scope_bindings],
              "resource_validators": [dict(row) for row in policy.resource_validators],
              "root_journal_roots": [dict(row) for row in policy.root_journal_roots],
+             "remote_startup_enrollments": [dict(row) for row in policy.remote_startup_enrollments],
+             "private_loopback_networks": [dict(row) for row in policy.private_loopback_networks],
+             "selected_resource_executions": [dict(row) for row in policy.selected_resource_executions],
+             "selected_application_runtimes": [dict(row) for row in policy.selected_application_runtimes],
+             "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
+             "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
+             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings],
              "resource_controller_roles": [dict(row) for row in policy.resource_controller_roles],
              "native_mcp_tool_bindings": [dict(row) for row in policy.native_mcp_tool_bindings],
              "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments]}
