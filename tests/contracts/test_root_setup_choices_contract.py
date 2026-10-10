@@ -24,6 +24,8 @@ def test_setup_choice_snapshot_cannot_be_constructed_without_registry_seal() -> 
             source_member_receipt_handles=(),
             choice_payload={},
             choice_payload_sha256="0" * 64,
+            signed_record_sha256="1" * 64,
+            release_deployment_receipt_sha256="2" * 64,
             choice_epoch=1,
             revocation_epoch=1,
             issued_at_unix=1.0,

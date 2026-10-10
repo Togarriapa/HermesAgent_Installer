@@ -54,6 +54,8 @@ class RootSetupChoiceSnapshot:
     source_member_receipt_handles: tuple[str, ...]
     choice_payload: Mapping[str, Any] = field(repr=False)
     choice_payload_sha256: str
+    signed_record_sha256: str
+    release_deployment_receipt_sha256: str
     choice_epoch: int
     revocation_epoch: int
     issued_at_unix: float
@@ -275,6 +277,8 @@ class RootSetupChoiceRegistry:
             private_profile_selection_handle=row["private_profile_selection_handle"],
             source_member_receipt_handles=tuple(row["source_member_receipt_handles"]),
             choice_payload=dict(row["choice_payload"]), choice_payload_sha256=row["choice_payload_sha256"],
+            signed_record_sha256=hashlib.sha256(_canonical(row)).hexdigest(),
+            release_deployment_receipt_sha256=row["release_deployment_receipt_sha256"],
             choice_epoch=row["choice_epoch"], revocation_epoch=row["revocation_epoch"],
             issued_at_unix=row["issued_at_unix"], setup_deadline_unix=row["setup_deadline_unix"],
             adoption_publication_receipt_handle=row["adoption_publication_receipt_handle"],
