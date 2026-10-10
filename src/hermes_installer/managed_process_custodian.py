@@ -2429,8 +2429,8 @@ class ManagedProcessEffectHandler:
         if (process_receipt.enrollment_id != memory_admission.service_enrollment_id
                 or process_receipt.generation != memory_admission.generation
                 or process_receipt.profile_id != memory_admission.profile_id
-                or process_receipt.principal_id != memory_admission.principal_id
-                or process_receipt.namespace_identity != memory_admission.namespace_identity
+                or process_receipt.selected_principal_id != memory_admission.principal_id
+                or process_receipt.selected_namespace_identity != memory_admission.namespace_identity
                 or process_receipt.service_generation_digest != memory_admission.service_generation_digest
                 or process_receipt.selected_subject_uid != memory_admission.subject_uid
                 or process_receipt.selected_subject_gid != memory_admission.subject_gid):
