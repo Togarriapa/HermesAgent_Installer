@@ -173,6 +173,74 @@ class NativeWorkerRuntimeMaterializationLinuxTests(unittest.TestCase):
         with self.assertRaises(NativeWorkerRuntimeMaterializationUnavailable):
             self.registry._committed_venv_identity(SimpleNamespace(selection=selected))
 
+    def test_active_verifier_reopens_pm_receipt_and_full_venv_after_prepared_guard_expires(self) -> None:
+        from hermes_installer.authority import pm_runtime
+
+        runtime_root = self.parent / "active-pm"
+        generation = runtime_root / ("pm-" + "b" * 32)
+        receipts = runtime_root / "receipts"
+        venv = generation / "venv"
+        (venv / "bin").mkdir(parents=True, mode=0o700)
+        os.chmod(runtime_root, 0o700)
+        os.chmod(generation, 0o700)
+        receipts.mkdir(mode=0o700)
+        executable = venv / "bin" / "python"
+        executable.write_text(
+            "#!/bin/sh\nprintf '%s\\n' '{\"version_info\":[3,14,7],"
+            "\"implementation\":\"cpython\",\"cache_tag\":\"cpython-314\","
+            "\"soabi\":\"cpython-314-x86_64-linux-gnu\",\"machine\":\"x86_64\"}'\n",
+            encoding="utf-8")
+        executable.chmod(0o555)
+        info = executable.stat()
+        record = {
+            "schema": 1, "handle": "p" * 40, "generation": generation.name,
+            "source_commit": pm_runtime.SOURCE_COMMIT,
+            "pm_lock_sha256": pm_runtime.LOCK_SHA256,
+            "uv_sha256": pm_runtime.UV_SHA256,
+            "base_python_artifact_id": pm_runtime.PYTHON_ID,
+            "base_python_sha256": pm_runtime.PYTHON_SHA256,
+            "pm_sync_outcome": "succeeded",
+            "runtime_relative": "venv/bin/python",
+            "runtime_venv_relative": "venv",
+            "runtime_closure_sha256": _tree_sha256(venv),
+            "runtime_executable_artifact_id": "observed:pm-committed-venv-python",
+            "runtime_executable_sha256": pm_runtime._hash(executable),
+            "runtime_device": info.st_dev, "runtime_inode": info.st_ino,
+            "runtime_uid": info.st_uid, "runtime_gid": info.st_gid,
+            "runtime_mode": stat.S_IMODE(info.st_mode),
+            "version_info": [3, 14, 7], "implementation": "cpython",
+            "cache_tag": "cpython-314", "soabi": "cpython-314-x86_64-linux-gnu",
+            "machine": "x86_64",
+        }
+        raw = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        (receipts / (record["handle"] + ".json")).write_bytes(raw)
+        (receipts / (record["handle"] + ".json")).chmod(0o600)
+        descriptor = {
+            "pm_runtime_receipt_handle": record["handle"],
+            "pm_receipt_sha256": hashlib.sha256(raw).hexdigest(),
+            "pm_generation": generation.name, "source_commit": record["source_commit"],
+            "runtime_relative": record["runtime_relative"],
+            "runtime_venv_relative": record["runtime_venv_relative"],
+            "runtime_closure_sha256": record["runtime_closure_sha256"],
+            "executable_identity_id": "observed:pm-committed-venv-python",
+            "executable_sha256": record["runtime_executable_sha256"],
+            "executable_device": info.st_dev, "executable_inode": info.st_ino,
+            "executable_uid": info.st_uid, "executable_gid": info.st_gid,
+            "executable_mode": stat.S_IMODE(info.st_mode),
+        }
+        self.registry.runtime_receipts = SimpleNamespace(
+            runtime_root=runtime_root, _record=lambda _handle: dict(record))
+        receipt = SimpleNamespace(pm_runtime_receipt_handle=record["handle"],
+                                 committed_venv_identity=descriptor)
+        row = {"pm_runtime_receipt_handle": record["handle"],
+               "committed_venv_identity": descriptor}
+        self.registry._verify_committed_pm_venv(receipt, row)
+
+        executable.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        executable.chmod(0o555)
+        with self.assertRaises(NativeWorkerRuntimeMaterializationUnavailable):
+            self.registry._verify_committed_pm_venv(receipt, row)
+
 
 if __name__ == "__main__":
     unittest.main()
