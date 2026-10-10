@@ -19,9 +19,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from .channel_ingress_services import (
-    IngressServiceDenied, RootAudioCaptureRequest, RootAudioInputSession,
-    RootInMemoryAudioArtifactCatalog,
+    RootAudioCaptureReceiptResolver, RootAudioCaptureRequest,
+    RootAudioInputSession, RootInMemoryAudioArtifactCatalog,
 )
+from .channel_provenance import SelectedAudioCaptureReceipt
 from hermes_installer.components.plugin_channel_provenance import AudioIngressSelection
 
 
@@ -227,6 +228,14 @@ class RootLocalAudioDeviceService:
             self.close_input_session(selection_handle, session_handle)
             raise LocalAudioDeviceUnavailable("audio permission, generation or selected device is no longer current")
         return session
+
+    def create_capture_receipt_resolver(self) -> RootAudioCaptureReceiptResolver:
+        """Bind this selected live session service to the root capture catalog."""
+        return RootAudioCaptureReceiptResolver(
+            self.selection, self.selection_handle, sessions=self,
+            artifacts=self.artifact_catalog, owner_generation=self.owner_generation,
+            monotonic=self.monotonic,
+        )
 
     def close_input_session(self, selection_handle: object, session_handle: str) -> None:
         self._require_selection(selection_handle)
@@ -447,3 +456,61 @@ class RootLocalAudioDeviceService:
         if len(data) > 16:
             raise LocalAudioDeviceUnavailable("root TTY response exceeds its bound")
         return data.decode("ascii")
+
+
+class RootSelectedAudioArtifactStore:
+    """Typed Wyoming bridge to a current selected ingress proof and artifact.
+
+    It accepts only proof objects currently retained by the selected audio
+    observer, then revalidates the selected session and receipt through the
+    root resolver before exposing a bounded mutable PCM buffer.
+    """
+
+    def __init__(self, selection: AudioIngressSelection, selection_handle: object,
+                 observer: Any, resolver: RootAudioCaptureReceiptResolver, *,
+                 monotonic: Callable[[], float] = time.monotonic) -> None:
+        if (not isinstance(selection, AudioIngressSelection) or selection_handle is None
+                or not callable(getattr(observer, "validate_audio_observation", None))
+                or not callable(getattr(observer, "consume", None))
+                or not isinstance(resolver, RootAudioCaptureReceiptResolver)
+                or resolver.selection is not selection
+                or resolver.selection_handle is not selection_handle):
+            raise TypeError("matching root-selected audio observer and artifact resolver are required")
+        self.selection, self.selection_handle = selection, selection_handle
+        self.observer, self.resolver, self.monotonic = observer, resolver, monotonic
+
+    def read_selected_capture(self, selection_handle: object, proof: object, *,
+                              max_bytes: int) -> bytearray:
+        self._require_selection(selection_handle)
+        if type(max_bytes) is not int or not 1 <= max_bytes <= self.selection.max_capture_bytes:
+            raise LocalAudioDeviceUnavailable("audio artifact read exceeds its selected byte bound")
+        try:
+            self.observer.validate_audio_observation(
+                self.selection, proof, now_monotonic=self.monotonic())
+            receipt = proof.receipt
+        except Exception:
+            raise LocalAudioDeviceUnavailable("selected audio proof is stale, replayed or malformed") from None
+        if not isinstance(receipt, SelectedAudioCaptureReceipt):
+            raise LocalAudioDeviceUnavailable("selected audio proof lacks its root capture receipt")
+        try:
+            return self.resolver.read_current_capture(
+                selection_handle, receipt, maximum_bytes=max_bytes)
+        except Exception:
+            raise LocalAudioDeviceUnavailable("sealed audio artifact is stale or unavailable") from None
+
+    def consume_selected_capture(self, selection_handle: object, proof: object) -> None:
+        self._require_selection(selection_handle)
+        try:
+            self.observer.validate_audio_observation(
+                self.selection, proof, now_monotonic=self.monotonic())
+            receipt = proof.receipt
+        except Exception:
+            raise LocalAudioDeviceUnavailable("selected audio proof is stale, replayed or malformed") from None
+        if not isinstance(receipt, SelectedAudioCaptureReceipt):
+            raise LocalAudioDeviceUnavailable("selected audio proof lacks its root capture receipt")
+        self.resolver.consume_capture(selection_handle, receipt)
+        self.observer.consume(proof)
+
+    def _require_selection(self, selection_handle: object) -> None:
+        if selection_handle is not self.selection_handle:
+            raise LocalAudioDeviceUnavailable("audio selection handle is not current")

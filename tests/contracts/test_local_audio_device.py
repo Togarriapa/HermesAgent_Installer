@@ -10,9 +10,13 @@ import pytest
 
 from hermes_installer.authority.channel_ingress_services import RootInMemoryAudioArtifactCatalog
 from hermes_installer.authority.local_audio_device import (
-    LocalAudioDeviceUnavailable, RootLocalAudioDeviceService, SOUNDDEVICE_VERSION,
+    LocalAudioDeviceUnavailable, RootLocalAudioDeviceService,
+    RootSelectedAudioArtifactStore, SOUNDDEVICE_VERSION,
 )
-from hermes_installer.components.plugin_channel_provenance import AudioIngressSelection
+from hermes_installer.authority.channel_provenance import RootSelectedAudioIngressObserver
+from hermes_installer.components.plugin_channel_provenance import (
+    AudioIngressSelection, SelectedAudioIngressProducer,
+)
 
 
 def _selection():
@@ -158,3 +162,39 @@ def test_audio_service_denies_unselected_default_drift_wrong_runtime_and_expired
         sounddevice_module=wrong_version)
     with pytest.raises(LocalAudioDeviceUnavailable, match="pinned source"):
         bad.enumerate_devices()
+
+
+def test_real_root_audio_proof_resolver_reads_and_consumes_only_current_sealed_artifact():
+    selection = _selection()
+    selection_handle = object()
+    sd = _FakeSoundDevice()
+    catalog = RootInMemoryAudioArtifactCatalog(selection, selection_handle,
+        owner_generation="owner-generation-01")
+    service = RootLocalAudioDeviceService(selection, selection_handle, profile_id="profile-audio-01",
+        owner_generation="owner-generation-01", artifact_catalog=catalog,
+        sounddevice_module=sd)
+    service._tty = _tty_response("1")
+    service.adopt_device_from_tty()
+    service._tty = _tty_response("CAPTURE")
+    session = service.open_input_session()
+    record = service.capture_selected_audio(selection_handle, session.session_handle,
+                                             max_bytes=selection.max_capture_bytes, max_seconds=2)
+    resolver = service.create_capture_receipt_resolver()
+    observer = RootSelectedAudioIngressObserver(
+        selection, selection_handle, resolver,
+        controller_identity_digest="c" * 64, service_generation_digest="d" * 64)
+    producer = SelectedAudioIngressProducer(selection, selection_handle, observer)
+    observed = producer.observe(record)
+    artifact_store = RootSelectedAudioArtifactStore(
+        selection, selection_handle, observer, resolver)
+
+    audio = artifact_store.read_selected_capture(
+        selection_handle, observed.proof, max_bytes=selection.max_capture_bytes)
+    assert len(audio) == 32768 and audio[:2] == b"\x01\x00"
+    artifact_store.consume_selected_capture(selection_handle, observed.proof)
+    with pytest.raises(LocalAudioDeviceUnavailable, match="stale, replayed"):
+        artifact_store.read_selected_capture(
+            selection_handle, observed.proof, max_bytes=selection.max_capture_bytes)
+    audio[:] = b"\0" * len(audio)
+    service.close_input_session(selection_handle, session.session_handle)
+    assert catalog._items == {}
