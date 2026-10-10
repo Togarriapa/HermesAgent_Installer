@@ -62,6 +62,7 @@ class RootControllerProcessIdentityLease:
     cgroup_identity: str
     mount_namespace_inode: int
     network_namespace_inode: int
+    proof_sha256: str
     expires_monotonic: float
     _current_check: Callable[[], bool] = field(repr=False, compare=False)
     _monotonic: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
@@ -77,6 +78,7 @@ class RootControllerProcessIdentityLease:
                 or not isinstance(self.cgroup_identity, str) or not self.cgroup_identity.startswith("/")
                 or type(self.mount_namespace_inode) is not int or self.mount_namespace_inode <= 0
                 or type(self.network_namespace_inode) is not int or self.network_namespace_inode <= 0
+                or not _DIGEST.fullmatch(self.proof_sha256)
                 or isinstance(self.expires_monotonic, bool)
                 or type(self.expires_monotonic) not in (int, float)
                 or self.expires_monotonic <= 0 or not callable(self._current_check)):
@@ -90,7 +92,8 @@ class RootControllerProcessIdentityLease:
             poller.register(self.pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
             if poller.poll(0):
                 return False
-            return bool(self._current_check())
+            return (RootSelectedDisplayLaunchAuthority._pidfd_matches(self.pidfd, self.pid)
+                    and bool(self._current_check()))
         except (OSError, ValueError, PermissionError):
             return False
 
@@ -130,6 +133,8 @@ class RootSelectedStartupRoleBinding:
     process_operation: Any = field(repr=False, compare=False)
     source_closure: Any = field(repr=False, compare=False)
     process_id: str | None = field(default=None, repr=False)
+    stop_reason: str | None = field(default=None, repr=False)
+    stop_grace_seconds: int = field(default=5, repr=False)
 
     def __post_init__(self) -> None:
         expected_capability = ("hermes-profile-invoke" if self.action == "start"
@@ -149,12 +154,21 @@ class RootSelectedStartupRoleBinding:
                 or not isinstance(self.source_receipt_handles, tuple)
                 or (self.action != "start" and (not isinstance(self.process_id, str)
                                                  or not self.process_id))
+                or (self.action == "stop" and self.stop_reason not in {
+                    "cancel", "shutdown", "rollback"})
+                or (self.action != "stop" and self.stop_reason is not None)
+                or type(self.stop_grace_seconds) is not int
+                or not 0 <= self.stop_grace_seconds <= 10
                 or self.service_profile is None or self.process_operation is None
                 or self.source_closure is None):
             raise SelectedStartupDenied("selected startup role binding is malformed")
 
     def __repr__(self) -> str:
         return f"RootSelectedStartupRoleBinding(role={self.role!r}, <root-private>)"
+
+    def payload(self) -> bytes:
+        """Canonical bytes are derived solely from this retained action binding."""
+        return startup_selection_payload(self)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -198,6 +212,72 @@ class SelectedStartupSelection:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedDisplayStartReceipt:
+    """Root-retained result of actual selected display launch and Xauth seal."""
+
+    admission_handle: str
+    process_receipt: Any = field(repr=False, compare=False)
+    xauthority_receipt: Any = field(repr=False, compare=False)
+    overlay_receipt: Any = field(repr=False, compare=False)
+    selection: SelectedStartupSelection = field(repr=False, compare=False)
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (not _OPAQUE.fullmatch(self.admission_handle)
+                or type(self.selection) is not SelectedStartupSelection
+                or self.process_receipt is None or self.xauthority_receipt is None
+                or self.overlay_receipt is None or self._seal is None
+                or type(self.issued_monotonic) not in (int, float)
+                or type(self.expires_monotonic) not in (int, float)
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise SelectedStartupDenied("selected display start receipt is malformed")
+
+    def __repr__(self) -> str:
+        return "RootSelectedDisplayStartReceipt(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedServiceHealthControl:
+    """Retained status observation of one actual root-managed selected process."""
+
+    admission_handle: str
+    role: str
+    process_id: str
+    generation: str
+    observed_monotonic: float
+    status_receipt: Any = field(repr=False, compare=False)
+    _authority: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (not _OPAQUE.fullmatch(self.admission_handle)
+                or self.role not in _ROLES
+                or not isinstance(self.process_id, str) or not self.process_id
+                or not isinstance(self.generation, str) or not self.generation
+                or isinstance(self.observed_monotonic, bool)
+                or type(self.observed_monotonic) not in (int, float)
+                or self.status_receipt is None or self._authority is None or self._seal is None):
+            raise SelectedStartupDenied("selected service health control is malformed")
+
+    @property
+    def state(self) -> str:
+        return self.status_receipt.state
+
+    @property
+    def exit_code(self) -> int | None:
+        return self.status_receipt.exit_code
+
+    def is_current(self) -> bool:
+        check = getattr(self._authority, "_health_control_current", None)
+        return bool(callable(check) and check(self, self._seal))
+
+    def __repr__(self) -> str:
+        return "RootSelectedServiceHealthControl(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootVerifiedStartupAdmission:
     """In-memory sealed active selection, setup controller, and source closure.
 
@@ -220,6 +300,7 @@ class RootVerifiedStartupAdmission:
     _setup_operation_intent: str = field(repr=False, compare=False)
     _selected_startup_row: Any = field(repr=False, compare=False)
     _network_row: Any = field(repr=False, compare=False)
+    _display_startup: Any = field(repr=False, compare=False)
     _controller_lease: RootControllerProcessIdentityLease = field(repr=False, compare=False)
     _xauthority_registry: Any = field(repr=False, compare=False)
     _overlay_registry: Any = field(repr=False, compare=False)
@@ -269,9 +350,13 @@ def startup_selection_payload(binding: RootSelectedStartupRoleBinding) -> bytes:
     process_id = getattr(binding, "process_id", None)
     if not isinstance(process_id, str) or not process_id:
         raise SelectedStartupDenied("selected process control requires a retained root process handle")
-    return canonical_bytes({
-        "schema": 1, "process_id": process_id, "generation": binding.generation,
-    })
+    payload = {"schema": 1, "process_id": process_id, "generation": binding.generation}
+    if binding.action == "stop":
+        # Root derives the normal shutdown verb; cancellation and partial-start
+        # rollback use distinct root-only call paths and cannot be requested by
+        # an RPC caller.
+        payload.update(reason=binding.stop_reason, grace_seconds=binding.stop_grace_seconds)
+    return canonical_bytes(payload)
 
 
 class RootSelectedDisplayLaunchAuthority:
@@ -315,6 +400,9 @@ class RootSelectedDisplayLaunchAuthority:
         self._controller_pidfds: dict[str, int] = {}
         self._used_role_actions: set[tuple[str, str, str]] = set()
         self._started_processes: dict[tuple[str, str], Any] = {}
+        self._prepared_xauthority: dict[str, Any] = {}
+        self._display_start_receipts: dict[str, RootSelectedDisplayStartReceipt] = {}
+        self._health_controls: dict[tuple[str, str], RootSelectedServiceHealthControl] = {}
 
     @classmethod
     def from_root_runtime(cls, active_bindings: Any,
@@ -346,6 +434,16 @@ class RootSelectedDisplayLaunchAuthority:
             raise SelectedStartupDenied("root selected startup setup session is unavailable")
         try:
             operation_intent = self.setup_sessions.operation_intent(setup_session_handle)
+            # The setup session owns the only authoritative wall-clock lease.
+            # Do not replace it with a fresh ten-minute startup lease: a
+            # selected service admission must expire no later than its parent
+            # root setup transaction.
+            setup_live = self.setup_sessions._live(setup_session_handle)
+            setup_deadline = setup_live.record.get("expires_monotonic")
+            if (isinstance(setup_deadline, bool)
+                    or type(setup_deadline) not in (int, float)
+                    or setup_deadline <= self.monotonic()):
+                raise SelectedStartupDenied("root setup session deadline is unavailable")
             selected_row = self.active_bindings.resolve_remote_startup(remote_enrollment_id)
             network_row = self.active_bindings.resolve_private_loopback_network(
                 selected_row.network_enrollment_id)
@@ -358,11 +456,20 @@ class RootSelectedDisplayLaunchAuthority:
             if not self._pidfd_matches(actor_pidfd, identity["pid"]):
                 raise SelectedStartupDenied("root setup controller PIDFD is not current")
             now = self.monotonic()
-            expires = min(now + 600.0, float(getattr(selected_row, "expires_monotonic", now + 600.0)))
+            expires = min(now + 600.0, float(setup_deadline),
+                          float(getattr(selected_row, "expires_monotonic", now + 600.0)))
             if expires <= now:
                 raise SelectedStartupDenied("selected startup admission deadline is expired")
             proof_handle = secrets.token_urlsafe(32)
             startup_handle = secrets.token_urlsafe(32)
+            controller_digest = hashlib.sha256(canonical_bytes({
+                "pid": identity["pid"], "uid": identity["uid"],
+                "start_ticks": identity["start_ticks"],
+                "cgroup_identity": identity["cgroup_identity"],
+                "mount_namespace_inode": identity["mount_namespace_inode"],
+                "network_namespace_inode": identity["network_namespace_inode"],
+                "setup_operation_intent": operation_intent,
+            })).hexdigest()
             proof = RootControllerProcessIdentityLease(
                 proof_handle=proof_handle,
                 startup_authorization_handle=startup_handle,
@@ -371,6 +478,7 @@ class RootSelectedDisplayLaunchAuthority:
                 cgroup_identity=identity["cgroup_identity"],
                 mount_namespace_inode=identity["mount_namespace_inode"],
                 network_namespace_inode=identity["network_namespace_inode"],
+                proof_sha256=controller_digest,
                 expires_monotonic=expires,
                 _current_check=lambda: self._setup_controller_current(
                     setup_session_handle, operation_intent, identity,
@@ -398,13 +506,6 @@ class RootSelectedDisplayLaunchAuthority:
             closure_digest = hashlib.sha256(canonical_bytes([
                 binding.source_closure_sha256 for binding in role_bindings.values()
             ])).hexdigest()
-            controller_digest = hashlib.sha256(canonical_bytes({
-                "pid": proof.pid, "uid": proof.uid, "start_ticks": proof.start_ticks,
-                "cgroup_identity": proof.cgroup_identity,
-                "mount_namespace_inode": proof.mount_namespace_inode,
-                "network_namespace_inode": proof.network_namespace_inode,
-                "setup_operation_intent": operation_intent,
-            })).hexdigest()
             admission_handle = secrets.token_urlsafe(32)
             admission = RootVerifiedStartupAdmission(
                 admission_handle=admission_handle,
@@ -421,6 +522,7 @@ class RootSelectedDisplayLaunchAuthority:
                 _setup_operation_intent=operation_intent,
                 _selected_startup_row=selected_row,
                 _network_row=network_row,
+                _display_startup=selection,
                 _controller_lease=proof,
                 _xauthority_registry=self.xauthority_registry,
                 _overlay_registry=self.overlay_registry,
@@ -470,6 +572,7 @@ class RootSelectedDisplayLaunchAuthority:
                 pidfd=os.dup(retained), cgroup_identity=proof.cgroup_identity,
                 mount_namespace_inode=proof.mount_namespace_inode,
                 network_namespace_inode=proof.network_namespace_inode,
+                proof_sha256=proof.proof_sha256,
                 expires_monotonic=proof.expires_monotonic,
                 _current_check=proof._current_check, _monotonic=self.monotonic,
             )
@@ -477,7 +580,8 @@ class RootSelectedDisplayLaunchAuthority:
             raise SelectedStartupDenied("startup controller PIDFD could not be duplicated") from None
 
     def resolve_selected_recipe_binding(self, admission: RootVerifiedStartupAdmission,
-                                        role: str, action: str = "start"
+                                        role: str, action: str = "start", *,
+                                        _stop_reason: str = "shutdown"
                                         ) -> RootSelectedStartupRoleBinding:
         current = self.resolve_current_admission(admission.admission_handle)
         if current is not admission or role not in _ROLES or action not in _ACTIONS:
@@ -520,6 +624,7 @@ class RootSelectedDisplayLaunchAuthority:
             process_id=process_id, service_profile=start_binding.service_profile,
             process_operation=process_operation,
             source_closure=start_binding.source_closure,
+            stop_reason=_stop_reason if action == "stop" else None,
         )
 
     def is_current(self, admission: RootVerifiedStartupAdmission) -> bool:
@@ -549,12 +654,14 @@ class RootSelectedDisplayLaunchAuthority:
             return False
 
     def issue_role_grant(self, admission_handle: str, role: str,
-                         action: str = "start") -> Any:
+                         action: str = "start", *,
+                         _stop_reason: str = "shutdown") -> Any:
         """Issue one service-owned signed grant for one exact role action."""
         if action not in _ACTIONS or role not in _ROLES:
             raise SelectedStartupDenied("startup action is outside the finite role/action set")
         admission = self.resolve_current_admission(admission_handle)
-        binding = self.resolve_selected_recipe_binding(admission, role, action)
+        binding = self.resolve_selected_recipe_binding(admission, role, action,
+                                                       _stop_reason=_stop_reason)
         payload = startup_selection_payload(binding)
         with self._lock:
             key = (admission_handle, role, action)
@@ -572,9 +679,11 @@ class RootSelectedDisplayLaunchAuthority:
             raise
 
     def consume_role_grant(self, grant: Any, admission_handle: str,
-                           role: str, action: str = "start") -> Any:
+                           role: str, action: str = "start", *,
+                           _stop_reason: str = "shutdown") -> Any:
         admission = self.resolve_current_admission(admission_handle)
-        binding = self.resolve_selected_recipe_binding(admission, role, action)
+        binding = self.resolve_selected_recipe_binding(admission, role, action,
+                                                       _stop_reason=_stop_reason)
         payload = startup_selection_payload(binding)
         return self.authority_service.consume_root_selected_service_effect(
             grant, admission, binding.service_profile, payload,
@@ -589,6 +698,15 @@ class RootSelectedDisplayLaunchAuthority:
                 or not 0 < timeout <= 600 or cancelled()):
             raise SelectedStartupDenied("selected startup request bounds are invalid")
         admission = self.resolve_current_admission(admission_handle)
+        if role == "display":
+            with self._lock:
+                prepared = self._prepared_xauthority.get(admission_handle)
+            if prepared is None:
+                raise SelectedStartupDenied("display launch requires root-prepared Xauthority")
+        elif role in {"gateway", "desktop"}:
+            start_receipt = self._display_start_receipts.get(admission_handle)
+            if not self._display_receipt_current(admission, start_receipt):
+                raise SelectedStartupDenied("gateway/Desktop launch requires current selected display receipt")
         binding = self.resolve_selected_recipe_binding(admission, role, "start")
         grant = self.issue_role_grant(admission_handle, role)
         verified = self.consume_role_grant(grant, admission_handle, role)
@@ -606,6 +724,8 @@ class RootSelectedDisplayLaunchAuthority:
                 cancelled=cancelled,
                 controller_proof=proof,
                 xauthority_binding=mount,
+                overlay_binding=(self._resolve_overlay_receipt(admission._selected_startup_row, admission)
+                                if role == "display" else None),
             )
             process_id = getattr(result, "process_id", None)
             generation = getattr(result, "generation", None)
@@ -618,24 +738,207 @@ class RootSelectedDisplayLaunchAuthority:
         finally:
             proof.close()
 
+    def start_selected_display(self, admission_handle: str, *,
+                               timeout: float = 30.0,
+                               cancelled: Callable[[], bool] | None = None
+                               ) -> RootSelectedDisplayStartReceipt:
+        """Production callpoint: prepare cookie, verify patch, launch, then seal."""
+        from .native_display_startup import XauthorityStartupRegistry
+
+        admission = self.resolve_current_admission(admission_handle)
+        if not isinstance(admission._xauthority_registry, XauthorityStartupRegistry):
+            raise SelectedStartupDenied("selected Xauthority registry is unavailable")
+        with self._lock:
+            if admission_handle in self._display_start_receipts:
+                raise SelectedStartupDenied("selected display already has a retained start receipt")
+        overlay_receipt = self._resolve_overlay_receipt(
+            admission._selected_startup_row, admission,
+        )
+        prepared = admission._xauthority_registry.prepare(admission._display_startup)
+        with self._lock:
+            self._prepared_xauthority[admission_handle] = prepared
+        process_receipt = None
+        try:
+            process_receipt = self.start_selected_role(
+                admission_handle, "display", timeout=timeout, cancelled=cancelled,
+            )
+            xauthority_receipt = admission._xauthority_registry.seal_started_display(prepared)
+            if (getattr(process_receipt, "process_id", None) != xauthority_receipt.process_id
+                    or getattr(process_receipt, "generation", None) != xauthority_receipt.process_generation
+                    or not self._role_binding_current(
+                        admission._selected_startup_row, admission.role_bindings["display"]
+                    )):
+                raise SelectedStartupDenied("Xauthority seal does not join the actual selected display launch")
+            receipt = RootSelectedDisplayStartReceipt(
+                admission_handle=admission_handle,
+                process_receipt=process_receipt,
+                xauthority_receipt=xauthority_receipt,
+                overlay_receipt=overlay_receipt,
+                selection=admission.selected_startup,
+                issued_monotonic=self.monotonic(),
+                expires_monotonic=min(
+                    admission.expires_monotonic,
+                    getattr(process_receipt, "expires_monotonic", admission.expires_monotonic),
+                    getattr(xauthority_receipt, "expires_monotonic", admission.expires_monotonic),
+                ),
+                _seal=object(),
+            )
+            with self._lock:
+                self._display_start_receipts[admission_handle] = receipt
+            return receipt
+        except BaseException:
+            if process_receipt is not None:
+                self._stop_selected_role_for_cleanup(admission, "display", process_receipt)
+            admission._xauthority_registry.discard_prepared(prepared)
+            raise
+
+    def resolve_live_health_control(self, admission_handle: str,
+                                    role: str) -> "RootSelectedServiceHealthControl":
+        """Produce health only from a fresh exact status effect on a retained launch."""
+        if role not in _ROLES:
+            raise SelectedStartupDenied("selected health role is outside the fixed set")
+        admission = self.resolve_current_admission(admission_handle)
+        if role in {"gateway", "desktop"}:
+            display = self._display_start_receipts.get(admission_handle)
+            if (display is None or display.selection != admission.selected_startup
+                    or not self._display_receipt_current(admission, display)):
+                raise SelectedStartupDenied("selected display/Xauthority predecessor is not current")
+        result = self.control_selected_role(admission_handle, role, "status")
+        if not self._is_typed_live_status_result(result, admission, role):
+            raise SelectedStartupDenied("custody returned no typed live managed-process status")
+        retained = self._started_processes.get((admission_handle, role))
+        control = RootSelectedServiceHealthControl(
+            admission_handle=admission_handle, role=role,
+            process_id=self._retained_process_id(admission, role),
+            generation=admission.role_bindings[role].generation,
+            observed_monotonic=self.monotonic(), status_receipt=result,
+            _authority=self, _seal=object(),
+        )
+        with self._lock:
+            self._health_controls[(admission_handle, role)] = control
+        return control
+
+    def _stop_selected_role_for_cleanup(self, admission: RootVerifiedStartupAdmission,
+                                        role: str, process_receipt: Any) -> None:
+        """Rollback only the exact process successfully retained by custody."""
+        with self._lock:
+            current = self._started_processes.get((admission.admission_handle, role))
+        if current is not process_receipt:
+            return
+        try:
+            self.control_selected_role(
+                admission.admission_handle, role, "stop", timeout=10.0,
+                _stop_reason="rollback",
+            )
+        except Exception:
+            # Retain the receipt for custody's exact owned-process cleanup.
+            return
+
+    def _health_control_current(self, control: RootSelectedServiceHealthControl,
+                                seal: object) -> bool:
+        if (type(control) is not RootSelectedServiceHealthControl
+                or control._authority is not self or control._seal is not seal):
+            return False
+        with self._lock:
+            if self._health_controls.get((control.admission_handle, control.role)) is not control:
+                return False
+            process_receipt = self._started_processes.get((control.admission_handle, control.role))
+        try:
+            admission = self.resolve_current_admission(control.admission_handle)
+            if (process_receipt is None
+                    or getattr(process_receipt, "process_id", None) != control.process_id
+                    or getattr(process_receipt, "generation", None) != control.generation
+                    or not self._is_typed_live_status_result(
+                        control.status_receipt, admission, control.role,
+                    )):
+                return False
+            lease_resolver = getattr(self.custody, "resolve_selected_service_process", None)
+            if not callable(lease_resolver):
+                return False
+            lease = lease_resolver(process_receipt)
+            if lease is None:
+                return False
+            try:
+                return (lease.process_id == control.process_id
+                        and lease.generation == control.generation
+                        and self.monotonic() < process_receipt.expires_monotonic)
+            finally:
+                lease.close()
+        except Exception:
+            return False
+
+    def _is_typed_live_status_result(self, result: Any,
+                                     admission: RootVerifiedStartupAdmission,
+                                     role: str) -> bool:
+        from hermes_installer.managed_process_custodian import RootSelectedServiceStatusReceipt
+
+        with self._lock:
+            retained = self._started_processes.get((admission.admission_handle, role))
+        return bool(
+            type(result) is RootSelectedServiceStatusReceipt
+            and result.schema == 1
+            and _OPAQUE.fullmatch(result.receipt_handle)
+            and retained is not None
+            and result.process_receipt is retained
+            and result.process_receipt.profile_id == admission.role_bindings[role].profile_id
+            and result.process_receipt.generation == admission.role_bindings[role].generation
+            and result.service_generation_digest == admission.service_generation_digest
+            and result.observed_monotonic <= self.monotonic()
+            and self.monotonic() < result.process_receipt.expires_monotonic
+            and _DIGEST.fullmatch(result.process_identity_digest)
+            and result.process_identity_digest == result.process_receipt.process_identity_digest
+            and result.state in {"running", "stopped", "exited"}
+            and (result.exit_code is None or type(result.exit_code) is int)
+        )
+
+    def _display_receipt_current(self, admission: RootVerifiedStartupAdmission,
+                                 start_receipt: RootSelectedDisplayStartReceipt | None) -> bool:
+        if (type(start_receipt) is not RootSelectedDisplayStartReceipt
+                or start_receipt._seal is None
+                or start_receipt.selection != admission.selected_startup
+                or self.monotonic() >= start_receipt.expires_monotonic):
+            return False
+        try:
+            opened = self.xauthority_registry.resolve_selected(
+                start_receipt.xauthority_receipt.receipt_handle,
+                remote_enrollment_id=admission.remote_enrollment_id,
+                native_profile_id=admission._display_startup.native_profile_id,
+                native_generation=admission._display_startup.native_generation,
+                display_profile_id=admission.role_bindings["display"].profile_id,
+                display_generation=admission.role_bindings["display"].generation,
+                display_name=admission._display_startup.display_name,
+            )
+            try:
+                return (opened.receipt is start_receipt.xauthority_receipt
+                        and opened.process_id == getattr(start_receipt.process_receipt, "process_id", None))
+            finally:
+                opened.close()
+        except Exception:
+            return False
+
     def control_selected_role(self, admission_handle: str, role: str, action: str, *,
                               timeout: float = 30.0,
-                              cancelled: Callable[[], bool] | None = None) -> Any:
+                              cancelled: Callable[[], bool] | None = None,
+                              _stop_reason: str = "shutdown") -> Any:
         """Issue a fresh typed status/stop effect for this root-retained launch."""
         cancelled = cancelled or (lambda: False)
         if action not in {"status", "stop"} or role not in _ROLES:
             raise SelectedStartupDenied("selected role control action is not fixed")
         admission = self.resolve_current_admission(admission_handle)
-        binding = self.resolve_selected_recipe_binding(admission, role, action)
-        grant = self.issue_role_grant(admission_handle, role, action)
-        verified = self.consume_role_grant(grant, admission_handle, role, action)
+        binding = self.resolve_selected_recipe_binding(admission, role, action,
+                                                       _stop_reason=_stop_reason)
+        grant = self.issue_role_grant(admission_handle, role, action,
+                                      _stop_reason=_stop_reason)
+        verified = self.consume_role_grant(grant, admission_handle, role, action,
+                                           _stop_reason=_stop_reason)
         proof = self.resolve_startup_controller_proof(
             admission.controller_proof_handle, admission_handle,
         )
         try:
             if cancelled() or not proof.is_current():
                 raise SelectedStartupDenied("selected startup controller changed before control effect")
-            binding = self.resolve_selected_recipe_binding(admission, role, action)
+            binding = self.resolve_selected_recipe_binding(admission, role, action,
+                                                            _stop_reason=_stop_reason)
             result = self.custody.perform_root_selected_service_effect(
                 binding.service_profile, verified, startup_selection_payload(binding),
                 timeout=min(float(timeout), admission.expires_monotonic - self.monotonic()),
@@ -808,10 +1111,29 @@ class RootSelectedDisplayLaunchAuthority:
 
     def _selected_xauthority_binding(self, admission: RootVerifiedStartupAdmission,
                                      role: str) -> Any | None:
+        from .native_display_startup import XauthorityMountBinding
+
         if role == "display":
-            return admission._xauthority_registry.mount_binding_for_admission(admission)
+            prepared = self._prepared_xauthority.get(admission.admission_handle)
+            if prepared is None:
+                raise SelectedStartupDenied("display Xauthority preparation is not retained")
+            binding = admission._xauthority_registry.mount_binding(prepared)
+            if (type(binding) is not XauthorityMountBinding
+                    or not admission._xauthority_registry.verify_mount_binding(binding)):
+                raise SelectedStartupDenied("display Xauthority mount binding is not current")
+            return binding
         if role == "desktop":
-            return admission._xauthority_registry.sealed_mount_binding_for_admission(admission)
+            receipt = self._display_start_receipts.get(admission.admission_handle)
+            if not self._display_receipt_current(admission, receipt):
+                raise SelectedStartupDenied("Desktop requires the actual current display/Xauthority receipt")
+            prepared = self._prepared_xauthority.get(admission.admission_handle)
+            if prepared is None:
+                raise SelectedStartupDenied("Desktop Xauthority source is not retained")
+            binding = admission._xauthority_registry.mount_binding(prepared)
+            if (type(binding) is not XauthorityMountBinding
+                    or not admission._xauthority_registry.verify_mount_binding(binding)):
+                raise SelectedStartupDenied("Desktop Xauthority mount binding is not current")
+            return binding
         return None
 
     def _service_generation_digest(self) -> str:
@@ -832,7 +1154,9 @@ class RootSelectedDisplayLaunchAuthority:
     def _pidfd_matches(pidfd: int, pid: int) -> bool:
         try:
             stat_path = f"/proc/self/fdinfo/{pidfd}"
-            for line in open(stat_path, encoding="ascii"):
+            with open(stat_path, encoding="ascii") as stream:
+                lines = stream.readlines()
+            for line in lines:
                 if line.startswith("Pid:"):
                     return int(line.split(":", 1)[1].strip()) == pid
         except (OSError, ValueError):
@@ -842,12 +1166,12 @@ class RootSelectedDisplayLaunchAuthority:
     @staticmethod
     def _controller_identity(pid: int) -> dict[str, Any]:
         proc = f"/proc/{pid}"
-        stat_text = open(f"{proc}/stat", encoding="ascii").read()
+        stat_text = Path(f"{proc}/stat").read_text(encoding="ascii")
         start_ticks = int(stat_text[stat_text.rfind(")") + 2:].split()[19])
-        status = open(f"{proc}/status", encoding="ascii").read().splitlines()
+        status = Path(f"{proc}/status").read_text(encoding="ascii").splitlines()
         uid_line = next(line for line in status if line.startswith("Uid:"))
         uid = int(uid_line.split()[1])
-        cgroup_identity = open(f"{proc}/cgroup", encoding="ascii").read().strip().split(":", 2)[-1]
+        cgroup_identity = Path(f"{proc}/cgroup").read_text(encoding="ascii").strip().split(":", 2)[-1]
         if not cgroup_identity.startswith("/"):
             cgroup_identity = "/" + cgroup_identity
         return {

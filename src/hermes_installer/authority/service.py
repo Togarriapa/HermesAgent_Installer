@@ -29,6 +29,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity, SourceReceipt,
+    RootSelectedServiceContext, RootSelectedServiceEffectGrant, VerifiedRootSelectedServiceEffect,
     canonical_bytes, canonical_digest, strict_json_loads,
 )
 
@@ -149,6 +150,26 @@ class EffectHandler(Protocol):
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]: ...
 
 
+class _RootDisplayReceiptSigner:
+    """In-process Xauthority receipt signer with an isolated signature domain."""
+
+    _DOMAIN = b"root-xauthority-startup-receipt-v1\x00"
+
+    def __init__(self, service: "AuthorityService"):
+        self._service = service
+
+    def sign(self, payload: bytes) -> bytes:
+        if not isinstance(payload, bytes) or len(payload) > 65_536:
+            raise AuthorityDenied("display.receipt", "display receipt payload exceeds its bound")
+        return hmac.new(self._service._key, self._DOMAIN + payload, hashlib.sha256).digest()
+
+    def verify(self, payload: bytes, signature: bytes) -> bool:
+        if (not isinstance(payload, bytes) or len(payload) > 65_536
+                or not isinstance(signature, bytes) or len(signature) != hashlib.sha256().digest_size):
+            return False
+        return hmac.compare_digest(self.sign(payload), signature)
+
+
 class DenyByDefaultPolicy:
     """Safe policy until protected purpose/capability rules are enrolled."""
 
@@ -229,11 +250,17 @@ class AuthorityService:
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
         self.native_input_delivery_registry = None
+        self.native_turn_observation_registry = None
         self.native_mcp_dispatcher = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
         self.resource_job_authority = None
         self.resource_event_context_issuer = None
+        self.root_selected_startup_authority = None
+        self.root_selected_memory_authority = None
+        self._root_selected_service_effects: dict[str, dict[str, Any]] = {}
+        self._root_selected_nonce_states: dict[str, tuple[str, float]] = {}
+        self._root_selected_seal = object()
         if (service_generation_digest is not None
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
@@ -371,6 +398,433 @@ class AuthorityService:
                 or not callable(getattr(registry, "take_selected_native_input", None))):
             raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
         self.native_input_delivery_registry = registry
+
+    def attach_native_turn_observation_registry(self, registry: Any) -> None:
+        """Attach the exact root-native turn observer once during assembly."""
+        from .native_turn_observation import RootNativeTurnObservationRegistry
+
+        if (self.native_turn_observation_registry is not None
+                or type(registry) is not RootNativeTurnObservationRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "finish_selected_native_turn", None))):
+            raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
+        self.native_turn_observation_registry = registry
+
+    def root_display_receipt_signer(self) -> Any:
+        """Return the in-process, domain-separated signer used by Xauthority receipts."""
+        signer = _RootDisplayReceiptSigner(self)
+        if not callable(getattr(signer, "sign", None)) or not callable(getattr(signer, "verify", None)):
+            raise AuthorityDenied("display.receipt", "root display receipt signer is unavailable")
+        return signer
+
+    def attach_root_selected_startup_authority(self, authority: Any) -> None:
+        """Attach the retained selected-startup admission resolver once."""
+        from .selected_startup_authority import RootSelectedDisplayLaunchAuthority
+
+        if (self.root_selected_startup_authority is not None
+                or type(authority) is not RootSelectedDisplayLaunchAuthority
+                or getattr(authority, "authority_service", None) is not self
+                or not callable(getattr(authority, "resolve_current_admission", None))
+                or not callable(getattr(authority, "resolve_selected_recipe_binding", None))
+                or not callable(getattr(authority, "resolve_startup_controller_proof", None))
+                or not callable(getattr(authority, "is_current", None))):
+            raise AuthorityDenied("root-selected.attach", "startup authority binding is invalid")
+        self.root_selected_startup_authority = authority
+
+    def attach_root_selected_memory_authority(self, authority: Any) -> None:
+        """Attach the retained selected-memory lifecycle resolver once."""
+        from hermes_installer.memory.lifecycle_authority import RootMemoryServiceLifecycle
+
+        if (self.root_selected_memory_authority is not None
+                or type(authority) is not RootMemoryServiceLifecycle
+                or getattr(authority, "authority_service", None) is not self
+                or not callable(getattr(authority, "resolve_admission", None))
+                or not callable(getattr(authority, "resolve_admission", None))):
+            raise AuthorityDenied("root-selected.attach", "memory lifecycle authority binding is invalid")
+        self.root_selected_memory_authority = authority
+
+    def issue_root_selected_service_effect(
+        self, admission: Any, selected_recipe_binding: Any, action: str,
+        canonical_payload_bytes: bytes,
+    ) -> RootSelectedServiceEffectGrant:
+        """Mint one finite, root-local grant for an exact selected lifecycle action.
+
+        This API is deliberately in-process only. Its admission and recipe must
+        be retained typed objects from the startup or memory authority; no
+        worker RPC accepts these records.
+        """
+        authority, current_admission, binding = self._resolve_root_selected_binding(
+            admission, selected_recipe_binding, action,
+        )
+        if not isinstance(canonical_payload_bytes, bytes) or not 1 <= len(canonical_payload_bytes) <= 65_536:
+            raise AuthorityDenied("root-selected.issue", "selected service payload is outside its bound")
+        try:
+            decoded = strict_json_loads(canonical_payload_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise AuthorityDenied("root-selected.issue", "selected service payload is not canonical JSON") from None
+        if canonical_bytes(decoded) != canonical_payload_bytes:
+            raise AuthorityDenied("root-selected.issue", "selected service payload is not canonical JSON")
+        role = self._selected_binding_text(binding, "role")
+        enrollment_id = self._selected_binding_text(binding, "service_enrollment_id")
+        operation = self._selected_binding_text(binding, "operation")
+        if action not in {"start", "status", "stop"} or operation != f"process.{action}":
+            raise AuthorityDenied("root-selected.issue", "selected service action is not fixed")
+        expected_payload = getattr(binding, "payload", None)
+        if callable(expected_payload):
+            expected_bytes = expected_payload()
+        elif action == "start":
+            expected_bytes = canonical_bytes({
+                "schema": 1, "enrollment_id": enrollment_id,
+                "generation": self._selected_binding_text(binding, "generation"),
+                "operation_id": self._selected_binding_text(binding, "operation_id"),
+                "parameters": {},
+            })
+        elif action == "status":
+            process_id = getattr(binding, "process_id", None)
+            if not isinstance(process_id, str) or not process_id:
+                raise AuthorityDenied("root-selected.issue", "selected process control handle is unavailable")
+            expected_bytes = canonical_bytes({"schema": 1, "process_id": process_id,
+                                              "generation": self._selected_binding_text(binding, "generation")})
+        else:
+            process_id = getattr(binding, "process_id", None)
+            reason = getattr(binding, "stop_reason", None)
+            grace_seconds = getattr(binding, "stop_grace_seconds", None)
+            if (not isinstance(process_id, str) or not process_id
+                    or reason not in {"shutdown", "cancel", "rollback"}
+                    or type(grace_seconds) is not int or grace_seconds != 5):
+                raise AuthorityDenied("root-selected.issue", "selected stop recipe is unavailable")
+            expected_bytes = canonical_bytes({
+                "schema": 1, "process_id": process_id,
+                "generation": self._selected_binding_text(binding, "generation"),
+                "reason": reason, "grace_seconds": 5,
+            })
+        if not isinstance(expected_bytes, bytes) or expected_bytes != canonical_payload_bytes:
+            raise AuthorityDenied("root-selected.issue", "payload does not match the retained operation recipe")
+        capability = self._selected_binding_text(binding, "capability")
+        target = self._selected_binding_text(binding, "target")
+        rule = self.rules.get((capability, operation, target))
+        recipient = getattr(binding, "recipient", None)
+        if (rule is None or rule.operation != operation or rule.target != target
+                or rule.recipient != recipient):
+            raise AuthorityDenied("root-selected.issue", "selected operation has no exact protected rule")
+        profile = getattr(binding, "service_profile", None)
+        process_operation = getattr(binding, "process_operation", None)
+        if profile is None or process_operation is None:
+            raise AuthorityDenied("root-selected.issue", "selected managed operation is unavailable")
+        controller = self._resolve_root_selected_controller(authority, current_admission, binding)
+        try:
+            now = self.monotonic()
+            lease_deadlines = [now + MAX_EFFECT_LEASE]
+            for candidate in (getattr(current_admission, "expires_monotonic", None),
+                              getattr(controller, "expires_monotonic", None),
+                              getattr(binding, "deadline_monotonic", None)):
+                if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                    lease_deadlines.append(float(candidate))
+            expiry = min(lease_deadlines)
+            if expiry <= now:
+                raise AuthorityDenied("root-selected.issue", "selected service admission has expired")
+            sensitivity = getattr(binding, "sensitivity", getattr(current_admission, "sensitivity", Sensitivity.UNKNOWN))
+            try:
+                sensitivity = sensitivity if isinstance(sensitivity, Sensitivity) else Sensitivity(sensitivity)
+            except ValueError:
+                raise AuthorityDenied("root-selected.issue", "selected source sensitivity is invalid") from None
+            fields = {
+                "schema": 1, "context_id": secrets.token_urlsafe(24),
+                "admission_handle": self._selected_binding_text(current_admission, "admission_handle"),
+                "admission_kind": "memory" if current_admission is getattr(authority, "memory_admission", None) else
+                    ("memory" if type(current_admission).__module__.startswith("hermes_installer.memory.") else "startup"),
+                "controller_proof_sha256": self._selected_controller_digest(current_admission, binding, controller),
+                "selected_principal_id": self._selected_binding_text(binding, "principal_id"),
+                "selected_profile_id": self._selected_binding_text(binding, "profile_id"),
+                "selected_generation": self._selected_binding_text(binding, "generation"),
+                "selected_namespace_identity": self._selected_binding_text(binding, "namespace_identity"),
+                "selected_subject_uid": self._selected_binding_int(binding, "subject_uid", minimum=1),
+                "selected_subject_gid": self._selected_binding_int(binding, "subject_gid", minimum=0),
+                "service_generation_digest": self._selected_binding_digest(current_admission, binding),
+                "role": role, "action": action, "enrollment_id": enrollment_id,
+                "operation_id": self._selected_binding_text(binding, "operation_id"),
+                "operation": operation, "capability": capability, "target": target,
+                "source_closure_sha256": self._selected_binding_text(binding, "source_closure_sha256"),
+                "sensitivity": sensitivity,
+                "recipient": getattr(binding, "recipient", None),
+                "policy_revision": self._policy_revision(), "authority_epoch": self.authority_epoch,
+                "issued_monotonic": now, "expires_monotonic": expiry,
+                "nonce": secrets.token_hex(32),
+            }
+            context = RootSelectedServiceContext(**fields, signature=self._sign_root_selected(
+                "root-selected-service-context-v1", fields,
+            ))
+            payload_sha = hashlib.sha256(canonical_payload_bytes).hexdigest()
+            if not self.policy.allow_effect(context=context, rule=rule,
+                                            request_digest=payload_sha, retry_index=0):
+                raise AuthorityDenied("root-selected.issue", "current host policy denied selected service action")
+            context_sha = hashlib.sha256(self._canonical_root_selected(context.to_wire())).hexdigest()
+            nonce = secrets.token_hex(32)
+            grant_fields = {
+                "schema": 1, "grant_id": secrets.token_urlsafe(24),
+                "context_sha256": context_sha, "admission_handle": context.admission_handle,
+                "operation": operation, "capability": capability, "target": target,
+                "request_sha256": payload_sha,
+                "nonce": nonce, "issued_monotonic": now, "expires_monotonic": expiry,
+            }
+            grant = RootSelectedServiceEffectGrant(**grant_fields, signature=self._sign_root_selected(
+                "root-selected-service-effect-v1", grant_fields,
+            ))
+            with self._lock:
+                self._prune_root_selected_effects(now)
+                if nonce in self._root_selected_nonce_states or len(self._root_selected_effects) >= 10_000:
+                    raise AuthorityDenied("root-selected.issue", "selected service nonce registry is unavailable")
+                self._root_selected_nonce_states[nonce] = ("pending", expiry)
+                self._root_selected_service_effects[grant.grant_id] = {
+                    "grant": grant, "context": context, "admission": current_admission,
+                    "authority": authority, "binding": binding, "controller": controller,
+                    "seal": self._root_selected_seal, "state": "pending",
+                }
+            return grant
+        finally:
+            close = getattr(controller, "close", None)
+            if authority is self.root_selected_startup_authority and callable(close):
+                close()
+
+    def consume_root_selected_service_effect(
+        self, grant: RootSelectedServiceEffectGrant, admission: Any,
+        selected_profile: Any, canonical_payload_bytes: bytes,
+    ) -> VerifiedRootSelectedServiceEffect:
+        """Atomically spend a pending selected-service grant and seal its effect."""
+        if type(grant) is not RootSelectedServiceEffectGrant:
+            raise AuthorityDenied("root-selected.consume", "selected service grant has the wrong type")
+        now = self.monotonic()
+        self._verify_root_selected_signature("root-selected-service-effect-v1", grant.claims(), grant.signature)
+        payload_digest = hashlib.sha256(canonical_payload_bytes).hexdigest() if isinstance(canonical_payload_bytes, bytes) else ""
+        with self._lock:
+            self._prune_root_selected_effects(now)
+            entry = self._root_selected_service_effects.get(grant.grant_id)
+            if (entry is None or entry["grant"] is not grant or entry["state"] != "pending"
+                    or self._root_selected_nonce_states.get(grant.nonce) != ("pending", grant.expires_monotonic)
+                    or grant.expires_monotonic <= now or grant.request_sha256 != payload_digest
+                    or grant.admission_handle != getattr(admission, "admission_handle", None)):
+                raise AuthorityDenied("root-selected.consume", "selected service grant is stale, mismatched or spent")
+            authority, current_admission, binding = self._resolve_root_selected_binding(
+                admission, entry["binding"], entry["context"].action,
+            )
+            if (authority is not entry["authority"] or current_admission is not entry["admission"]
+                    or binding != entry["binding"] or selected_profile is not getattr(binding, "service_profile", None)
+                    or grant.operation != entry["context"].operation
+                    or grant.capability != entry["context"].capability
+                    or grant.target != entry["context"].target
+                    or hashlib.sha256(self._canonical_root_selected(entry["context"].to_wire())).hexdigest() != grant.context_sha256):
+                raise AuthorityDenied("root-selected.consume", "selected service binding changed")
+            self._verify_root_selected_signature(
+                "root-selected-service-context-v1", entry["context"].claims(), entry["context"].signature,
+            )
+            rule = self.rules.get((entry["context"].capability, entry["context"].operation,
+                                  entry["context"].target))
+            if (rule is None or rule.recipient != entry["context"].recipient
+                    or not self.policy.allow_effect(context=entry["context"], rule=rule,
+                                                    request_digest=grant.request_sha256, retry_index=0)):
+                raise AuthorityDenied("root-selected.consume", "current host policy denied selected service action")
+            controller = self._resolve_root_selected_controller(authority, current_admission, binding)
+            try:
+                if not controller.is_current():
+                    raise AuthorityDenied("root-selected.consume", "selected service controller is no longer live")
+            finally:
+                close = getattr(controller, "close", None)
+                if callable(close):
+                    close()
+            self._root_selected_nonce_states[grant.nonce] = ("consumed", grant.expires_monotonic)
+            entry["state"] = "consumed"
+            controller_handle = self._selected_binding_text(entry["context"], "admission_handle")
+            effect = VerifiedRootSelectedServiceEffect(
+                admission_handle=controller_handle,
+                admission_kind=entry["context"].admission_kind,
+                role=entry["context"].role, action=entry["context"].action,
+                profile_id=entry["context"].selected_profile_id,
+                enrollment_id=entry["context"].enrollment_id,
+                generation=entry["context"].selected_generation,
+                selected_principal_id=entry["context"].selected_principal_id,
+                selected_namespace_identity=entry["context"].selected_namespace_identity,
+                selected_subject_uid=entry["context"].selected_subject_uid,
+                selected_subject_gid=entry["context"].selected_subject_gid,
+                operation=entry["context"].operation, capability=entry["context"].capability,
+                target=entry["context"].target, request_sha256=grant.request_sha256,
+                controller_proof_handle=self._root_selected_controller_handle(entry["admission"]),
+                controller_proof_sha256=entry["context"].controller_proof_sha256,
+                service_generation_digest=entry["context"].service_generation_digest,
+                issued_monotonic=grant.issued_monotonic, expires_monotonic=grant.expires_monotonic,
+                context_sha256=grant.context_sha256,
+                operation_id=self._selected_binding_text(binding, "operation_id"),
+                recipe_sha256=self._selected_binding_text(binding, "recipe_sha256"),
+                source_closure_sha256=entry["context"].source_closure_sha256,
+                service_profile=binding.service_profile, process_operation=binding.process_operation,
+                _service=self, _nonce=grant.nonce,
+                _seal=self._root_selected_seal,
+            )
+            entry["verified"] = effect
+            return effect
+
+    def _resolve_root_selected_binding(self, admission: Any, binding: Any,
+                                       action: str) -> tuple[Any, Any, Any]:
+        startup = self.root_selected_startup_authority
+        memory = self.root_selected_memory_authority
+        if startup is not None and type(admission).__module__ == "hermes_installer.authority.selected_startup_authority":
+            authority = startup
+            current = authority.resolve_current_admission(admission.admission_handle)
+            stop_reason = getattr(binding, "stop_reason", "shutdown")
+            if action == "stop" and stop_reason not in {"shutdown", "cancel", "rollback"}:
+                raise AuthorityDenied("root-selected.binding", "selected stop reason is invalid")
+            if action != "stop" and getattr(binding, "stop_reason", None) is not None:
+                raise AuthorityDenied("root-selected.binding", "stop reason is only valid for stop")
+            selected = authority.resolve_selected_recipe_binding(
+                current, binding.role, action, _stop_reason=stop_reason,
+            )
+            expected = type(admission)
+        elif memory is not None and type(admission).__module__ == "hermes_installer.memory.lifecycle_authority":
+            authority = memory
+            current = authority.resolve_admission(admission.admission_handle)
+            reason = getattr(binding, "stop_reason", None)
+            try:
+                if action == "stop":
+                    selected = current.action(action, now=self.monotonic(), reason=reason)
+                else:
+                    selected = current.action(action, now=self.monotonic())
+            except (TypeError, ValueError):
+                raise AuthorityDenied("root-selected.binding", "selected memory action resolver is unavailable") from None
+            expected = type(admission)
+        else:
+            raise AuthorityDenied("root-selected.binding", "selected lifecycle admission is unavailable")
+        if (type(admission) is not expected or current is not admission or selected != binding
+                or getattr(selected, "service_profile", None) is not getattr(binding, "service_profile", None)
+                or getattr(selected, "process_operation", None) != getattr(binding, "process_operation", None)
+                or getattr(selected, "source_receipt_handles", None) != getattr(binding, "source_receipt_handles", None)
+                or not callable(getattr(authority, "is_current", None)) and authority is startup
+                or authority is startup and not authority.is_current(current)
+                or action not in {"start", "status", "stop"}
+                or getattr(binding, "action", None) != action):
+            raise AuthorityDenied("root-selected.binding", "selected lifecycle admission or recipe is stale")
+        if authority is memory:
+            if not current.is_current(now=self.monotonic()):
+                raise AuthorityDenied("root-selected.binding", "memory lifecycle admission is no longer current")
+        return authority, current, binding
+
+    def _resolve_root_selected_controller(self, authority: Any, admission: Any, binding: Any) -> Any:
+        admission_handle = self._selected_binding_text(admission, "admission_handle")
+        if authority is self.root_selected_startup_authority:
+            handle = self._selected_binding_text(admission, "controller_proof_handle")
+            proof = authority.resolve_startup_controller_proof(handle, admission_handle)
+        else:
+            proof = getattr(admission, "_controller_lease", None)
+        if proof is None or not callable(getattr(proof, "is_current", None)) or not proof.is_current():
+            raise AuthorityDenied("root-selected.controller", "selected service controller proof is stale")
+        return proof
+
+    @staticmethod
+    def _root_selected_controller_handle(admission: Any) -> str:
+        value = getattr(admission, "controller_proof_handle", None)
+        if value is None:
+            value = getattr(getattr(admission, "_controller_lease", None), "proof_handle", None)
+        if not isinstance(value, str) or not value:
+            raise AuthorityDenied("root-selected.controller", "controller proof handle is unavailable")
+        return value
+
+    def _selected_controller_digest(self, admission: Any, binding: Any, controller: Any) -> str:
+        value = getattr(binding, "controller_proof_sha256", None) or getattr(admission, "controller_proof_sha256", None)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            value = canonical_digest({"pid": getattr(controller, "pid", None),
+                                     "uid": getattr(controller, "uid", None),
+                                     "start_ticks": getattr(controller, "start_ticks", None),
+                                     "identity": getattr(controller, "kernel_identity", None)})
+        return value
+
+    def _selected_binding_digest(self, admission: Any, binding: Any) -> str:
+        value = getattr(binding, "service_generation_digest", None) or getattr(admission, "service_generation_digest", None)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise AuthorityDenied("root-selected.binding", "selected service generation digest is invalid")
+        if self.service_generation_digest is not None and value != self.service_generation_digest:
+            raise AuthorityDenied("root-selected.binding", "selected service generation is stale")
+        return value
+
+    @staticmethod
+    def _selected_binding_text(binding: Any, name: str) -> str:
+        value = getattr(binding, name, None)
+        if not isinstance(value, str) or not value or len(value) > 512:
+            raise AuthorityDenied("root-selected.binding", f"selected binding {name} is invalid")
+        return value
+
+    @staticmethod
+    def _selected_binding_int(binding: Any, name: str, *, minimum: int) -> int:
+        value = getattr(binding, name, None)
+        if type(value) is not int or value < minimum:
+            raise AuthorityDenied("root-selected.binding", f"selected binding {name} is invalid")
+        return value
+
+    def _sign_root_selected(self, domain: str, claims: Mapping[str, Any]) -> str:
+        envelope = {"domain": domain, "key_id": self.key_id, "claims": dict(claims)}
+        encoded = self._canonical_root_selected(envelope)
+        return hmac.new(self._key, encoded, hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _canonical_root_selected(value: Mapping[str, Any]) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    def _verify_root_selected_signature(self, domain: str, claims: Mapping[str, Any], signature: str) -> None:
+        expected = self._sign_root_selected(domain, claims)
+        if not hmac.compare_digest(expected, signature):
+            raise AuthorityDenied("root-selected.signature", "selected service signature is invalid")
+
+    def _prune_root_selected_effects(self, now: float) -> None:
+        for grant_id, entry in tuple(self._root_selected_service_effects.items()):
+            if entry["grant"].expires_monotonic <= now:
+                self._root_selected_service_effects.pop(grant_id, None)
+                self._root_selected_nonce_states.pop(entry["grant"].nonce, None)
+
+    def _is_current_root_selected_service_effect(self, effect: VerifiedRootSelectedServiceEffect,
+                                                seal: object) -> bool:
+        if seal is not self._root_selected_seal or effect._service is not self:
+            return False
+        with self._lock:
+            entry = self._root_selected_service_effects.get(next((key for key, item in self._root_selected_service_effects.items()
+                if item.get("verified") is effect), ""))
+            if (entry is None or entry["state"] != "consumed"
+                    or self._root_selected_nonce_states.get(effect._nonce)
+                    != ("consumed", effect.expires_monotonic)
+                    or effect.expires_monotonic <= self.monotonic()):
+                return False
+            try:
+                authority, admission, binding = self._resolve_root_selected_binding(
+                    entry["admission"], entry["binding"], effect.action,
+                )
+                controller = self._resolve_root_selected_controller(authority, admission, binding)
+                try:
+                    context = entry["context"]
+                    rule = self.rules.get((effect.capability, effect.operation, effect.target))
+                    return bool(
+                        context.authority_epoch == self.authority_epoch
+                        and context.policy_revision == self._policy_revision()
+                        and context.service_generation_digest == self._selected_binding_digest(admission, binding)
+                        and rule is not None and rule.recipient == context.recipient
+                        and self.policy.allow_effect(
+                            context=context, rule=rule, request_digest=effect.request_sha256,
+                            retry_index=0,
+                        )
+                        and controller.is_current()
+                    )
+                finally:
+                    close = getattr(controller, "close", None)
+                    if authority is self.root_selected_startup_authority and callable(close):
+                        close()
+            except Exception:
+                return False
+
+    def _close_root_selected_service_effect(self, effect: VerifiedRootSelectedServiceEffect,
+                                            seal: object) -> None:
+        if seal is not self._root_selected_seal or effect._service is not self:
+            return
+        with self._lock:
+            for grant_id, entry in tuple(self._root_selected_service_effects.items()):
+                if entry.get("verified") is effect:
+                    self._root_selected_service_effects.pop(grant_id, None)
+                    self._root_selected_nonce_states.pop(effect._nonce, None)
+                    return
 
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
         """Attach the root-only memory compound step issuer exactly once."""
@@ -1276,6 +1730,10 @@ class AuthorityService:
             return self._dispatch_native_input_take(
                 uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
             )
+        if operation == "native.turn.finish":
+            return self._dispatch_native_turn_finish(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "native.response.take":
             registry = self.native_invocation_registry
             if registry is None or peer_pidfd is None:
@@ -1304,13 +1762,23 @@ class AuthorityService:
                 result = {
                     "producer_context_handle": result.producer_context_handle,
                     "tool_call_bindings": list(result.tool_call_bindings),
+                    "turn_handle": getattr(result, "turn_handle", None),
+                    "final_response_delivery_handle": getattr(result, "final_response_delivery_handle", None),
                 }
-            fields = {"producer_context_handle", "tool_call_bindings"}
+            fields = {"producer_context_handle", "tool_call_bindings", "turn_handle",
+                      "final_response_delivery_handle"}
             if (not isinstance(result, Mapping) or set(result) != fields
                     or not isinstance(result["producer_context_handle"], str)
                     or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["producer_context_handle"])
                     or not isinstance(result["tool_call_bindings"], (list, tuple))
-                    or len(result["tool_call_bindings"]) > 128):
+                    or len(result["tool_call_bindings"]) > 128
+                    or result["turn_handle"] is not None
+                       and (not isinstance(result["turn_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))
+                    or result["final_response_delivery_handle"] is not None
+                       and (not isinstance(result["final_response_delivery_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                                result["final_response_delivery_handle"]))):
                 raise AuthorityDenied("native.response.take", "root provider response metadata is invalid")
             from .types import NativeToolCallBinding
             calls = tuple(item if isinstance(item, NativeToolCallBinding)
@@ -1324,7 +1792,9 @@ class AuthorityService:
                                                  "provider_tool_call_id": item.provider_tool_call_id,
                                                  "tool_name": item.tool_name,
                                                  "arguments_sha256": item.arguments_sha256}
-                                           for item in calls]}
+                                           for item in calls],
+                    "turn_handle": result["turn_handle"],
+                    "final_response_delivery_handle": result["final_response_delivery_handle"]}
         if operation == "native.mcp.dispatch":
             return self._dispatch_native_mcp(uid, peer_pid, peer_pidfd, payload, cancelled=cancelled)
         if operation == "source.receipt.take":
@@ -1512,7 +1982,7 @@ class AuthorityService:
         result = delivery.to_wire()
         expected = {"schema", "source_receipt_handle", "selected_execution_handle",
                     "input_sha256", "input_size_bytes", "expires_monotonic"}
-        if (not isinstance(result, Mapping) or set(result) != expected
+        if (not isinstance(result, Mapping) or set(result) not in (expected, expected | {"turn_handle"})
                 or type(result.get("schema")) is not int or result["schema"] != 1
                 or not isinstance(result.get("source_receipt_handle"), str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["source_receipt_handle"])
@@ -1524,7 +1994,10 @@ class AuthorityService:
                 or not 1 <= result["input_size_bytes"] <= 1_048_576
                 or isinstance(result.get("expires_monotonic"), bool)
                 or type(result.get("expires_monotonic")) not in (int, float)
-                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0):
+                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0
+                or result.get("turn_handle") is not None and (
+                    not isinstance(result.get("turn_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))):
             raise AuthorityDenied("native.input.take", "root input delivery fields exceed their bounds")
         return dict(result)
 
@@ -2193,6 +2666,7 @@ class AuthorityService:
             handle = observe(
                 service=self, context=context, authorization=grant,
                 operation=rule.operation, target=rule.target,
+                request_payload=body, request_sha256=grant.request_digest,
                 response_status=response["status"], result_payload=body_bytes,
                 peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cancelled=current_or_cancelled,
@@ -2210,6 +2684,40 @@ class AuthorityService:
             # live peer before the opaque reference enters the response.
             result["source_receipt_handle"] = handle
         return result
+
+    def _dispatch_native_turn_finish(self, peer_uid: int, peer_pid: int,
+                                     peer_pidfd: int | None, payload: Any, *,
+                                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Return only the opaque presentation from the authenticated turn registry."""
+        from .types import RootCompletedNativeTurnPresentation
+
+        registry = self.native_turn_observation_registry
+        fields = {"schema", "turn_handle", "final_response_delivery_handle"}
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != fields
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("turn_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["turn_handle"])
+                or not isinstance(payload.get("final_response_delivery_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["final_response_delivery_handle"])):
+            raise AuthorityDenied("native.turn.finish", "native turn finish request is malformed or unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.turn.finish", "native turn finish request was cancelled")
+        try:
+            presentation = registry.finish_selected_native_turn(
+                peer_uid, peer_pid, peer_pidfd, payload["turn_handle"],
+                payload["final_response_delivery_handle"],
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.turn.finish", "root native turn verification failed") from None
+        if (type(presentation) is not RootCompletedNativeTurnPresentation
+                or presentation.turn_handle != payload["turn_handle"]
+                or presentation.state != "completed"
+                or presentation.expires_monotonic <= self.monotonic()):
+            raise AuthorityDenied("native.turn.finish", "root native turn presentation is invalid or expired")
+        return presentation.to_wire()
 
     def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
                               ) -> tuple[EffectAuthorization, HostContext, EffectRule]:
