@@ -4,6 +4,7 @@ import base64
 import hashlib
 import os
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
@@ -130,6 +131,22 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
         service.process_effect_handler = SimpleNamespace(resolve_live_peer=process_resolver)
 
         package = _Package()
+        process_role = package.process_role_records["native-process-role"]
+        protected_action = next(iter(package.action_records.values()))
+        action_binding_id = "hermes-main:action:chat-complete"
+        protected_action = replace(
+            protected_action, action_id="chat.complete",
+            action_binding_id=action_binding_id, target_id=target,
+            recipient=recipient,
+            observer_enrollment_ids=("observer.provider.result",),
+        )
+        object.__setattr__(package, "action_records", {action_binding_id: protected_action})
+        object.__setattr__(package, "adapter_records", {"hermes-main": protected_action})
+        process_role.action_binding_ids = (action_binding_id,)
+        process_role.observer_enrollment_ids = ("observer.provider.result",)
+        registration = package.registration_records["registration.native.input"]
+        registration.observer_enrollment_ids = ("observer.provider.result",)
+        registration.action_bindings = (SimpleNamespace(action_binding_id=action_binding_id),)
         loaded_proof_fixture = _LoadedProof(
             proof_id="loaded-proof-fixture",
             package_id=package.package_id,
@@ -145,13 +162,25 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             source_root_device=8,
             source_root_inode=99,
             target_peer_identity=producer_identity,
-            loader_role_artifact_id="hermes-main",
-            loader_role_sha256="b" * 64,
+            loader_role_artifact_id=process_role.role_artifact_id,
+            loader_role_sha256=process_role.role_sha256,
             loader_ready_event_id="loader-ready-fixture",
+            # This field remains a separately observed action set for the
+            # invocation consumer; registration proof is carried separately.
             observed_entrypoint_action_ids=("chat.complete",),
             issued_monotonic=service.monotonic() - 1,
             expires_monotonic=service.monotonic() + 60,
             service_generation_digest="2" * 64,
+            role_id=process_role.role_id,
+            role_source_receipt_handle=process_role.role_source_receipt_handle,
+            role_module_name=process_role.module_name,
+            role_closure_member_path=process_role.closure_member_path,
+            role_source_revision=process_role.role_source_revision,
+            role_source_tree_sha256=process_role.role_source_tree_sha256,
+            role_module_device=8,
+            role_module_inode=99,
+            role_module_sha256=process_role.role_sha256,
+            observed_registration_ids=("registration.native.input",),
         )
         source_enrollment = _enrollment(
             observer_enrollment_id="observer.provider.result",
@@ -159,6 +188,8 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             origin_id="hermes.provider.result",
             enrollment_id=producer_enrollment_id,
             source_action_id="chat.complete",
+            source_action_binding_id=action_binding_id,
+            source_registration_ids=("registration.native.input",),
             target_id=target,
             recipient=recipient,
             allowed_parent_source_kinds=frozenset(),

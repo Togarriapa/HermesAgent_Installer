@@ -1339,9 +1339,13 @@ class AuthorityService:
                          event_handle.expires_monotonic, now + 30.0)
             if not now < expiry:
                 raise AuthorityDenied("channel.expired", "event and peer leases do not overlap")
+            observer = source_registry.observers.get(event_handle.source_observer_enrollment_id)
+            if observer is None or observer.source_kind != "native-input":
+                raise AuthorityDenied("channel.lineage", "retained event source observer is unavailable")
             source_leaf = [item for item in parents
                            if item.source_kind == "native-input"
-                           and item.payload_digest == event_handle.payload_sha256]
+                           and item.payload_digest == event_handle.payload_sha256
+                           and item.origin_id == f"{observer.origin_id}:{event_handle.event_id}"]
             if len(source_leaf) != 1:
                 raise AuthorityDenied("channel.lineage", "event source closure has no unique input leaf")
             parent_ceiling = frozenset.intersection(*(frozenset(item.recipient_ceiling) for item in parents))
@@ -1357,7 +1361,8 @@ class AuthorityService:
                 issuer_id="host-authority:root-channel-event-v129",
                 source_kind="native-input", principal_id=binding.principal_id,
                 profile_id=binding.profile_id, namespace_id=binding.namespace_id,
-                uid=binding.uid, origin_id=f"{event_handle.resource_id}:{event_handle.event_id}",
+                uid=binding.uid,
+                origin_id=f"{source_leaf[0].origin_id}:channel:{channel_ingress_id}",
                 process_generation=generation, payload_digest=canonical_digest(record.payload),
                 sensitivity=max((Sensitivity.PRIVATE, *(item.sensitivity for item in parents)),
                                 key=lambda value: list(Sensitivity).index(value)),
