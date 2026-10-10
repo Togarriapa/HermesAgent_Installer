@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -73,11 +73,13 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         pid = os.getpid()
         executable = Path(sys.executable).resolve()
         tracked = []
+        observed_modules = {}
         for name, module in tuple(sys.modules.items()):
             if name == "hermes_installer" or name.startswith("hermes_installer."):
                 origin = getattr(getattr(module, "__spec__", None), "origin", None)
                 if origin is not None:
                     tracked.append((name, origin, 0, 0, "0" * 64))
+                    observed_modules[name] = module
         pidfd, pidfd_writer = os.pipe()
         actor = RootActorObservation(
             _SEAL, pid=pid, uid=0, gid=0, start_time=123,
@@ -105,21 +107,34 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                  patch("hermes_installer.authority.installer_release._namespace_inodes", return_value=()), \
                  patch("hermes_installer.authority.installer_release._isolated_import_facts", return_value=()), \
                  patch("hermes_installer.authority.installer_release._verify_actor_path"), \
+                 patch("hermes_installer.authority.installer_release.sys",
+                       SimpleNamespace(modules=observed_modules)), \
                  patch.object(Path, "resolve", resolve_process_executable):
                 actor.verify_current(LiveRelease())
+
+                originless_name = "hermes_installer.originless_for_test"
+                originless = ModuleType(originless_name)
+                originless.__spec__ = importlib.util.spec_from_loader(
+                    originless_name, loader=None, origin=None)
+                observed_modules[originless_name] = originless
+                try:
+                    with self.assertRaisesRegex(InstallerReleaseError, "unreviewed Hermes installer module"):
+                        actor.verify_current(LiveRelease())
+                finally:
+                    del observed_modules[originless_name]
 
                 injected_name = "hermes_installer.unreviewed_injected_for_test"
                 injected = ModuleType(injected_name)
                 injected.__spec__ = importlib.util.spec_from_loader(injected_name, loader=None,
                                                                      origin="/tmp/unreviewed.py")
-                sys.modules[injected_name] = injected
+                observed_modules[injected_name] = injected
                 try:
                     with self.assertRaisesRegex(InstallerReleaseError, "unreviewed Hermes installer module"):
                         actor.verify_current(LiveRelease())
                 finally:
-                    del sys.modules[injected_name]
+                    del observed_modules[injected_name]
 
-                module = sys.modules["hermes_installer.authority.installer_release"]
+                module = observed_modules["hermes_installer.authority.installer_release"]
                 prior_origin = module.__spec__.origin
                 module.__spec__.origin = "/tmp/substituted-installer-release.py"
                 try:
