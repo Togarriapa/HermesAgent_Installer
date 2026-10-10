@@ -130,3 +130,5 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 - [ ] VD-T191.4 Verify actual two-actor source/commit/run/completion and negative currentness/ACK/replay failures. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.
 
 - [ ] VD-T192.2 Verify actual selected PM/package views, loader/proc proof and conflict/source/readability failures. See `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; acceptance OPEN.
+
+- [ ] VD-T193.2 Verify five readonly member binds/source0700/target custody and failure cleanup. See `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; acceptance OPEN.

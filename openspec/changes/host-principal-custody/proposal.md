@@ -319,3 +319,6 @@ Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-cust
 
 
 Selected view paths v192: `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md` separates host source executable custody from fixed worker argv/path, retains byte-identical full PM venv/base closure and actual native output/package/helper views, and requires postmount inode/hash proof before release. No caller paths or broad host exposure; pins/acceptance remain OPEN.
+
+
+Selected member custody v193: `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md` permits only exact five native-output file binds into a separately owned readable target tree, preserving original protected root/member proof and empty hidden source parents; exact private selected/observed APIs distinguish source and target identity. All pins/acceptance OPEN.

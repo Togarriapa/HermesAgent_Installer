@@ -95,3 +95,6 @@ Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-cust
 
 
 Native selected views v192: `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; HI-T192.1 → VD-T192.2 OPEN, source host identity distinct from actual worker mount/argv, full PM/native closure preserved. All AC01..18 OPEN.
+
+
+Native member custody v193: `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; HI-T193.1 → VD-T193.2 OPEN, source root/member versus actual owned target identities distinct. All AC01..18 OPEN.

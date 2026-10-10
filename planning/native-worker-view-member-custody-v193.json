@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md",
+  "sparse_view_kind": "native-runtime-output",
+  "maximum_selected_output_members": 5,
+  "target_root_fields": [
+    "view_kind",
+    "worker_mount_path",
+    "target_device",
+    "target_inode",
+    "target_uid",
+    "target_gid",
+    "target_mode",
+    "mount_id"
+  ],
+  "member_fields": [
+    "view_kind",
+    "relative_path",
+    "source_device",
+    "source_inode",
+    "source_sha256",
+    "target_device",
+    "target_inode",
+    "target_sha256",
+    "target_uid",
+    "target_gid",
+    "target_mode",
+    "mount_id"
+  ],
+  "tasks": [
+    "HI-T193.1",
+    "VD-T193.2"
+  ],
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "source_pins": "pending coherent committed cohort"
+}

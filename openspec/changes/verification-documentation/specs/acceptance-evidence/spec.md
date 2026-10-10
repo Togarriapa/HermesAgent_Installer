@@ -855,3 +855,15 @@ The manager SHALL separate host source identity from worker-visible executable/a
 #### Scenario: View not proven
 - **WHEN** source dependency, readable contract, mount, executable or package proof is absent or changed
 - **THEN** startup SHALL deny without unmasking broad host roots or caller path/environment fallback
+
+
+### Requirement: Distinct native view source and target custody v193
+The manager SHALL enforce exact source/member/owned target proof under `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; a synthetic target root SHALL NOT be relabeled as the source directory inode.
+
+#### Scenario: Protected output source directory not traversable
+- **WHEN** the exact five held native output files are individually readonly bound into a root-owned readable private view
+- **THEN** source root permissions SHALL remain intact and actual target root/member identity SHALL be independently observed
+
+#### Scenario: Sparse view not exact
+- **WHEN** target has extra/changed/unreadable member, foreign mount or unproven source/current namespace
+- **THEN** startup SHALL deny without source permission repair or broad host exposure
