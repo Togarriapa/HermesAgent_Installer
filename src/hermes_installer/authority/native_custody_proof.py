@@ -37,6 +37,51 @@ _PROGRESS_FIELDS = frozenset({
 })
 _PHASES = ("entrypoint-imported", "actions-registered", "ready")
 _DIGEST_FIELDS = ("entrypoint_sha256", "resolver_sha256")
+_OWNER_OVERLAY_OBSERVER_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootActiveOwnerOverlayLoaderObserver:
+    """Root-minted loader selector for one published local operation.
+
+    This is deliberately distinct from SourceObserverEnrollment: a local
+    Resources operation is a native registration, not a backend action. The
+    loader proof still requires the exact selected role module and READY
+    registration observation.
+    """
+
+    observer_enrollment_id: str
+    profile_id: str
+    generation: str
+    package_id: str
+    native_package_generation: str
+    role_id: str
+    role_artifact_id: str
+    role_sha256: str
+    role_source_receipt_handle: str
+    role_module_name: str
+    role_closure_member_path: str
+    role_source_revision: str
+    role_source_tree_sha256: str
+    registration_id: str
+    lease_seconds: int
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _OWNER_OVERLAY_OBSERVER_SEAL
+                or not self.registration_id.startswith("resource-overlay-store:tool:resource_overlay_")
+                or self.lease_seconds != 30):
+            raise TypeError("active owner-overlay loader observers are root-issued")
+
+    @classmethod
+    def _issue(cls, **values: Any) -> "RootActiveOwnerOverlayLoaderObserver":
+        expected = {"observer_enrollment_id", "profile_id", "generation", "package_id",
+                    "native_package_generation", "role_id", "role_artifact_id", "role_sha256",
+                    "role_source_receipt_handle", "role_module_name", "role_closure_member_path",
+                    "role_source_revision", "role_source_tree_sha256", "registration_id", "lease_seconds"}
+        if set(values) != expected:
+            raise TypeError("owner-overlay loader observer fields differ from the fixed contract")
+        return cls(**values, _seal=_OWNER_OVERLAY_OBSERVER_SEAL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1075,6 +1120,10 @@ class RootNativeLoaderObservationStore:
             getattr(observer, "role_sha256", None),
             getattr(observer, "source_action_id", None),
         )
+        owner_overlay_observer = (
+            type(observer) is RootActiveOwnerOverlayLoaderObserver
+            and observer._seal is _OWNER_OVERLAY_OBSERVER_SEAL
+        )
         role = next((item for item in selection.process_roles
                      if item.role_id == getattr(observer, "role_id", None)), None)
         observed_role = (None if not entry.progress else next(
@@ -1090,8 +1139,14 @@ class RootNativeLoaderObservationStore:
                 or getattr(observer, "role_closure_member_path", None) != role.closure_member_path
                 or getattr(observer, "role_source_revision", None) != role.role_source_revision
                 or getattr(observer, "role_source_tree_sha256", None) != role.role_source_tree_sha256
-                or observer_role_binding not in selection.observer_role_action_bindings
-                or getattr(observer, "source_action_id", None) not in selection.registered_action_ids
+                or (owner_overlay_observer and (
+                    observer.registration_id not in role.registration_ids
+                    or observer.registration_id not in selection.registered_registration_ids
+                ))
+                or (not owner_overlay_observer and (
+                    observer_role_binding not in selection.observer_role_action_bindings
+                    or getattr(observer, "source_action_id", None) not in selection.registered_action_ids
+                ))
                 or observed_role is None
                 or not set(role.registration_ids).issubset(entry.progress[-1].registered_registration_ids)):
             raise AuthorityDenied("native.observer", "protected observer role or action is outside loaded package closure")

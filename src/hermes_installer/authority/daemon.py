@@ -292,12 +292,21 @@ def _finalize_active_setup_choice_registry(*, service: AuthorityService,
         try:
             from .local_resource_effects import RootActiveLocalOwnerPrincipalRegistry
             local_owner_principal = RootActiveLocalOwnerPrincipalRegistry.from_root_runtime(runtime)
-            runtime = replace(runtime, active_local_owner_principal_registry=local_owner_principal)
+            from .local_resource_effects import RootActiveOwnerOverlayRegistry
+            owner_overlay_registry = RootActiveOwnerOverlayRegistry.from_root_runtime(
+                runtime, local_owner_principal,
+            )
+            runtime = replace(
+                runtime, active_local_owner_principal_registry=local_owner_principal,
+                active_owner_overlay_registry=owner_overlay_registry,
+                local_owner_overlay_unavailable_reason=None,
+            )
         except Exception as exc:
             # Local-owner resources are independent of Authentik. An absent
             # or stale local adoption disables only that exact feature lane.
             runtime = replace(
                 runtime, active_local_owner_principal_registry=None,
+                active_owner_overlay_registry=None,
                 local_owner_overlay_unavailable_reason=(
                     f"active local-owner principal registry is unavailable ({type(exc).__name__})"
                 ),

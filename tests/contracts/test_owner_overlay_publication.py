@@ -19,6 +19,7 @@ from hermes_installer.authority.local_resource_effects import (
     RootActiveLocalOwnerPrincipalRegistry,
     RootCurrentActiveLocalOwnerPrincipalSnapshot,
 )
+from hermes_installer.authority.native_custody_proof import RootActiveOwnerOverlayLoaderObserver
 
 
 def _projection():
@@ -155,3 +156,21 @@ def test_active_local_owner_snapshot_cannot_be_forged():
     )
     with pytest.raises(TypeError):
         RootCurrentActiveLocalOwnerPrincipalSnapshot(**fields)
+
+
+def test_local_owner_loaded_role_selector_is_separate_and_root_minted():
+    fields = {
+        "observer_enrollment_id": "observer", "profile_id": "service-profile",
+        "generation": "generation", "package_id": "package",
+        "native_package_generation": "generation", "role_id": "hermes-native-invocations-v1",
+        "role_artifact_id": "role-artifact", "role_sha256": "1" * 64,
+        "role_source_receipt_handle": "receipt", "role_module_name": "hermes.role",
+        "role_closure_member_path": "hermes/role.py", "role_source_revision": "release",
+        "role_source_tree_sha256": "2" * 64,
+        "registration_id": "resource-overlay-store:tool:resource_overlay_read",
+        "lease_seconds": 30,
+    }
+    selector = RootActiveOwnerOverlayLoaderObserver._issue(**fields)
+    assert selector.registration_id == fields["registration_id"]
+    with pytest.raises(TypeError):
+        RootActiveOwnerOverlayLoaderObserver(**fields, _seal=object())
