@@ -11,6 +11,7 @@ from hermes_installer.authority.native_policy_preparation import (
     _issue_root_native_policy_configuration_choice,
     _validate_choice,
     _source_coverage,
+    _selection_matches_choice_payload,
     RootNativePolicyPreparationSelection,
     _SELECTION_SEAL,
 )
@@ -77,7 +78,8 @@ def test_all_reviewed_registrations_remain_pending_until_real_joins_exist() -> N
         "3" * 64, "choice-1", "session-1", "transaction-1", "b" * 64,
         "generation-1", "c" * 64, "d" * 64, "f" * 64, "e" * 64, "1" * 64,
         "profile-1", "service-generation-1", None, "hermes-agent-native-package-v1",
-        None, ("some-selected-component",), (), (), (), (), None, "2" * 64,
+        None, ("some-selected-component",), (), (), (), (), None, "setup-choice-1", 1, "5" * 64,
+        "2" * 64,
         "4" * 64, now, now + 60, 0, _SELECTION_SEAL,
     )
     rows = _source_coverage(selection, {})
@@ -85,3 +87,41 @@ def test_all_reviewed_registrations_remain_pending_until_real_joins_exist() -> N
     assert len({row.registration_id for row in rows}) == 42
     assert {row.configuration_state for row in rows} == {"configurable-pending"}
     assert all(row.missing_prerequisite_ids for row in rows)
+
+
+def test_signed_choice_payload_must_match_every_selected_policy_field() -> None:
+    now = time.monotonic()
+    selection = RootNativePolicyPreparationSelection(
+        "3" * 64, "choice-1", "session-1", "transaction-1", "b" * 64,
+        "generation-1", "c" * 64, "d" * 64, "f" * 64, "e" * 64, "1" * 64,
+        "profile-1", "service-generation-1", None, "hermes-agent-native-package-v1",
+        "package-generation-1", ("some-selected-component",),
+        ("agent37-discovery:tool:agent37_discover_skills",), (), (), (), None,
+        "setup-choice-1", 1, "5" * 64, "2" * 64, "4" * 64,
+        now, now + 60, 1, _SELECTION_SEAL,
+    )
+    payload = {
+        "choice_observation_id": "choice-1",
+        "setup_session_id": "session-1",
+        "transaction_handle": "transaction-1",
+        "plan_sha256": "b" * 64,
+        "prepared_generation_id": "generation-1",
+        "prepared_generation_digest": "c" * 64,
+        "principal_selection_handle": "d" * 64,
+        "principal_binding_sha256": "e" * 64,
+        "namespace_selection_handle": "f" * 64,
+        "namespace_binding_sha256": "1" * 64,
+        "service_profile_id": "profile-1",
+        "service_generation": "service-generation-1",
+        "resource_profile_selection_handle": None,
+        "package_id": "hermes-agent-native-package-v1",
+        "native_package_generation": "package-generation-1",
+        "selected_component_ids": ["some-selected-component"],
+        "selected_registration_ids": ["agent37-discovery:tool:agent37_discover_skills"],
+        "selected_action_binding_ids": [],
+        "controller_binding_handle": "2" * 64,
+        "private_input_consent_selection_handle": None,
+    }
+    assert _selection_matches_choice_payload(selection, payload)
+    payload["selected_action_binding_ids"] = ["unselected-action"]
+    assert not _selection_matches_choice_payload(selection, payload)
