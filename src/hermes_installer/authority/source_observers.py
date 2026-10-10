@@ -1410,6 +1410,7 @@ class SourceObserverRegistry:
             self._pending.clear()
             self._pending_bytes = 0
             self._proofs_pending.clear()
+            self._selected_input_proofs.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
