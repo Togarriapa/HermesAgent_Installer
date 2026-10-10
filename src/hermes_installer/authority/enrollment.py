@@ -835,6 +835,8 @@ class ProtectedEnrollment:
     private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_model_selection_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -1071,6 +1073,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "remote_startup_enrollments", "private_loopback_networks",
             "selected_resource_executions",
             "selected_application_runtimes",
+            "private_memory_endpoint_selections", "private_memory_model_selections",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -1090,12 +1093,38 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "source_issuers", "native_mcp_tool_bindings",
                    "resource_controller_roles", "remote_observation_enrollments",
                    "remote_startup_enrollments", "private_loopback_networks",
-                   "selected_resource_executions", "selected_application_runtimes")
+                   "selected_resource_executions", "selected_application_runtimes",
+                   "private_memory_endpoint_selections", "private_memory_model_selections")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
+    # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
+    try:
+        from hermes_installer.protected_enrollment import (
+            RootSelectedPrivateMemoryEndpointBinding,
+            RootSelectedPrivateMemoryModelBinding,
+        )
+        endpoints = {}
+        for row in item["private_memory_endpoint_selections"]:
+            selected = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            if selected.binding_id in endpoints:
+                raise ValueError("duplicate endpoint binding ID")
+            endpoints[selected.binding_id] = selected
+        models = set()
+        for row in item["private_memory_model_selections"]:
+            selected = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            if selected.binding_id in models or selected.endpoint_binding_id not in endpoints:
+                raise ValueError("duplicate model binding or unknown endpoint foreign key")
+            models.add(selected.binding_id)
+    except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError) as exc:
+        raise AuthorityDenied("enrollment.generation", "private memory model selection catalog is invalid") from exc
     native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
     composio_channel_records = _parse_composio_channel_enrollment_records(
         item["composio_channel_enrollments"],
@@ -2402,6 +2431,10 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             memory_enrollments=memory_enrollments,
             parameter_schemas=service_generations["operation_parameter_schemas"],
             selected_application_runtimes=service_generations["selected_application_runtimes"],
+            native_schema_artifacts=service_generations["native_schema_artifacts"],
+            native_mcp_tool_bindings=service_generations["native_mcp_tool_bindings"],
+            private_memory_endpoint_selections=service_generations["private_memory_endpoint_selections"],
+            private_memory_model_selections=service_generations["private_memory_model_selections"],
         )
         generation_profiles = {}
         for service_record in service_generations["service_records"]:
@@ -2451,6 +2484,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_loopback_networks"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_resource_executions"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_application_runtimes"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_endpoint_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
     )
 
 
