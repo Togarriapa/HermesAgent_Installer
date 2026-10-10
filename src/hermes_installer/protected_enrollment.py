@@ -477,6 +477,61 @@ class HostServiceProfile:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryServiceEnablementProjection:
+    """Digest-covered active projection of the explicit root service choice.
+
+    This is deliberately only a projection row.  The retained root TTY choice
+    registry verifies the signed choice and revocation index independently;
+    neither this row nor its handle is a process-start grant.
+    """
+
+    selection_handle: str
+    choice_observation_id: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    provider: str
+    backend_variant: str
+    service_enrollment_id: str
+    service_generation: str
+    memory_owner_generation: int
+    start_operation_id: str
+    policy_revision: str
+    selection_digest: str
+    state: str
+    revocation_epoch: int
+
+    _FIELDS = frozenset({
+        "selection_handle", "choice_observation_id", "principal_id", "profile_id",
+        "namespace_id", "provider", "backend_variant", "service_enrollment_id",
+        "service_generation", "memory_owner_generation", "start_operation_id",
+        "policy_revision", "selection_digest", "state", "revocation_epoch",
+    })
+
+    @classmethod
+    def from_protected_record(cls, row: Mapping[str, Any]) -> "MemoryServiceEnablementProjection":
+        if not isinstance(row, Mapping) or set(row) != cls._FIELDS:
+            raise EnrollmentDenied("memory service enablement projection fields differ from v124")
+        text_fields = cls._FIELDS - {"memory_owner_generation", "revocation_epoch", "state"}
+        for name in text_fields:
+            _id(row[name], f"memory service enablement {name}")
+        if (not isinstance(row["state"], str)
+                or row["state"] not in {"enabled", "disabled", "revoked"}):
+            raise EnrollmentDenied("memory service enablement state is invalid")
+        if (type(row["memory_owner_generation"]) is not int or row["memory_owner_generation"] < 1
+                or type(row["revocation_epoch"]) is not int or row["revocation_epoch"] < 1):
+            raise EnrollmentDenied("memory service enablement owner or revocation epoch is invalid")
+        claims = {key: value for key, value in row.items() if key != "selection_digest"}
+        expected = hashlib.sha256(_canonical(claims)).hexdigest()
+        if row["selection_digest"] != expected:
+            raise EnrollmentDenied("memory service enablement selection digest is invalid")
+        return cls(**dict(row))
+
+    def as_mapping(self) -> Mapping[str, Any]:
+        return MappingProxyType({name: getattr(self, name) for name in self._FIELDS})
+
+
 class ProtectedEnrollmentCatalog:
     """Immutable root-owned mapping from caller opaque IDs to service policy."""
 
@@ -484,6 +539,7 @@ class ProtectedEnrollmentCatalog:
                  native_packages: list[Mapping[str, Any]] | None = None,
                  source_issuers: tuple[Any, ...] | list[Any] | None = None,
                  memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
+                 memory_service_enablement_projections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  parameter_schemas: list[Mapping[str, Any]] | None = None,
                  selected_application_runtimes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  native_schema_artifacts: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
@@ -758,6 +814,18 @@ class ProtectedEnrollmentCatalog:
             # signed snapshot preimage.
             selected_applications[application_id] = MappingProxyType(frozen)
         self._selected_application_runtimes = MappingProxyType(selected_applications)
+        enablement_rows: dict[tuple[str, str], MemoryServiceEnablementProjection] = {}
+        raw_enablement_rows = memory_service_enablement_projections or ()
+        if not isinstance(raw_enablement_rows, (tuple, list)):
+            raise EnrollmentDenied("active memory service enablement projections are malformed")
+        for raw in raw_enablement_rows:
+            projection = MemoryServiceEnablementProjection.from_protected_record(raw)
+            key = (projection.service_enrollment_id, projection.service_generation)
+            if key in enablement_rows:
+                raise EnrollmentDenied("active memory service enablement projection is duplicated")
+            self._validate_memory_service_enablement_join(projection)
+            enablement_rows[key] = projection
+        self._memory_service_enablement_projections = MappingProxyType(enablement_rows)
         parsed_schemas = {}
         for raw in parameter_schemas or []:
             schema = (raw if isinstance(raw, OperationParameterSchema)
@@ -939,6 +1007,7 @@ class ProtectedEnrollmentCatalog:
                               native_packages: list[Mapping[str, Any]] | None = None,
                               source_issuers: tuple[Any, ...] | list[Any] | None = None,
                               memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
+                              memory_service_enablement_projections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               parameter_schemas: list[Mapping[str, Any]] | None = None,
                               selected_application_runtimes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               native_schema_artifacts: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
@@ -962,6 +1031,7 @@ class ProtectedEnrollmentCatalog:
         return cls(records, digest=protected_digest, native_packages=native_packages,
                    source_issuers=source_issuers,
                    memory_enrollments=memory_enrollments,
+                   memory_service_enablement_projections=memory_service_enablement_projections,
                    parameter_schemas=parameter_schemas,
                    selected_application_runtimes=selected_application_runtimes,
                    native_schema_artifacts=native_schema_artifacts,
@@ -1120,6 +1190,70 @@ class ProtectedEnrollmentCatalog:
         if row is None:
             raise EnrollmentDenied("selected application runtime is not enrolled")
         return row
+
+    def _validate_memory_service_enablement_join(
+            self, projection: MemoryServiceEnablementProjection) -> None:
+        """Validate one compiler projection against its exact active rows."""
+        memory = self._memory_enrollments.get(
+            (projection.service_enrollment_id, projection.service_generation))
+        if memory is None:
+            raise EnrollmentDenied("memory enablement projection has no active memory enrollment")
+        from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+        if type(memory) is not MemoryServiceEnrollment:
+            raise EnrollmentDenied("memory enablement projection requires a typed active enrollment")
+        service = self._records.get((memory.service_enrollment_id, memory.service_generation))
+        if service is None:
+            raise EnrollmentDenied("memory enablement projection has no active service profile")
+        lifecycle = memory.lifecycle_binding
+        selection_handle = getattr(lifecycle, "enablement_selection_handle", None)
+        expected = {
+            "principal_id": memory.principal_id,
+            "profile_id": memory.profile_id,
+            "namespace_id": memory.namespace_identity,
+            "provider": memory.provider,
+            "backend_variant": memory.backend_variant,
+            "service_enrollment_id": memory.service_enrollment_id,
+            "service_generation": memory.service_generation,
+            "memory_owner_generation": memory.memory_owner_generation,
+            "start_operation_id": getattr(lifecycle, "start_operation_id", None),
+        }
+        if (lifecycle is None or not selection_handle
+                or selection_handle != projection.selection_handle
+                or service.profile_id != memory.profile_id
+                or service.principal_id != memory.principal_id
+                or service.generation != memory.service_generation
+                or service.namespace_identity != memory.namespace_identity
+                or any(getattr(projection, key) != value for key, value in expected.items())):
+            raise EnrollmentDenied("memory enablement projection differs from active owner, service, or start recipe")
+
+    @property
+    def memory_service_enablement_projections(
+            self) -> Mapping[tuple[str, str], MemoryServiceEnablementProjection]:
+        return self._memory_service_enablement_projections
+
+    def resolve_current_memory_service_enablement_selection(
+            self, enrollment: Any, *, service_generation_digest: str) -> Mapping[str, Any]:
+        """Resolve the current digest-bound v124 projection for one exact enrollment.
+
+        The signed root TTY choice and its durable revocation index are checked
+        by RootMemoryServiceEnablementRegistry on every use.  This catalog
+        method only confirms that the active compiled projection, service row,
+        and memory enrollment remain the exact same generation.
+        """
+        from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+        if (service_generation_digest != self.digest
+                or type(enrollment) is not MemoryServiceEnrollment):
+            raise EnrollmentDenied("memory service enablement selection is stale or untyped")
+        key = (enrollment.service_enrollment_id, enrollment.service_generation)
+        if self._memory_enrollments.get(key) is not enrollment:
+            raise EnrollmentDenied("memory service enablement enrollment is not the active catalog object")
+        projection = self._memory_service_enablement_projections.get(key)
+        if projection is None:
+            raise EnrollmentDenied("active memory service enablement projection is absent")
+        self._validate_memory_service_enablement_join(projection)
+        if projection.state != "enabled":
+            raise EnrollmentDenied("memory service enablement is disabled or revoked")
+        return projection.as_mapping()
 
     def resolve(self, enrollment_id: str, generation: str) -> HostServiceProfile:
         key = (_id(enrollment_id, "enrollment ID"), _id(generation, "generation"))
