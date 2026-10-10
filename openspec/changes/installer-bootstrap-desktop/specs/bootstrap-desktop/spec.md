@@ -805,3 +805,17 @@ The installer SHALL apply only the exact committed source/member/catalog/role/im
 #### Scenario: Source evidence does not activate runtime
 - **WHEN** source review or fixture tests pass but actual loaded/current source, helper, invocation, health or target evidence is absent
 - **THEN** affected execution SHALL remain denied or unavailable and all original AC01..AC18 acceptance SHALL remain OPEN
+
+
+## ADDED Requirements
+
+### Requirement: Safe finite bootstrap failure diagnosis
+The installer SHALL report bootstrap OS failures only through the exact finite step/errno contract and reviewed source rows in `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md`, preserving all source/actor/runtime custody guards.
+
+#### Scenario: Private or malformed failure detail
+- **WHEN** an OS failure has a private filename/message, unknown errno, mutated fields or a hostile diagnostic subclass
+- **THEN** public output SHALL contain only revalidated finite step/errno strings or a fixed category and SHALL expose no raw detail or authority waiver
+
+#### Scenario: Exact source application remains separate from target success
+- **WHEN** the two reviewed source tuples are applied and source tests pass
+- **THEN** actual candidate publication, installed execution and all original runtime/target acceptance SHALL still require their genuine evidence

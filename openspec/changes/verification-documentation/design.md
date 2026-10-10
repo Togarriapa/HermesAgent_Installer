@@ -113,3 +113,8 @@ Health causal ancestry v194: `plans/amendments/2026-10-10-health-event-causal-an
 ## Final coherent source review v195
 
 Exact closed source/member/catalog/preload application under existing VD-T180.6/VD-T183.5: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`. Source0add8c33 follows reviewed nested leaf corrections; metadata self-pinning is excluded. All original implementation/acceptance tasks and AC01..AC18 remain OPEN.
+
+
+## Safe bootstrap diagnostics v196
+
+Exact finite output redaction, reviewed two-member source update and ownership/evidence: `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md` / `planning/safe-bootstrap-diagnostics-source-review-v196.json`. Guards/phases and all acceptance remain unchanged; actual source-CAS failure diagnosis is independent of still-open display/task runtime custody.
