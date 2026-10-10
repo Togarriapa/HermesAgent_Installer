@@ -275,3 +275,5 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 
 - [ ] `HI-T187.1` Produce verified installed root daemon supervisor/unit/launch and distinct peer observations. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
 - [ ] `HI-T187.2` Implement actual both-process authenticated activation channel and one-use exact listener FD adoption. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+
+- [ ] HI-T191.3 Wire fixed authenticated setup intent and current completed witness at genuine two-process callpoints. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.

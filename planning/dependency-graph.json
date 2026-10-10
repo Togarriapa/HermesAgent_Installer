@@ -2804,5 +2804,18 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "two_actor_health_v191": {
+    "amendment": "plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md",
+    "wire_contract": "planning/two-actor-health-custody-v191.json",
+    "order": [
+      "HI-T191.1",
+      "HI-T191.2",
+      "HI-T191.3",
+      "VD-T191.4"
+    ],
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

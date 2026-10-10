@@ -405,3 +405,5 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T189.1 Implement exact committed PM executable descriptor/private resolver/parser-runtime consumer. See `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; all acceptance OPEN.
 
 - [ ] HI-T190.1 Implement exact helper/manager staged namespace gate and same-PID release. See `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md`; acceptance OPEN.
+
+- [ ] HI-T191.1/2 Implement exact source/run producer and independent daemon commit/health consumer. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.

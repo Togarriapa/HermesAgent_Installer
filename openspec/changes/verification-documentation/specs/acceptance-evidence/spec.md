@@ -831,3 +831,15 @@ The manager/helper SHALL implement the exact schema2 protocol in `plans/amendmen
 #### Scenario: Missing or changed observed namespace grant
 - **WHEN** gate or peer/source/probe/release evidence is absent, replayed or mismatched
 - **THEN** app start and network lease SHALL deny with verified owned cleanup
+
+
+### Requirement: Two-actor same-generation functional health v191
+The installer SHALL enforce the independent daemon commit/source proof and fixed authenticated setup health intent in `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`, without transferring live setup authority.
+
+#### Scenario: Real daemon health completion
+- **WHEN** the actual selected source/native run produces passed same-generation semantic health and verified terminal cleanup
+- **THEN** only its concrete root consumer MAY issue the current committed journal witness used for functional enablement
+
+#### Scenario: Transport or copied setup proof only
+- **WHEN** only ACK, copied DTO, wrong generation/source, stale intent or incomplete observer/terminal evidence exists
+- **THEN** functional enablement SHALL remain pending with one-use reconciliation and owned cleanup
