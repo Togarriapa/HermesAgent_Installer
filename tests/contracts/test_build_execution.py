@@ -16,11 +16,23 @@ import pytest
 from hermes_installer.authority.build_execution import (
     BuildOutputSpec, ContentAddressedBuildStore, LinuxBuildOutputFactInspector,
     ManagedBuildResult, ProtectedBuildArtifactRootResolver, RootBuildExecutionService,
-    managed_process_identity_digest,
+    managed_process_identity_digest, _resolve_argv_recipe,
 )
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
+
+
+def test_application_only_mount_ids_do_not_expand_generic_build_grammar():
+    recipe = (
+        {"build_path": {"mount_id": "builder", "relative_path": ""}},
+        {"build_path": {"mount_id": "packages", "relative_path": ""}},
+    )
+    with pytest.raises(AuthorityDenied):
+        _resolve_argv_recipe(recipe)
+    assert _resolve_argv_recipe(recipe, additional_mount_ids=("packages",)) == recipe
+    with pytest.raises(AuthorityDenied):
+        _resolve_argv_recipe(recipe, additional_mount_ids=("caller-path",))
 
 
 def _test_temp_parent() -> str:

@@ -5577,6 +5577,16 @@ class ManagedBuildJobRunner:
         "work": "/run/hermes-installer/build/work",
         "output": "/run/hermes-installer/build/output",
     }
+    # These targets are reserved for the finite application-environment build
+    # adapter. They are intentionally absent from the generic/Xpra recipe
+    # grammar and are supplied only by that adapter after selection recheck.
+    _APPLICATION_MOUNTS = {
+        "packages": "/run/hermes-installer/build/packages",
+        "backend": "/run/hermes-installer/build/backend",
+        "uv": "/run/hermes-installer/build/uv",
+        "recipe": "/run/hermes-installer/build/recipe",
+        "python-runtime": "/run/hermes-installer/build/python-runtime",
+    }
 
     def __init__(self, manager: ManagedProcessEffectHandler, *,
                  process_profile_resolver: Callable[[str, str], ManagedProfileCustody],
@@ -6283,6 +6293,7 @@ class ManagedBuildJobRunner:
                  root_selection_digest: str | None = None,
                  root_effect_check: Callable[[], bool] | None = None,
                  output_root_fd: int | None = None,
+                 additional_readonly_mounts: Mapping[str, Path] | None = None,
                  require_root_effect: bool = False):
         manager = self.manager
         job_id = uuid.uuid4().hex
@@ -6356,7 +6367,14 @@ class ManagedBuildJobRunner:
                 self._validate_output_root_fd(output_root_info, profile.owner_uid, profile.owner_gid)
                 if os.listdir(output_root_fd):
                     raise AuthorityDenied("build.output", "selected output directory is not empty")
-            self._prepare_mount_targets()
+            extra_mounts = dict(additional_readonly_mounts or {})
+            if (set(extra_mounts) - set(self._APPLICATION_MOUNTS)
+                    or any(key not in mount_targets or mount_targets[key] != self._APPLICATION_MOUNTS[key]
+                           for key in extra_mounts)):
+                raise AuthorityDenied("build.mount", "application build mount set is outside its fixed allowlist")
+            if set(mount_targets) != set(self._MOUNTS) | set(extra_mounts):
+                raise AuthorityDenied("build.mount", "build mount targets differ from the selected fixed recipe")
+            self._prepare_mount_targets(mount_targets)
             manager._ensure_root_runtime_directory(Path("/run/hermes-installer/build-jobs"), 0o700)
             job_root.mkdir(mode=0o700)
             os.chown(job_root, 0, 0)
@@ -6379,9 +6397,10 @@ class ManagedBuildJobRunner:
                 "work": work,
                 "output": Path(inputs.output_root),
             }
+            mount_inputs.update({name: Path(path) for name, path in extra_mounts.items()})
             self._verify_file(mount_inputs["builder"], inputs.builder_sha256, executable=True)
             for name, path in mount_inputs.items():
-                if name in {"source", "toolchain", "builder"}:
+                if name in {"source", "toolchain", "builder", *extra_mounts}:
                     self._protect_build_mount(path, readonly=True)
                 else:
                     self._protect_build_mount(path, readonly=False)
@@ -6416,6 +6435,10 @@ class ManagedBuildJobRunner:
                 # rejects the namespace if an unprefixed masked path is absent.
                 "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
             ]
+            properties.extend(
+                "--property=BindReadOnlyPaths=" + str(mount_inputs[name]) + ":" + mount_targets[name]
+                for name in sorted(extra_mounts)
+            )
             if profile.memory_max_bytes is not None:
                 properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
             if profile.cpu_quota_percent is not None:
@@ -6478,7 +6501,8 @@ class ManagedBuildJobRunner:
                         break
                     raise
                 if main_pid is None:
-                    observed = self._capture_build_identity(unit, cgroup, inputs, profile)
+                    observed = self._capture_build_identity(unit, cgroup, inputs, profile,
+                                                            mount_targets=mount_targets)
                     if observed is not None:
                         main_pid = observed["pid"]
                         start_ticks = observed["ticks"]
@@ -6695,7 +6719,8 @@ class ManagedBuildJobRunner:
 
     def _capture_build_identity(self, unit: str, cgroup: str, inputs: Any,
                                 profile: ManagedProfileCustody, *,
-                                output_readonly: bool = False) -> Mapping[str, Any] | None:
+                                output_readonly: bool = False,
+                                mount_targets: Mapping[str, str] | None = None) -> Mapping[str, Any] | None:
         manager = self.manager
         pidfd: int | None = None
         def reject(reason: str) -> None:
@@ -6781,7 +6806,8 @@ class ManagedBuildJobRunner:
                     pidfd = None
                     return reject("unit_property")
                 readback[key] = actual
-            self._verify_build_mountinfo(pid, self._MOUNTS, output_readonly=output_readonly)
+            self._verify_build_mountinfo(pid, mount_targets or self._MOUNTS,
+                                        output_readonly=output_readonly)
             if (_pidfd_exited(pidfd) or _pid_identity(pid) != (ticks, cgroup, device, inode)):
                 os.close(pidfd)
                 pidfd = None
@@ -6829,10 +6855,16 @@ class ManagedBuildJobRunner:
             if (readonly and "ro" not in options) or (not readonly and "rw" not in options):
                 raise AuthorityDenied("build.mount", "fixed build mount access mode differs from policy")
 
-    def _prepare_mount_targets(self) -> None:
+    def _prepare_mount_targets(self, targets: Mapping[str, str] | None = None) -> None:
         root = Path("/run/hermes-installer/build")
         self.manager._ensure_root_runtime_directory(root, 0o755)
-        for key, raw in self._MOUNTS.items():
+        targets = self._MOUNTS if targets is None else targets
+        if (not isinstance(targets, Mapping) or targets.get("builder") != self._MOUNTS["builder"]
+                or targets.get("output") != self._MOUNTS["output"]
+                or any(value not in {*self._MOUNTS.values(), *self._APPLICATION_MOUNTS.values()}
+                       for value in targets.values())):
+            raise AuthorityDenied("build.mount", "fixed build target map is malformed")
+        for key, raw in targets.items():
             target = Path(raw)
             parent = target.parent
             if parent != root:
@@ -7018,7 +7050,10 @@ class ManagedBuildJobRunner:
     @classmethod
     def _resolve_build_argv(cls, recipe: Any, targets: Mapping[str, str]) -> list[str]:
         from hermes_installer.authority.build_execution import _resolve_argv_recipe
-        normalized = _resolve_argv_recipe(recipe)
+        additional = tuple(sorted(set(targets) - set(cls._MOUNTS)))
+        if set(additional) - set(cls._APPLICATION_MOUNTS):
+            raise AuthorityDenied("build.argv", "build recipe requested an unknown app-only mount")
+        normalized = _resolve_argv_recipe(recipe, additional_mount_ids=additional)
         argv = []
         for index, node in enumerate(normalized):
             if "literal" in node:

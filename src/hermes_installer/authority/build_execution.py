@@ -95,10 +95,18 @@ def _safe_output_name(value: Any) -> str:
     return path.as_posix()
 
 
-def _resolve_argv_recipe(value: Any) -> tuple[Mapping[str, Any], ...]:
+def _resolve_argv_recipe(value: Any, *, additional_mount_ids: tuple[str, ...] = ()) -> tuple[Mapping[str, Any], ...]:
     """Validate Sol's strict tagged argv grammar before a runner sees it."""
     if not isinstance(value, (tuple, list)) or not value or len(value) > 128:
         raise AuthorityDenied("build.argv", "protected build argv recipe is malformed")
+    # Additional mounts are an internal, app-adapter-only capability. The
+    # generic/Xpra callers use the default grammar unchanged.
+    if (not isinstance(additional_mount_ids, tuple)
+            or any(item not in {"packages", "backend", "uv", "recipe", "python-runtime"}
+                   for item in additional_mount_ids)
+            or len(set(additional_mount_ids)) != len(additional_mount_ids)):
+        raise AuthorityDenied("build.argv", "application build mount extension is invalid")
+    allowed_mount_ids = set(BUILD_MOUNT_TARGETS) | set(additional_mount_ids)
     result = []
     for node in value:
         if not isinstance(node, Mapping):
@@ -116,7 +124,7 @@ def _resolve_argv_recipe(value: Any) -> tuple[Mapping[str, Any], ...]:
         if set(item) != {"mount_id", "relative_path"}:
             raise AuthorityDenied("build.argv", "build path node fields are invalid")
         mount_id, relative_path = item["mount_id"], item["relative_path"]
-        if (not isinstance(mount_id, str) or mount_id not in BUILD_MOUNT_TARGETS
+        if (not isinstance(mount_id, str) or mount_id not in allowed_mount_ids
                 or not isinstance(relative_path, str)):
             raise AuthorityDenied("build.argv", "build path mount is not an enrolled fixed mount")
         if relative_path:
