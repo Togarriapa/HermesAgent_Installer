@@ -194,13 +194,41 @@ def _local_owner_adoption_for_claim(claim):
                       "prepared_source_observer_selection_handle": handle,
                       "process_role_id": "fixture-role", "source_issuer_id": "fixture-source",
                       "source_observer_enrollment_ids": ["fixture-observer"]})
+    schema_member = {"role": "owner-overlay-capture-schema-source",
+                     "artifact_id": "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
+                     "receipt_handle": "C" * 43,
+                     "relative_path": "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py",
+                     "sha256": "7" * 64, "size_bytes": 5409, "mode": 0o444}
+    observer = {
+        "schema": 1, "observer_kind": "owner-overlay-registration-v1",
+        "observer_enrollment_id": "fixture-observer", "profile_id": "hermes-agent-native-v1",
+        "profile_generation": claim.prepared_generation_id,
+        "principal_id": choice["principal_id"], "namespace_id": choice["namespace_id"],
+        "service_enrollment_id": "fixture-service-enrollment", "package_id": "fixture-package",
+        "package_generation": "fixture-package-generation",
+        "registration_id": operation["registration_id"], "method": "read",
+        "operation_row_sha256": hashlib.sha256(_canonical(operation)).hexdigest(),
+        "source_choice_selection_handle": choice["selection_handle"],
+        "source_choice_signed_record_sha256": choice["signed_record_sha256"],
+        "choice_epoch": choice["choice_epoch"], "revocation_epoch": choice["revocation_epoch"],
+        "role_id": "fixture-role", "role_artifact_id": "fixture-module", "role_sha256": digest,
+        "role_source_receipt_handle": handle, "role_module_name": "fixture_role",
+        "role_closure_member_path": "fixture.py", "role_source_revision": "f" * 40,
+        "role_source_tree_sha256": digest, "source_issuer_id": "fixture-source",
+        "channel_id": "fixture-channel", "invocation_capture_schema_id": "native-owner-overlay-invocation-v1",
+        "result_capture_schema_id": "native-owner-overlay-result-v1",
+        "argument_schema_id": "fixture-args", "argument_schema_sha256": digest,
+        "result_schema_id": "fixture-result", "result_schema_sha256": digest,
+        "lease_seconds": 30,
+    }
     return projection, _mint_published_local_owner_adoption(
         adoption_handle=handle, identity_kind="linux-local-owner-v1", signed_choice=choice,
         adopted_at_unix=None, setup_deadline_unix=100.0, owner=owner, resources=resources,
         native_package=package, operation_records=(operation,), view_custody=view,
         source_members=({"role": "fixture-source", "artifact_id": "fixture-module",
                          "receipt_handle": handle, "relative_path": "fixture.py",
-                         "sha256": digest, "size_bytes": 1, "mode": 0o400},))
+                         "sha256": digest, "size_bytes": 1, "mode": 0o400}, schema_member),
+        owner_overlay_observer_records=(observer,))
 
 
 def test_owner_overlay_claim_rows_bind_local_domain_namespace_and_receipt_closure():

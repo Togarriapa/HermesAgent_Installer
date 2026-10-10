@@ -141,6 +141,24 @@ def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_sep
         )
 
 
+def test_owner_overlay_observer_catalog_is_generation_scoped_when_unselected():
+    service = SimpleNamespace(enrollment_id="service-a", profile_id="profile-a", generation="service-g1",
+                              principal_id="principal-a", namespace_identity="namespace-a")
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "service-g1"): service}, digest="b" * 64,
+        owner_overlay_observer_records=(),
+    )
+    assert catalog.resolve_owner_overlay_observer_records(
+        profile_id="profile-a", profile_generation="service-g1",
+        service_generation_digest="b" * 64,
+    ) == ()
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        catalog.resolve_owner_overlay_observer_records(
+            profile_id="profile-a", profile_generation="service-g1",
+            service_generation_digest="c" * 64,
+        )
+
+
 def _private_endpoint_row(**overrides):
     row = {
         "binding_id": "endpoint-selection-a", "profile_id": "profile-a",

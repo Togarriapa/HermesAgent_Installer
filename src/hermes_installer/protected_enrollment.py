@@ -571,7 +571,8 @@ class ProtectedEnrollmentCatalog:
                  public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  native_worker_network_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  active_network_generation_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                 native_worker_runtime_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
+                 native_worker_runtime_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 owner_overlay_observer_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -584,6 +585,15 @@ class ProtectedEnrollmentCatalog:
             active_network_generation_records or (), "active network generation")
         self._native_worker_runtime_records = _index_generation_rows(
             native_worker_runtime_records or (), "native worker runtime")
+        observer_rows: dict[str, Mapping[str, Any]] = {}
+        for raw in owner_overlay_observer_records or ():
+            if not isinstance(raw, Mapping):
+                raise EnrollmentDenied("owner-overlay observer row is malformed")
+            observer_id = _id(raw.get("observer_enrollment_id"), "owner-overlay observer enrollment ID")
+            if observer_id in observer_rows:
+                raise EnrollmentDenied("owner-overlay observer enrollment ID is duplicated")
+            observer_rows[observer_id] = _freeze_json_record(raw)
+        self._owner_overlay_observer_records = MappingProxyType(observer_rows)
         parsed_native = {}
         for raw in native_packages or []:
             package = NativePackageBinding.from_protected_record(raw)
@@ -1045,7 +1055,8 @@ class ProtectedEnrollmentCatalog:
                               native_mcp_tool_bindings: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                              public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
+                              public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                              owner_overlay_observer_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
         if (not isinstance(protected_digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", protected_digest)
@@ -1069,7 +1080,8 @@ class ProtectedEnrollmentCatalog:
                    native_mcp_tool_bindings=native_mcp_tool_bindings,
                    private_memory_endpoint_selections=private_memory_endpoint_selections,
                    private_memory_model_selections=private_memory_model_selections,
-                   public_web_scopes=public_web_scopes)
+                   public_web_scopes=public_web_scopes,
+                   owner_overlay_observer_records=owner_overlay_observer_records)
 
     def _validate_public_web_scope_join(self, scope: RootSelectedPublicWebScope) -> None:
         if scope.service_generation_digest != self.digest:
@@ -1351,6 +1363,30 @@ class ProtectedEnrollmentCatalog:
                 or active.get("process_profile_generation") != service.generation):
             raise EnrollmentDenied("native worker network, service and runtime rows do not join")
         return network, active, runtime
+
+    def resolve_owner_overlay_observer_records(
+            self, *, profile_id: str, profile_generation: str,
+            service_generation_digest: str) -> tuple[Mapping[str, Any], ...]:
+        """Resolve immutable owner-overlay observer rows for one current service generation."""
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("owner-overlay observer rows belong to a stale service generation")
+        selected_profile = _id(profile_id, "owner-overlay profile ID")
+        selected_generation = _id(profile_generation, "owner-overlay profile generation")
+        if not self._owner_overlay_observer_records:
+            return ()
+        profile = self.resolve_profile_generation(selected_profile, selected_generation)
+        rows = tuple(row for row in self._owner_overlay_observer_records.values()
+                     if row.get("profile_id") == selected_profile
+                     and row.get("profile_generation") == selected_generation)
+        for row in rows:
+            service = self.resolve(row.get("service_enrollment_id"), selected_generation)
+            if (service.profile_id != selected_profile
+                    or service.principal_id != row.get("principal_id")
+                    or service.namespace_identity != row.get("namespace_id")
+                    or profile.principal_id != row.get("principal_id")
+                    or profile.namespace_identity != row.get("namespace_id")):
+                raise EnrollmentDenied("owner-overlay observer no longer joins its selected service identity")
+        return rows
 
     def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
         """Resolve a unique current service enrollment by its opaque ID."""

@@ -176,6 +176,7 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         "remote_startup_enrollments": [], "private_loopback_networks": [],
         "native_worker_network_records": [], "active_network_generation_records": [],
         "native_worker_runtime_records": [],
+        "owner_overlay_observer_records": [],
         "selected_resource_executions": [], "selected_application_runtimes": [],
         # These rows require separately verified root endpoint/model receipts;
         # a prepared snapshot must not derive or activate them.

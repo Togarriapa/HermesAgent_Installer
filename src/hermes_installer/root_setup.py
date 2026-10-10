@@ -362,7 +362,9 @@ def _import_v180_native_support_closure() -> None:
         native_registration_projection,
         native_source_definitions,
         native_worker_start_recipe,
+        owner_overlay_capture_schemas,
         pm_runtime,
+        runtime_root_custody,
     )
     from .registry import resource_backends
 
@@ -370,6 +372,8 @@ def _import_v180_native_support_closure() -> None:
     _ = (native_assembler, native_registration_projection, native_plugins, public_registries,
          native_definition_composition, native_policy_preparation,
          native_source_definitions, local_resource_effects, native_worker_start_recipe,
+         owner_overlay_capture_schemas,
+         runtime_root_custody,
          native_plugin_loader, native_boundary_patch, native_plugin_bindings,
          resource_backends, pm_runtime)
 

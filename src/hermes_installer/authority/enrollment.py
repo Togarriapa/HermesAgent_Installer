@@ -1168,6 +1168,7 @@ class ProtectedEnrollment:
     native_worker_network_records: tuple[Mapping[str, Any], ...] = ()
     active_network_generation_records: tuple[Mapping[str, Any], ...] = ()
     native_worker_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    owner_overlay_observer_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
     private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
@@ -1494,6 +1495,136 @@ def _validate_native_worker_generation_rows(item: Mapping[str, Any]) -> None:
         raise ValueError("native worker rows do not join their exact service/network/runtime records")
 
 
+_OWNER_OVERLAY_OBSERVER_FIELDS = frozenset({
+    "schema", "observer_kind", "observer_enrollment_id", "profile_id", "profile_generation",
+    "principal_id", "namespace_id", "service_enrollment_id", "package_id", "package_generation",
+    "registration_id", "method", "operation_row_sha256", "source_choice_selection_handle",
+    "source_choice_signed_record_sha256", "choice_epoch", "revocation_epoch", "role_id",
+    "role_artifact_id", "role_sha256", "role_source_receipt_handle", "role_module_name",
+    "role_closure_member_path", "role_source_revision", "role_source_tree_sha256",
+    "source_issuer_id", "channel_id", "invocation_capture_schema_id", "result_capture_schema_id",
+    "argument_schema_id", "argument_schema_sha256", "result_schema_id", "result_schema_sha256",
+    "lease_seconds",
+})
+_OWNER_OVERLAY_METHOD_REGISTRATIONS = {
+    "read": "resource-overlay-store:tool:resource_overlay_read",
+    "history": "resource-overlay-store:tool:resource_overlay_history",
+    "write": "resource-overlay-store:tool:resource_overlay_write",
+    "delete": "resource-overlay-store:tool:resource_overlay_delete",
+}
+
+
+def _validate_owner_overlay_observer_records(item: Mapping[str, Any]) -> None:
+    """Validate the exact v185 owner-registration observer generation rows."""
+    rows = item["owner_overlay_observer_records"]
+    if not isinstance(rows, list) or len(rows) > 4:
+        raise ValueError("owner-overlay observer catalog is malformed")
+    if not rows:
+        return
+    packages = item["native_packages"]
+    if not isinstance(packages, list):
+        raise ValueError("owner-overlay observers require the protected native package catalog")
+    seen_ids: set[str] = set()
+    seen_registration_methods: set[tuple[str, str, str, str]] = set()
+    for raw in rows:
+        if not isinstance(raw, dict) or set(raw) != _OWNER_OVERLAY_OBSERVER_FIELDS:
+            raise ValueError("owner-overlay observer row differs from the closed v185 wire")
+        if type(raw["schema"]) is not int or raw["schema"] != 1:
+            raise ValueError("owner-overlay observer schema is unsupported")
+        if raw["observer_kind"] != "owner-overlay-registration-v1":
+            raise ValueError("owner-overlay observer kind is unsupported")
+        observer_id = _read_id(raw["observer_enrollment_id"], "owner-overlay observer enrollment ID")
+        if observer_id in seen_ids:
+            raise ValueError("owner-overlay observer enrollment ID is duplicated")
+        seen_ids.add(observer_id)
+        method = raw["method"]
+        registration_id = raw["registration_id"]
+        if (method not in _OWNER_OVERLAY_METHOD_REGISTRATIONS
+                or registration_id != _OWNER_OVERLAY_METHOD_REGISTRATIONS[method]):
+            raise ValueError("owner-overlay observer registration and method do not match")
+        identity = (raw["profile_id"], raw["profile_generation"], registration_id, method)
+        if identity in seen_registration_methods:
+            raise ValueError("owner-overlay observer duplicates a selected registration method")
+        seen_registration_methods.add(identity)
+        for name in ("profile_id", "profile_generation", "principal_id", "namespace_id",
+                     "service_enrollment_id", "package_id", "package_generation", "registration_id",
+                     "source_choice_selection_handle", "role_id", "role_artifact_id",
+                     "role_source_receipt_handle", "role_module_name", "role_closure_member_path",
+                     "role_source_revision", "source_issuer_id", "channel_id",
+                     "invocation_capture_schema_id", "result_capture_schema_id",
+                     "argument_schema_id", "result_schema_id"):
+            value = raw[name]
+            if not isinstance(value, str) or not 1 <= len(value) <= 512 or any(ord(char) < 0x20 for char in value):
+                raise ValueError(f"owner-overlay observer {name} is malformed")
+        if (not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+                             raw["role_module_name"], re.ASCII)
+                or raw["invocation_capture_schema_id"] != "native-owner-overlay-invocation-v1"
+                or raw["result_capture_schema_id"] != "native-owner-overlay-result-v1"
+                or type(raw["choice_epoch"]) is not int or raw["choice_epoch"] < 0
+                or type(raw["revocation_epoch"]) is not int or raw["revocation_epoch"] < 0
+                or type(raw["lease_seconds"]) is not int or raw["lease_seconds"] != 30):
+            raise ValueError("owner-overlay observer schema IDs, epochs, module or lease are invalid")
+        for name in ("operation_row_sha256", "source_choice_signed_record_sha256", "role_sha256",
+                     "role_source_tree_sha256", "argument_schema_sha256", "result_schema_sha256"):
+            if not isinstance(raw[name], str) or not re.fullmatch(r"[0-9a-f]{64}", raw[name]):
+                raise ValueError(f"owner-overlay observer {name} is malformed")
+        package_matches = [package for package in packages
+                           if isinstance(package, dict)
+                           and package.get("package_id") == raw["package_id"]
+                           and package.get("generation") == raw["package_generation"]]
+        if len(package_matches) != 1:
+            raise ValueError("owner-overlay observer does not join one exact package generation")
+        package = package_matches[0]
+        operations = package.get("owner_overlay_operation_records")
+        operation_matches = [operation for operation in operations or ()
+                             if isinstance(operation, dict)
+                             and operation.get("registration_id") == registration_id]
+        if len(operation_matches) != 1:
+            raise ValueError("owner-overlay observer does not join one exact protected operation")
+        operation = operation_matches[0]
+        if (_row_digest(operation) != raw["operation_row_sha256"]
+                or operation.get("method") != method
+                or operation.get("profile_id") != raw["profile_id"]
+                or operation.get("profile_generation") != raw["profile_generation"]
+                or operation.get("principal_id") != raw["principal_id"]
+                or operation.get("namespace_id") != raw["namespace_id"]
+                or operation.get("package_id") != raw["package_id"]
+                or operation.get("package_generation") != raw["package_generation"]
+                or operation.get("source_issuer_id") != raw["source_issuer_id"]
+                or operation.get("argument_schema_id") != raw["argument_schema_id"]
+                or operation.get("argument_schema_sha256") != raw["argument_schema_sha256"]
+                or operation.get("result_schema_id") != raw["result_schema_id"]
+                or operation.get("result_schema_sha256") != raw["result_schema_sha256"]):
+            raise ValueError("owner-overlay observer differs from its exact protected operation row")
+        role_matches = [role for role in package.get("process_role_records", ())
+                        if isinstance(role, dict) and role.get("role_id") == raw["role_id"]]
+        if len(role_matches) != 1:
+            raise ValueError("owner-overlay observer does not join one exact process role")
+        role = role_matches[0]
+        if (operation.get("process_role_id") != raw["role_id"]
+                or registration_id not in role.get("registration_ids", ())
+                or observer_id not in role.get("observer_enrollment_ids", ())
+                or role.get("profile_id") != raw["profile_id"]
+                or role.get("profile_generation") != raw["profile_generation"]
+                or role.get("role_artifact_id") != raw["role_artifact_id"]
+                or role.get("role_sha256") != raw["role_sha256"]
+                or role.get("role_source_receipt_handle") != raw["role_source_receipt_handle"]
+                or role.get("module_name") != raw["role_module_name"]
+                or role.get("closure_member_path") != raw["role_closure_member_path"]
+                or role.get("role_source_revision") != raw["role_source_revision"]
+                or role.get("role_source_tree_sha256") != raw["role_source_tree_sha256"]):
+            raise ValueError("owner-overlay observer does not exactly join its role registration closure")
+        service_matches = [service for service in item["service_records"]
+                           if isinstance(service, dict)
+                           and service.get("enrollment_id") == raw["service_enrollment_id"]
+                           and service.get("profile_id") == raw["profile_id"]
+                           and service.get("generation") == raw["profile_generation"]
+                           and service.get("principal_id") == raw["principal_id"]
+                           and service.get("namespace_identity") == raw["namespace_id"]]
+        if len(service_matches) != 1:
+            raise ValueError("owner-overlay observer does not join one service enrollment/profile")
+
+
 def _validate_native_worker_process_profile_join(
         item: Mapping[str, Any], raw_profiles: Any, typed_profiles: Mapping[str, Any]) -> None:
     if not item.get("active_network_generation_records"):
@@ -1541,7 +1672,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
     if schema == 2:
         keys.update({"native_worker_network_records", "active_network_generation_records",
-                     "native_worker_runtime_records"})
+                     "native_worker_runtime_records", "owner_overlay_observer_records"})
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != schema:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
@@ -1566,21 +1697,22 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "public_web_scopes")
     if schema == 2:
         list_fields += ("native_worker_network_records", "active_network_generation_records",
-                        "native_worker_runtime_records")
+                        "native_worker_runtime_records", "owner_overlay_observer_records")
     for name in list_fields:
         rows = item[name]
         row_limit = 1 if schema == 2 and name in (
             "native_worker_network_records", "active_network_generation_records",
-            "native_worker_runtime_records") else 1024
+            "native_worker_runtime_records") else 4 if schema == 2 and name == "owner_overlay_observer_records" else 1024
         if (not isinstance(rows, list) or len(rows) > row_limit
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
     if schema == 2:
         try:
             _validate_native_worker_generation_rows(item)
+            _validate_owner_overlay_observer_records(item)
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise AuthorityDenied(
-                "enrollment.generation", "native worker generation rows are malformed or mismatched",
+                "enrollment.generation", "schema-2 runtime or owner-overlay rows are malformed or mismatched",
             ) from exc
     # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
     # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
@@ -2957,6 +3089,10 @@ def _parse_protected_enrollment_document(
             private_memory_endpoint_selections=service_generations["private_memory_endpoint_selections"],
             private_memory_model_selections=service_generations["private_memory_model_selections"],
             public_web_scopes=service_generations["public_web_scopes"],
+            native_worker_network_records=service_generations["native_worker_network_records"],
+            active_network_generation_records=service_generations["active_network_generation_records"],
+            native_worker_runtime_records=service_generations["native_worker_runtime_records"],
+            owner_overlay_observer_records=service_generations["owner_overlay_observer_records"],
         )
         generation_profiles = {}
         for service_record in service_generations["service_records"]:
@@ -3016,6 +3152,8 @@ def _parse_protected_enrollment_document(
                                                  service_generations.get("active_network_generation_records", ())),
         native_worker_runtime_records=tuple(_freeze_generation_json(row) for row in
                                             service_generations.get("native_worker_runtime_records", ())),
+        owner_overlay_observer_records=tuple(_freeze_generation_json(row) for row in
+                                             service_generations.get("owner_overlay_observer_records", ())),
     )
 
 
