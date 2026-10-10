@@ -495,6 +495,8 @@ class RootAuthorityRuntime:
     private_input_consent_registry: Any | None = None
     memory_capture_consent_registry: Any | None = None
     memory_capture_coordinator: Any | None = None
+    memory_runtime_composition: Any | None = None
+    memory_lifecycle_unavailable_reason: str | None = None
     consent_unavailable_reason: str | None = None
 
     @property
@@ -613,6 +615,7 @@ class RootAuthorityRuntime:
             self.root_tty_consent_choices,
             self.private_input_consent_registry,
             self.memory_capture_consent_registry,
+            self.memory_runtime_composition,
             self.selected_webhook_ingress,
             self.resource_scheduler,
             self.resource_dag_dispatcher,
@@ -1943,6 +1946,28 @@ def compose_root_authority_runtime(
             "a fully attached active provider invocation and bridge graph is required for root TTY choices"
         )
 
+    memory_runtime_composition = None
+    memory_lifecycle_unavailable_reason = None
+    if enrollment.memory_enrollments:
+        try:
+            from .memory_runtime_composition import compose_root_memory_runtime
+
+            memory_runtime_composition = compose_root_memory_runtime(
+                bindings=bindings, enrollment=enrollment,
+                memory_runtime=memory_runtime, service=service,
+                monotonic=service.monotonic,
+            )
+            memory_lifecycle_unavailable_reason = (
+                memory_runtime_composition.unavailable_reason
+            )
+        except Exception as exc:
+            # Lifecycle, provider-route, capture, and network authorities are
+            # independent. A missing lifecycle dependency must not substitute
+            # another consent registry or create a success-shaped runtime.
+            memory_lifecycle_unavailable_reason = (
+                f"root memory lifecycle composition rejected ({type(exc).__name__})"
+            )
+
     return RootAuthorityRuntime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=artifact_catalog, vault=vault,
@@ -1977,5 +2002,7 @@ def compose_root_authority_runtime(
         memory_capture_consent_registry=memory_capture_consent_registry,
         memory_capture_coordinator=(memory_runtime.get("capture_coordinator")
                                     if isinstance(memory_runtime, Mapping) else None),
+        memory_runtime_composition=memory_runtime_composition,
+        memory_lifecycle_unavailable_reason=memory_lifecycle_unavailable_reason,
         consent_unavailable_reason=consent_unavailable_reason,
     )

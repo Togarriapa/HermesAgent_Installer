@@ -844,6 +844,17 @@ class ProtectedEnrollmentCatalog:
             raise EnrollmentDenied("private memory endpoint binding is no longer current") from None
         return row
 
+    def resolve_private_loopback_binding_handle(
+        self, network_binding_handle: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        """Resolve the unique current endpoint row for an opaque network handle."""
+        selected = _id(network_binding_handle, "private loopback network binding handle")
+        matches = [row for row in self._private_memory_endpoint_selections.values()
+                   if row.network_binding_handle == selected]
+        if len(matches) != 1:
+            raise EnrollmentDenied("private loopback handle has no unique selected memory endpoint")
+        return self.resolve_private_memory_endpoint_binding(matches[0].binding_id)
+
     def resolve_private_memory_model_binding(
         self, binding_id: str, endpoint_binding_id: str | None = None,
     ) -> RootSelectedPrivateMemoryModelBinding:

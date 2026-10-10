@@ -174,6 +174,21 @@ class RootRuntimeBindings:
                 raise EnrollmentDenied("private memory model artifact is not pinned")
         return selected
 
+    def retain_private_loopback_network_lease(self, binding_id: str, lease: Any) -> None:
+        """Retain an actual root network lease against exact active protected rows."""
+        selected = self.resolve_private_memory_endpoint_binding(binding_id)
+        network = self.resolve_private_loopback_network(
+            selected.network_binding_handle,
+            service_generation_digest=selected.service_generation_digest,
+        )
+        if (selected.service_enrollment_id not in network.member_enrollment_ids
+                or selected.namespace_id != network.namespace_identity):
+            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
+        retain = getattr(self.process_manager, "retain_private_loopback_network_lease", None)
+        if not callable(retain):
+            raise EnrollmentDenied("root process custody has no private network lease registry")
+        retain(selected, network, lease)
+
     private_memory_engine_selections: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 
     @property
@@ -185,6 +200,17 @@ class RootRuntimeBindings:
         return self.enrollment_catalog.resolve_memory_enrollment(
             memory_enrollment_id, service_generation_digest=service_generation_digest)
 
+    def resolve_current_memory_service_enablement_selection(
+            self, enrollment: Any, *, service_generation_digest: str) -> Mapping[str, Any]:
+        """Resolve explicit active service-start choice, apart from capture consent."""
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("memory lifecycle enablement selection is stale")
+        resolver = getattr(self.enrollment_catalog,
+                           "resolve_current_memory_service_enablement_selection", None)
+        if not callable(resolver):
+            raise EnrollmentDenied("memory lifecycle enablement selection is unavailable")
+        return resolver(enrollment, service_generation_digest=service_generation_digest)
+
     def resolve_private_memory_engine_selection(self, selection_id: str, *,
                                                 service_generation_digest: str) -> Mapping[str, Any]:
         if service_generation_digest != self.service_generation_digest:
@@ -195,6 +221,24 @@ class RootRuntimeBindings:
         if selected is None:
             raise EnrollmentDenied("private memory engine selection is unavailable")
         return selected
+
+    def resolve_private_loopback_network_lease(self, network_binding_handle: str) -> Any:
+        """Resolve custody's retained lease by the opaque protected network selector."""
+        endpoint = self.enrollment_catalog.resolve_private_loopback_binding_handle(
+            network_binding_handle,
+        )
+        endpoint = self.resolve_private_memory_endpoint_binding(endpoint.binding_id)
+        network = self.resolve_private_loopback_network(
+            endpoint.network_binding_handle,
+            service_generation_digest=endpoint.service_generation_digest,
+        )
+        if (endpoint.service_enrollment_id not in network.member_enrollment_ids
+                or endpoint.namespace_id != network.namespace_identity):
+            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
+        resolve = getattr(self.process_manager, "resolve_private_loopback_network_lease", None)
+        if not callable(resolve):
+            raise EnrollmentDenied("root process custody has no private network lease resolver")
+        return resolve(endpoint)
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
         """Return one channel row only after active resource, issuer and controller joins."""
