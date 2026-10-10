@@ -3839,6 +3839,9 @@ class RootBootstrapSession:
         self._adopted_principal_selection_handle: str | None = None
         self._setup_choice_signer: Any | None = None
         self._setup_choice_registry: Any | None = None
+        # Set only by the root-owned source/public-permission composition. The
+        # registry itself checks this exact session and source-observer owner.
+        self._public_input_disclosure_registry: Any | None = None
         self._durable_memory_choice_handles: dict[str, str] = {}
         self._release_receipt_handle: str | None = None
         self._native_output_receipts: Any | None = None
@@ -3935,6 +3938,44 @@ class RootBootstrapSession:
             return registry.record_observed_choice(actual_root_tty_choice, self._selected_installation)
         except Exception:
             raise BootstrapEnrollmentPending("root TTY choice could not be durably signed and retained") from None
+
+    def attach_public_input_disclosure_registry(self, registry: Any) -> None:
+        """Attach the single public-specific TTY proof registry during root composition."""
+        self._check_live()
+        from .public_web_selection import RootPublicInputDisclosureRegistry
+        source = (getattr(self, "_source_observer_registry", None)
+                  or getattr(self._factory, "_source_observer_registry", None))
+        if (type(registry) is not RootPublicInputDisclosureRegistry
+                or source is None or registry._session is not self
+                or registry._source is not source
+                or self._public_input_disclosure_registry is not None):
+            raise BootstrapEnrollmentPending("public input disclosure registry is not the exact root source composition")
+        self._public_input_disclosure_registry = registry
+
+    def resolve_current_public_input_disclosure_registry(self) -> Any:
+        self._check_live()
+        from .public_web_selection import RootPublicInputDisclosureRegistry
+        registry = self._public_input_disclosure_registry
+        source = (getattr(self, "_source_observer_registry", None)
+                  or getattr(self._factory, "_source_observer_registry", None))
+        if (type(registry) is not RootPublicInputDisclosureRegistry
+                or registry._session is not self or source is None or registry._source is not source):
+            raise BootstrapEnrollmentPending("root public input disclosure is not composed with the current source observer")
+        return registry
+
+    def observe_public_input_disclosure(
+            self, public_permission_selection_handle: str,
+            retained_observed_input_handle: str, selected_execution_handle: str,
+    ) -> Any:
+        """Review one exact retained input at the root TTY before public issuance."""
+        self._check_live()
+        registry = self.resolve_current_public_input_disclosure_registry()
+        try:
+            return registry.observe_public_input_disclosure(
+                public_permission_selection_handle, retained_observed_input_handle,
+                selected_execution_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("exact public input disclosure is unavailable or was declined") from None
 
     def resolve_current_release_receipt_handle(self) -> str:
         self._check_live()
