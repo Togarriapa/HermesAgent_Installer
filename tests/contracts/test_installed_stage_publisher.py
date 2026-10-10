@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentE
 from hermes_installer.authority.installed_stage_publisher import (
     _build_rows, _canonical, _publish_retained_build, _recover_staging_journals, _sha,
 )
+from hermes_installer.authority import installer_release_build as release_build
+from hermes_installer.authority.installer_release import REVIEWED_SOURCE_ARTIFACTS, REVIEWED_SOURCE_MODULES
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,160 @@ class InstalledStagePublicationTests(unittest.TestCase):
                                 ("invented-runtime-role",), member.device, member.inode)
             with self.assertRaises(BootstrapEnrollmentError):
                 _build_rows(BuildReceipt(source, (malformed,), root))
+
+    def _real_role_receipt(self, output: Path, *, overrides=None):
+        """Build a sealed typed receipt from the real producer's row sealer."""
+        repo = Path(__file__).parents[2]
+        overrides = overrides or {}
+        output.mkdir(mode=0o700)
+        staged = []
+        for _artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES:
+            if role != "source-module":
+                continue
+            body = (repo / path).read_bytes()
+            target = path
+            row_override = overrides.get(target)
+            if row_override is not None:
+                target, row_role, body = row_override
+            else:
+                row_role = role
+                self.assertEqual((len(body), _sha(body)), (size, digest))
+            destination = output / target
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(body)
+            os.chmod(destination, 0o444)
+            staged.append((target, _sha(body), len(body), 0o444, (row_role,)))
+        for _artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS:
+            if role != "native-health-fixture":
+                continue
+            source_path = {
+                "fixtures/native-health/request.txt": "src/hermes_installer/native_health_fixture/request.txt",
+                "fixtures/native-health/seed-value.txt": "src/hermes_installer/native_health_fixture/seed-value.txt",
+                "fixtures/native-health/expected-tool-result.json":
+                    "src/hermes_installer/native_health_fixture/expected-tool-result.json",
+                "fixtures/native-health/tool-result.schema.json":
+                    "src/hermes_installer/native_health_fixture/tool-result.schema.json",
+                "fixtures/native-health/recipe.json": "src/hermes_installer/native_health_fixture/recipe.json",
+            }[path]
+            body = (repo / source_path).read_bytes()
+            row_override = overrides.get(path)
+            if row_override is not None:
+                target, row_role, body = row_override
+            else:
+                target, row_role = path, role
+                self.assertEqual((len(body), _sha(body)), (size, digest))
+            destination = output / target
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(body)
+            os.chmod(destination, 0o444)
+            staged.append((target, _sha(body), len(body), 0o444, (row_role,)))
+
+        output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            rows = release_build.RootInstalledReleaseBuilder._seal_output_rows(
+                object.__new__(release_build.RootInstalledReleaseBuilder), output_fd, staged)
+        finally:
+            os.close(output_fd)
+        candidate = "a" * 40
+        manifest = release_build._canonical_json({
+            "schema": 1,
+            "candidate_git_sha": candidate,
+            "files": [{"relative_path": row.relative_path, "sha256": row.sha256,
+                       "size_bytes": row.size_bytes, "mode": row.mode,
+                       "roles": list(row.roles)} for row in rows],
+        })
+        (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+        os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+        root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+        info = os.fstat(root_fd)
+        receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+            release_build._SEAL,
+            handle="test-build-receipt",
+            candidate_git_sha=candidate,
+            distribution_receipt_handle="test-distribution",
+            interpreter_receipt_handle="test-interpreter",
+            source_tree_sha256="b" * 64,
+            baseline_tree_sha256="c" * 64,
+            amendment_manifest_sha256="d" * 64,
+            source_catalog_sha256="e" * 64,
+            role_closure_manifest_sha256=_sha(manifest),
+            root_setup_plan_sha256="f" * 64,
+            builder_artifact_sha256="1" * 64,
+            issued_monotonic=time.monotonic(),
+            deployment_predecessor=release_build.DeploymentPredecessor(
+                "absent", info.st_dev, info.st_ino),
+            files=rows,
+            manifest_sha256=_sha(manifest),
+            root_fd=root_fd,
+            expected_uid=os.geteuid(),
+        )
+        return receipt
+
+    def test_real_build_receipt_rows_accept_exact_source_and_health_members(self):
+        with tempfile.TemporaryDirectory() as temp:
+            receipt = self._real_role_receipt(Path(temp) / "output")
+            try:
+                receipt.verify_current()
+                rows = _build_rows(receipt)
+                self.assertEqual(
+                    {row.relative_path for row in rows if row.roles == ("source-module",)},
+                    {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"},
+                )
+                self.assertEqual(
+                    {row.relative_path for row in rows if row.roles == ("native-health-fixture",)},
+                    {item[1] for item in REVIEWED_SOURCE_ARTIFACTS
+                     if item[4] == "native-health-fixture"},
+                )
+            finally:
+                os.close(receipt._root_fd)
+
+    def test_real_build_receipt_rows_reject_misassigned_swapped_and_unpinned_members(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(__file__).parents[2]
+            path = "fixtures/native-health/expected-tool-result.json"
+            receipt = self._real_role_receipt(Path(temp) / "misassigned", overrides={
+                path: (path, "module",
+                       (repo / "src/hermes_installer/native_health_fixture/expected-tool-result.json").read_bytes()),
+            })
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _build_rows(receipt)
+            finally:
+                os.close(receipt._root_fd)
+
+        source_members = [item for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"]
+        first, second = source_members
+        with tempfile.TemporaryDirectory() as temp:
+            receipt = self._real_role_receipt(Path(temp) / "path-swapped", overrides={
+                first[1]: (first[1] + ".swapped", "source-module",
+                           (Path(__file__).parents[2] / first[1]).read_bytes()),
+            })
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _build_rows(receipt)
+            finally:
+                os.close(receipt._root_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(__file__).parents[2]
+            receipt = self._real_role_receipt(Path(temp) / "swapped", overrides={
+                first[1]: (first[1], "source-module", (repo / second[1]).read_bytes()),
+            })
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _build_rows(receipt)
+            finally:
+                os.close(receipt._root_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            receipt = self._real_role_receipt(Path(temp) / "unpinned", overrides={
+                first[1]: (first[1], "source-module", b"different source bytes"),
+            })
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _build_rows(receipt)
+            finally:
+                os.close(receipt._root_fd)
 
     def test_stale_predecessor_denies_before_release_or_pointer_mutation(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -26,6 +26,7 @@ from .application_effect_source_catalog import (
     APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
     APPLICATION_EFFECT_SOURCE_MEMBERS,
 )
+from .installer_release_roles import RELEASE_MEMBER_ROLES
 
 DEPLOYMENT_RECEIPT_PATH = Path("/var/lib/hermes-installer/deployments/current.json")
 RELEASE_STORE_ROOT = Path("/usr/lib/hermes-installer/releases")
@@ -156,9 +157,7 @@ MAX_RECEIPT_BYTES = 64 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_FILES = 50_000
 MAX_FILE_BYTES = 512 * 1024 * 1024
-ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
-                   "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
-                   "runtime-member", "application-effect-fixture", "native-health-fixture"})
+ROLES = RELEASE_MEMBER_ROLES
 _SEAL = object()
 _SHA = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -799,17 +798,20 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
     if "module" in roles and not (path.startswith("lib/python/")
                                   or path in {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "module"}):
         raise InstallerReleaseError("module role is outside the finite source/import closure")
-    if "source-module" in roles and (roles != ["source-module"]
-            or path not in ({item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"}
-                            | {item[1] for item in APPLICATION_EFFECT_SOURCE_MEMBERS if item[2] == "source-module"})):
-        raise InstallerReleaseError("source-module role is outside the finite prepared source closure")
-    if "application-effect-fixture" in roles:
-        if (roles != ["application-effect-fixture"]
-                or not any((path, digest, size) == (member_path, member_sha, member_size)
-                           and role == "application-effect-fixture"
-                           for _artifact_id, member_path, role, member_sha, member_size
-                           in APPLICATION_EFFECT_SOURCE_MEMBERS)):
-            raise InstallerReleaseError("application effect fixture role is outside its finite pinned source closure")
+    if "source-module" in roles:
+        expected_source_modules = {
+            relative_path: (digest, size)
+            for _artifact_id, relative_path, digest, size, role in REVIEWED_SOURCE_MODULES
+            if role == "source-module"
+        }
+        expected_source_modules.update({
+            relative_path: (digest, size)
+            for _artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS
+            if role == "source-module"
+        })
+        if (roles != ["source-module"] or path not in expected_source_modules
+                or (digest, size) != expected_source_modules[path]):
+            raise InstallerReleaseError("source-module role differs from its exact reviewed source member")
     if path.startswith("runtime/") and path != INTERPRETER_PATH and roles != ["runtime-member"]:
         raise InstallerReleaseError("installed runtime closure member lacks its exact runtime-member role")
     if "runtime-member" in roles and (
