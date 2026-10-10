@@ -1,10 +1,14 @@
 """Selected memory lifecycle bindings remain finite and profile joined (SK-T01)."""
 from types import SimpleNamespace
+import os
+import sys
+import time
 import unittest
 
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from hermes_installer.memory.lifecycle_authority import (
     MemoryLifecycleDenied, MemorySelectedLifecycleActionBinding,
+    RootMemoryServiceLifecycle, RootVerifiedMemoryLifecycleAdmission,
 )
 from test_memory_enrollment import record
 
@@ -33,7 +37,7 @@ class FakeCatalog:
                                service_uid=12001, service_gid=12001)
 
     def resolve_operation(self, enrollment_id, generation, operation):
-        return SimpleNamespace(enrollment_id="service-agentmemory-one",
+        return SimpleNamespace(operation=operation, enrollment_id="service-agentmemory-one",
                                profile_id="profile-one", principal_id="principal-one",
                                generation="service-gen-7", service_uid=12001, service_gid=12001,
                                namespace_identity="namespace-one", target_id=f"target:{operation}")
@@ -106,6 +110,71 @@ class MemoryLifecycleBindingTests(unittest.TestCase):
                 unavailable, FakeCatalog(), action="start", source_closure_sha256="d" * 64,
                 source_receipt_handles=("receipt-one",),
             )
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() == 0,
+                         "requires controlled Linux root PIDFD fixture")
+    def test_effect_passes_sealed_lifecycle_and_controller_separately_from_short_grant(self):
+        from hermes_installer.authority.selected_startup_authority import (
+            RootControllerProcessIdentityLease,
+        )
+        from test_selected_startup_authority import _current_identity
+
+        enrollment = enrolled_agentmemory()
+        bindings = {
+            action: MemorySelectedLifecycleActionBinding.resolve(
+                enrollment, FakeCatalog(), action=action,
+                source_closure_sha256="e" * 64,
+                source_receipt_handles=("receipt-one", "receipt-two"),
+            ) for action in ("start", "status", "stop")
+        }
+        controller_identity = _current_identity(os.getpid())
+        controller = RootControllerProcessIdentityLease(
+            proof_handle="a" * 43, startup_authorization_handle="b" * 43,
+            pid=os.getpid(), uid=0, start_ticks=controller_identity["start_ticks"],
+            pidfd=os.pidfd_open(os.getpid(), 0),
+            cgroup_identity=controller_identity["cgroup_identity"],
+            mount_namespace_inode=controller_identity["mount_namespace_inode"],
+            network_namespace_inode=controller_identity["network_namespace_inode"],
+            proof_sha256="f" * 64, expires_monotonic=time.monotonic() + 30,
+            _current_check=lambda: True,
+        )
+        now = time.monotonic()
+        admission = RootVerifiedMemoryLifecycleAdmission._from_root_registry(
+            service_generation_digest="a" * 64, enrollment=enrollment,
+            consent_id="lifecycle-consent", consent_revision=enrollment.background_consent_revision,
+            source_closure_sha256="e" * 64,
+            source_receipt_handles=("receipt-one", "receipt-two"),
+            sensitivity="PRIVATE", issued_monotonic=now,
+            expires_monotonic=now + 20, original_deadline=now + 90,
+            action_bindings=bindings, controller_lease=controller,
+            consent_record=object(), source_closure=object(), current_check=lambda _admission: True,
+        )
+        captured = {}
+
+        class Authority:
+            def issue_root_selected_service_effect(self, *_args):
+                return object()
+
+            def consume_root_selected_service_effect(self, *_args):
+                return object()
+
+        class Custody:
+            def perform_root_selected_service_effect(self, profile, effect, payload, **kwargs):
+                captured.update(kwargs)
+                return "managed-result"
+
+        lifecycle = RootMemoryServiceLifecycle(
+            authority_service=Authority(), custody=Custody(), monotonic=time.monotonic)
+        try:
+            result = lifecycle._effect(admission, admission.action("start"),
+                                       timeout=10, cancelled=None)
+            self.assertEqual(result, "managed-result")
+            self.assertIs(captured["memory_admission"], admission)
+            self.assertIs(captured["controller_proof"], controller)
+            self.assertGreater(captured["timeout"], 0)
+            self.assertFalse(captured["cancelled"]())
+        finally:
+            controller.close()
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
@@ -106,6 +107,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
+
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,
@@ -142,7 +144,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
-
     @unittest.skipUnless(os.geteuid() == 0, "root-key signer fixture requires uid 0")
     def test_setup_choice_signer_binds_finite_purpose_and_live_key_bytes(self):
         class Issuer:

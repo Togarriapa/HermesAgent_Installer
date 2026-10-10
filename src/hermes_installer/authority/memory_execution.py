@@ -744,6 +744,7 @@ class RootMemoryStepEffectAuthority:
                  service_catalog: Any, process_manager: Any, vault: Any,
                  owner_state: Callable[[str], tuple[str | None, int]],
                  consent_active: Callable[[str], bool],
+                 private_network_lease_resolver: Any | None = None,
                  ledger_profiles: tuple[str, ...] = (),
                  monotonic: Callable[[], float] = time.monotonic):
         if not all(callable(value) for value in (
@@ -770,7 +771,8 @@ class RootMemoryStepEffectAuthority:
         self._registered: set[str] = set()
         from hermes_installer.memory.namespace_connector import MemoryNamespaceConnector
         self.namespace_transport = MemoryNamespaceConnector(
-            catalog=service_catalog, process_manager=process_manager, vault=vault)
+            catalog=service_catalog, process_manager=process_manager, vault=vault,
+            private_network_lease_resolver=private_network_lease_resolver)
 
     def register(self) -> tuple[str, ...]:
         """Install only connector.open handlers backed by existing protected rules."""

@@ -19,7 +19,12 @@ from typing import Any
 
 
 _TARGET_SEAL = object()
+_PUBLIC_CANDIDATE_SEAL = object()
 _TARGET_TTL_SECONDS = 300.0
+_WEB_REGISTRATION_SOURCE_PATH = "hermes_installer/components/plugin_local_voice_web.py"
+_WEB_REGISTRATION_SOURCE_SHA256 = "f46733a6e59788c94360187bb4d24369c5f3298984b6a351b190b1dca4feea84"
+_WEB_TARGET_CONTRACT_PATH = "src/hermes_installer/components/plugin_public_https.py"
+_WEB_TARGET_CONTRACT_SHA256 = "63e4a128f0a48f0bfcbd3c0f6c7313d94f4a3e79f83c2655dde32a339b91ff0d"
 
 
 class NativeComponentTargetDenied(PermissionError):
@@ -114,6 +119,54 @@ class RootNativeTargetSourceObservation:
     contract_sha256: str
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativePublicWebTargetCandidate:
+    """Source-backed preconfiguration candidate; carries no scope or permission."""
+
+    candidate_handle: str
+    native_policy_selection_handle: str
+    component_id: str
+    enrollment_id: str
+    target_id: str
+    profile_id: str
+    profile_generation: str
+    recipient: str
+    principal_selection_handle: str
+    namespace_selection_handle: str
+    target_contract_artifact_id: str
+    target_contract_sha256: str
+    target_contract_source_receipt_handle: str
+    registration_source_artifact_id: str
+    registration_source_sha256: str
+    registration_source_receipt_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        strings = (
+            self.candidate_handle, self.native_policy_selection_handle, self.component_id,
+            self.enrollment_id, self.target_id, self.profile_id, self.profile_generation,
+            self.recipient, self.principal_selection_handle, self.namespace_selection_handle,
+            self.target_contract_artifact_id, self.target_contract_source_receipt_handle,
+            self.registration_source_artifact_id, self.registration_source_receipt_handle,
+        )
+        hashes = (self.target_contract_sha256, self.registration_source_sha256)
+        if (self._seal is not _PUBLIC_CANDIDATE_SEAL or any(not isinstance(item, str) or not item for item in strings)
+                or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in hashes)
+                or type(self.issued_monotonic) not in (int, float)
+                or type(self.expires_monotonic) not in (int, float)
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise TypeError("public web candidates are issued by the root target registry")
+
+    @property
+    def backend_generation(self) -> str:
+        return self.profile_generation
+
+    def __repr__(self) -> str:
+        return "RootNativePublicWebTargetCandidate(<root-private>)"
+
+
 # Deliberately limited to the three source families with concrete bounded
 # implementations reviewed in this checkout. Other source components receive
 # a precise pending result from their own future adapters; no cartesian target
@@ -167,6 +220,10 @@ class RootNativeComponentTargetRegistry:
         self._targets: dict[str, RootPreparedNativeTargetSelection] = {}
         self._target_by_policy_component: dict[tuple[str, str], str] = {}
         self._source_observations: dict[tuple[str, str], RootNativeTargetSourceObservation] = {}
+        self._public_candidates: dict[str, RootNativePublicWebTargetCandidate] = {}
+        self._configured_candidates: dict[str, tuple[RootNativePublicWebTargetCandidate, Any, RootPreparedNativeTargetSelection]] = {}
+        self._candidate_by_policy: dict[str, tuple[str, ...]] = {}
+        self._candidate_evidence: dict[str, tuple[Any, Any]] = {}
 
     @classmethod
     def from_root_setup(cls, selected_installation_binding: Any,
@@ -372,6 +429,196 @@ class RootNativeComponentTargetRegistry:
             missing.extend(("selected-profile-overlay-view", "overlay-root-owner-receipt"))
         raise NativeComponentTargetPending(component_id, tuple(dict.fromkeys(missing)))
 
+    def resolve_current_public_web_target_candidates(
+            self, native_policy_selection_handle: str
+    ) -> tuple[RootNativePublicWebTargetCandidate, ...]:
+        """Resolve source-derived web target candidates before any scope exists."""
+        selection = self._resolve_policy_selection(native_policy_selection_handle)
+        if ("web" not in selection.selected_component_ids
+                or "web:tool:web_retrieve" not in selection.selected_registration_ids):
+            return ()
+        candidate_handles = self._candidate_by_policy.get(native_policy_selection_handle)
+        if candidate_handles is None:
+            candidates = self._mint_public_web_candidates(selection)
+            candidate_handles = tuple(row.candidate_handle for row in candidates)
+            self._candidate_by_policy[native_policy_selection_handle] = candidate_handles
+        output = []
+        for handle in candidate_handles:
+            candidate = self._public_candidates.get(handle)
+            evidence = self._candidate_evidence.get(handle)
+            if (candidate is None or evidence is None or candidate._seal is not _PUBLIC_CANDIDATE_SEAL
+                    or candidate.expires_monotonic <= time.monotonic()
+                    or candidate.native_policy_selection_handle != native_policy_selection_handle):
+                raise NativeComponentTargetDenied("public web target candidate is stale or not retained")
+            registration_receipt, contract_receipt = evidence
+            registration_raw = registration_receipt.read_current()
+            contract_raw = contract_receipt.read_current()
+            if (hashlib.sha256(registration_raw).hexdigest() != candidate.registration_source_sha256
+                    or hashlib.sha256(contract_raw).hexdigest() != candidate.target_contract_sha256):
+                raise NativeComponentTargetDenied("public web source candidate receipts changed")
+            self._verify_public_web_contract_source(contract_raw)
+            output.append(candidate)
+        return tuple(output)
+
+    def observe_configured_public_web_scope(
+            self, native_policy_selection_handle: str, target_candidate_handle: str,
+            typed_configuration: Any,
+    ) -> RootPreparedNativeTargetSelection:
+        """Retain exact TTY-selected scope after candidate/source/policy joins."""
+        from .public_web_selection import RootPublicWebScopeConfiguration, _CONFIGURATION_SEAL
+
+        candidates = self.resolve_current_public_web_target_candidates(native_policy_selection_handle)
+        candidate = self._public_candidates.get(target_candidate_handle)
+        if (type(typed_configuration) is not RootPublicWebScopeConfiguration
+                or typed_configuration._issuer_token is not _CONFIGURATION_SEAL
+                or candidate is None or candidate not in candidates
+                or typed_configuration.native_policy_selection_handle != native_policy_selection_handle
+                or typed_configuration.target_candidate_handle != target_candidate_handle
+                or typed_configuration.component_id != candidate.component_id
+                or typed_configuration.target_id != candidate.target_id
+                or typed_configuration.profile_id != candidate.profile_id
+                or typed_configuration.profile_generation != candidate.profile_generation
+                or typed_configuration.recipient != candidate.recipient):
+            raise NativeComponentTargetDenied("public scope configuration does not join the current source candidate")
+        _validate_scope_configuration_bytes(typed_configuration.scope_payload,
+                                            typed_configuration.scope_payload_sha256,
+                                            candidate)
+        existing = self._configured_candidates.get(target_candidate_handle)
+        if existing is not None:
+            old_candidate, old_configuration, old_target = existing
+            if (old_candidate is not candidate
+                    or old_configuration is not typed_configuration
+                    or old_target.scope_payload != typed_configuration.scope_payload):
+                raise NativeComponentTargetDenied("public scope candidate was rebound")
+            return self.resolve_current_target(old_target.selection_handle, native_policy_selection_handle)
+
+        now = time.monotonic()
+        registration_receipt, contract_receipt = self._candidate_evidence[target_candidate_handle]
+        raw_source = contract_receipt.read_current()
+        self._verify_public_web_contract_source(raw_source)
+        observation_handle = secrets.token_urlsafe(36)
+        target = RootPreparedNativeTargetSelection(
+            selection_handle=secrets.token_urlsafe(36),
+            native_policy_selection_handle=native_policy_selection_handle,
+            component_id=candidate.component_id,
+            adapter_id="web",
+            target_contract_artifact_id=contract_receipt.artifact_id,
+            target_contract_sha256=contract_receipt.sha256,
+            target_contract_source_receipt_handle=contract_receipt.source_receipt_handle,
+            configuration_schema_id=contract_receipt.artifact_id,
+            configuration_schema_sha256=contract_receipt.sha256,
+            configuration_observation_handle=observation_handle,
+            principal_selection_handle=candidate.principal_selection_handle,
+            namespace_selection_handle=candidate.namespace_selection_handle,
+            profile_id=candidate.profile_id,
+            profile_generation=candidate.profile_generation,
+            target_id=candidate.target_id,
+            recipient=candidate.recipient,
+            credential_reference_ids=(),
+            account_observation_handle=None,
+            owned_target_observation_handle=None,
+            permission_observation_handle=None,
+            backend_generation=candidate.profile_generation,
+            configuration_sha256=typed_configuration.tty_configuration_sha256,
+            scope_payload=typed_configuration.scope_payload,
+            scope_payload_sha256=typed_configuration.scope_payload_sha256,
+            issued_monotonic=now,
+            expires_monotonic=min(now + _TARGET_TTL_SECONDS, typed_configuration.expires_monotonic),
+            revocation_epoch=self._resolve_policy_selection(native_policy_selection_handle).revocation_epoch,
+            _seal=_TARGET_SEAL,
+        )
+        self._targets[target.selection_handle] = target
+        self._target_by_policy_component[(native_policy_selection_handle, candidate.component_id)] = target.selection_handle
+        self._configured_candidates[target_candidate_handle] = (candidate, typed_configuration, target)
+        return target
+
+    def _mint_public_web_candidates(self, selection: Any) -> tuple[RootNativePublicWebTargetCandidate, ...]:
+        """Join one actual selected web registration to current held source receipts."""
+        try:
+            from .bootstrap_runtime_factory import RootReleaseModuleReceipt
+            from .native_registration_projection import capture_actual_hermes_registrations
+
+            registrations = [row for row in capture_actual_hermes_registrations()
+                             if row.adapter_id == "web" and row.native_tool_name == "web_retrieve"]
+            if len(registrations) != 1:
+                raise ValueError
+            registration = registrations[0]
+            if (registration.registration_source_path != _WEB_REGISTRATION_SOURCE_PATH
+                    or registration.registration_source_sha256 != _WEB_REGISTRATION_SOURCE_SHA256):
+                raise ValueError
+            receipt_rows = self._binding.resolve_prepared_release_module_receipts()
+            registration_receipts = [row for row in receipt_rows
+                                      if type(row) is RootReleaseModuleReceipt
+                                      and row.relative_path == "src/" + _WEB_REGISTRATION_SOURCE_PATH
+                                      and row.sha256 == _WEB_REGISTRATION_SOURCE_SHA256]
+            target_receipts = self._binding.resolve_prepared_native_target_module_receipts()
+            contract_receipts = [row for row in target_receipts
+                                 if type(row) is RootReleaseModuleReceipt
+                                 and row.relative_path == _WEB_TARGET_CONTRACT_PATH
+                                 and row.sha256 == _WEB_TARGET_CONTRACT_SHA256]
+            if len(registration_receipts) != 1 or len(contract_receipts) != 1:
+                raise ValueError
+            registration_receipt, contract_receipt = registration_receipts[0], contract_receipts[0]
+            registration_raw, contract_raw = registration_receipt.read_current(), contract_receipt.read_current()
+            if (hashlib.sha256(registration_raw).hexdigest() != _WEB_REGISTRATION_SOURCE_SHA256
+                    or hashlib.sha256(contract_raw).hexdigest() != contract_receipt.sha256):
+                raise ValueError
+            self._verify_public_web_contract_source(contract_raw)
+            now = time.monotonic()
+            candidate = RootNativePublicWebTargetCandidate(
+                candidate_handle=secrets.token_urlsafe(36),
+                native_policy_selection_handle=selection.selection_handle,
+                component_id="web",
+                enrollment_id="scope-" + secrets.token_hex(16),
+                target_id="public-web-" + secrets.token_hex(16),
+                profile_id=selection.service_profile_id,
+                profile_generation=selection.service_generation,
+                recipient="public-web",
+                principal_selection_handle=selection.principal_selection_handle,
+                namespace_selection_handle=selection.namespace_selection_handle,
+                target_contract_artifact_id=contract_receipt.artifact_id,
+                target_contract_sha256=contract_receipt.sha256,
+                target_contract_source_receipt_handle=contract_receipt.source_receipt_handle,
+                registration_source_artifact_id=registration_receipt.artifact_id,
+                registration_source_sha256=registration_receipt.sha256,
+                registration_source_receipt_handle=registration_receipt.source_receipt_handle,
+                issued_monotonic=now,
+                expires_monotonic=min(now + _TARGET_TTL_SECONDS, selection.expires_monotonic),
+                _seal=_PUBLIC_CANDIDATE_SEAL,
+            )
+            self._public_candidates[candidate.candidate_handle] = candidate
+            self._candidate_evidence[candidate.candidate_handle] = (registration_receipt, contract_receipt)
+            return (candidate,)
+        except NativeComponentTargetPending:
+            raise
+        except Exception:
+            raise NativeComponentTargetPending(
+                "web", ("current-web-registration-and-target-contract-receipts",),
+            ) from None
+
+    @staticmethod
+    def _verify_public_web_contract_source(source: bytes) -> None:
+        try:
+            module = ast.parse(source)
+            classes = {node.name: node for node in module.body if isinstance(node, ast.ClassDef)}
+            target = classes["PublicReadTarget"]
+            scope = classes["EnrolledPublicWebScope"]
+            target_fields = {node.target.id for node in target.body if isinstance(node, ast.AnnAssign)
+                             and isinstance(node.target, ast.Name)}
+            scope_fields = {node.target.id for node in scope.body if isinstance(node, ast.AnnAssign)
+                            and isinstance(node.target, ast.Name)}
+            limits = {item.value for item in ast.walk(scope)
+                      if isinstance(item, ast.Constant) and type(item.value) is int}
+            if (target_fields != {"hostname", "path_prefixes", "query_keys"}
+                    or not {"target_id", "generation", "principal_id", "profile_id", "recipient",
+                            "targets", "request_bytes_limit", "response_bytes_limit", "deadline_seconds"} <= scope_fields
+                    or not {262144, 2_097_152, 30} <= limits):
+                raise ValueError
+        except Exception:
+            raise NativeComponentTargetPending(
+                "web", ("reviewed-public-web-target-contract",),
+            ) from None
+
     def resolve_current_target(self, target_selection_handle: str,
                                native_policy_selection_handle: str
                                ) -> RootPreparedNativeTargetSelection:
@@ -382,6 +629,8 @@ class RootNativeComponentTargetRegistry:
                 or target._seal is not _TARGET_SEAL):
             raise NativeComponentTargetDenied("native target selection is absent, stale or belongs to another policy")
         self._assert_binding_matches_selection(selection)
+        if target.component_id == "web":
+            self._validate_configured_target(target, selection)
         return target
 
     def resolve_current_target_handle(
@@ -412,6 +661,18 @@ class RootNativeComponentTargetRegistry:
         _validate_scope_payload(target, target.scope_payload, target.scope_payload_sha256)
         return target.scope_payload
 
+    def resolve_current_public_web_scope(
+            self, target_selection_handle: str
+    ) -> RootPreparedNativeTargetSelection:
+        """Return the current retained scope and its exact source/config joins."""
+        target = self.resolve_current_target_handle(target_selection_handle)
+        if target.component_id != "web" or target.scope_payload is None:
+            raise NativeComponentTargetPending(
+                getattr(target, "component_id", "web"), ("retained-public-web-scope-configuration",),
+            )
+        _validate_scope_payload(target, target.scope_payload, target.scope_payload_sha256)
+        return target
+
     def _resolve_policy_selection(self, selection_handle: str) -> Any:
         if not isinstance(selection_handle, str) or not selection_handle:
             raise NativeComponentTargetDenied("native policy selection handle is malformed")
@@ -419,7 +680,35 @@ class RootNativeComponentTargetRegistry:
         if selection is None or selection.expires_monotonic <= time.monotonic():
             raise NativeComponentTargetDenied("native policy selection is absent or expired")
         self._assert_binding_matches_selection(selection)
+        current_resolver = getattr(self._binding, "resolve_current_native_policy_selection", None)
+        if callable(current_resolver):
+            try:
+                current = current_resolver(selection_handle)
+            except Exception:
+                raise NativeComponentTargetDenied("current signed native policy selection is unavailable") from None
+            if (current is not selection or current.selection_sha256 != selection.selection_sha256
+                    or current.choice_payload_sha256 != selection.choice_payload_sha256):
+                raise NativeComponentTargetDenied("native policy selection changed after target selection")
         return selection
+
+    def _validate_configured_target(self, target: RootPreparedNativeTargetSelection,
+                                    selection: Any) -> None:
+        matches = [row for row in self._configured_candidates.values() if row[2] is target]
+        if len(matches) != 1:
+            raise NativeComponentTargetDenied("web target is not retained from a TTY scope configuration")
+        candidate, configuration, _ = matches[0]
+        from .public_web_selection import RootPublicWebScopeConfiguration, _CONFIGURATION_SEAL
+        if (type(configuration) is not RootPublicWebScopeConfiguration
+                or configuration._issuer_token is not _CONFIGURATION_SEAL
+                or configuration.expires_monotonic <= time.monotonic()
+                or candidate.native_policy_selection_handle != selection.selection_handle
+                or configuration.native_policy_selection_handle != selection.selection_handle
+                or configuration.scope_payload != target.scope_payload
+                or configuration.scope_payload_sha256 != target.scope_payload_sha256
+                or configuration.tty_configuration_sha256 != target.configuration_sha256):
+            raise NativeComponentTargetDenied("public TTY configuration is stale or detached from its target")
+        self.resolve_current_public_web_target_candidates(selection.selection_handle)
+        _validate_scope_payload(target, target.scope_payload, target.scope_payload_sha256)
 
     def _assert_binding_matches_selection(self, selection: Any) -> None:
         try:
@@ -466,7 +755,8 @@ class RootNativeComponentTargetRegistry:
 __all__ = [
     "NativeComponentTargetDenied", "NativeComponentTargetPending",
     "NativeComponentTargetSourceContract", "RootNativeComponentTargetRegistry",
-    "RootNativeTargetSourceObservation", "RootPreparedNativeTargetSelection",
+    "RootNativePublicWebTargetCandidate", "RootNativeTargetSourceObservation",
+    "RootPreparedNativeTargetSelection",
 ]
 
 
@@ -527,3 +817,28 @@ def _validate_scope_payload(target: RootPreparedNativeTargetSelection,
             raise ValueError
     except Exception:
         raise TypeError("public scope payload is not a canonical, bounded selected scope") from None
+
+
+def _validate_scope_configuration_bytes(raw: bytes, digest: str,
+                                        candidate: RootNativePublicWebTargetCandidate) -> None:
+    if (not isinstance(raw, bytes) or not isinstance(digest, str)
+            or hashlib.sha256(raw).hexdigest() != digest):
+        raise NativeComponentTargetDenied("public scope configuration digest is invalid")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+        if _canonical_target_source(value) != raw:
+            raise ValueError
+        if (value.get("target_id") != candidate.target_id
+                or value.get("enrollment_id") != candidate.enrollment_id
+                or value.get("profile_id") != candidate.profile_id
+                or value.get("generation") != candidate.profile_generation
+                or value.get("recipient") != candidate.recipient):
+            raise ValueError
+        # Full schema and dangerous-target checks are performed by the typed
+        # TTY constructor; invoke the same production scope parser here too.
+        from .public_web_selection import canonical_scope_payload
+        canonical, expected = canonical_scope_payload(value)
+        if canonical != raw or expected != digest:
+            raise ValueError
+    except Exception:
+        raise NativeComponentTargetDenied("public scope is not the exact canonical candidate configuration") from None

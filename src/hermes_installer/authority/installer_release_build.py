@@ -24,6 +24,7 @@ import sysconfig
 import tarfile
 import time
 import threading
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -114,7 +115,8 @@ BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-ar
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
 RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "template", "plan",
-                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment"})
+                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                           "runtime-member"})
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
 STAGED_LAUNCHER_SOURCE = "scripts/hermes-installer-root-setup"
 STAGED_LAUNCHER_PATH = "bin/hermes-installer-root-setup"
@@ -147,6 +149,14 @@ _DEPLOYMENT_PREDECESSOR_RECEIPTS: dict[str, tuple["VerifiedDeploymentPredecessor
 
 class InstallerReleaseBuildError(BootstrapEnrollmentError):
     """Candidate source or release-build custody failed verification."""
+
+
+def _runtime_output_roles(relative_path: str) -> tuple[str, ...]:
+    if relative_path == STAGED_INTERPRETER_PATH:
+        return ("interpreter",)
+    if relative_path.startswith("runtime/"):
+        return ("runtime-member",)
+    raise InstallerReleaseBuildError("runtime output path is outside the fixed interpreter closure")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1839,10 +1849,25 @@ class RootSourceBootstrapActorVerifier:
         prefix = interpreter.runtime_prefix.resolve(strict=True)
         stdlib = Path(sysconfig.get_path("stdlib")).resolve(strict=True)
         allowed_paths = {str(prefix), str(root.resolve(strict=True)), str(stdlib)}
+        runtime_members = {item.relative_path for item in interpreter.files}
+        optional_stdlib_zip = prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
         for path in sys.path:
             if not path:
                 raise InstallerReleaseBuildError("bootstrap actor imports from the ambient working directory")
-            resolved = Path(path).resolve(strict=True)
+            candidate = Path(path)
+            try:
+                resolved = candidate.resolve(strict=True)
+            except FileNotFoundError:
+                # CPython includes an optional stdlib zip archive in sys.path
+                # even when the standalone runtime ships the expanded stdlib
+                # directory only. Permit only that exact absent runtime path;
+                # all other missing import roots remain a closed failure.
+                if (candidate == optional_stdlib_zip
+                        and _is_absent_optional_stdlib_zip(candidate, prefix, runtime_members)):
+                    continue
+                raise InstallerReleaseBuildError("bootstrap actor import path is unavailable") from None
+            if candidate == optional_stdlib_zip and optional_stdlib_zip.relative_to(prefix).as_posix() not in runtime_members:
+                raise InstallerReleaseBuildError("optional stdlib archive is absent from the measured runtime closure")
             if not any(_is_beneath(resolved, Path(base)) for base in allowed_paths):
                 raise InstallerReleaseBuildError("bootstrap actor import path is outside selected source/runtime closure")
         for name, module in tuple(sys.modules.items()):
@@ -2340,18 +2365,48 @@ class VerifiedInstallerReleaseBuildReceipt:
             raise InstallerReleaseBuildError("sealed manifest does not describe the retained role closure")
 
     def open_file(self, relative_path: str) -> int:
-        self.verify_current()
+        # The publisher verifies the complete sealed closure before copying and
+        # again before committing its pointer.  Repeating that whole-tree hash
+        # here for every member turns a linear publication into O(files * tree
+        # size).  Keep each copy independently bound to its exact retained row:
+        # a no-follow FD, complete byte hash, metadata identity, and the same
+        # live receipt/root custody checks.  The publisher's final full verify
+        # detects sibling changes and additions before pointer publication.
+        self._verify_live_root()
         row = next((item for item in self.files if item.relative_path == relative_path), None)
         if row is None:
             raise InstallerReleaseBuildError("publisher requested a file outside the sealed output closure")
         fd = _open_relative(self._root_fd, relative_path, os.O_RDONLY)
-        info = os.fstat(fd)
-        digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-        if digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device or info.st_ino != row.inode:
+        try:
+            before = os.fstat(fd)
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            self._verify_live_root()
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or before.st_uid != self._expected_uid or before.st_dev != row.device
+                    or before.st_ino != row.inode or stat.S_IMODE(before.st_mode) != row.mode
+                    or before.st_size != row.size_bytes or digest != row.sha256 or size != row.size_bytes
+                    or (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_nlink,
+                        before.st_uid, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_nlink,
+                        after.st_uid, after.st_mtime_ns, after.st_ctime_ns)):
+                raise InstallerReleaseBuildError("release output changed while opening sealed file")
+            os.lseek(fd, 0, os.SEEK_SET)
+            return fd
+        except BaseException:
             os.close(fd)
-            raise InstallerReleaseBuildError("release output changed while opening sealed file")
-        os.lseek(fd, 0, os.SEEK_SET)
-        return fd
+            raise
+
+    def _verify_live_root(self) -> None:
+        if self._seal is not _SEAL or self._closed or self._consumed or self._root_fd < 0:
+            raise BootstrapEnrollmentPending("release build receipt is absent or already consumed")
+        if time.monotonic() >= self.expires_monotonic:
+            raise BootstrapEnrollmentPending("release build receipt expired before stage publication")
+        root = os.fstat(self._root_fd)
+        if (not stat.S_ISDIR(root.st_mode) or root.st_uid != self._expected_uid
+                or stat.S_IMODE(root.st_mode) & 0o077 or root.st_dev != self._root_device
+                or root.st_ino != self._root_inode):
+            raise InstallerReleaseBuildError("release build output root custody changed")
 
     def open_manifest(self) -> int:
         self.verify_current()
@@ -2500,11 +2555,10 @@ class RootInstalledReleaseBuilder:
         staged.append(self._last_output_row)
         runtime_fd = interpreter.open_executable()
         try:
-            info = os.fstat(runtime_fd)
-            digest, size = _hash_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
-            body = _read_exact_fd(runtime_fd, size)
+            digest, size, body = _hash_and_read_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
             _write_relative(output_fd, STAGED_INTERPRETER_PATH, body, mode=0o555)
-            staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555, ("interpreter",)))
+            staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555,
+                           _runtime_output_roles(STAGED_INTERPRETER_PATH)))
         finally:
             os.close(runtime_fd)
         for row in interpreter.files:
@@ -2520,9 +2574,10 @@ class RootInstalledReleaseBuilder:
             path = "runtime/" + row.relative_path
             if path == STAGED_INTERPRETER_PATH:
                 continue
-            _write_relative(output_fd, path, body, mode=0o555 if row.mode & 0o111 else 0o444)
+            mode = 0o555 if row.mode & 0o111 else 0o444
+            _write_relative(output_fd, path, body, mode=mode)
             staged.append((path, row.sha256, row.size_bytes,
-                           0o555 if row.mode & 0o111 else 0o444, ("interpreter",)))
+                           mode, _runtime_output_roles(path)))
         for source_path, target, role, expected_sha256, expected_size in (
             (PLAN_TEMPLATE_PATH, STAGED_PLAN_TEMPLATE_PATH, "template", PLAN_TEMPLATE_SHA256, PLAN_TEMPLATE_BYTES),
             (COMPILER_TEMPLATE_PATH, STAGED_COMPILER_TEMPLATE_PATH, "template",
@@ -2716,6 +2771,7 @@ def _bootstrap_after_reexec() -> Any:
             or interpreter.runtime_prefix_sha256 != handoff.runtime_closure_sha256
             or interpreter.executable_sha256 != handoff.expected_executable_sha256):
         raise InstallerReleaseBuildError("observed root actor interpreter differs from the consumed handoff")
+    _load_installed_setup_module_closure()
     actor_verifier = RootSourceBootstrapActorVerifier.from_verified_source(
         distribution_registry, interpreter_registry)
     actor = actor_verifier.verify_current(distribution_handle, interpreter_handle)
@@ -2756,6 +2812,29 @@ def _bootstrap_after_reexec() -> Any:
         raise BootstrapEnrollmentPending("installed lifecycle launcher exec returned unexpectedly")
     finally:
         installed.close()
+
+
+def _load_installed_setup_module_closure() -> None:
+    """Load the exact future installed-launcher imports into the observed source closure.
+
+    The first-source actor execs the installed launcher after publishing its
+    release. Importing these fixed modules now lets the normal source actor
+    verifier bind their actual selected SourceCAS bytes into the release, so
+    the installed launcher does not depend on checkout-only Python modules.
+    No setup action is invoked here.
+    """
+    import importlib
+
+    for name in (
+        "hermes_installer.root_setup",
+        "hermes_installer.authority.installer_release",
+        "hermes_installer.authority.bootstrap_runtime_factory",
+    ):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            raise BootstrapEnrollmentPending(
+                "installed root setup module closure is unavailable from selected source") from None
 
 
 def _verify_frozen_baseline(root_fd: int, rows: tuple[DistributionFile, ...]) -> str:
@@ -3276,6 +3355,12 @@ def _hash_fd(fd: int, maximum: int) -> tuple[str, int]:
     return digest.hexdigest(), total
 
 
+def _hash_and_read_fd(fd: int, maximum: int) -> tuple[str, int, bytes]:
+    digest, size = _hash_fd(fd, maximum)
+    os.lseek(fd, 0, os.SEEK_SET)
+    return digest, size, _read_exact_fd(fd, size)
+
+
 def _read_exact_fd(fd: int, size: int) -> bytes:
     chunks = bytearray()
     while len(chunks) < size:
@@ -3336,6 +3421,66 @@ def _open_secure_directory(path: Path, *, expected_uid: int) -> int:
     finally:
         if current >= 0:
             os.close(current)
+
+
+def ensure_initial_setup_fixed_prefixes() -> None:
+    """Create only the two fixed first-install config directories, without repair.
+
+    The installed root actor needs these directories before constructing its
+    credential-vault and first-selection registries. Existing objects are
+    observed and must already have the exact reviewed owner, group, and mode;
+    this routine never chmods, chowns, follows, or replaces an existing path.
+    """
+    if os.geteuid() != 0 or not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("initial setup prefixes require the installed Linux root actor")
+    etc_fd = _open_secure_directory(Path("/etc"), expected_uid=0)
+    try:
+        _ensure_owned_child_directory(etc_fd, "hermes-installer", 0o755)
+        setup_fd = os.open("hermes-installer", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=etc_fd)
+        try:
+            _ensure_owned_child_directory(setup_fd, "credentials", 0o700)
+        finally:
+            os.close(setup_fd)
+    finally:
+        os.close(etc_fd)
+
+
+def _ensure_owned_child_directory(parent_fd: int, name: str, mode: int, *,
+                                  expected_uid: int = 0, expected_gid: int = 0) -> None:
+    if (name not in {"hermes-installer", "credentials"}
+            or (name == "hermes-installer" and mode != 0o755)
+            or (name == "credentials" and mode != 0o700)
+            or type(expected_uid) is not int or type(expected_gid) is not int):
+        raise InstallerReleaseBuildError("first-install directory is outside its fixed layout")
+    created = False
+    try:
+        os.mkdir(name, mode, dir_fd=parent_fd)
+        created = True
+    except FileExistsError:
+        pass
+    try:
+        child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=parent_fd)
+    except OSError:
+        raise InstallerReleaseBuildError("fixed first-install directory is not a real directory") from None
+    try:
+        info = os.fstat(child_fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise InstallerReleaseBuildError("fixed first-install path is not a directory")
+        if created:
+            # Only the directory exclusively created above may be normalized.
+            os.fchown(child_fd, expected_uid, expected_gid)
+            os.fchmod(child_fd, mode)
+            os.fsync(child_fd)
+            info = os.fstat(child_fd)
+        if (info.st_uid != expected_uid or info.st_gid != expected_gid
+                or stat.S_IMODE(info.st_mode) != mode):
+            raise InstallerReleaseBuildError("fixed first-install directory has conflicting custody or mode")
+    finally:
+        os.close(child_fd)
+    if created:
+        os.fsync(parent_fd)
 
 
 def _relative_below(root: Path, path: Path) -> str:
@@ -3491,14 +3636,16 @@ def _runtime_dependency_receipts(prefix: Path,
     packages: list[tuple[str, str]] = []
     handles: list[str] = []
     seen: set[tuple[str, str]] = set()
-    search_paths = [str(Path(sysconfig.get_path(key)).resolve(strict=True))
-                    for key in ("purelib", "platlib") if sysconfig.get_path(key)]
+    search_paths = _runtime_site_search_paths()
     for dist in importlib.metadata.distributions(path=search_paths):
         name = dist.metadata.get("Name")
         version = dist.version
         if not isinstance(name, str) or not isinstance(version, str):
             raise InstallerReleaseBuildError("installed runtime dependency identity is incomplete")
         normalized = _normalize_package_name(name)
+        if normalized == "pip":
+            _verify_bundled_pip_distribution(dist, prefix)
+            continue
         if version not in locked.get(normalized, frozenset()):
             raise InstallerReleaseBuildError("installed runtime dependency is not pinned by selected requirements-runtime.txt")
         identity = (normalized, version)
@@ -3526,6 +3673,71 @@ def _runtime_dependency_receipts(prefix: Path,
     if not packages:
         raise BootstrapEnrollmentPending("selected installer runtime has no verified locked dependencies")
     return packages, tuple(handles)
+
+
+def _runtime_site_search_paths() -> list[str]:
+    paths: list[str] = []
+    for key in ("purelib", "platlib"):
+        value = sysconfig.get_path(key)
+        if not value:
+            continue
+        try:
+            resolved = str(Path(value).resolve(strict=True))
+        except OSError:
+            raise InstallerReleaseBuildError("isolated runtime dependency directory is unavailable") from None
+        if resolved not in paths:
+            paths.append(resolved)
+    return paths
+
+
+def _is_absent_optional_stdlib_zip(path: Path, runtime_prefix: Path,
+                                   runtime_members: set[str] | frozenset[str]) -> bool:
+    """Recognize CPython's one optional archive entry when it is truly absent."""
+    expected = runtime_prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+    if path != expected or expected.relative_to(runtime_prefix).as_posix() in runtime_members:
+        return False
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    else:
+        # Existing files, directories, and even dangling symlinks must go
+        # through normal strict resolution and closure verification.
+        return False
+    try:
+        library_info = os.lstat(path.parent)
+        if not stat.S_ISDIR(library_info.st_mode):
+            return False
+        library_dir = (runtime_prefix / "lib").resolve(strict=True)
+        return path.parent.resolve(strict=True) == library_dir
+    except OSError:
+        return False
+
+
+def _verify_bundled_pip_distribution(dist: Any, prefix: Path) -> None:
+    """Bind the runtime's bundled pip metadata to its fixed CPython closure.
+
+    The pinned standalone CPython archive includes pip; it is not selected from
+    requirements-runtime.txt and receives no separate dependency receipt. Its
+    complete bytes are already covered by the verified runtime closure.
+    """
+    files = dist.files
+    if not files:
+        raise BootstrapEnrollmentPending("bundled runtime pip has no installed file manifest")
+    version = dist.version
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
+        raise InstallerReleaseBuildError("bundled runtime pip version is malformed")
+    site_root = "lib/python3.14/site-packages/"
+    package_root = site_root + "pip/"
+    metadata_root = site_root + "pip-" + version + ".dist-info/"
+    bundled_scripts = {"bin/pip", "bin/pip3", "bin/pip3.14"}
+    for item in files:
+        relative = _relative_below(prefix, Path(dist.locate_file(item)))
+        if not (relative.startswith(package_root) or relative.startswith(metadata_root)
+                or relative in bundled_scripts):
+            raise InstallerReleaseBuildError("bundled runtime pip escaped its fixed CPython site directory")
 
 
 def _runtime_artifact_current_files(

@@ -1,8 +1,8 @@
 """Root-local first-install launcher for the reviewed Hermes installer.
 
 This module is intentionally a small command boundary. It accepts only the
-three lifecycle intents understood by the installed root setup actor; policy,
-paths, credentials, and artifact bytes are resolved by the root-owned
+three lifecycle intents plus the finite installed qualification selector;
+policy, paths, credentials, and artifact bytes are resolved by root-owned
 registries.
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import re
 import stat
 import sys
 import time
+from pathlib import Path
 from typing import Sequence
 
 
@@ -23,6 +24,12 @@ class RootSetupAction(StrEnum):
     INSTALL = "install"
     RESUME = "resume"
     UPDATE = "update"
+    QUALIFY = "qualify"
+
+
+class RootInstalledQualificationSuite(StrEnum):
+    RESOURCE_CRON_TASK = "resource-cron-task-v1"
+    DISPLAY_XAUTHORITY = "display-xauthority-v1"
 
 
 class RootSetupState(StrEnum):
@@ -50,7 +57,8 @@ class RootSetupResult:
     def __post_init__(self) -> None:
         if not isinstance(self.action, RootSetupAction) or not isinstance(self.state, RootSetupState):
             raise TypeError("root setup results require finite action and state values")
-        if self.phase not in {"admission", "distribution", "prepared", "runtime", "materialization", "health"}:
+        if self.phase not in {"admission", "distribution", "prepared", "runtime", "materialization",
+                              "publication", "health"}:
             raise ValueError("root setup phase is not a reviewed phase")
         if not self.message or len(self.message) > 512 or "\n" in self.message:
             raise ValueError("root setup message must be one bounded line")
@@ -125,8 +133,9 @@ class RootSetupExplicitChoices:
             raise TypeError("root setup choices must be issued by the root TTY selection registry")
         if not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha):
             raise ValueError("candidate source choice must be an exact lowercase 40-character Git SHA")
-        if not isinstance(lifecycle_action, RootSetupAction):
-            raise ValueError("root lifecycle action must be a fixed RootSetupAction enum")
+        if (not isinstance(lifecycle_action, RootSetupAction)
+                or lifecycle_action is RootSetupAction.QUALIFY):
+            raise ValueError("source bootstrap accepts only install, resume, or update")
         object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
         object.__setattr__(self, "lifecycle_action", lifecycle_action)
         object.__setattr__(self, "_seal", _seal)
@@ -236,8 +245,9 @@ class RootBootstrapCandidateSelectionRegistry:
     def issue_explicit_tty_choice(self, action: RootSetupAction) -> RootSetupExplicitChoices:
         if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
             raise RuntimeError("candidate source choice requires the Linux root setup process")
-        if not isinstance(action, RootSetupAction):
-            raise ValueError("root lifecycle action must be one of the fixed RootSetupAction values")
+        if (not isinstance(action, RootSetupAction)
+                or action is RootSetupAction.QUALIFY):
+            raise ValueError("root source bootstrap accepts only install, resume, or update")
         if not (sys.stdin.isatty() and sys.stderr.isatty()):
             raise RuntimeError("candidate source choice requires the root controlling terminal")
         proof = _capture_root_tty_proof()
@@ -346,14 +356,18 @@ def run_root_setup_action(
     """Run one bounded root setup intent through the installed actor.
 
     Selection handles are accepted only as opaque root-issued references.
-    Their resolution remains inside the installed registries. The current
-    runtime graph does not yet expose the recovery/update/materialization and
-    health consumers, so this function reports their exact pending phase.
+    Their resolution remains inside the installed registries. Lifecycle
+    recovery and update are kept pending until their durable rehydration and
+    generation-CAS consumers are available; installation drives current
+    source/runtime and native materialization before requiring distinct
+    allowlisted runtime-role receipts for strict active enrollment.
     """
     try:
         selected_action = RootSetupAction(action)
     except (TypeError, ValueError):
-        raise ValueError("root setup action must be install, resume, or update") from None
+        raise ValueError("root setup action must be install, resume, update, or qualify") from None
+    if selected_action is RootSetupAction.QUALIFY:
+        raise ValueError("qualification requires the fixed --suite selector")
 
     try:
         _require_root_linux()
@@ -370,10 +384,6 @@ def run_root_setup_action(
                        "The selected root reference is validly shaped, but its installed resolver is not connected.")
     from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
     from .authority.installer_release import InstalledRootReleaseVerifier
-    from .authority.bootstrap_runtime_factory import (
-        RootBootstrapRuntimeFactory,
-        RootInitialSetupAggregate,
-    )
     from .authority.installer_release_build import (
         InstallerReleaseBuildError,
         bootstrap_selected_release,
@@ -415,6 +425,10 @@ def run_root_setup_action(
     except (OSError, RuntimeError) as exc:
         return _result(selected_action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
 
+    from .authority.bootstrap_runtime_factory import (
+        RootBootstrapRuntimeFactory,
+        RootInitialSetupAggregate,
+    )
     factory: RootBootstrapRuntimeFactory | None = None
     initial_aggregate: RootInitialSetupAggregate | None = None
     session = None
@@ -432,6 +446,8 @@ def run_root_setup_action(
             if selected_action is not RootSetupAction.INSTALL:
                 return _result(selected_action, RootSetupState.PENDING, "admission",
                                "No installed root selection exists; run install to begin fresh setup.")
+            from .authority.installer_release_build import ensure_initial_setup_fixed_prefixes
+            ensure_initial_setup_fixed_prefixes()
             initial_aggregate = RootInitialSetupAggregate(release, actor)
             release = actor = None  # type: ignore[assignment]
             account = _read_target_account_name()
@@ -467,24 +483,81 @@ def run_root_setup_action(
         if session is None:
             session = factory.begin(mode, account)
         if selected_action is RootSetupAction.RESUME:
-            # begin(resume) verifies and adopts only an owned, checkpointed
-            # transaction. The actual continuation phases are connected below
-            # once their sealed root APIs are available.
-            return _result(selected_action, RootSetupState.PENDING, "runtime",
-                           "The owned checkpoint is valid; runtime receipt recovery and continuation are not yet connected.",
-                           resume_allowed=True)
-        receipt = session.provision()
+            # Factory.begin("resume") reissues only the exact current empty
+            # prepared checkpoint after checking the current authority snapshot,
+            # unique transaction journal, prior session record, and service
+            # identity marker. Source/runtime/materialization receipts are then
+            # reacquired under this new live session below.
+            receipt = session.selected_installation.resolve_current_prepared_enrollment()
+        else:
+            receipt = session.provision()
         if receipt.state != "prepared" or receipt.enrollment_ids:
             return _result(selected_action, RootSetupState.FAILED, "prepared",
                            "Initial setup did not produce the required empty prepared generation.")
+
+        # Keep this sequence inside the installed root actor: every path,
+        # resource revision, profile choice, and receipt is resolved by the
+        # live factory/session. In particular, no caller-provided path or JSON
+        # can substitute for the pinned source, PM runtime, or TTY selection.
+        bundle = None
+        try:
+            bundle = session.prepare_selected_native_bundle()
+            native_policy_selection = session.observe_native_policy_configuration()
+            from .authority.native_policy_preparation import RootNativePolicyPreparationSelection
+            if (type(native_policy_selection) is not RootNativePolicyPreparationSelection
+                    or getattr(native_policy_selection, "setup_session_id", None)
+                    != session._handle.session_id
+                    or getattr(native_policy_selection, "transaction_handle", None)
+                    != receipt.transaction_handle
+                    or getattr(native_policy_selection, "prepared_generation_id", None)
+                    != receipt.generation_id
+                    or getattr(native_policy_selection, "resource_profile_selection_handle", None)
+                    != bundle.resource_profile_selection_receipt_handle):
+                raise RuntimeError("native policy choice is not bound to the current prepared transaction")
+            assembly = session.resolve_native_bootstrap_assembly(
+                receipt.provision_receipt_handle, bundle.materialization_receipt_handle)
+            materializer = getattr(session, "_native_materializer", None)
+            if materializer is None:
+                raise RuntimeError("root native materialization actor is not retained")
+            output_receipts = materializer.compile_selected(assembly)
+            _verify_native_output_receipts(output_receipts, session=session,
+                                           prepared_generation_id=receipt.generation_id)
+        except BootstrapEnrollmentPending as exc:
+            failure_refs = [_report_ref(receipt.provision_receipt_handle)]
+            if bundle is not None:
+                failure_refs.append(_report_ref(bundle.materialization_receipt_handle))
+            return _result(
+                selected_action, RootSetupState.PENDING, "materialization", _safe_reason(exc),
+                resume_allowed=True, session_id=session._handle.session_id,
+                transaction_ref=_report_ref(receipt.transaction_handle),
+                generation_ref=_report_ref(receipt.generation_id),
+                receipt_refs=tuple(failure_refs),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            return _result(
+                selected_action, RootSetupState.PENDING, "materialization", _safe_reason(exc),
+                resume_allowed=True, session_id=session._handle.session_id,
+                transaction_ref=_report_ref(receipt.transaction_handle),
+                generation_ref=_report_ref(receipt.generation_id),
+                receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
+            )
+
+        # These five package outputs are not the separate allowlisted runtime
+        # role receipts required by RootBootstrapSession.activate_runnable.
+        # Keep the prepared generation selected until the factory has a
+        # reviewed closure-to-runtime receipt producer; do not equate receipt
+        # IDs or hashes across the two registries.
+        references = [_report_ref(receipt.provision_receipt_handle),
+                      _report_ref(bundle.materialization_receipt_handle)]
+        references.extend(_report_ref(item.receipt_id) for item in output_receipts)
         return _result(
-            selected_action, RootSetupState.PENDING, "prepared",
-            "The root prepared generation is recorded; source/runtime receipts, native materialization, publication, and health checks still need their verified runtime handlers.",
+            selected_action, RootSetupState.PENDING, "publication",
+            "Pinned source, PM runtime, selected Resources, native materialization, and package outputs are retained; strict active enrollment is pending its separate allowlisted runtime-role receipts.",
             resume_allowed=True,
             session_id=session._handle.session_id,
             transaction_ref=_report_ref(receipt.transaction_handle),
             generation_ref=_report_ref(receipt.generation_id),
-            receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
+            receipt_refs=tuple(references),
         )
     except BootstrapEnrollmentPending as exc:
         return _result(selected_action, RootSetupState.PENDING, "runtime", _safe_reason(exc),
@@ -516,10 +589,24 @@ def run_root_setup_action(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
     parser.add_argument("action", choices=tuple(item.value for item in RootSetupAction))
-    args = parser.parse_args(argv)
+    parser.add_argument("--suite", choices=tuple(item.value for item in RootInstalledQualificationSuite))
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(arguments)
+    if args.action == RootSetupAction.QUALIFY.value:
+        if (args.suite is None or len(arguments) != 3
+                or arguments[0] != RootSetupAction.QUALIFY.value
+                or arguments[1] != "--suite"):
+            parser.error("use exactly: qualify --suite <fixed-suite-id>")
+    elif args.suite is not None or arguments != [args.action]:
+        parser.error("lifecycle actions accept no additional arguments")
     if not sys.stdin.isatty() or not sys.stderr.isatty():
+        if args.action == RootSetupAction.QUALIFY.value:
+            print("Qualification requires the root controlling terminal.", file=sys.stderr)
+            return 4
         result = _result(RootSetupAction(args.action), RootSetupState.PENDING, "admission",
                          "Root setup requires its controlling terminal for local operator intake.")
+    elif args.action == RootSetupAction.QUALIFY.value:
+        return _run_installed_qualification(args.suite)
     else:
         try:
             result = run_root_setup_action(args.action)
@@ -536,6 +623,52 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result.state is RootSetupState.PENDING and result.resume_command:
         print(f"Resume with: {result.resume_command}", file=sys.stderr)
     return result.exit_code
+
+
+def _run_installed_qualification(suite_id: str) -> int:
+    """Dispatch one source-owned qualification recipe through the installed actor."""
+    try:
+        selected_suite = RootInstalledQualificationSuite(suite_id)
+    except (TypeError, ValueError):
+        print("Qualification suite is outside the fixed installed suite catalog.", file=sys.stderr)
+        return 1
+    try:
+        _require_root_linux()
+    except RuntimeError:
+        print("Qualification is incomplete: a current Linux root actor is required.", file=sys.stderr)
+        return 4
+    try:
+        from .authority.installed_qualification import (
+            RootInstalledQualificationResult,
+            run_selected_installed_qualification,
+        )
+    except ImportError:
+        print("Qualification is incomplete: the verified installed dispatcher is unavailable.",
+              file=sys.stderr)
+        return 4
+    try:
+        result = run_selected_installed_qualification(selected_suite.value)
+    except Exception as exc:
+        # The dispatcher owns detailed typed diagnostics. Never print exception
+        # contents, which could contain paths, source data, or credentials.
+        print(f"Qualification is incomplete ({type(exc).__name__}).", file=sys.stderr)
+        return 4
+    if (type(result) is not RootInstalledQualificationResult
+            or getattr(result, "schema", None) != 1
+            or getattr(result, "suite_id", None) != selected_suite.value
+            or getattr(result, "status", None) not in {"passed", "failed", "incomplete"}):
+        print("Qualification is incomplete: installed dispatcher returned an invalid result.",
+              file=sys.stderr)
+        return 4
+    status = result.status
+    evidence = getattr(result, "evidence_sha256", None)
+    if status == "passed" and (not isinstance(evidence, str)
+                               or not re.fullmatch(r"[0-9a-f]{64}", evidence)):
+        print("Qualification is incomplete: passed result has no valid evidence digest.",
+              file=sys.stderr)
+        return 4
+    print(f"Installed qualification {selected_suite.value}: {status}.", file=sys.stderr)
+    return {"passed": 0, "failed": 1, "incomplete": 4}[status]
 
 
 def launcher_status() -> LauncherStatus:
@@ -681,6 +814,7 @@ def _result(action: RootSetupAction, state: RootSetupState, phase: str, message:
         (RootSetupState.PENDING, "prepared"): "RUNTIME_HANDLERS_UNAVAILABLE",
         (RootSetupState.PENDING, "runtime"): "RUNTIME_HANDLERS_UNAVAILABLE",
         (RootSetupState.PENDING, "materialization"): "MATERIALIZATION_UNAVAILABLE",
+        (RootSetupState.PENDING, "publication"): "PUBLICATION_UNAVAILABLE",
         (RootSetupState.PENDING, "health"): "HEALTH_UNAVAILABLE",
     }.get((state, phase), "SETUP_PENDING")
     resume = action if state is RootSetupState.PENDING and resume_allowed else None
@@ -692,6 +826,35 @@ def _result(action: RootSetupAction, state: RootSetupState, phase: str, message:
 
 def _report_ref(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _verify_native_output_receipts(receipts: object, *, session: object,
+                                   prepared_generation_id: str) -> tuple[object, ...]:
+    """Require the assembler's complete fixed output-role closure."""
+    from .authority.native_output_receipts import RuntimeArtifactReceipt
+
+    required = {
+        "native-compiled-closure", "native-entrypoint-manifest",
+        "native-action-resolver", "native-boundary-overlay", "native-candidate-index",
+    }
+    if not isinstance(receipts, tuple) or len(receipts) != len(required):
+        raise RuntimeError("native assembler did not return its complete five-role receipt closure")
+    authorization = getattr(session, "_authorization", None)
+    session_handle = getattr(session, "_handle", None)
+    if (not isinstance(getattr(authorization, "transaction_handle", None), str)
+            or not isinstance(getattr(authorization, "plan_digest", None), str)
+            or not isinstance(getattr(session_handle, "session_id", None), str)):
+        raise RuntimeError("native output receipts cannot be joined to current setup custody")
+    if (any(type(item) is not RuntimeArtifactReceipt for item in receipts)
+            or {item.artifact_role for item in receipts} != required
+            or len({item.receipt_id for item in receipts}) != len(required)
+            or any(item.setup_session_id != session_handle.session_id
+                   or item.transaction_handle != authorization.transaction_handle
+                   or item.plan_digest != authorization.plan_digest
+                   or item.prepared_generation_id != prepared_generation_id
+                   for item in receipts)):
+        raise RuntimeError("native assembler receipt roles are missing, duplicated, or untyped")
+    return receipts
 
 
 __all__ = ["LauncherStatus", "RootBootstrapCandidateSelectionRegistry", "RootSetupAction",

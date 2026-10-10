@@ -52,6 +52,7 @@ from .bootstrap_enrollment import (
     _open_immutable_release_root,
     _read_secure_root_bytes,
     _unique_pairs,
+    _validate_authority_base,
     _validate_sha256,
     _verify_release_file_at,
 )

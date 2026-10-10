@@ -33,6 +33,11 @@ _CLAIM_DIR = "active-policy-compilation"
 _HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_DOCUMENT = 2 * 1024 * 1024
+_SETUP_CHOICE_PURPOSES = frozenset({
+    "memory-service-enablement", "memory-capture-configuration", "private-input-routes",
+    "public-free-web-read", "existing-model-selection", "native-policy-preparation",
+    "application-qualification",
+})
 
 
 def _canonical(value: Any) -> bytes:
@@ -42,6 +47,19 @@ def _canonical(value: Any) -> bytes:
 
 def _sha(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _ordered_unique_receipt_handles(handles: Sequence[str], label: str) -> tuple[str, ...]:
+    """Return one stable receipt order while rejecting malformed source handles."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for handle in handles:
+        if not isinstance(handle, str) or not _HANDLE.fullmatch(handle):
+            raise BootstrapEnrollmentPending(f"{label} receipt closure contains a malformed handle")
+        if handle not in seen:
+            seen.add(handle)
+            result.append(handle)
+    return tuple(result)
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -208,16 +226,91 @@ def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
         "plan_artifact_id": claim.plan_artifact_id,
         "release_commit": claim.release_commit,
         "source_receipt_handles": list(claim.source_receipt_handles),
+        "choice_adoptions": [_choice_projection_record(row) for row in claim.choice_adoptions],
         "issued_monotonic": claim.issued_monotonic,
         "expires_monotonic": claim.expires_monotonic,
     }
+
+
+def _choice_projection_record(row: "ActiveSetupChoiceProjection") -> dict[str, Any]:
+    return {
+        "selection_handle": row.selection_handle,
+        "purpose": row.purpose,
+        "key_id": row.key_id,
+        "signed_record_sha256": row.signed_record_sha256,
+        "choice_payload_sha256": row.choice_payload_sha256,
+        "choice_epoch": row.choice_epoch,
+        "revocation_epoch": row.revocation_epoch,
+        "issued_at_unix": row.issued_at_unix,
+        "setup_deadline_unix": row.setup_deadline_unix,
+        "release_deployment_receipt_sha256": row.release_deployment_receipt_sha256,
+        "setup_session_handle": row.setup_session_handle,
+        "transaction_handle": row.transaction_handle,
+        "plan_id": row.plan_id,
+        "prepared_generation": row.prepared_generation,
+        "principal_selection_handle": row.principal_selection_handle,
+        "namespace_selection_handle": row.namespace_selection_handle,
+        "private_profile_selection_handle": row.private_profile_selection_handle,
+        "source_member_receipt_handles": list(row.source_member_receipt_handles),
+        "principal_id": row.principal_id,
+        "profile_id": row.profile_id,
+        "namespace_id": row.namespace_id,
+        "principal_binding_sha256": row.principal_binding_sha256,
+        "namespace_binding_sha256": row.namespace_binding_sha256,
+        "service_generation_id": row.service_generation_id,
+        "service_generation_digest": row.service_generation_digest,
+        "selection_catalog_sha256": row.selection_catalog_sha256,
+    }
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ActiveSetupChoiceProjection:
+    """Typed source projection for one root-signed setup choice.
+
+    This contains no choice payload or runtime authority. Its private seal ties
+    the normalized projection to the exact active compiler claim.
+    """
+
+    selection_handle: str
+    purpose: str
+    key_id: str
+    signed_record_sha256: str
+    choice_payload_sha256: str
+    choice_epoch: int
+    revocation_epoch: int
+    issued_at_unix: float
+    setup_deadline_unix: float
+    release_deployment_receipt_sha256: str
+    setup_session_handle: str
+    transaction_handle: str
+    plan_id: str
+    prepared_generation: str
+    principal_selection_handle: str
+    namespace_selection_handle: str
+    private_profile_selection_handle: str | None
+    source_member_receipt_handles: tuple[str, ...]
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    principal_binding_sha256: str
+    namespace_binding_sha256: str
+    service_generation_id: str
+    service_generation_digest: str
+    selection_catalog_sha256: str
+    _compiler_seal: object = field(repr=False, compare=False)
 
 
 def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> None:
     if (not isinstance(claim.policy_bytes, bytes) or _sha(claim.policy_bytes) != claim.compiled_policy_sha256
             or not isinstance(claim.artifact_catalog_bytes, bytes)
             or _sha(claim.artifact_catalog_bytes) != claim.compiled_artifact_catalog_sha256
-            or not isinstance(claim.selection_document, Mapping)):
+            or not isinstance(claim.selection_document, Mapping)
+            or not isinstance(claim.source_receipt_handles, tuple)
+            or _ordered_unique_receipt_handles(claim.source_receipt_handles, "active claim")
+            != claim.source_receipt_handles
+            or not set(claim.runtime_receipt_handles).issubset(claim.source_receipt_handles)
+            or not set(claim.materialization_receipt_handles).issubset(claim.source_receipt_handles)
+            or claim.principal_selection_receipt_handle not in claim.source_receipt_handles):
         raise BootstrapEnrollmentPending("active policy claim output bytes changed")
     document = dict(claim.selection_document)
     catalog_digest = document.get("catalog_sha256")
@@ -264,6 +357,8 @@ class RootActivePolicyCompilationClaim:
     _root_setup_session: Any = field(repr=False, compare=False)
     _reservation_handle: str = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
+    _root_prepared_native_bundle: Any = field(default=None, repr=False, compare=False)
+    choice_adoptions: tuple[ActiveSetupChoiceProjection, ...] = ()
 
 
 class RootActivePolicyTemplateResolver:
@@ -341,21 +436,19 @@ class RootActivePolicyCompilationRegistry:
 
     def compile_active_policy(
             self, setup_session_handle: RootSetupSessionHandle,
-            prepared_enrollment_receipt_handle: str,
-            runtime_receipt_handles: Sequence[str],
+            prepared_bundle: Any,
             materialization_receipt_handles: Sequence[str]) -> str:
         self._require_root()
         session = self.factory.resolve_live_session(setup_session_handle)
+        prepared = self._verify_prepared_native_bundle(session, prepared_bundle)
         if getattr(self.runtime_receipts, "setup_session", None) is not session:
             raise BootstrapEnrollmentPending("PM runtime registry is not bound to this exact live setup session")
         output_binding = getattr(self.materialization_receipts, "_binding", None)
         if getattr(output_binding, "_session", None) is not session:
             raise BootstrapEnrollmentPending("native output registry is not bound to this exact live setup session")
         session._refresh_authorization()
-        prepared = session.resolve_prepared_receipt(prepared_enrollment_receipt_handle)
-        self._validate_prepared(session, prepared)
-        runtime_handles = self._handles(runtime_receipt_handles, "runtime receipt")
-        output_handles = self._handles(materialization_receipt_handles, "native materialization receipt")
+        runtime_handles = (prepared_bundle.pm_runtime_receipt_handle,)
+        output_handles = self._handles(materialization_receipt_handles, "native output receipt")
         if len(runtime_handles) != 1 or not output_handles:
             raise BootstrapEnrollmentPending("active policy compilation requires selected PM runtime and complete native outputs")
         resolved_runtime = tuple(self.runtime_receipts.resolve_runtime(
@@ -370,6 +463,8 @@ class RootActivePolicyCompilationRegistry:
         if not isinstance(principal_handle, str) or not re.fullmatch(r"[0-9a-f]{64}", principal_handle):
             raise BootstrapEnrollmentPending("adopted principal registry returned an invalid root receipt")
         policy_bytes, catalog_bytes, selection_document, selection_digest = self._compile_documents(session)
+        choice_adoptions = self._compile_choice_adoptions(
+            session, prepared, selection_document["catalog_sha256"])
         issued = time.monotonic()
         live = self.sessions._live(setup_session_handle)
         expires = min(issued + 120.0, float(live.expires_monotonic))
@@ -377,6 +472,16 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("active policy compilation lease expired")
         publication_handle = secrets.token_urlsafe(36)
         observed_handle = self._mint_actor_observation(session, prepared, expires)
+        source_receipt_handles = _ordered_unique_receipt_handles((
+            prepared_bundle.hermes_source_receipt_handle,
+            prepared_bundle.pm_runtime_receipt_handle,
+            prepared_bundle.resources_source_receipt_handle,
+            prepared_bundle.resource_profile_selection_receipt_handle,
+            prepared_bundle.materialization_receipt_handle,
+            *runtime_handles, *output_handles, principal_handle,
+            *(handle for row in choice_adoptions
+              for handle in row.source_member_receipt_handles)),
+            "active source")
         provisional = RootActivePolicyCompilationClaim(
             1, session._authorization.plan_artifact_id,
             session._factory._release.release_commit,
@@ -385,12 +490,12 @@ class RootActivePolicyCompilationRegistry:
             prepared.generation_id, selection_digest, prepared.generation_digest,
             session._policy.artifact_id, session._policy.sha256, principal_handle,
             runtime_handles, output_handles,
-            (*runtime_handles, *output_handles, principal_handle),
+            source_receipt_handles,
             _sha(policy_bytes), _sha(catalog_bytes),
             _sha(_canonical(dict(selection_document))), selection_document["catalog_sha256"],
             issued, expires, "0" * 64, policy_bytes, catalog_bytes,
             selection_document, observed_handle, self.root_journal, session,
-            "", self._seal,
+            "", self._seal, prepared_bundle, choice_adoptions,
         )
         claim_digest = _sha(_canonical(_manifest(provisional)))
         reservation = self.materialization_receipts.reserve_for_active_compilation(
@@ -424,18 +529,21 @@ class RootActivePolicyCompilationRegistry:
             _root_journal_root=provisional._root_journal_root,
             _root_setup_session=provisional._root_setup_session,
             _reservation_handle=reservation.reservation_handle, _seal=self._seal,
+            _root_prepared_native_bundle=provisional._root_prepared_native_bundle,
+            choice_adoptions=provisional.choice_adoptions,
         )
         # Durable claim record reserves the transaction before the publisher can
         # create any generation. Same-transaction replay remains denied until
         # explicit release or committed active state.
-        _ensure_private_directory(self._claim_root)
-        lock_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".lock")
-        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        os.fchown(lock_fd, 0, 0)
-        os.fchmod(lock_fd, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        lock_fd = -1
+        state_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".json")
         try:
-            state_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".json")
+            _ensure_private_directory(self._claim_root)
+            lock_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".lock")
+            lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.fchown(lock_fd, 0, 0)
+            os.fchmod(lock_fd, 0o600)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             if state_path.exists():
                 state = _read_json(state_path)
                 if state.get("state") not in {"released"}:
@@ -449,9 +557,33 @@ class RootActivePolicyCompilationRegistry:
             lock_fd = -1
             return publication_handle
         except Exception:
-            self.materialization_receipts.release_active_compilation(
-                reservation.reservation_handle, prepared_generation_id=prepared.generation_id,
-                publication_handle=publication_handle, claim_digest=claim_digest)
+            # If persistence failed after some immutable files were written,
+            # remove only artifacts whose names are derived from this fresh
+            # unreturned handle. Keep the reservation if durable cleanup itself
+            # fails; that is the safe outcome after an uncertain interruption.
+            try:
+                if state_path.exists():
+                    state = _read_json(state_path)
+                    if (state.get("publication_handle") == publication_handle
+                            and state.get("claim_digest") == claim_digest):
+                        state_path.unlink()
+                for suffix in (".policy", ".catalog", ".selection", ".claim.json"):
+                    path = self._claim_root / (publication_handle + suffix)
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+                if self._claim_root.exists():
+                    directory = os.open(self._claim_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+                self.materialization_receipts.release_active_compilation(
+                    reservation.reservation_handle, prepared_generation_id=prepared.generation_id,
+                    publication_handle=publication_handle, claim_digest=claim_digest)
+            except Exception:
+                pass
             raise
         finally:
             if lock_fd >= 0:
@@ -487,6 +619,7 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("active policy claim is stale, altered, replayed, or unsealed")
         _validate_claim_output_hashes(claim)
         self._verify_claim_bundle(claim)
+        self._verify_choice_projection_seals(claim)
         session = self.factory.resolve_live_session(claim._root_setup_session._handle)
         session._refresh_authorization()
         retained = session._last_receipt
@@ -494,6 +627,9 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("prepared receipt was lost during active policy compilation")
         prepared = session.resolve_prepared_receipt(retained.provision_receipt_handle)
         self._validate_prepared(session, prepared)
+        bundle = claim._root_prepared_native_bundle
+        if bundle is None or self._verify_prepared_native_bundle(session, bundle) is not prepared:
+            raise BootstrapEnrollmentPending("prepared native bundle changed during active policy publication")
         if (session is not claim._root_setup_session
                 or session._handle.session_id != claim.setup_session_id
                 or session._authorization.transaction_handle != claim.transaction_handle
@@ -522,6 +658,8 @@ class RootActivePolicyCompilationRegistry:
                 or policy_bytes != claim.policy_bytes or catalog_bytes != claim.artifact_catalog_bytes
                 or _canonical(dict(selection)) != _canonical(dict(claim.selection_document))):
             raise BootstrapEnrollmentPending("active policy compiler inputs changed after claim issuance")
+        if self._compile_choice_adoptions(session, prepared, claim.selection_catalog_sha256) != claim.choice_adoptions:
+            raise BootstrapEnrollmentPending("signed setup-choice projection changed after claim issuance")
         return claim
 
     def complete_active_publication(self, receipt: Any) -> None:
@@ -554,8 +692,9 @@ class RootActivePolicyCompilationRegistry:
                 or receipt.artifact_catalog_sha256 != claim.compiled_artifact_catalog_sha256
                 or receipt.runtime_receipt_handles != claim.runtime_receipt_handles
                 or receipt.materialization_receipt_handles != claim.materialization_receipt_handles
-                or receipt.input_receipt_handles != (claim.observed_root_receipt_handle,
-                                                     *claim.source_receipt_handles)):
+                or receipt.input_receipt_handles != _ordered_unique_receipt_handles(
+                    (claim.observed_root_receipt_handle, *claim.source_receipt_handles),
+                    "published input")):
             raise BootstrapEnrollmentPending("active publication receipt does not bind the compiled claim outputs")
         # Publication is already the atomic externally visible commit. Persist
         # that fact before consuming output capabilities so a later local CAS
@@ -681,6 +820,172 @@ class RootActivePolicyCompilationRegistry:
         selection["catalog_sha256"] = unsigned_digest
         return policy_bytes, catalog_bytes, selection, current.selection_digest
 
+    def _compile_choice_adoptions(
+            self, session: Any, prepared: EnrollmentReceipt,
+            selection_catalog_sha256: str) -> tuple[ActiveSetupChoiceProjection, ...]:
+        """Project only current signed choices retained by the root registry."""
+        from .root_setup_choices import RootSetupChoiceRegistry, RootSetupChoiceSnapshot
+
+        binding = session.selected_installation
+        registry = binding.resolve_setup_choice_registry()
+        if type(registry) is not RootSetupChoiceRegistry:
+            raise BootstrapEnrollmentPending("current setup has no concrete root signed-choice registry")
+        snapshots = registry.resolve_current_session_choices(binding)
+        if not isinstance(snapshots, tuple) or len(snapshots) > len(_SETUP_CHOICE_PURPOSES):
+            raise BootstrapEnrollmentPending("root setup-choice registry returned an unbounded choice set")
+
+        identity = binding.resolve_current_setup_identity()
+        principal_selector = binding.resolve_adopted_principal_selector()
+        namespace_selector = binding.resolve_adopted_namespace_selector()
+        session_handle = binding.resolve_current_setup_session_handle()
+        release = session._factory._release
+        release.verify_current()
+        release_digest = getattr(release, "deployment_receipt_sha256", None)
+        principal_id = getattr(identity.principal, "principal_id", None)
+        namespace_id = getattr(identity.namespace, "namespace_id", None)
+        if (getattr(identity, "expires_monotonic", 0) <= time.monotonic()
+                or identity.principal_selection_handle != principal_selector.selection_handle
+                or identity.namespace_selection_handle != namespace_selector.selection_handle
+                or principal_selector.setup_session_id != session_handle.session_id
+                or namespace_selector.setup_session_id != session_handle.session_id
+                or principal_selector.transaction_handle != session._authorization.transaction_handle
+                or namespace_selector.transaction_handle != session._authorization.transaction_handle
+                or principal_selector.plan_sha256 != session._authorization.plan_digest
+                or namespace_selector.plan_sha256 != session._authorization.plan_digest
+                or namespace_selector.prepared_generation_id != prepared.generation_id
+                or namespace_selector.prepared_generation_digest != prepared.generation_digest
+                or not isinstance(release_digest, str) or not _HEX.fullmatch(release_digest)
+                or not isinstance(principal_id, str) or not principal_id
+                or not isinstance(namespace_id, str) or not namespace_id):
+            raise BootstrapEnrollmentPending("fresh setup identity does not match active choice projection")
+
+        projections: list[ActiveSetupChoiceProjection] = []
+        for snapshot in snapshots:
+            if type(snapshot) is not RootSetupChoiceSnapshot:
+                raise BootstrapEnrollmentPending("choice registry returned an untyped signed choice")
+            purpose = snapshot.purpose
+            if purpose not in _SETUP_CHOICE_PURPOSES:
+                raise BootstrapEnrollmentPending("signed setup choice purpose is outside the finite contract")
+            payload = dict(snapshot.choice_payload)
+            expected = {
+                "setup_session_handle": session_handle.session_id,
+                "transaction_handle": session._authorization.transaction_handle,
+                "plan_id": session._authorization.plan_artifact_id,
+                "prepared_generation": prepared.generation_id,
+                "principal_selection_handle": principal_selector.selection_handle,
+                "namespace_selection_handle": namespace_selector.selection_handle,
+                "principal_id": principal_id,
+                "namespace_id": namespace_id,
+                "principal_binding_sha256": principal_selector.binding_sha256,
+                "namespace_binding_sha256": namespace_selector.binding_sha256,
+                "release_deployment_receipt_sha256": release_digest,
+            }
+            if any(getattr(snapshot, name, None) != value for name, value in expected.items()):
+                raise BootstrapEnrollmentPending("signed setup choice belongs to another active subject or generation")
+            if (not isinstance(snapshot.selection_handle, str)
+                    or not _HANDLE.fullmatch(snapshot.selection_handle)
+                    or not isinstance(snapshot.key_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", snapshot.key_id)
+                    or not _HEX.fullmatch(snapshot.signed_record_sha256)
+                    or not _HEX.fullmatch(snapshot.choice_payload_sha256)
+                    or snapshot.choice_payload_sha256 != _sha(_canonical(payload))
+                    or type(snapshot.choice_epoch) is not int or snapshot.choice_epoch < 1
+                    or type(snapshot.revocation_epoch) is not int or snapshot.revocation_epoch != 1
+                    or type(snapshot.issued_at_unix) not in (int, float)
+                    or type(snapshot.setup_deadline_unix) not in (int, float)
+                    or snapshot.issued_at_unix >= snapshot.setup_deadline_unix
+                    or snapshot.adoption_publication_receipt_handle is not None):
+                raise BootstrapEnrollmentPending("signed setup choice digest, epoch, or lease is invalid")
+            if (not isinstance(snapshot.source_member_receipt_handles, tuple)
+                    or not snapshot.source_member_receipt_handles
+                    or len(set(snapshot.source_member_receipt_handles)) != len(snapshot.source_member_receipt_handles)
+                    or any(not isinstance(handle, str) or not _HANDLE.fullmatch(handle)
+                           for handle in snapshot.source_member_receipt_handles)):
+                raise BootstrapEnrollmentPending("signed setup choice source receipt closure is invalid")
+
+            private_profile_id: str | None = None
+            if snapshot.private_profile_selection_handle is not None:
+                if purpose not in {"memory-service-enablement", "existing-model-selection"}:
+                    raise BootstrapEnrollmentPending("choice purpose cannot use a private profile selector")
+                private_profile = binding.resolve_current_private_profile(
+                    snapshot.private_profile_selection_handle, purpose)
+                private_profile_id = getattr(private_profile, "profile_id", None)
+                if not isinstance(private_profile_id, str) or not private_profile_id:
+                    raise BootstrapEnrollmentPending("current private profile selector has no profile identity")
+
+            if purpose == "memory-service-enablement":
+                profile_id = payload.get("profile_id")
+                if (private_profile_id is None or profile_id != private_profile_id
+                        or not isinstance(payload.get("enabled"), bool)):
+                    raise BootstrapEnrollmentPending("memory choice profile differs from its current private selection")
+            elif purpose == "existing-model-selection":
+                profile_id = payload.get("profile_id", private_profile_id)
+                if private_profile_id is None or profile_id != private_profile_id:
+                    raise BootstrapEnrollmentPending("model choice profile differs from its current private selection")
+            elif purpose == "native-policy-preparation":
+                profile_id = payload.get("service_profile_id")
+                if (not isinstance(profile_id, str)
+                        or profile_id != getattr(identity.principal, "service_profile_id", None)):
+                    raise BootstrapEnrollmentPending("native policy choice profile differs from the current principal")
+            elif purpose == "application-qualification":
+                profile_id = payload.get("target_profile_id")
+                if (not isinstance(profile_id, str)
+                        or profile_id != getattr(identity.namespace, "target_profile_id", None)):
+                    raise BootstrapEnrollmentPending("application choice profile differs from the current namespace")
+            else:
+                # The signed choice registry may eventually issue the other
+                # v143 purposes, but each needs a dedicated typed selector join
+                # before it can enter a published generation.
+                raise BootstrapEnrollmentPending("setup-choice purpose has no installed root profile join")
+            if (not isinstance(profile_id, str) or not profile_id
+                    or profile_id != principal_selector.service_profile_id
+                    or profile_id != namespace_selector.target_profile_id):
+                raise BootstrapEnrollmentPending("signed setup choice profile differs from current principal/namespace selectors")
+
+            projections.append(ActiveSetupChoiceProjection(
+                selection_handle=snapshot.selection_handle,
+                purpose=purpose,
+                key_id=snapshot.key_id,
+                signed_record_sha256=snapshot.signed_record_sha256,
+                choice_payload_sha256=snapshot.choice_payload_sha256,
+                choice_epoch=snapshot.choice_epoch,
+                revocation_epoch=snapshot.revocation_epoch,
+                issued_at_unix=snapshot.issued_at_unix,
+                setup_deadline_unix=snapshot.setup_deadline_unix,
+                release_deployment_receipt_sha256=snapshot.release_deployment_receipt_sha256,
+                setup_session_handle=snapshot.setup_session_handle,
+                transaction_handle=snapshot.transaction_handle,
+                plan_id=snapshot.plan_id,
+                prepared_generation=snapshot.prepared_generation,
+                principal_selection_handle=snapshot.principal_selection_handle,
+                namespace_selection_handle=snapshot.namespace_selection_handle,
+                private_profile_selection_handle=snapshot.private_profile_selection_handle,
+                source_member_receipt_handles=tuple(sorted(snapshot.source_member_receipt_handles)),
+                principal_id=principal_id,
+                profile_id=profile_id,
+                namespace_id=namespace_id,
+                principal_binding_sha256=principal_selector.binding_sha256,
+                namespace_binding_sha256=namespace_selector.binding_sha256,
+                service_generation_id=prepared.generation_id,
+                service_generation_digest=prepared.generation_digest,
+                selection_catalog_sha256=selection_catalog_sha256,
+                _compiler_seal=self._seal,
+            ))
+        projections.sort(key=lambda row: (row.purpose, row.selection_handle))
+        return tuple(projections)
+
+    def _verify_choice_projection_seals(self, claim: RootActivePolicyCompilationClaim) -> None:
+        rows = claim.choice_adoptions
+        if (not isinstance(rows, tuple) or len(rows) > len(_SETUP_CHOICE_PURPOSES)
+                or any(type(row) is not ActiveSetupChoiceProjection
+                       or row._compiler_seal is not self._seal
+                       or row.selection_catalog_sha256 != claim.selection_catalog_sha256
+                       or row.service_generation_id != claim.prepared_generation_id
+                       or row.service_generation_digest != claim.expected_service_generation_digest
+                       for row in rows)
+                or rows != tuple(sorted(rows, key=lambda row: (row.purpose, row.selection_handle)))):
+            raise BootstrapEnrollmentPending("active setup-choice projection is stale, altered, or unsealed")
+
     def _mint_actor_observation(self, session: Any, prepared: EnrollmentReceipt,
                                 expires: float) -> str:
         session._check_live()
@@ -740,6 +1045,38 @@ class RootActivePolicyCompilationRegistry:
                 or committed.plan_digest != proof.plan_digest):
             raise BootstrapEnrollmentPending("prepared receipt is not the exact durable root commit")
 
+    def _verify_prepared_native_bundle(self, session: Any, bundle: Any) -> EnrollmentReceipt:
+        """Use the factory's typed currentness resolver for the prepared bundle."""
+        from .bootstrap_runtime_factory import RootPreparedNativeBundle
+        if (type(bundle) is not RootPreparedNativeBundle
+                or not isinstance(getattr(bundle, "_session_seal", None), str)
+                or not secrets.compare_digest(bundle._session_seal, session._seal)):
+            raise BootstrapEnrollmentPending("active compilation requires the root-prepared native bundle")
+        session._check_live()
+        session._refresh_authorization()
+        retained = session._last_receipt
+        if (not isinstance(retained, EnrollmentReceipt) or retained.state != "prepared"
+                or not retained.provision_receipt_handle or retained.enrollment_ids):
+            raise BootstrapEnrollmentPending("prepared native bundle no longer has an empty current generation")
+        prepared = session.resolve_prepared_receipt(retained.provision_receipt_handle)
+        self._validate_prepared(session, prepared)
+        current = session.selected_installation.resolve_current_prepared_native_bundle(bundle)
+        if (current is not bundle
+                or (bundle.setup_session_id, bundle.transaction_handle,
+                    bundle.prepared_generation_id, bundle.prepared_generation_digest)
+                != (session._handle.session_id, session._authorization.transaction_handle,
+                    prepared.generation_id, prepared.generation_digest)):
+            raise BootstrapEnrollmentPending("prepared native bundle belongs to another setup transaction")
+        pm_runtime = session.selected_installation.resolve_current_pm_runtime()
+        if (getattr(pm_runtime, "receipt_handle", None) != bundle.pm_runtime_receipt_handle
+                or getattr(pm_runtime, "prepared_generation_id", None) != prepared.generation_id
+                or getattr(pm_runtime, "transaction_handle", None) != session._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("prepared native bundle PM receipt is stale")
+        source = session.selected_installation.resolve_current_hermes_source()
+        if getattr(source, "receipt_handle", None) != bundle.hermes_source_receipt_handle:
+            raise BootstrapEnrollmentPending("prepared native bundle Hermes source receipt is stale")
+        return prepared
+
     def _verify_postpublication_claim(self,
                                       claim: RootActivePolicyCompilationClaim) -> None:
         if (not isinstance(claim, RootActivePolicyCompilationClaim)
@@ -758,12 +1095,18 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("prepared receipt was lost after active publication")
         prepared = session.resolve_prepared_receipt(retained.provision_receipt_handle)
         self._validate_prepared(session, prepared)
+        bundle = claim._root_prepared_native_bundle
+        if bundle is None or self._verify_prepared_native_bundle(session, bundle) is not prepared:
+            raise BootstrapEnrollmentPending("prepared native bundle changed after active publication")
         if (session is not claim._root_setup_session
                 or session._authorization.transaction_handle != claim.transaction_handle
                 or session._authorization.plan_digest != claim.plan_sha256
                 or prepared.generation_id != claim.prepared_generation_id
                 or prepared.generation_digest != claim.expected_service_generation_digest):
             raise BootstrapEnrollmentPending("active publication no longer joins the prepared setup session")
+        self._verify_choice_projection_seals(claim)
+        if self._compile_choice_adoptions(session, prepared, claim.selection_catalog_sha256) != claim.choice_adoptions:
+            raise BootstrapEnrollmentPending("signed setup-choice projection changed during active publication")
         self.principal_registry.resolve_adopted_initial_principal(self.sessions, session._handle)
         self._verify_actor_observation(claim.observed_root_receipt_handle, claim)
         for handle in claim.runtime_receipt_handles:

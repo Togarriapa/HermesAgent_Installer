@@ -292,6 +292,18 @@ class RootResolvedHostTool:
     selected_network_key: tuple[str, str, str] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        # Host-tool identity is a root-issued capability, not a bag of package
+        # metadata. Requiring the concrete registry here prevents callers from
+        # constructing an apparently verified tool with an arbitrary FD.
+        from hermes_installer.authority.host_tool_observation import HostToolObservationRegistry
+        if type(self.observation_registry) is not HostToolObservationRegistry:
+            raise ValueError("root nft tool must come from the host-tool observation registry")
+        if (not isinstance(self.observation_handle, str)
+                or not re.fullmatch(r"host-nft-observation:[0-9a-f]{48}", self.observation_handle)
+                or not isinstance(self.selected_network_key, tuple)
+                or len(self.selected_network_key) != 3
+                or not all(isinstance(item, str) and item for item in self.selected_network_key)):
+            raise ValueError("root nft tool observation binding is malformed")
         for name in ("variant_id", "package_name", "version", "distribution", "release",
                      "architecture", "executable_artifact_id", "package_set_receipt_handle"):
             _id(getattr(self, name), name)
@@ -307,6 +319,10 @@ class RootResolvedHostTool:
         return f"/proc/self/fd/{self.executable_fd}"
 
     def verify_current(self, *, expected_uid: int = 0) -> None:
+        from hermes_installer.authority.host_tool_observation import HostToolObservationRegistry
+        if type(self.observation_registry) is not HostToolObservationRegistry:
+            raise AuthorityDenied("private_network.tool", "root nft observation registry is unavailable")
+        self.observation_registry.verify_resolved_tool(self)
         try:
             info = self.path.stat(follow_symlinks=False)
             held_info = os.fstat(self.executable_fd)
@@ -327,13 +343,21 @@ class RootResolvedHostTool:
                 or digest.hexdigest() != self.executable_sha256
                 or time.monotonic() >= self.expires_monotonic):
             raise AuthorityDenied("private_network.tool", "selected kernel tool changed after catalog resolution")
-        if self.observation_registry is not None:
-            self.observation_registry.revalidate_current(self.observation_handle, self.selected_network_key)
+
+    def verify_for_network(self, network: PrivateLoopbackNetwork, *, expected_uid: int = 0) -> None:
+        if (not isinstance(network, PrivateLoopbackNetwork)
+                or self.selected_network_key != (network.network_id, network.generation,
+                                                  network.service_generation_digest)):
+            raise AuthorityDenied("private_network.tool", "nft observation is not selected for this network")
+        self.verify_current(expected_uid=expected_uid)
 
     def close(self) -> None:
         if self.executable_fd >= 0:
             os.close(self.executable_fd)
             object.__setattr__(self, "executable_fd", -1)
+        registry = self.observation_registry
+        if registry is not None:
+            registry.forget_resolved_tool(self)
 
     def __repr__(self) -> str:
         return f"RootResolvedHostTool({self.variant_id!r}, <verified>)"
@@ -637,6 +661,9 @@ _OPTIONAL_KERNEL_TEMPLATES = {
     "sit0": "sit", "ip6tnl0": "ip6tnl", "ip6gre0": "ip6gre",
 }
 _NLMSG_ALIGNTO = 4
+# Rtnetlink includes these counters in link dumps. Loopback probes naturally
+# change them, so they are not part of the interface topology proof.
+_VOLATILE_LINK_ATTRIBUTE_TYPES = frozenset({7, 23})  # IFLA_STATS, IFLA_STATS64
 
 
 def _align4(value: int) -> int:
@@ -657,6 +684,15 @@ def _attributes(data: bytes) -> list[tuple[int, bytes]]:
         result.append((attr_type & 0x3FFF, data[offset + 4:offset + length]))
         offset += _align4(length)
     return result
+
+
+def _canonical_link_attributes(attrs: Sequence[tuple[int, bytes]]) -> list[dict[str, Any]]:
+    """Retain stable raw link attributes while excluding live traffic counters."""
+    return [
+        {"type": kind, "value": value.hex()}
+        for kind, value in sorted(attrs, key=lambda item: (item[0], item[1]))
+        if kind not in _VOLATILE_LINK_ATTRIBUTE_TYPES
+    ]
 
 
 def _rtnetlink_dump(message_type: int, body: bytes) -> list[bytes]:
@@ -737,7 +773,7 @@ def _kernel_topology() -> dict[str, Any]:
             "link_ifindex": struct.unpack("=I", by_type[5][0][:4])[0] if by_type.get(5) else None,
             "link_netnsid": struct.unpack("=i", by_type[37][0][:4])[0] if by_type.get(37) else None,
             "address_hex": by_type.get(1, [b""])[0].hex(), "config": info_data,
-            "attributes": [{"type": kind, "value": value.hex()} for kind, value in attrs],
+            "attributes": _canonical_link_attributes(attrs),
         })
     links.sort(key=lambda row: (row["name"], row["ifindex"]))
 
@@ -941,11 +977,7 @@ def create_root_namespace(
     _linux_root()
     if not isinstance(network, PrivateLoopbackNetwork) or not isinstance(nft_tool, RootResolvedHostTool):
         raise TypeError("namespace creation requires protected network and host-tool records")
-    if (nft_tool.observation_registry is not None
-            and nft_tool.selected_network_key != (network.network_id, network.generation,
-                network.service_generation_digest)):
-        raise AuthorityDenied("private_network.tool", "verified nft observation belongs to another selected network")
-    nft_tool.verify_current()
+    nft_tool.verify_for_network(network)
     expected_root = Path("/run/hermes-installer/netns")
     if root != expected_root:
         raise AuthorityDenied("private_network.path", "namespace mount root is not the fixed installer-owned directory")
@@ -1218,11 +1250,7 @@ def renew_root_network_lease(lease: RootPrivateLoopbackNetworkLease,
     verify_root_network_lease(lease)
     if not isinstance(fresh_nft_tool, RootResolvedHostTool):
         raise TypeError("network renewal requires a fresh root-resolved nft tool")
-    if (fresh_nft_tool.observation_registry is not None
-            and fresh_nft_tool.selected_network_key != (lease.network.network_id,
-                lease.network.generation, lease.network.service_generation_digest)):
-        raise AuthorityDenied("private_network.tool", "renewal nft observation belongs to another selected network")
-    fresh_nft_tool.verify_current()
+    fresh_nft_tool.verify_for_network(lease.network)
     current = _verify_nft_readback(lease.network,
                                    _in_namespace(lease.namespace_fd, "read", fresh_nft_tool))
     if current != lease.nft_ruleset_sha256:
