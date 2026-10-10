@@ -59,6 +59,20 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
         receipt.close()
 
 
+def test_release_builder_pins_literal_model_store_template_and_native_source_modules():
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_ID == "installer-existing-model-store-root-template-v1"
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_PATH.endswith(
+        "2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json")
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_SHA256 == (
+        "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f")
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_BYTES == 712
+    for _name, source_path, target_path, digest, size in release_build.REVIEWED_SOURCE_MODULES:
+        source = Path(__file__).parents[2] / source_path
+        body = source.read_bytes()
+        assert target_path.startswith("lib/python/hermes_installer/components/")
+        assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
+
+
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
 def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
     repository = tmp_path / "repository"

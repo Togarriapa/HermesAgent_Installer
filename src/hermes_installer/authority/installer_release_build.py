@@ -67,6 +67,22 @@ COMPOSIO_POLICY_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reade
 COMPOSIO_POLICY_TEMPLATE_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 COMPOSIO_POLICY_TEMPLATE_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 COMPOSIO_POLICY_TEMPLATE_BYTES = 528
+EXISTING_MODEL_STORE_TEMPLATE_PATH = (
+    "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/"
+    "existing-model-store-root-template-v1.json")
+EXISTING_MODEL_STORE_TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
+EXISTING_MODEL_STORE_TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
+EXISTING_MODEL_STORE_TEMPLATE_BYTES = 712
+REVIEWED_SOURCE_MODULES = (
+    ("hermes_installer.components.native_plugins",
+     "src/hermes_installer/components/native_plugins.py",
+     "lib/python/hermes_installer/components/native_plugins.py",
+     "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+    ("hermes_installer.components.public_registries",
+     "src/hermes_installer/components/public_registries.py",
+     "lib/python/hermes_installer/components/public_registries.py",
+     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+)
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
 REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
@@ -110,6 +126,7 @@ STAGED_IDENTITY_TEMPLATE_PATH = "templates/authentik-policy-template-v1.json"
 STAGED_PREPARED_BASE_TEMPLATE_PATH = "templates/prepared-authority-base-template-v1.json"
 STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 STAGED_COMPOSIO_POLICY_TEMPLATE_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
+STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH = "templates/existing-model-store-root-template-v1.json"
 STAGED_REVIEWED_CAPABILITY_MAP_PATH = "templates/reviewed-native-capability-map-v1.json"
 STAGED_CATALOG_PATH = "catalog/artifacts.json"
 ROOT_PLAN_TEMPLATE_ARTIFACT_IDS = (
@@ -2518,6 +2535,8 @@ class RootInstalledReleaseBuilder:
              RECEIPT_BINDINGS_TEMPLATE_SHA256, RECEIPT_BINDINGS_TEMPLATE_BYTES),
             (COMPOSIO_POLICY_TEMPLATE_PATH, STAGED_COMPOSIO_POLICY_TEMPLATE_PATH, "template",
              COMPOSIO_POLICY_TEMPLATE_SHA256, COMPOSIO_POLICY_TEMPLATE_BYTES),
+            (EXISTING_MODEL_STORE_TEMPLATE_PATH, STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH, "template",
+             EXISTING_MODEL_STORE_TEMPLATE_SHA256, EXISTING_MODEL_STORE_TEMPLATE_BYTES),
             (REVIEWED_CAPABILITY_MAP_PATH, STAGED_REVIEWED_CAPABILITY_MAP_PATH, "template",
              REVIEWED_CAPABILITY_MAP_SHA256, REVIEWED_CAPABILITY_MAP_BYTES),
             (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog", None, None),
@@ -2558,6 +2577,16 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
             self._copy_source(source, output_fd, source_rel, target, ("module",))
             staged.append(self._last_output_row)
+        staged_paths = {row[0] for row in staged}
+        for _name, source_rel, target, expected_digest, expected_size in REVIEWED_SOURCE_MODULES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, ("module",))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
         return staged
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
