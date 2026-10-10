@@ -14,6 +14,7 @@ import io
 import json
 import os
 import platform
+import posixpath
 import re
 import secrets
 import stat
@@ -1061,12 +1062,7 @@ def _extract_verified_runtime_archive(archive: bytes, destination: Path) -> None
                 if total > BOOTSTRAP_RUNTIME_MAX_EXPANDED:
                     raise InstallerReleaseBuildError("runtime archive exceeds expanded size bound")
             elif member.issym():
-                _validate_relative_path(member.linkname)
-                target = (Path(name).parent / member.linkname)
-                normalized = os.path.normpath(target.as_posix())
-                _validate_relative_path(normalized)
-                if not normalized.startswith("python/"):
-                    raise InstallerReleaseBuildError("runtime archive symlink escapes its fixed prefix")
+                _resolve_runtime_archive_symlink(name, member.linkname)
             else:
                 raise InstallerReleaseBuildError("runtime archive contains a hardlink or special member")
             members[name] = member
@@ -1099,9 +1095,26 @@ def _extract_verified_runtime_archive(archive: bytes, destination: Path) -> None
                 os.symlink(member.linkname, target)
         for name, member in members.items():
             if member.issym():
-                resolved = (destination.parent / name).resolve(strict=True)
+                try:
+                    resolved = (destination.parent / name).resolve(strict=True)
+                except (OSError, RuntimeError):
+                    raise InstallerReleaseBuildError("runtime archive symlink is broken or cyclic") from None
                 if not _is_beneath(resolved, destination.resolve(strict=True)):
                     raise InstallerReleaseBuildError("runtime archive alias resolves outside its prefix")
+
+
+def _resolve_runtime_archive_symlink(member_path: str, link_target: str) -> str:
+    """Allow relative ``..`` components only when their normalized target stays in python/."""
+    _validate_relative_path(member_path)
+    if (not isinstance(link_target, str) or not link_target or link_target.startswith("/")
+            or "\\" in link_target or "\x00" in link_target
+            or any(ord(char) < 32 or ord(char) == 127 for char in link_target)
+            or any(part in {"", "."} for part in link_target.split("/"))):
+        raise InstallerReleaseBuildError("runtime archive symlink target is not a portable relative path")
+    normalized = posixpath.normpath(posixpath.join(posixpath.dirname(member_path), link_target))
+    if normalized == "python" or normalized.startswith("python/"):
+        return normalized
+    raise InstallerReleaseBuildError("runtime archive symlink escapes its fixed prefix")
 
 
 def _write_all(fd: int, body: bytes) -> None:
