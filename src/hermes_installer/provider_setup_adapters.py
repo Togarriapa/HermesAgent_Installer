@@ -150,6 +150,7 @@ def _bounded_int(value: Any, *, maximum: int) -> int | None:
 
 class OpenRouterSetupAdapter:
     name = "providers"
+    supported_providers = frozenset({"openrouter"})
     fields = (
         AccountField("openrouter_api_key", "An OpenRouter API key for the requested free model route.",
                      "Setup checks the key and exact public model catalog using read-only requests; it never sends a prompt.",
@@ -170,6 +171,10 @@ class OpenRouterSetupAdapter:
         self._persist_reference = persist_reference
         self._credential_reference = credential_reference
         self._secret_resolver = secret_resolver
+
+    def select_provider(self, name: str) -> None:
+        if not isinstance(name, str) or name.casefold() not in self.supported_providers:
+            raise ValueError("only the reviewed OpenRouter provider setup is available")
 
     def configure(self, config: Mapping[str, Any], *, input_fn: Callable[[str], str],
                   output_fn: Callable[[str], None], secret_reader: Callable[[str], str],
@@ -260,6 +265,10 @@ class OpenRouterSetupAdapter:
                              {"privacy": _zero_budget(config)},
                              ("Keep provider routes disabled until protected account and native-boundary verification completes.",))
 
+    def test_connection(self, config: Mapping[str, Any]) -> AdapterResult:
+        """Run only the same bounded, GET-only probe against the saved ref."""
+        return self.configure_noninteractive(config, credential_store=_ReferenceOnlyStore())
+
 
 def _zero_budget(config: Mapping[str, Any]) -> Mapping[str, Any]:
     privacy = config.get("privacy")
@@ -267,6 +276,13 @@ def _zero_budget(config: Mapping[str, Any]) -> Mapping[str, Any]:
     # The strict config only supports zero budget at this stage.
     selected["additional_metered_budget"] = 0
     return selected
+
+
+class _ReferenceOnlyStore:
+    """Sentinel store proving connection tests never write credentials."""
+
+    def put(self, _name: str, _value: str) -> str:
+        raise AssertionError("test-connection must not store a credential")
 
 
 def build_provider_setup_adapter(*, probe_factory: Callable[[], OpenRouterAccountProbe] = OpenRouterAccountProbe,

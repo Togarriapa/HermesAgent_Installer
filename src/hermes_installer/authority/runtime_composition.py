@@ -141,8 +141,24 @@ class _ProtectedNativeActionResolver:
                 if workflow.get("external_tool_name") != tool_name:
                     continue
                 try:
+                    schema_id = workflow["external_argument_schema_id"]
+                    protected_schema = self.bindings.resolve_native_schema_record(
+                        schema_id, package.package_id, package.generation,
+                        adapter.adapter_id, adapter.action_id, "arguments",
+                    )
+                    if (not isinstance(protected_schema, Mapping)
+                            or protected_schema.get("id") != schema_id
+                            or protected_schema.get("native_package_id") != package.package_id
+                            or protected_schema.get("native_package_generation") != package.generation
+                            or protected_schema.get("adapter_id") != adapter.adapter_id
+                            or protected_schema.get("action_id") != adapter.action_id
+                            or protected_schema.get("schema_kind") != "arguments"
+                            or not isinstance(protected_schema.get("source_receipt_handle"), str)):
+                        raise AuthorityDenied(
+                            "native.action", "selected workflow schema metadata does not match its protected row",
+                        )
                     schema = self.schema_catalog.resolve(
-                        workflow["external_argument_schema_id"],
+                        schema_id,
                         native_package_id=package.package_id,
                         native_package_generation=package.generation,
                         adapter_id=adapter.adapter_id,
@@ -176,6 +192,188 @@ class _ProtectedNativeActionResolver:
         )
 
 
+def _build_native_mcp_dispatcher(
+    *, service: AuthorityService, enrollment: ProtectedEnrollment,
+    bindings: RootRuntimeBindings, schema_catalog: Any,
+    source_observers: Any,
+) -> Any:
+    """Construct the fixed MCP dispatcher from one exact active native package.
+
+    This dispatcher accepts only one-use invocations already issued by the
+    attached NativeInvocationRegistry. Multiple package generations are kept
+    unroutable until the dispatcher/index contract supports a typed composite.
+    """
+    from .native_runtime_observer import NativeRuntimeObserver
+    from hermes_installer.mcp.broker import ProtectedMCPService
+    from hermes_installer.mcp.native_dispatch import (
+        HANDLER_ARTIFACT_ID, NativeMCPRegistrationIndex,
+    )
+    from hermes_installer.mcp.native_execution import NativeMCPDispatcher
+    from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+    if (not isinstance(schema_catalog, NativeMCPProtectedSchemaCatalog)
+            or not isinstance(enrollment.native_mcp_tool_binding_records, tuple)
+            or not enrollment.native_mcp_tool_binding_records
+            or source_observers is None or service.source_observer_registry is not source_observers
+            or service.native_invocation_registry is None):
+        raise AuthorityDenied("native.mcp", "active schema, source, or invocation bindings are unavailable")
+    grouped: dict[tuple[str, str, str, str, str], list[Mapping[str, Any]]] = {}
+    for raw in enrollment.native_mcp_tool_binding_records:
+        if not isinstance(raw, Mapping):
+            raise AuthorityDenied("native.mcp", "protected MCP action row is malformed")
+        key = tuple(raw.get(field) for field in (
+            "profile_id", "process_generation", "native_package_id",
+            "native_package_generation", "handler_artifact_sha256",
+        ))
+        if any(not isinstance(part, str) or not part for part in key):
+            raise AuthorityDenied("native.mcp", "protected MCP package selector is malformed")
+        # Stdio has no approved runtime transport constructor. Its rows stay
+        # absent while exact HTTP rows can be dispatched independently.
+        if raw.get("effect_operation") != "mcp.request":
+            continue
+        grouped.setdefault(key, []).append(raw)
+    if not grouped:
+        raise AuthorityDenied("native.mcp", "no selected native MCP action has a fixed HTTP transport")
+    if len(grouped) != 1:
+        raise AuthorityDenied("native.mcp", "selected native MCP actions span multiple package dispatch generations")
+    (profile_id, process_generation, package_id,
+     package_generation, handler_sha), raw_rows = next(iter(grouped.items()))
+    active = bindings.resolve_native_mcp_tool_bindings(
+        profile_id, process_generation, service.service_generation_digest,
+    )
+    selected_rows = tuple(row for row in active if row.get("effect_operation") == "mcp.request")
+    if ({row.get("id"): dict(row) for row in selected_rows}
+            != {row.get("id"): dict(row) for row in raw_rows}):
+        raise AuthorityDenied("native.mcp", "selected MCP action rows differ from active root bindings")
+
+    services: dict[str, ProtectedMCPService] = {}
+    for service_id, raw in enrollment.mcp_services.items():
+        fields = {key: value for key, value in raw.items() if key != "id"}
+        fields["allowed_tools"] = frozenset(fields["allowed_tools"])
+        fields["selection_arguments"] = {
+            tool: tuple(arguments) for tool, arguments in fields["selection_arguments"].items()
+        }
+        try:
+            services[service_id] = ProtectedMCPService(service_id=service_id, **fields)
+        except Exception:
+            raise AuthorityDenied("native.mcp", "protected MCP service record is invalid") from None
+    generations: dict[str, str] = {}
+    for row in selected_rows:
+        service_id, generation = row["mcp_enrollment_id"], row["mcp_generation"]
+        previous = generations.setdefault(service_id, generation)
+        if previous != generation or service_id not in services:
+            raise AuthorityDenied("native.mcp", "selected MCP service generations are ambiguous")
+        target_key = (row["effect_operation"], row["effect_target"])
+        if (target_key not in service.handlers
+                or not any(rule.operation == target_key[0] and rule.target == target_key[1]
+                           and rule.capability == row["capability"]
+                           for rule in service.rules.values())):
+            raise AuthorityDenied("native.mcp", "selected MCP row lacks its installed fixed effect handler")
+    registration = NativeMCPRegistrationIndex.from_protected_records(
+        tuple(raw_rows), services=services,
+        mcp_generation_by_enrollment=generations,
+        profile_id=profile_id, process_generation=process_generation,
+        native_package_id=package_id, native_package_generation=package_generation,
+        handler_artifact_sha256=handler_sha,
+    )
+
+    observers = getattr(source_observers, "observers", {})
+    effect_observer_ids: dict[tuple[str, str, str], str] = {}
+    for row in selected_rows:
+        operation, target = row["effect_operation"], row["effect_target"]
+        candidates = [observer_id for observer_id, observer in observers.items()
+                      if getattr(observer, "source_kind", None) == "tool-result"
+                      and getattr(observer, "source_action_id", None) == "registered-tool-result"
+                      and getattr(observer, "profile_id", None) == profile_id
+                      and getattr(observer, "generation", None) == process_generation
+                      and getattr(observer, "target_id", None) == target
+                      and getattr(observer, "recipient", None) == row["recipient"]]
+        if len(candidates) != 1:
+            raise AuthorityDenied("native.mcp", "selected MCP effect has no unique active tool-result observer")
+        key = (row["capability"], operation, target)
+        previous = effect_observer_ids.setdefault(key, candidates[0])
+        if previous != candidates[0]:
+            raise AuthorityDenied("native.mcp", "selected MCP effects resolve to conflicting result observers")
+    current_observer = service.native_runtime_observer
+    if current_observer is None:
+        service.attach_native_runtime_observer(NativeRuntimeObserver(
+            source_observers=source_observers,
+            effect_observer_ids=effect_observer_ids,
+        ))
+    elif any(getattr(current_observer, "effect_observer_ids", {}).get(key) != observer_id
+             for key, observer_id in effect_observer_ids.items()):
+        raise AuthorityDenied("native.mcp", "active MCP result observers differ from the root observer")
+    dispatcher = NativeMCPDispatcher(
+        service, registration_index=registration, schema_catalog=schema_catalog,
+        protected_services=services,
+        current_mcp_generations=generations,
+        invocation_resolver=service.native_invocation_registry,
+        monotonic=service.monotonic,
+    )
+    service.attach_native_mcp_dispatcher(dispatcher)
+    return dispatcher
+
+
+def _build_native_bridge_candidate(
+    *, service: AuthorityService, enrollment: ProtectedEnrollment,
+    bindings: RootRuntimeBindings, vault: RootCredentialVault,
+) -> tuple[Any, Any]:
+    """Build the root broker from exact provider and bridge enrollments.
+
+    The provider response registry is attached later, after the live source
+    observer exists. The broker itself is a concrete cycle-breaking object;
+    it is never attached to the service unless the response registry also
+    passes the provider owner’s full validation.
+    """
+    from .native_bridge import NativeBridgeBroker, RootObserverDeliveryBinding
+    from .provider_runtime_composition import build_provider_runtime_selection
+    from hermes_installer.provider_effect_handlers import canonical_provider_request
+
+    bridges = bindings.native_bridges
+    if (not isinstance(bridges, Mapping) or not bridges
+            or dict(bridges) != dict(enrollment.native_bridges)):
+        raise AuthorityDenied("native.broker", "active bridge rows are absent or stale")
+    selection = build_provider_runtime_selection(
+        service=service, enrollment=enrollment, bindings=bindings,
+        bridges=bridges, provider_handlers=service.handlers, vault=vault,
+        source_observer_enrollments=bindings.source_observer_enrollments,
+    )
+    digests = {bridge.canonicalizer_sha256 for bridge in bridges.values()}
+    if len(digests) != 1:
+        raise AuthorityDenied("native.broker", "selected bridges do not share one reviewed canonicalizer")
+    delivery_map: dict[str, tuple[Any, ...]] = {}
+    for bridge_id, bridge in bridges.items():
+        raw_rows = getattr(bridge, "observer_delivery_bindings", None)
+        if not isinstance(raw_rows, tuple) or not raw_rows:
+            raise AuthorityDenied("native.broker", "selected bridge has no protected delivery rows")
+        rows = tuple(
+            RootObserverDeliveryBinding(
+                observer_enrollment_id=row.observer_enrollment_id,
+                delivery_role=row.delivery_role,
+            )
+            for row in raw_rows
+        )
+        if (any(row.observer_enrollment_id not in bindings.source_observer_enrollments
+                for row in rows)
+                or len({row.observer_enrollment_id for row in rows}) != len(rows)):
+            raise AuthorityDenied("native.broker", "bridge delivery rows do not join active observer records")
+        delivery_map[bridge_id] = rows
+    process_resolver = getattr(bindings.process_manager, "resolve_live_peer", None)
+    role_resolver = getattr(bindings, "resolve_native_bridge_role_artifact", None)
+    if not callable(process_resolver) or not callable(role_resolver):
+        raise AuthorityDenied("native.broker", "selected bridge process or role resolver is unavailable")
+    broker = NativeBridgeBroker(
+        service=service, bridges=bridges, process_resolver=process_resolver,
+        canonicalizer=canonical_provider_request,
+        root_selected_enrollments=selection.root_selected_enrollments_by_bridge,
+        canonicalizer_sha256=next(iter(digests)),
+        observer_delivery_bindings=delivery_map,
+        peer_role_artifact_resolver=role_resolver,
+        monotonic=service.monotonic,
+    )
+    return broker, selection
+
+
 @dataclass(frozen=True, slots=True)
 class RootAuthorityRuntime:
     """Concrete root-owned catalog joins for one AuthorityService epoch."""
@@ -191,10 +389,12 @@ class RootAuthorityRuntime:
     scope_bindings: Mapping[str, Any]
     validators: Mapping[str, Any]
     source_observer_unavailable_reason: str | None
+    resource_task_unavailable_reason: str | None
     job_enrollments: Mapping[tuple[str, str], Any]
     memory_runtime: Any | None
     job_authority: Any | None
     build_execution_service: Any | None
+    native_mcp_unavailable_reason: str | None = None
 
     @property
     def process_manager(self) -> Any:
@@ -257,7 +457,11 @@ class RootAuthorityRuntime:
 
     @property
     def task_native_observations(self) -> Any | None:
-        return getattr(self.service, "task_native_observations", None)
+        attached = getattr(self.service, "task_native_observations", None)
+        if attached is not None:
+            return attached
+        runner = getattr(self.service, "resource_task_runner", None)
+        return getattr(runner, "native_observations", None)
 
     @property
     def native_mcp_dispatcher(self) -> Any | None:
@@ -289,6 +493,8 @@ class RootAuthorityRuntime:
         # the composer never installs capability flags or callback placeholders.
         components = (
             self.task_native_observations,
+            getattr(self.service, "native_input_delivery_registry", None),
+            getattr(self.process_manager, "task_input_coordinator", None),
             self.native_mcp_dispatcher,
             self.native_runtime_observer,
             self.native_invocation_registry,
@@ -424,10 +630,69 @@ def compose_root_authority_runtime(
         raise AuthorityDenied("authority.composition", "runtime bindings do not match this service epoch and catalog")
 
     source_observer_unavailable_reason: str | None = None
+    source_receipt_runtime = None
+    schema_catalog = None
+    action_resolver = None
+    broker_candidate = getattr(service, "native_bridge_broker", None)
+    provider_selection = None
+    if (service.source_observer_registry is not None and schema_catalog is None
+            and (enrollment.native_bridges or enrollment.native_mcp_tool_binding_records)):
+        # A caller may have attached the concrete source registry earlier in
+        # the same root startup transaction. Still resolve the exact active
+        # schema receipt/catalog here; never let an already-attached observer
+        # silently disable selected MCP composition.
+        try:
+            from .source_artifact_receipts import build_root_schema_receipt_runtime
+            from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+            source_receipt_runtime = build_root_schema_receipt_runtime(bindings, enrollment)
+            schema_catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
+                enrollment.native_schema_artifact_records,
+                read_artifact=source_receipt_runtime.verifier.read_artifact,
+                verify_source_receipt=source_receipt_runtime.verifier.verify_source_receipt,
+            )
+            if enrollment.native_bridges:
+                action_resolver = _ProtectedNativeActionResolver(
+                    bindings, schema_catalog,
+                    service_generation_digest=service.service_generation_digest,
+                )
+        except Exception:
+            source_observer_unavailable_reason = (
+                "active source-derived native schemas or artifact receipt runtime are unavailable"
+            )
+    if service.source_observer_registry is None:
+        # Root schema receipts and the bridge candidate are assembled before
+        # source observers, breaking the actual provider/source dependency
+        # cycle without publishing a partially attached broker.
+        if enrollment.native_bridges or enrollment.native_mcp_tool_binding_records:
+            try:
+                from .source_artifact_receipts import build_root_schema_receipt_runtime
+                from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+                source_receipt_runtime = build_root_schema_receipt_runtime(bindings, enrollment)
+                schema_catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
+                    enrollment.native_schema_artifact_records,
+                    read_artifact=source_receipt_runtime.verifier.read_artifact,
+                    verify_source_receipt=source_receipt_runtime.verifier.verify_source_receipt,
+                )
+                if enrollment.native_bridges:
+                    action_resolver = _ProtectedNativeActionResolver(
+                        bindings, schema_catalog,
+                        service_generation_digest=service.service_generation_digest,
+                    )
+                    broker_candidate, provider_selection = _build_native_bridge_candidate(
+                        service=service, enrollment=enrollment, bindings=bindings, vault=vault,
+                    )
+            except Exception:
+                source_observer_unavailable_reason = (
+                    "active provider schemas, source derivation, live admission, or bridge broker did not join"
+                )
     if service.source_observer_registry is None:
         observer_enrollments = getattr(bindings, "source_observer_enrollments", None)
         if not isinstance(observer_enrollments, Mapping) or not observer_enrollments:
             source_observer_unavailable_reason = "no active protected source-observer enrollment is selected"
+        elif source_observer_unavailable_reason is not None:
+            pass
         elif getattr(service, "native_loader_observation_store", None) is not None:
             source_observer_unavailable_reason = (
                 "a loader observation store is already installed without its matching source registry"
@@ -443,7 +708,7 @@ def compose_root_authority_runtime(
                 )
             else:
                 manager = bindings.process_manager
-                broker = getattr(service, "native_bridge_broker", None)
+                broker = broker_candidate
                 from .native_bridge import NativeBridgeBroker
 
                 if (not callable(getattr(manager, "set_native_loader_observation_store", None))
@@ -554,6 +819,18 @@ def compose_root_authority_runtime(
                         )
                         try:
                             manager.set_native_loader_observation_store(store)
+                            if (broker_candidate is not None and provider_selection is not None
+                                    and source_receipt_runtime is not None
+                                    and schema_catalog is not None and action_resolver is not None):
+                                from .provider_runtime_composition import attach_provider_response_registry
+
+                                attach_provider_response_registry(
+                                    service=service, broker=broker_candidate,
+                                    selection=provider_selection,
+                                    source_observers=registry,
+                                    process_resolver=manager.resolve_live_peer,
+                                    action_resolver=action_resolver,
+                                )
                         except BaseException:
                             try:
                                 registry.close()
@@ -571,6 +848,30 @@ def compose_root_authority_runtime(
                             except AttributeError:
                                 pass
                             raise
+
+    native_mcp_unavailable_reason: str | None = None
+    if enrollment.native_mcp_tool_binding_records:
+        if schema_catalog is None or service.source_observer_registry is None:
+            native_mcp_unavailable_reason = (
+                "source-verified native MCP schemas or the selected source-observer registry are unavailable"
+            )
+        elif service.native_invocation_registry is None:
+            native_mcp_unavailable_reason = (
+                "native MCP requires the attached root provider invocation registry"
+            )
+        elif service.native_mcp_dispatcher is not None:
+            native_mcp_unavailable_reason = None
+        else:
+            try:
+                _build_native_mcp_dispatcher(
+                    service=service, enrollment=enrollment, bindings=bindings,
+                    schema_catalog=schema_catalog,
+                    source_observers=service.source_observer_registry,
+                )
+            except Exception as exc:
+                native_mcp_unavailable_reason = (
+                    f"selected native MCP dispatcher rejected composition ({type(exc).__name__})"
+                )
 
     from .resource_jobs import (
         ResourceJobAuthority, index_resource_job_records,
@@ -672,11 +973,12 @@ def compose_root_authority_runtime(
             )
             for key, handler in generated.items():
                 operation, target = key
-                if operation != "memory.search":
+                if operation not in {"memory.search", "memory.doctor"}:
                     continue
+                action = operation.removeprefix("memory.")
                 target_entry = next((value for value in memory_runtime["targets"].values()
-                                     if "memory:" + value.provider + ":search" == target), None)
-                route_id = target_entry.route_for("search") if target_entry is not None else None
+                                     if "memory:" + value.provider + ":" + action == target), None)
+                route_id = target_entry.route_for(action) if target_entry is not None else None
                 connector_key = (("connector.open", target_entry.enrollment.target_id)
                                  if target_entry is not None and target_entry.enrollment is not None
                                  else None)
@@ -782,6 +1084,7 @@ def compose_root_authority_runtime(
             build_execution_service = candidate_build_execution_service
 
     job_authority = None
+    resource_task_unavailable_reason: str | None = None
     if jobs:
         if source_observers is None:
             raise AuthorityDenied("authority.composition", "active resource jobs have no root source observer")
@@ -805,10 +1108,113 @@ def compose_root_authority_runtime(
                 raise AuthorityDenied("resource.unavailable", "resource is not selected in the active generation")
             return generation
 
+        profile_task_adapters: Mapping[tuple[str, str], Any] = MappingProxyType({})
+        if any(backend.execution_binding is not None
+               for enrollment_row in jobs.values()
+               for backend in enrollment_row.backends.values()):
+            if source_observers is not None:
+                from hermes_installer.registry.resource_backends import build_resource_profile_task_adapters
+                profile_task_adapters = build_resource_profile_task_adapters(
+                    jobs, protected_bindings=bindings, authority_service=service,
+                )
+            if not profile_task_adapters:
+                resource_task_unavailable_reason = (
+                    "selected process-task adapters are not joined to active protected backend catalogs"
+                )
         job_authority = ResourceJobAuthority(
             service=service, enrollments=jobs, ledger=ledger,
             selected_generation=selected_generation,
+            profile_task_adapters=profile_task_adapters,
         )
+
+        if profile_task_adapters:
+            broker = getattr(service, "native_bridge_broker", None)
+            loader_store = getattr(service, "native_loader_observation_store", None)
+            if broker is not None and loader_store is not None and service.native_invocation_registry is not None:
+                task_graph: tuple[Any, ...] | None = None
+                task_phase = "root task observation registries"
+                try:
+                    from .task_native_observation import RootTaskNativeObservationRegistry
+                    from .source_observers import RootNativeExecutionSelectionRegistry
+                    from .native_custody_proof import RootNativeInputTargetResolver
+                    from .native_input_observer import RootNativeInputObserver
+                    from .source_observers import RootNativeInputDeliveryRegistry
+                    from .native_observer_wiring import RootTaskInputCoordinator
+                    from hermes_installer.registry.resource_backends import RootArtifactValidator
+                    from .resource_task_execution import RootResourceTaskRunner
+
+                    task_native = RootTaskNativeObservationRegistry(
+                        source_observer_registry=source_observers,
+                        native_bridge_broker=broker,
+                        admitted_task_registry=job_authority,
+                        process_custody_registry=process_manager,
+                        monotonic=service.monotonic,
+                    )
+                    task_phase = "selected native execution and PIDFD target resolver"
+                    selected_execution = RootNativeExecutionSelectionRegistry(
+                        source_observer_registry=source_observers,
+                        admitted_task_registry=job_authority,
+                        process_custody_registry=process_manager,
+                        task_native_observation_registry=task_native,
+                        monotonic=service.monotonic,
+                    )
+                    loader_proof_resolver = loader_store.source_observer_loaded_package_resolver
+                    target_resolver = RootNativeInputTargetResolver(
+                        selected_execution, process_manager,
+                        observer_enrollments=bindings.source_observer_enrollments,
+                        loader_observations=loader_store,
+                    )
+                    selected_execution.attach_native_input_target_resolver(target_resolver)
+                    input_observer = RootNativeInputObserver.for_selected_resource_tasks(
+                        service=service, source_observers=source_observers,
+                        selected_execution_registry=selected_execution,
+                        process_resolver=process_manager.resolve_live_peer,
+                        loaded_package_proof_resolver=loader_proof_resolver,
+                        monotonic=service.monotonic,
+                    )
+                    task_native.attach_native_input_observer(input_observer, selected_execution)
+                    task_phase = "selector-free native input delivery and pre-stdin coordinator"
+                    input_delivery = RootNativeInputDeliveryRegistry.from_root_runtime(
+                        source_observers, selected_execution, process_manager,
+                    )
+                    coordinator = RootTaskInputCoordinator.from_root_runtime(
+                        task_native, selected_execution, input_observer, source_observers,
+                        process_manager, input_delivery,
+                    )
+                    task_phase = "protected result validator and native completion runner"
+                    result_validator = RootArtifactValidator(
+                        backend_enrollments=backends, validators=validators,
+                        artifact_catalog=artifact_catalog,
+                        staging_root=enrollment.artifact_staging_directory,
+                        active_service_generation_digest=enrollment.protected_enrollment_digest,
+                        expected_uid=vault.expected_uid,
+                    )
+                    task_runner = RootResourceTaskRunner(
+                        service=service, job_authority=job_authority,
+                        profile_task_adapters=profile_task_adapters,
+                        protected_bindings=bindings, result_validator=result_validator,
+                        native_observations=task_native,
+                    )
+                    task_graph = (task_native, input_delivery, coordinator, task_runner)
+                except Exception as exc:
+                    # Keep selected task routes absent unless the complete
+                    # task-input, custody, result and native-evidence graph
+                    # is installed. Other service routes remain available.
+                    task_graph = None
+                    resource_task_unavailable_reason = (
+                        f"{task_phase} rejected composition ({type(exc).__name__})"
+                    )
+                if task_graph is not None:
+                    _, input_delivery, coordinator, task_runner = task_graph
+                    service.attach_native_input_delivery_registry(input_delivery)
+                    process_manager.set_task_input_coordinator(coordinator)
+                    service.attach_resource_task_runtime(task_runner, job_authority)
+                    resource_task_unavailable_reason = None
+            elif profile_task_adapters:
+                resource_task_unavailable_reason = (
+                    "active source observers, provider response registry, or native loader proof are unavailable"
+                )
+
         job_handlers = job_authority.handlers()
         for key in job_handlers:
             if key in service.handlers:
@@ -827,6 +1233,8 @@ def compose_root_authority_runtime(
         scope_bindings=MappingProxyType(dict(scope_bindings)),
         validators=MappingProxyType(dict(validators)),
         source_observer_unavailable_reason=source_observer_unavailable_reason,
+        resource_task_unavailable_reason=resource_task_unavailable_reason,
         job_enrollments=MappingProxyType(dict(jobs)), memory_runtime=memory_runtime,
         job_authority=job_authority, build_execution_service=build_execution_service,
+        native_mcp_unavailable_reason=native_mcp_unavailable_reason,
     )

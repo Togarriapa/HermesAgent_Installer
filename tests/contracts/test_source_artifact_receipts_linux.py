@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -16,17 +17,34 @@ from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec, TreeFile
 from hermes_installer.authority import artifacts as derivation
 from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
 from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
-from hermes_installer.authority.setup_policy_publication import RootSetupPublicationReceipt
-from hermes_installer.protected_enrollment import RootJournalSelection
+from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+from hermes_installer.authority.setup_policy_publication import (
+    PolicyPublicationReceiptResolver, RootSetupPublicationReceipt,
+)
+from hermes_installer.authority.source_artifact_receipts import build_root_schema_receipt_runtime
+from hermes_installer.protected_enrollment import ProtectedRootJournalCatalog, RootJournalSelection
 
 
 class RootSchemaDerivationLinuxTests(unittest.TestCase):
     @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
                          "requires isolated Linux root-owned fixture")
     def test_package_member_derivation_requires_current_active_receipt_closure(self):
-        with tempfile.TemporaryDirectory(prefix="hermes-schema-derivation-") as temporary:
+        # /tmp is intentionally rejected by the root journal reader because
+        # its writable sticky parent is not part of the trusted journal chain.
+        with tempfile.TemporaryDirectory(prefix="hermes-schema-derivation-",
+                                         dir="/var/lib") as temporary:
             base = Path(temporary)
             os.chmod(base, 0o700)
+            journal_dir = Path("/var/lib/hermes-installer/authority-journal")
+            if journal_dir.exists():
+                self.skipTest("fixed production journal path already exists; refusing to alter it")
+            journal_parent = journal_dir.parent
+            parent_created = not journal_parent.exists()
+            journal_parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            journal_dir.mkdir(mode=0o700)
+            self.addCleanup(shutil.rmtree, journal_dir)
+            if parent_created:
+                self.addCleanup(self._remove_empty_parent, journal_parent)
             cas = base / "cas"
             cas.mkdir(mode=0o700)
             schema = b'{"additionalProperties":false,"type":"object"}'
@@ -45,7 +63,15 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
             self._put_cas(cas, source.artifact_id, source.sha256, source.filename, archive_bytes)
             self._put_cas(cas, child.artifact_id, child.sha256, child.filename, schema)
 
-            receipt_root = base / "bootstrap-receipts"
+            journal_info = journal_dir.stat()
+            generation = "b" * 64
+            root_catalog = ProtectedRootJournalCatalog.from_protected_records([{
+                "root_id": "installer-authority-journal-v1",
+                "absolute_path": str(journal_dir), "owner_uid": 0, "owner_gid": 0,
+                "mode": 0o700, "device": journal_info.st_dev, "inode": journal_info.st_ino,
+                "generation": "generation-1", "purpose": "authority-journal",
+            }], generation_digest=generation)
+            receipt_root = journal_dir / "bootstrap-receipts"
             receipt_root.mkdir(mode=0o700)
             parent = "parentreceipt0000000000000000000000000000000000000000000"
             parent_record = {
@@ -89,15 +115,33 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
                         raise LookupError
                     return schema_row
 
-            journal_dir = base / "selected-journal"
-            journal_dir.mkdir(mode=0o700)
-            journal_info = journal_dir.stat()
-            generation = "b" * 64
-            journal = RootJournalSelection("journal-demo", journal_dir, journal_info.st_dev,
-                                           journal_info.st_ino, "generation-1", generation)
-            registry = RootSchemaDerivationReceiptRegistry.from_root_runtime(
-                catalog, parent_registry, SelectedRuntime(), None, journal,
+            class RuntimeBindings(RootRuntimeBindings):
+                def resolve_native_package(self, package_id, package_generation):
+                    if (package_id, package_generation) != ("package-demo", "generation-1"):
+                        raise LookupError
+                    return package
+
+                def resolve_native_schema_record(self, *identity):
+                    expected = (schema_row["id"], schema_row["native_package_id"],
+                                schema_row["native_package_generation"], schema_row["adapter_id"],
+                                schema_row["action_id"], schema_row["schema_kind"])
+                    if identity != expected:
+                        raise LookupError
+                    return schema_row
+
+            bindings = RuntimeBindings(
+                enrollment_catalog=SimpleNamespace(digest=generation), build_catalog=None,
+                device_catalog=None, process_manager=None, effect_handlers={}, native_bridges={},
+                artifact_catalog=catalog, build_store=None, service_connector=None,
+                root_journal_catalog=root_catalog, native_schema_artifact_records=(schema_row,),
             )
+            enrollment = SimpleNamespace(
+                protected_enrollment_digest=generation, artifact_staging_directory=cas,
+            )
+            source_runtime = build_root_schema_receipt_runtime(bindings, enrollment)
+            registry = source_runtime.derivations
+            self.assertIs(source_runtime.artifact_receipts.catalog, catalog)
+            self.assertEqual(source_runtime.artifact_receipts.root, receipt_root)
             with mock.patch.object(derivation, "_active_publication_with_parent", lambda _handle: object()):
                 observation = registry.observe_packaged_schema(
                     schema_record=schema_row, parent_receipt_handle=parent,
@@ -106,7 +150,24 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
 
             schema_row["source_receipt_handle"] = handle
             active = self._publication(journal_dir, generation, (parent, handle))
-            with mock.patch.object(derivation, "_active_publication", lambda: active):
+            unlisted_parent = self._publication(journal_dir, generation, (handle,))
+            with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
+                                   return_value=unlisted_parent):
+                with self.assertRaises(derivation.SchemaDerivationDenied):
+                    registry.resolve_schema_derivation(
+                        handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
+                        size_bytes=len(schema), service_generation_digest=generation,
+                    )
+            prepared = self._publication(journal_dir, generation, (parent, handle), state="prepared")
+            with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
+                                   return_value=prepared):
+                with self.assertRaises(derivation.SchemaDerivationPending):
+                    registry.resolve_schema_derivation(
+                        handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
+                        size_bytes=len(schema), service_generation_digest=generation,
+                    )
+            with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
+                                   return_value=active):
                 receipt = registry.resolve_schema_derivation(
                     handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
                     size_bytes=len(schema), service_generation_digest=generation,
@@ -142,14 +203,21 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
         os.chmod(path, 0o600)
 
     @staticmethod
-    def _publication(root: Path, generation: str, handles: tuple[str, ...]):
+    def _publication(root: Path, generation: str, handles: tuple[str, ...], *, state: str = "active"):
         from hermes_installer.authority.setup_policy_publication import _SEAL
         info = root.stat()
         return RootSetupPublicationReceipt(
             1, "receipt-handle", "transaction-handle", "generation-id", "d" * 64,
             root, info.st_dev, info.st_ino, "e" * 64, "f" * 64, "a" * 64,
-            "b" * 64, None, "c" * 64, handles, "active", _SEAL,
+            "b" * 64, None, "c" * 64, handles, state, _SEAL,
         )
+
+    @staticmethod
+    def _remove_empty_parent(path: Path) -> None:
+        try:
+            path.rmdir()
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

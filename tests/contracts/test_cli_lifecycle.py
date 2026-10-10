@@ -34,42 +34,77 @@ class CliLifecycleTests(unittest.TestCase):
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="install",config=config,dry_run=True)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.cli._host_findings",return_value=()), \
-                 patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
+                 patch("hermes_installer.cli._host_findings",return_value=()):
                 result=run(args)
             self.assertEqual(result.state,OutcomeState.READY)
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
-            bootstrap.assert_not_called()
-    def test_resume_without_durable_operation_is_denied_before_bootstrap(self):
+    def test_resume_without_user_mode_checkpoint_uses_root_launcher_status(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="resume",config=config)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
+                     message="The installed launcher has not been verified by its root actor.")):
                 result=run(args)
-            self.assertEqual(result.state,OutcomeState.FAILED)
-            self.assertIn("no readable installer checkpoint",result.message)
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertIn("not been verified",result.message)
+            self.assertEqual(result.resume_command,"hermes-installer status")
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
-            bootstrap.assert_not_called()
-    def test_selected_config_is_durable_and_mismatch_resume_is_denied(self):
+    def test_install_does_not_use_user_mode_bootstrap_or_create_state_roots(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
-            report=SimpleNamespace(commit="a"*40,generation=str(root/"data"/"generation"),
-                hermes_home=str(root/"data"/"profile"),agent_ready=True,desktop_built=True,
-                configuration_state="provider setup pending")
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.cli.HermesBootstrap") as bootstrap:
-                bootstrap.return_value.install.return_value=report
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
+                     message="The installed launcher has not been verified by its root actor.")):
                 first=run(SimpleNamespace(command="install",config=config,dry_run=False))
                 self.assertEqual(first.state,OutcomeState.PENDING)
-                self.assertIn("./install.sh resume --config",first.resume_command)
-                changed=write_config(root/"changed.json",root/"data",root/"state",{"hermes_agent":True,"hermes_desktop":False})
-                second=run(SimpleNamespace(command="resume",config=changed))
-                self.assertEqual(second.state,OutcomeState.FAILED)
-                self.assertIn("differs",second.message)
-                self.assertEqual(bootstrap.return_value.install.call_count,1)
+                self.assertEqual(first.resume_command,"hermes-installer status")
+                self.assertIn("not been verified",first.message)
+                self.assertFalse((root/"data").exists())
+                self.assertFalse((root/"state").exists())
+
+    def test_update_apply_stays_pending_without_root_owned_lifecycle_effects(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="unverified",blocker_code="ROOT_ATTESTATION_REQUIRED",
+                     message="The installed launcher has not been verified by its root actor.")):
+                result=run(SimpleNamespace(command="update",action="apply",config=config))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
+            self.assertTrue(result.findings[0].details["effects_started"] is False)
+
+    def test_install_shows_fixed_root_command_only_after_launcher_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="verified",blocker_code=None,
+                     message="The current process matches the installed root launcher.")):
+                result=run(SimpleNamespace(command="install",config=config,dry_run=False))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.resume_command,"sudo -- hermes-installer-root-setup install")
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
+
+    def test_update_rollback_is_not_misrouted_to_root_update_action(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.root_setup.launcher_status",return_value=SimpleNamespace(
+                     state="verified",blocker_code=None,
+                     message="The current process matches the installed root launcher.")):
+                result=run(SimpleNamespace(command="update",action="rollback",config=config))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.resume_command,"hermes-installer status")
+            self.assertFalse((root/"data").exists())
+            self.assertFalse((root/"state").exists())
 
     def test_update_check_verifies_active_generation_without_creating_state(self):
         with tempfile.TemporaryDirectory() as td:
@@ -198,5 +233,25 @@ class CliLifecycleTests(unittest.TestCase):
                     save_config=None,json=False))
             self.assertEqual(result.state,OutcomeState.FAILED)
             self.assertFalse((root/"state").exists())
+
+    def test_select_memory_routes_through_locked_configuration_adapter(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
+            saved=root/"selected.json"
+            adapter=SimpleNamespace(OPTIONS={"openviking": object()})
+            def configure_noninteractive(current, **kwargs):
+                from hermes_installer.setup_wizard import AdapterResult
+                return AdapterResult("pending", "Memory runtime awaits protected enrollment.", {})
+            adapter.configure_noninteractive=configure_noninteractive
+            with patch("hermes_installer.cli.discover_host",return_value=self.host), \
+                 patch("hermes_installer.configuration_cli.build_setup_adapters",return_value={"memory":adapter}):
+                result=run(SimpleNamespace(command="select-memory",choice="openviking",config=config,
+                    save_config=saved))
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertEqual(result.findings[0].details["selected_memory_provider"],"openviking")
+            operation=Journal(root/"state"/"journal.sqlite3").operation("installer:setup")
+            self.assertEqual(operation["payload"]["setup_state"]["memory"]["selections"]["provider_id"],"openviking")
+            self.assertEqual(stat.S_IMODE(saved.stat().st_mode),0o600)
+            self.assertFalse(json.loads(saved.read_text())["components"]["memory"])
 
 if __name__=="__main__": unittest.main()
