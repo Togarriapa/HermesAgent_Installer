@@ -428,7 +428,8 @@ def stage_verified_release_artifact(catalog: ArtifactCatalog, artifact_root: Pat
         spec = catalog.artifacts[artifact_id]
         matches = [row for row in release.files if row.relative_path == relative_path
                    and row.sha256 == spec.sha256 and row.size_bytes == spec.size_bytes]
-        if (len(matches) != 1 or not spec.size_bytes or spec.size_bytes > min(spec.max_bytes, 256 * 1024)
+        if (len(matches) != 1 or "amendment" not in matches[0].roles
+                or not spec.size_bytes or spec.size_bytes > min(spec.max_bytes, 256 * 1024)
                 or spec.tree_files or spec.archive_format is not None):
             raise ValueError
         member = matches[0]
