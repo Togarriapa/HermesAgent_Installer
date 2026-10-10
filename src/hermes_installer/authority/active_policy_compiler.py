@@ -459,7 +459,7 @@ class RootActivePolicyCompilationRegistry:
         self._states: dict[str, str] = {}
         self._locks: dict[str, int] = {}
         self._precompile_caps: dict[str, RootActivePolicyPrecompile] = {}
-        self._precompile_reservations: dict[tuple[str, str, tuple[str, ...]], Any] = {}
+        self._precompile_reservations: dict[tuple[str, str], Any] = {}
         self._native_claims: dict[str, Any] = {}
 
     @classmethod
@@ -505,25 +505,31 @@ class RootActivePolicyCompilationRegistry:
                 or assembly_selection.pm_runtime_receipt_handle != prepared_bundle.pm_runtime_receipt_handle
                 or assembly_selection.materialization_receipt_handle != prepared_bundle.materialization_receipt_handle):
             raise BootstrapEnrollmentPending("native assembly selection does not join the current prepared bundle")
-        selected_outputs = binding.compile_selected_native_package(prepared_bundle)
-        if not isinstance(selected_outputs, tuple) or len(selected_outputs) != 5:
-            raise BootstrapEnrollmentPending("factory did not produce the exact five selected native output receipts")
-        output_handles = tuple(sorted(self._handles(
-            tuple(getattr(row, "receipt_id", None) for row in selected_outputs),
-            "native output receipt")))
-        if len(output_handles) != 5:
-            raise BootstrapEnrollmentPending("precompile requires the complete five-role native output receipt set")
-        reservation_key = (setup_session_handle.session_id,
-                           assembly_selection.selection_handle, output_handles)
-        reservation = self._precompile_reservations.get(reservation_key)
+        assembly_key = (setup_session_handle.session_id, assembly_selection.selection_handle)
+        retained = [cap for cap in self._precompile_caps.values()
+                    if (cap.setup_session_id, cap.assembly_selection_handle) == assembly_key]
+        if retained:
+            if (len(retained) != 1
+                    or retained[0]._root_prepared_native_bundle is not prepared_bundle):
+                raise BootstrapEnrollmentPending("this setup assembly already has another retained precompile")
+            return self.verify_current_precompile_capability(retained[0])
+        reservation = self._precompile_reservations.get(assembly_key)
         if reservation is None:
+            selected_outputs = binding.compile_selected_native_package(prepared_bundle)
+            if not isinstance(selected_outputs, tuple) or len(selected_outputs) != 5:
+                raise BootstrapEnrollmentPending("factory did not produce the exact five selected native output receipts")
+            output_handles = tuple(sorted(self._handles(
+                tuple(getattr(row, "receipt_id", None) for row in selected_outputs),
+                "native output receipt")))
+            if len(output_handles) != 5:
+                raise BootstrapEnrollmentPending("precompile requires the complete five-role native output receipt set")
             publication_handle = secrets.token_urlsafe(36)
             reservation = self.materialization_receipts.reserve_for_precompile(
                 assembly_selection.selection_handle, output_handles, publication_handle)
             # Retain the durable reservation immediately. If the following
             # role projection is interrupted, a same-session retry resumes
             # this reservation instead of reserving or consuming another set.
-            self._precompile_reservations[reservation_key] = reservation
+            self._precompile_reservations[assembly_key] = reservation
         else:
             reservation = self.materialization_receipts.resolve_current_precompile_reservation(
                 reservation.reservation_handle)
@@ -586,8 +592,7 @@ class RootActivePolicyCompilationRegistry:
         prepared = self._verify_prepared_native_bundle(session, capability._root_prepared_native_bundle)
         reservation = self.materialization_receipts.resolve_current_precompile_reservation(
             capability.reservation_handle)
-        reservation_key = (capability.setup_session_id, capability.assembly_selection_handle,
-                           capability.receipt_ids)
+        reservation_key = (capability.setup_session_id, capability.assembly_selection_handle)
         if (type(reservation) is not RootNativePrecompileOutputReservation
                 or self._precompile_reservations.get(reservation_key) != capability._root_reservation
                 or reservation != capability._root_reservation
@@ -621,6 +626,7 @@ class RootActivePolicyCompilationRegistry:
                 or closure.plan_digest != session._authorization.plan_digest
                 or closure.prepared_generation_id != prepared.generation_id
                 or closure.pm_runtime_receipt_handle is None
+                or closure.pm_runtime_receipt_handle != getattr(session, "_pm_runtime_handle", None)
                 or closure.native_output_claim_handle != reservation.reservation_handle
                 or not isinstance(closure.role_rows, tuple)
                 or len(closure.role_rows) != len(expected)):
@@ -681,6 +687,8 @@ class RootActivePolicyCompilationRegistry:
                 setup_session_handle, prepared_bundle)
         capability = self.verify_current_precompile_capability(precompile)
         session = capability._root_setup_session
+        if setup_session_handle is not session._handle:
+            raise BootstrapEnrollmentPending("active compilation handle differs from the retained setup session")
         prepared = self._verify_prepared_native_bundle(session, prepared_bundle)
         if prepared_bundle is not capability._root_prepared_native_bundle:
             raise BootstrapEnrollmentPending("active compile bundle differs from the retained precompile capability")
