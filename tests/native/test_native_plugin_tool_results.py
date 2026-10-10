@@ -43,7 +43,7 @@ class NativePluginToolResultTests(unittest.TestCase):
 
         handler = lambda _args: {"answer": 42}
         parameters = {"type": "object", "properties": {}, "additionalProperties": False}
-        schema = {"name": "fixture", "description": "fixture", "parameters": parameters}
+        schema = parameters
         digest = hashlib.sha256(json.dumps(
             parameters, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")).hexdigest()

@@ -10,6 +10,7 @@ from hermes_installer.artifacts import ArtifactCatalog
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
+from hermes_installer.authority.runtime_composition import _compose_selected_resource_events
 from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
 from hermes_installer.authority.runtime_composition import _native_json_schema_matches
 from hermes_installer.authority.runtime_composition import _ProtectedNativeActionResolver
@@ -147,6 +148,22 @@ def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
         _root_resource_job_ledger_path(stale_bindings, enrollment)
 
 
+def test_resource_event_assembly_requires_the_attached_root_task_runtime():
+    service, enrollment, bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    result = _compose_selected_resource_events(
+        service=service, enrollment=enrollment, bindings=bindings,
+        jobs={}, selected_resources=object(), source_observers=object(),
+        job_authority=object(),
+    )
+
+    assert result[:6] == (None, None, None, None, None, None)
+    assert result[6] == (
+        "selected materialized Resources, source observers, or concrete task runtime are unavailable"
+    )
+    assert service.resource_event_context_issuer is None
+    assert service.resource_task_authority is None
+
+
 def test_native_action_schema_validator_enforces_pinned_finite_schema_subset():
     schema = {
         "type": "object",
@@ -189,7 +206,7 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     schema_digest = hashlib.sha256(schema_bytes).hexdigest()
     adapter = SimpleNamespace(
         adapter_id="adapter:lookup", action_id="action:lookup",
-        argument_schema_id="schema:lookup:arguments", result_schema_id="schema:lookup:result",
+        operation="native.invoke", argument_schema_id="schema:lookup:arguments", result_schema_id="schema:lookup:result",
         workflow_bindings=(MappingProxyType({
             "external_tool_name": "search_records",
             "external_action_id": "search-records",
@@ -230,8 +247,9 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         bindings, enrollment_catalog=catalog, artifact_catalog=SimpleNamespace(artifacts=artifacts),
         native_bridges={"bridge:one": bridge},
         native_schema_artifact_records=({
-            "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
-            "sha256": schema_digest, "schema_kind": "arguments",
+                "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+                "sha256": schema_digest, "size_bytes": len(schema_bytes),
+                "derivation_receipt_handle": None, "schema_kind": "arguments",
             "native_package_id": package.package_id,
             "native_package_generation": package.generation,
             "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
@@ -239,8 +257,9 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         },),
     )
     schema_records = ({
-        "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
-        "sha256": schema_digest, "schema_kind": "arguments",
+            "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+            "sha256": schema_digest, "size_bytes": len(schema_bytes),
+            "derivation_receipt_handle": None, "schema_kind": "arguments",
         "native_package_id": package.package_id,
         "native_package_generation": package.generation,
         "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
@@ -263,8 +282,8 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     )
     identity = SimpleNamespace(profile_id=package.profile_id, generation=package.generation)
     selected = resolver(bridge, identity, "search_records")
-    assert (selected.package_id, selected.adapter_id, selected.action_id) == (
-        package.package_id, adapter.adapter_id, adapter.action_id,
+    assert (selected.package_id, selected.adapter_id, selected.action_id, selected.operation) == (
+        package.package_id, adapter.adapter_id, adapter.action_id, adapter.operation,
     )
     assert selected.validate_arguments(b'{"query":"status"}') is True
     assert selected.validate_arguments(b'{"query":""}') is False

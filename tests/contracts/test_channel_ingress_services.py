@@ -16,7 +16,8 @@ import pytest
 from hermes_installer.authority.channel_ingress_services import (
     AuthoritySourceReceiptResolver, IngressServiceDenied,
     RootAudioCaptureReceiptResolver, RootAudioCaptureRequest, RootAudioCaptureArtifact,
-    RootAudioInputSession, RootIngressDisposition, RootLoopbackHttpIngressListener,
+    RootAudioInputSession, RootInMemoryAudioArtifactCatalog,
+    RootIngressDisposition, RootLoopbackHttpIngressListener,
 )
 from hermes_installer.authority.channel_provenance import AuthenticatedSubjectReceipt
 from hermes_installer.authority.source_observers import SourceReceiptHandle
@@ -44,7 +45,7 @@ def listener(*, context=None, handle=None, process=None, host="127.0.0.1"):
             "S"*43, "session-handle-001", "a"*64, time.monotonic()+60, "jwt-verifier-001"),
         "current_selected_subject": lambda self, selection, receipt: receipt,
     })()
-    body=b'{"message":"hello"}'
+    body=b'{"text":"hello"}'
     request_receipt=replace(source_receipt("http-request-receipt"),
                             payload_digest=hashlib.sha256(body).hexdigest())
     authority=FakeAuthorityService({"R"*43:request_receipt})
@@ -79,19 +80,19 @@ def test_loopback_listener_ticket_is_root_owned_bounded_and_one_use():
     service._server = SimpleNamespace(server_address=("127.0.0.1", 54321))
     ticket = service._create_ticket(
         method="POST", path="/ingress", host="127.0.0.1:54321", content_type="application/json",
-        session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"message":"hello"}',
+        session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"text":"hello"}',
         request_receipt_handle="R"*43,
     )
     request = service.take_authenticated_request(handle, ticket)
     assert request.listener_enrollment_id == "listener-001"
-    assert request.body == b'{"message":"hello"}'
+    assert request.body == b'{"text":"hello"}'
     assert request.access_jwt == b"synthetic-jwt"
     with pytest.raises(IngressServiceDenied, match="unknown or replayed"):
         service.take_authenticated_request(handle, ticket)
     with pytest.raises(IngressServiceDenied, match="not issued"):
         service.take_authenticated_request(object(), service._create_ticket(
             method="POST", path="/ingress", host="127.0.0.1:54321", content_type="application/json",
-            session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"message":"hello"}',
+            session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"text":"hello"}',
             request_receipt_handle="R"*43,
         ))
     service._server = None
@@ -133,7 +134,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
     from hermes_installer.authority.channel_provenance import (
         RootSelectedHttpIngressObserver,
     )
@@ -146,6 +147,11 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
         .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
         .not_valid_before(now-dt.timedelta(minutes=1)).not_valid_after(now+dt.timedelta(hours=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+        .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+            key_encipherment=False, data_encipherment=False, key_agreement=False,
+            key_cert_sign=True, crl_sign=True, encipher_only=None, decipher_only=None), critical=True)
         .sign(ca_key, hashes.SHA256()))
 
     def leaf(name, san):
@@ -155,6 +161,16 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
             .public_key(key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now-dt.timedelta(minutes=1)).not_valid_after(now+dt.timedelta(hours=1))
             .add_extension(x509.SubjectAlternativeName([san]), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value), critical=False)
+            .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+                key_encipherment=True, data_encipherment=False, key_agreement=False,
+                key_cert_sign=False, crl_sign=False, encipher_only=None, decipher_only=None), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([
+                ExtendedKeyUsageOID.SERVER_AUTH if name == "loopback" else ExtendedKeyUsageOID.CLIENT_AUTH
+            ]), critical=False)
             .sign(ca_key, hashes.SHA256()))
         key_path, cert_path = tmp_path/f"{name}.key", tmp_path/f"{name}.crt"
         key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM,
@@ -174,7 +190,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
     client_context = ssl.create_default_context(cafile=str(ca_path))
     client_context.load_cert_chain(str(client_cert), str(client_key))
 
-    body = b'{"message":"synthetic ingress"}'
+    body = b'{"text":"synthetic ingress"}'
     subject_receipt = source_receipt("subject-parent")
     request_receipt = replace(source_receipt("http-request", parents=(subject_receipt.receipt_id,)),
                               payload_digest=hashlib.sha256(body).hexdigest())
@@ -205,8 +221,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
     def process(ticket):
         observed = holder["producer"].observe(ticket)
         parents = holder["observer"].consume_source_receipts(observed.proof)
-        assert {row.receipt_id for row in parents} == {subject_receipt.receipt_id,
-                                                       request_receipt.receipt_id}
+        assert parents == ()
         holder["observer"].consume(observed.proof)
         return RootIngressDisposition.ACCEPTED
 
@@ -220,7 +235,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
         selected, selection_handle, service, identity,
         controller_identity_digest="a"*64, service_generation_digest="b"*64,
         route_id="ingress", body_schema_validator=lambda schema, data:
-            schema == selected.body_schema_id and data == body, monotonic=time.monotonic,
+            schema == selected.body_schema_id and data == b'{"text":"synthetic ingress"}', monotonic=time.monotonic,
         source_receipt_resolver=receipts, source_receipt_validator=receipts.validate)
     holder["producer"] = AuthenticatedHttpIngressProducer(
         selected, selection_handle, holder["observer"], clock=time.monotonic)
@@ -406,7 +421,7 @@ def test_root_audio_resolver_binds_current_consent_device_artifact_and_parent_re
         def consume_capture(self,handle,current_artifact): self.consumed=True
     sessions, artifacts=Sessions(),Artifacts()
     resolver=RootAudioCaptureReceiptResolver(selection,selection_handle,sessions=sessions,
-        artifacts=artifacts,source_receipts=source_resolver)
+        artifacts=artifacts,owner_generation="generation-001",source_receipts=source_resolver)
     with pytest.raises(PermissionError, match="root-issued"):
         resolver.take_selected_capture(selection_handle,
             RootAudioCaptureRequest(session.session_handle,artifact.artifact_id))
@@ -424,3 +439,27 @@ def test_root_audio_resolver_binds_current_consent_device_artifact_and_parent_re
     resolver.consume_capture(selection_handle,proof)
     with pytest.raises(IngressServiceDenied,match="unknown, consumed"):
         resolver.current_selected_capture(selection_handle,proof)
+
+
+def test_root_audio_memory_catalog_seals_bounds_and_zeroes_pcm_without_paths():
+    selection = AudioIngressSelection("audio-selection", "audio-channel", 1, "profile-001",
+        "role-001", "issuer-001", "device-001", "capture-backend-001", "d"*64,
+        "session-policy-001", 32000, 60, "pcm16-mono-16000-v1")
+    selection_handle = object()
+    session = RootAudioInputSession("S"*43, "profile-001", "generation-001", "device-001",
+        "e"*64, "C"*43, time.monotonic()+30)
+    catalog = RootInMemoryAudioArtifactCatalog(selection, selection_handle,
+        owner_generation="generation-001")
+    pcm = bytearray(b"\x01\x00" * 16000)
+    artifact = catalog.store_capture(selection_handle, session, pcm, operation_id="O"*43)
+    assert not any(pcm)
+    assert artifact.size_bytes == 32000
+    assert artifact.sha256 == hashlib.sha256(b"\x01\x00" * 16000).hexdigest()
+    assert not hasattr(artifact, "path")
+    assert catalog.resolve_capture(selection_handle, session, artifact.artifact_id) is artifact
+    data = catalog.read_capture_bytes(selection_handle, session, artifact, maximum_bytes=32000)
+    assert bytes(data) == b"\x01\x00" * 16000
+    catalog.consume_capture(selection_handle, artifact)
+    assert not catalog._items
+    with pytest.raises(IngressServiceDenied, match="stale|consumed"):
+        catalog.read_capture_bytes(selection_handle, session, artifact, maximum_bytes=32000)
