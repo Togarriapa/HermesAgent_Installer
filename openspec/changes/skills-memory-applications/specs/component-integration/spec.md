@@ -795,3 +795,10 @@ The installer SHALL distinguish held root observation from completed signed choi
 #### Scenario: Fixed root is observed before child choice
 - **WHEN** only the fixed model store root is held
 - **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Lock-derived hash-constrained offline dependency install v147
+The installer SHALL preserve the original selected lock while deriving hashed requirements and installing only the verified target-active package closure offline, and SHALL require a separate actual noneditable source-project wheel and environment probe before qualification.
+
+#### Scenario: Export omits source project
+- **WHEN** the hash-constrained dependency install succeeds using no-emit-project
+- **THEN** no application runtime is qualified until its exact source-built project wheel and complete installed origin/probe receipts also pass

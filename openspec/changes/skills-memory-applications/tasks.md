@@ -202,3 +202,7 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T146.1 factory/model selection/consent: Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately.
 
 - [ ] HI-T146.2 native target/factory/enrollment: Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation.
+
+- [ ] SK-T147.1 application build/package broker: Implement exact lock-derived export/active closure comparison and offline require-hashes pip sync with held wheelhouse/no ambient dependencies; preserve original lock and source receipts.
+
+- [ ] SK-T147.2 app source/build/probe: Review exact per-project offline backend/source-wheel stage and genuine observed wheel receipt; full installed env/probe requires project plus complete103 closure where selected, no dependency-only success.

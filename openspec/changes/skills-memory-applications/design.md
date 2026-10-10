@@ -122,3 +122,5 @@ Hyperframes finite toolchain source v144: `plans/amendments/2026-10-10-hyperfram
 Memory process control re-admission v145: `plans/amendments/2026-10-10-memory-process-control-readmission-v145.md`; fresh current short status/stop proof joins original owned process, immutable deadline and revocation cleanup. All AC open.
 
 Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
+
+Lock-derived offline dependency install v147: `plans/amendments/2026-10-10-lock-export-offline-wheel-install-v147.md`; official unchanged-lock export + hash-constrained offline pip sync, exact active package receipt closure, separate actual project wheel/backend and full env probe. All AC open.
