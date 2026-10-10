@@ -4,6 +4,7 @@ import hashlib
 import pytest
 
 from hermes_installer.authority.active_policy_compiler import (
+    ActiveSetupChoiceProjection,
     RootActivePolicyCompilationClaim,
     RootActivePolicyCompilationRegistry,
     _canonical,
@@ -70,6 +71,33 @@ def test_active_claim_hashes_keep_predecessor_and_compiled_selection_domains_sep
     assert "claim_digest" not in manifest
     assert manifest["expected_selection_catalog_sha256"] == claim.expected_selection_catalog_sha256
     assert manifest["selection_catalog_sha256"] == claim.selection_catalog_sha256
+    assert manifest["choice_adoptions"] == []
+
+
+def test_caller_constructed_choice_projection_fails_compiler_seal_check():
+    from dataclasses import replace
+
+    claim = _claim()
+    projection = ActiveSetupChoiceProjection(
+        selection_handle="H" * 43, purpose="memory-service-enablement", key_id="root-key-v1",
+        signed_record_sha256="a" * 64, choice_payload_sha256="b" * 64,
+        choice_epoch=1, revocation_epoch=1, issued_at_unix=1.0, setup_deadline_unix=2.0,
+        release_deployment_receipt_sha256="c" * 64, setup_session_handle="d" * 64,
+        transaction_handle="T" * 64, plan_id="installer-root-setup-plan-v1",
+        prepared_generation="prepared-1", principal_selection_handle="e" * 43,
+        namespace_selection_handle="f" * 43, private_profile_selection_handle="g" * 43,
+        source_member_receipt_handles=("i" * 43,), principal_id="principal",
+        profile_id="hermes-agent-native-v1", namespace_id="namespace",
+        principal_binding_sha256="j" * 64, namespace_binding_sha256="k" * 64,
+        service_generation_id="prepared-1", service_generation_digest="8" * 64,
+        selection_catalog_sha256=claim.selection_catalog_sha256,
+        _compiler_seal=object(),
+    )
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._seal = claim._seal
+    with pytest.raises(BootstrapEnrollmentPending, match="unsealed"):
+        registry._verify_choice_projection_seals(
+            replace(claim, choice_adoptions=(projection,)))
 
 
 def test_mutated_selection_output_is_rejected_before_claim_can_be_published():
