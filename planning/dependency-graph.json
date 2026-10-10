@@ -2801,8 +2801,8 @@
     "amendment": "plans/amendments/2026-10-10-owner-result-source-selector-v188.md",
     "wire_contract": "planning/owner-result-source-selector-v188.json",
     "order": [
-      "HI-T188.1 → VD-T188.2",
-      "HI-T188.3 → VD-T188.4"
+      "HI-T188.1 \u2192 VD-T188.2",
+      "HI-T188.3 \u2192 VD-T188.4"
     ],
     "implementation_complete": false,
     "target_acceptance_complete": false,
@@ -2811,7 +2811,7 @@
   "committed_pm_executable_identity_v189": {
     "amendment": "plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md",
     "wire_contract": "planning/committed-pm-executable-identity-v189.json",
-    "order": "HI-T189.1 → VD-T189.2",
+    "order": "HI-T189.1 \u2192 VD-T189.2",
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
@@ -2819,7 +2819,7 @@
   "same_worker_namespace_v190": {
     "amendment": "plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md",
     "wire_contract": "planning/same-worker-namespace-handshake-v190.json",
-    "order": "HI-T190.1 → VD-T190.2",
+    "order": "HI-T190.1 \u2192 VD-T190.2",
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
@@ -2840,7 +2840,7 @@
   "native_worker_views_v192": {
     "amendment": "plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md",
     "wire_contract": "planning/native-worker-selected-view-paths-v192.json",
-    "order": "HI-T192.1 → VD-T192.2",
+    "order": "HI-T192.1 \u2192 VD-T192.2",
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
@@ -2848,7 +2848,7 @@
   "native_worker_member_views_v193": {
     "amendment": "plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md",
     "wire_contract": "planning/native-worker-view-member-custody-v193.json",
-    "order": "HI-T193.1 → VD-T193.2",
+    "order": "HI-T193.1 \u2192 VD-T193.2",
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
@@ -3275,13 +3275,8 @@
   "typed_initial_pending_diagnostics_v232": {
     "contract": "planning/typed-initial-pending-diagnostics-v232.json",
     "task_dependencies": {
-      "BD-T232.1": [
-        "BD-F02",
-        "HI-T149.1"
-      ],
-      "VD-T232.2": [
-        "BD-T232.1"
-      ]
+      "BD-T232.1": ["BD-F02", "HI-T149.1"],
+      "VD-T232.2": ["BD-T232.1"]
     },
     "acceptance": "All AC OPEN"
   }
