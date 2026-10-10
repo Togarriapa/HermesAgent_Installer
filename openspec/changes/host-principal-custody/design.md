@@ -327,3 +327,6 @@ Exact supervised installed daemon/private pathname control/peer PIDFD/unit/relea
 Owner result source v188: `plans/amendments/2026-10-10-owner-result-source-selector-v188.md` adds exact separately signed tool-result enrollment/issuer/channel/root-handler member, paired to the invocation and consumed grant. Generic backend observer matching is insufficient; all acceptance/source pins remain pending.
 
 Finite native worker mode v188 also resolves the fixed reviewed Hermes -m recipe versus generic child-script matcher contradiction through a private current active worker launch proof; generic interpreter rules remain unchanged.
+
+
+Committed PM identity v189: `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md` supplies exact independently verified venv executable metadata to the selected native worker parser/runtime consumer, preserving generic static catalog checks and base/venv distinction. No source pin approval or acceptance.

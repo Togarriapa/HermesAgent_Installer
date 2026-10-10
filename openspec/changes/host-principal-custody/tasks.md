@@ -401,3 +401,5 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T188.1 Implement exact paired owner result source publication/active issuer and completed-effect capture. See `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; all AC remain OPEN.
 
 - [ ] HI-T188.3 Implement exact typed active native Hermes module launch at manager admission/barrier. See v188; acceptance OPEN.
+
+- [ ] HI-T189.1 Implement exact committed PM executable descriptor/private resolver/parser-runtime consumer. See `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; all acceptance OPEN.
