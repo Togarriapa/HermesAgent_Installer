@@ -11,9 +11,11 @@ import hashlib
 import hmac
 import json
 import os
+import platform
 import re
 import secrets
 import stat
+import sys
 import time
 from types import SimpleNamespace
 from dataclasses import dataclass, field
@@ -386,7 +388,10 @@ class RootXpraBuildSelectionProducer:
                     or pm.receipt_handle != pm_runtime_receipt_handle
                     or pm.transaction_handle != auth.transaction_handle
                     or pm.prepared_generation_id != prepared.generation_id
-                    or pm.uid != 0):
+                    or pm.uid != 0 or pm.implementation.lower() != "cpython"
+                    or tuple(pm.version_info[:2]) != (3, 14)
+                    or sys.platform != "linux"
+                    or platform.machine().lower() not in {"aarch64", "arm64"}):
                 raise ValueError("current selected PM runtime is absent")
 
             binding = getattr(session, "_selected_installation", None)
