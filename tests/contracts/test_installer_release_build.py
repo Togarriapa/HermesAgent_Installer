@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -56,6 +57,20 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
             receipt.verify_current()
     finally:
         receipt.close()
+
+
+def test_release_builder_pins_literal_model_store_template_and_native_source_modules():
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_ID == "installer-existing-model-store-root-template-v1"
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_PATH.endswith(
+        "2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json")
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_SHA256 == (
+        "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f")
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_BYTES == 712
+    for _name, source_path, target_path, digest, size in release_build.REVIEWED_SOURCE_MODULES:
+        source = Path(__file__).parents[2] / source_path
+        body = source.read_bytes()
+        assert target_path.startswith("lib/python/hermes_installer/components/")
+        assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
@@ -272,9 +287,13 @@ def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
         _extract_fixture_runtime(monkeypatch, archive, destination)
 
 
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="runtime closure requires root-owned sealed directories")
 def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_path):
     root = tmp_path / "python"
     (root / "bin").mkdir(parents=True)
+    root.chmod(0o555)
+    (root / "bin").chmod(0o555)
     os.symlink("../lib/target", root / "bin/alias")
     rows = release_build._runtime_archive_rows(root)
     assert rows == [("bin/alias", hashlib.sha256(b"../lib/target").hexdigest(),
@@ -284,6 +303,48 @@ def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_
     os.symlink("../../outside", root / "bin/alias")
     with pytest.raises(release_build.InstallerReleaseBuildError, match="escapes its fixed prefix"):
         release_build._runtime_archive_rows(root)
+
+
+def test_runtime_closure_modes_match_the_sealed_tree_modes():
+    assert release_build._sealed_runtime_mode(0o755) == 0o555
+    assert release_build._sealed_runtime_mode(0o644) == 0o444
+    assert release_build._sealed_runtime_mode(0o700) == 0o555
+    assert release_build._sealed_runtime_mode(0o600) == 0o444
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="runtime mode currentness requires a root-owned Linux tree")
+def test_root_runtime_tree_seals_before_closure_and_rejects_writable_mode(tmp_path):
+    root = tmp_path / "runtime"
+    root.mkdir(mode=0o700)
+    executable = root / "bin/python3.14"
+    data = root / "lib/config.dat"
+    executable.parent.mkdir()
+    data.parent.mkdir()
+    executable.write_bytes(b"interpreter")
+    data.write_bytes(b"runtime data")
+    executable.chmod(0o755)
+    data.chmod(0o644)
+
+    release_build._seal_runtime_tree(root)
+    assert executable.stat().st_mode & 0o777 == 0o555
+    assert data.stat().st_mode & 0o777 == 0o444
+    closure = release_build._runtime_closure_digest(root)
+    release_build._verify_runtime_materialization(root, closure)
+
+    data.parent.chmod(0o777)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="directory mode is not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+    data.parent.chmod(0o555)
+
+    executable.chmod(0o666)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+    executable.chmod(0o555)
+
+    root.chmod(0o777)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="directory mode is not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
 
 
 def test_wheel_record_rejects_digest_and_unlisted_member_changes():
@@ -604,6 +665,30 @@ def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
         parsed, info, observed = release_build._decode_sealed_handoff_descriptor(descriptor)
         assert observed == body and info.st_size == len(body)
         assert parsed == {"schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43}
+    finally:
+        os.close(descriptor)
+
+
+def test_bootstrap_handoff_uses_linux_uapi_when_python_omits_seal_names(monkeypatch):
+    if not hasattr(os, "memfd_create") or not sys.platform.startswith("linux"):
+        pytest.skip("Linux sealed memfd is required")
+    for name in ("F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_SEAL", "F_SEAL_SHRINK",
+                 "F_SEAL_GROW", "F_SEAL_WRITE"):
+        monkeypatch.delattr(release_build.fcntl, name, raising=False)
+    descriptor = os.memfd_create("handoff-uapi-test", os.MFD_ALLOW_SEALING)
+    try:
+        body = release_build._canonical_json({
+            "schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43,
+        })
+        os.write(descriptor, body)
+        constants = release_build._memfd_seal_constants()
+        required = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                    | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+        release_build.fcntl.fcntl(descriptor, constants["F_ADD_SEALS"], required)
+        parsed, info, observed = release_build._decode_sealed_handoff_descriptor(descriptor)
+        assert observed == body and info.st_size == len(body)
+        assert parsed["handoff_handle"] == "h" * 43
+        assert release_build.fcntl.fcntl(descriptor, constants["F_GET_SEALS"]) & required == required
     finally:
         os.close(descriptor)
 
