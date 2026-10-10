@@ -466,6 +466,33 @@ class RootSetupLocalOwnerIdentityRegistry:
         self._snapshots: dict[str, RootCurrentLocalOwnerIdentitySnapshot] = {}
         self._normal_adoptions: dict[str, dict[str, Any]] = {}
 
+    @property
+    def setup_session_store(self) -> "RootSetupSessionStore":
+        """Return the exact normal store only after a live local-owner adoption.
+
+        Stage-zero selections never expose a normal setup store.  This property
+        exists for consumers that need to join their factory to the adopted
+        normal-session authority; every recorded adoption is revalidated before
+        the store is returned.
+        """
+        stores: list[RootSetupSessionStore] = []
+        for adoption in tuple(self._normal_adoptions.values()):
+            store = adoption.get("store")
+            handle = adoption.get("handle")
+            if (not isinstance(store, RootSetupSessionStore)
+                    or not isinstance(handle, RootSetupSessionHandle)):
+                raise BootstrapEnrollmentPending("local-owner adoption has no concrete normal setup store")
+            self.resolve_adopted_initial_principal(store, handle)
+            # Adoption also requires a current namespace joined to the prepared
+            # generation.  This prevents a stale principal alone from binding
+            # the active compiler to a normal session.
+            self.resolve_adopted_namespace_selection(store, handle)
+            if all(existing is not store for existing in stores):
+                stores.append(store)
+        if len(stores) != 1:
+            raise BootstrapEnrollmentPending("local-owner registry has no unique adopted normal setup store")
+        return stores[0]
+
     @classmethod
     def from_initial_compilation(cls, initial_compilation_registry: Any,
                                  root_journal: Path, *, monotonic=time.monotonic

@@ -51,7 +51,9 @@ def _claim() -> RootActivePolicyCompilationClaim:
         expected_selection_catalog_sha256="7" * 64, expected_service_generation_digest="8" * 64,
         policy_template_artifact_id="installer-bootstrap-policy-v1", policy_template_sha256="6" * 64,
         principal_selection_receipt_handle="9" * 64, runtime_receipt_handles=("A" * 43,),
-        materialization_receipt_handles=("B" * 43,), source_receipt_handles=("A" * 43, "B" * 43, "9" * 64),
+        materialization_receipt_handles=("B" * 43,), source_receipt_handles=("A" * 43, "B" * 43, "9" * 64, "F" * 43),
+        principal_identity_kind="authentik-subject-v1", principal_binding_sha256="a" * 64,
+        namespace_selection_handle="F" * 43, namespace_binding_sha256="b" * 64,
         compiled_policy_sha256=hashlib.sha256(policy).hexdigest(),
         compiled_artifact_catalog_sha256=hashlib.sha256(catalog).hexdigest(),
         compiled_selection_sha256=hashlib.sha256(_canonical(selection)).hexdigest(),
@@ -77,11 +79,28 @@ def test_active_claim_hashes_keep_predecessor_and_compiled_selection_domains_sep
     assert manifest["choice_adoptions"] == []
 
 
+def test_active_claim_commits_to_tagged_principal_and_current_namespace_bindings():
+    claim = _claim()
+    manifest = _manifest(claim)
+    assert manifest["principal_identity_kind"] == "authentik-subject-v1"
+    assert manifest["principal_binding_sha256"] == "a" * 64
+    assert manifest["namespace_selection_handle"] == "F" * 43
+    assert manifest["namespace_binding_sha256"] == "b" * 64
+    changed_domain = replace(claim, principal_identity_kind="linux-local-owner-v1")
+    changed_namespace = replace(claim, namespace_binding_sha256="c" * 64)
+    assert hashlib.sha256(_canonical(_manifest(changed_domain))).hexdigest() != hashlib.sha256(
+        _canonical(manifest)).hexdigest()
+    assert hashlib.sha256(_canonical(_manifest(changed_namespace))).hexdigest() != hashlib.sha256(
+        _canonical(manifest)).hexdigest()
+    with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
+        _validate_claim_output_hashes(replace(claim, namespace_selection_handle="G" * 43))
+
+
 def test_active_source_receipt_closure_is_ordered_unique_and_covers_explicit_receipts():
     claim = _claim()
-    raw = ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64)
+    raw = ("A" * 43, "B" * 43, "9" * 64, "F" * 43, "A" * 43, "B" * 43, "9" * 64, "F" * 43)
     canonical = _ordered_unique_receipt_handles(raw, "test")
-    assert canonical == ("A" * 43, "B" * 43, "9" * 64)
+    assert canonical == ("A" * 43, "B" * 43, "9" * 64, "F" * 43)
     from dataclasses import replace
     _validate_claim_output_hashes(replace(claim, source_receipt_handles=canonical))
     with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
@@ -102,7 +121,8 @@ def test_complete_active_publication_accepts_publishers_deduplicated_input_closu
     # These are the real source components: PM, native output and principal.
     # The PM/output handles also occur in the prepared-bundle source list.
     claim = replace(claim, source_receipt_handles=_ordered_unique_receipt_handles(
-        ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64), "test"))
+        ("A" * 43, "B" * 43, "9" * 64, "F" * 43,
+         "A" * 43, "B" * 43, "9" * 64, "F" * 43), "test"))
     claim = replace(claim, claim_digest=hashlib.sha256(_canonical(_manifest(claim))).hexdigest())
     input_handles = _receipt_input_handles(claim)
     receipt = RootSetupPublicationReceipt(
@@ -171,7 +191,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
     original = _claim()
     output_handles = ("B" * 43, "C" * 43, "D" * 43, "E" * 43, "F" * 43)
     source_handles = _ordered_unique_receipt_handles(
-        ("A" * 43, *output_handles, "9" * 64), "fixture")
+        ("A" * 43, *output_handles, "9" * 64, "F" * 43), "fixture")
     original = replace(original, source_receipt_handles=source_handles,
                        materialization_receipt_handles=output_handles, claim_digest="0" * 64)
     original = replace(original, claim_digest=hashlib.sha256(_canonical(_manifest(original))).hexdigest())
@@ -204,6 +224,11 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "selection_sha256": original.compiled_selection_sha256,
         "observed_root_receipt_handle": original.observed_root_receipt_handle,
         "principal_selection_receipt_handle": original.principal_selection_receipt_handle,
+        "principal_identity_kind": original.principal_identity_kind,
+        "principal_binding_sha256": original.principal_binding_sha256,
+        "namespace_selection_handle": original.namespace_selection_handle,
+        "namespace_binding_sha256": original.namespace_binding_sha256,
+        "owner_overlay_adoptions": [],
         "runtime_receipt_handles": list(original.runtime_receipt_handles),
         "materialization_receipt_handles": list(original.materialization_receipt_handles),
         "publication_receipt_handle": None,
