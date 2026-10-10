@@ -354,7 +354,9 @@ class ProtectedEnrollmentCatalog:
                  source_issuers: tuple[Any, ...] | list[Any] | None = None,
                  memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
                  parameter_schemas: list[Mapping[str, Any]] | None = None,
-                 selected_application_runtimes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
+                 selected_application_runtimes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -390,6 +392,53 @@ class ProtectedEnrollmentCatalog:
                     observer_joins[observer_id] = NativeSourceObserverJoin(issuer, package, adapter)
         self._source_observer_joins = MappingProxyType(observer_joins)
         self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
+        endpoints: dict[str, RootSelectedPrivateMemoryEndpointBinding] = {}
+        for raw in private_memory_endpoint_selections or ():
+            endpoint = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                raw, service_generation_digest=digest,
+            )
+            if endpoint.binding_id in endpoints:
+                raise EnrollmentDenied("private memory endpoint binding ID is duplicated")
+            try:
+                service = self.resolve(endpoint.service_enrollment_id, endpoint.service_generation)
+                memory = self._memory_enrollments.get((endpoint.service_enrollment_id,
+                                                       endpoint.service_generation))
+                process = self.resolve_profile_generation(endpoint.process_profile_id,
+                                                          endpoint.process_profile_generation)
+                if (service.profile_id != endpoint.profile_id
+                        or service.principal_id != endpoint.principal_id
+                        or service.namespace_identity != endpoint.namespace_id
+                        or memory is None or memory.profile_id != endpoint.profile_id
+                        or memory.principal_id != endpoint.principal_id
+                        or memory.namespace_identity != endpoint.namespace_id
+                        or memory.service_enrollment_id != endpoint.service_enrollment_id
+                        or memory.service_generation != endpoint.service_generation
+                        or process.profile_id != endpoint.process_profile_id
+                        or process.generation != endpoint.process_profile_generation
+                        or process.principal_id != endpoint.principal_id
+                        or process.namespace_identity != endpoint.namespace_id
+                        or endpoint.endpoint_target_id != memory.target_id
+                        or endpoint.credential_reference_id != memory.auth_reference_id
+                        or any(route_id not in memory.fixed_route_map
+                               for route_id in endpoint.connector_route_ids)):
+                    raise EnrollmentDenied("private memory endpoint does not join current service/process/routes")
+                for route_id in endpoint.connector_route_ids:
+                    self.resolve_connector_route(endpoint.service_enrollment_id,
+                                                  endpoint.service_generation,
+                                                  endpoint.endpoint_target_id, route_id)
+            except (KeyError, AttributeError, TypeError, ValueError, PermissionError):
+                raise EnrollmentDenied("private memory endpoint selection is stale or incomplete") from None
+            endpoints[endpoint.binding_id] = endpoint
+        self._private_memory_endpoint_selections = MappingProxyType(endpoints)
+        models: dict[str, RootSelectedPrivateMemoryModelBinding] = {}
+        for raw in private_memory_model_selections or ():
+            model = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                raw, service_generation_digest=digest,
+            )
+            if model.binding_id in models or model.endpoint_binding_id not in endpoints:
+                raise EnrollmentDenied("private memory model foreign key is absent or duplicated")
+            models[model.binding_id] = model
+        self._private_memory_model_selections = MappingProxyType(models)
         selected_applications: dict[str, Mapping[str, Any]] = {}
         for raw in selected_application_runtimes or ():
             if not isinstance(raw, Mapping):
@@ -493,7 +542,10 @@ class ProtectedEnrollmentCatalog:
                               native_packages: list[Mapping[str, Any]] | None = None,
                               source_issuers: tuple[Any, ...] | list[Any] | None = None,
                               memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
-                              parameter_schemas: list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
+                              parameter_schemas: list[Mapping[str, Any]] | None = None,
+                              selected_application_runtimes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                              private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                              private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
         if (not isinstance(protected_digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", protected_digest)
@@ -511,7 +563,60 @@ class ProtectedEnrollmentCatalog:
                    source_issuers=source_issuers,
                    memory_enrollments=memory_enrollments,
                    parameter_schemas=parameter_schemas,
-                   selected_application_runtimes=selected_application_runtimes)
+                   selected_application_runtimes=selected_application_runtimes,
+                   private_memory_endpoint_selections=private_memory_endpoint_selections,
+                   private_memory_model_selections=private_memory_model_selections)
+
+    def resolve_private_memory_endpoint_binding(
+        self, binding_id: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        selected = _id(binding_id, "private memory endpoint binding ID")
+        row = self._private_memory_endpoint_selections.get(selected)
+        if row is None or row.service_generation_digest != self.digest:
+            raise EnrollmentDenied("private memory endpoint binding is absent or stale")
+        try:
+            service = self.resolve(row.service_enrollment_id, row.service_generation)
+            process = self.resolve_profile_generation(row.process_profile_id, row.process_profile_generation)
+            memory = self._memory_enrollments.get((row.service_enrollment_id, row.service_generation))
+            if (service.profile_id != row.profile_id or service.principal_id != row.principal_id
+                    or service.namespace_identity != row.namespace_id or memory is None
+                    or memory.profile_id != row.profile_id or memory.principal_id != row.principal_id
+                    or memory.namespace_identity != row.namespace_id or memory.target_id != row.endpoint_target_id
+                    or memory.auth_reference_id != row.credential_reference_id
+                    or process.profile_id != row.process_profile_id
+                    or process.generation != row.process_profile_generation
+                    or process.principal_id != row.principal_id
+                    or process.namespace_identity != row.namespace_id):
+                raise EnrollmentDenied("private memory endpoint identity changed")
+            for route_id in row.connector_route_ids:
+                self.resolve_connector_route(row.service_enrollment_id, row.service_generation,
+                                             row.endpoint_target_id, route_id)
+        except Exception:
+            raise EnrollmentDenied("private memory endpoint binding is no longer current") from None
+        return row
+
+    def resolve_private_loopback_binding_handle(
+        self, network_binding_handle: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        if not isinstance(network_binding_handle, str) or not network_binding_handle:
+            raise EnrollmentDenied("private loopback network binding handle is malformed")
+        matches = [row for row in self._private_memory_endpoint_selections.values()
+                   if row.network_binding_handle == network_binding_handle]
+        if len(matches) != 1:
+            raise EnrollmentDenied("private loopback network binding handle is absent or ambiguous")
+        return self.resolve_private_memory_endpoint_binding(matches[0].binding_id)
+
+    def resolve_private_memory_model_binding(
+        self, binding_id: str, endpoint_binding_id: str | None = None,
+    ) -> RootSelectedPrivateMemoryModelBinding:
+        selected = _id(binding_id, "private memory model binding ID")
+        row = self._private_memory_model_selections.get(selected)
+        if row is None or row.service_generation_digest != self.digest:
+            raise EnrollmentDenied("private memory model binding is absent or stale")
+        endpoint = self.resolve_private_memory_endpoint_binding(row.endpoint_binding_id)
+        if endpoint_binding_id is not None and _id(endpoint_binding_id, "endpoint binding ID") != endpoint.binding_id:
+            raise EnrollmentDenied("private memory model binding belongs to another endpoint")
+        return row
 
     def selected_application_runtime_record(self, application_id: str) -> Mapping[str, Any]:
         """Return the unique active application row with its snapshot kept separate.
@@ -833,6 +938,119 @@ class ConnectorRouteBinding:
     route_record: Mapping[str, Any] | None = None
     memory_enrollment: Any | None = None
     memory_route: Any | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedPrivateMemoryEndpointBinding:
+    """Digest-bound endpoint selection metadata, never a listener proof."""
+
+    binding_id: str
+    profile_id: str
+    namespace_id: str
+    principal_id: str
+    service_enrollment_id: str
+    service_generation: str
+    process_profile_id: str
+    process_profile_generation: str
+    endpoint_target_id: str
+    connector_route_ids: tuple[str, ...]
+    recipient_id: str
+    credential_reference_id: str
+    server_config_artifact_id: str
+    server_config_sha256: str
+    runtime_artifact_ids: tuple[str, ...]
+    network_binding_handle: str
+    service_generation_digest: str
+
+    @classmethod
+    def from_protected_record(cls, record: Mapping[str, Any], *,
+                              service_generation_digest: str) -> "RootSelectedPrivateMemoryEndpointBinding":
+        fields = {
+            "binding_id", "profile_id", "namespace_id", "principal_id",
+            "service_enrollment_id", "service_generation", "process_profile_id",
+            "process_profile_generation", "endpoint_target_id", "connector_route_ids",
+            "recipient_id", "credential_reference_id", "server_config_artifact_id",
+            "server_config_sha256", "runtime_artifact_ids", "network_binding_handle",
+        }
+        if not isinstance(record, Mapping) or set(record) != fields:
+            raise EnrollmentDenied("private memory endpoint selection fields are invalid")
+        if not isinstance(service_generation_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest):
+            raise EnrollmentDenied("private memory endpoint selection digest is invalid")
+        ids = fields - {"connector_route_ids", "runtime_artifact_ids", "server_config_sha256"}
+        values = {key: _id(record[key], f"private memory endpoint {key}") for key in ids}
+        digest = record["server_config_sha256"]
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise EnrollmentDenied("private memory endpoint server config digest is invalid")
+        routes, artifacts = record["connector_route_ids"], record["runtime_artifact_ids"]
+        if (not isinstance(routes, (list, tuple)) or not 1 <= len(routes) <= 32
+                or any(not isinstance(value, str) for value in routes) or len(routes) != len(set(routes))):
+            raise EnrollmentDenied("private memory endpoint route selection is invalid")
+        if (not isinstance(artifacts, (list, tuple)) or not 1 <= len(artifacts) <= 64
+                or any(not isinstance(value, str) for value in artifacts) or len(artifacts) != len(set(artifacts))):
+            raise EnrollmentDenied("private memory endpoint runtime artifact selection is invalid")
+        return cls(**values,
+                   connector_route_ids=tuple(_id(value, "private memory endpoint route ID") for value in routes),
+                   server_config_sha256=digest,
+                   runtime_artifact_ids=tuple(_id(value, "private memory endpoint runtime artifact ID")
+                                              for value in artifacts),
+                   service_generation_digest=service_generation_digest)
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedPrivateMemoryModelBinding:
+    """Digest-bound model selection metadata, never proof of installed weights."""
+
+    binding_id: str
+    endpoint_binding_id: str
+    served_model_id: str
+    source_model_id: str
+    source_revision: str
+    license_artifact_id: str
+    license_sha256: str
+    model_artifact_id: str
+    model_artifact_sha256: str
+    model_tree_manifest_sha256: str
+    runtime_artifact_id: str
+    runtime_artifact_sha256: str
+    load_config_artifact_id: str
+    load_config_sha256: str
+    capability: str
+    dimensions: int | None
+    service_generation_digest: str
+
+    @classmethod
+    def from_protected_record(cls, record: Mapping[str, Any], *,
+                              service_generation_digest: str) -> "RootSelectedPrivateMemoryModelBinding":
+        fields = {"binding_id", "endpoint_binding_id", "served_model_id", "source_model_id",
+                  "source_revision", "license_artifact_id", "license_sha256", "model_artifact_id",
+                  "model_artifact_sha256", "model_tree_manifest_sha256", "runtime_artifact_id",
+                  "runtime_artifact_sha256", "load_config_artifact_id", "load_config_sha256",
+                  "capability", "dimensions"}
+        if (not isinstance(record, Mapping) or set(record) != fields
+                or not isinstance(service_generation_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
+            raise EnrollmentDenied("private memory model selection fields are invalid")
+        digests = {"license_sha256", "model_artifact_sha256", "model_tree_manifest_sha256",
+                   "runtime_artifact_sha256", "load_config_sha256"}
+        values: dict[str, Any] = {}
+        for key in fields - digests - {"capability", "dimensions"}:
+            values[key] = _id(record[key], f"private memory model {key}")
+        for key in digests:
+            value = record[key]
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise EnrollmentDenied(f"private memory model {key} is invalid")
+            values[key] = value
+        capability, dimensions = record["capability"], record["dimensions"]
+        if capability == "extraction-text":
+            if dimensions is not None:
+                raise EnrollmentDenied("text model selection cannot declare embedding dimensions")
+        elif capability == "embedding":
+            if type(dimensions) is not int or not 1 <= dimensions <= 8192:
+                raise EnrollmentDenied("embedding model selection dimensions are invalid")
+        else:
+            raise EnrollmentDenied("private memory model capability is unsupported")
+        return cls(**values, capability=capability, dimensions=dimensions,
+                   service_generation_digest=service_generation_digest)
 
 
 @dataclass(frozen=True, slots=True)
