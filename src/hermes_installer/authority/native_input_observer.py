@@ -64,15 +64,16 @@ class RootNativeInputObserver:
     """Capture exact bytes only after a trusted root adapter proves their origin."""
 
     def __init__(self, *, service: Any, source_observers: Any,
-                 task_input_resolver: Callable[[str, str, Any], RootNativeInputSelection],
-                 health_input_resolver: Callable[[str, Any, str], RootNativeInputSelection],
-                 desktop_input_resolver: Callable[[str, Any, Any], RootNativeInputSelection],
+                 task_input_resolver: Callable[[str, str, Any], RootNativeInputSelection] | None,
+                 health_input_resolver: Callable[[str, Any, str], RootNativeInputSelection] | None,
+                 desktop_input_resolver: Callable[[str, Any, Any], RootNativeInputSelection] | None,
                  process_resolver: Callable[..., Any],
                  loaded_package_proof_resolver: Callable[..., Any],
                  selected_execution_registry: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
-        if (not all(callable(value) for value in (
-                task_input_resolver, health_input_resolver, desktop_input_resolver,
+        if (not all(value is None or callable(value) for value in (
+                task_input_resolver, health_input_resolver, desktop_input_resolver))
+                or not all(callable(value) for value in (
                 process_resolver, loaded_package_proof_resolver, monotonic))
                 or not callable(getattr(source_observers, "capture_observed_ingress", None))):
             raise ValueError("native input observer requires root session, process, proof, and source adapters")
@@ -88,6 +89,30 @@ class RootNativeInputObserver:
         self._events: dict[str, RootNativeInputEvent] = {}
         self._task_receipts: dict[str, Any] = {}
         self._lock = threading.RLock()
+
+    @classmethod
+    def for_selected_resource_tasks(
+        cls, *, service: Any, source_observers: Any,
+        selected_execution_registry: Any, process_resolver: Callable[..., Any],
+        loaded_package_proof_resolver: Callable[..., Any],
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> "RootNativeInputObserver":
+        """Build the observer for v46 selected-task ingress only.
+
+        The legacy task/health/desktop resolvers are absent by construction;
+        those ingress paths remain unavailable until separately root-selected.
+        """
+        if (not callable(getattr(selected_execution_registry, "select_resource_task", None))
+                or not callable(getattr(selected_execution_registry, "resolve_selected_native_input_target", None))):
+            raise ValueError("selected resource-task execution registry is incomplete")
+        return cls(
+            service=service, source_observers=source_observers,
+            task_input_resolver=None, health_input_resolver=None,
+            desktop_input_resolver=None, process_resolver=process_resolver,
+            loaded_package_proof_resolver=loaded_package_proof_resolver,
+            selected_execution_registry=selected_execution_registry,
+            monotonic=monotonic,
+        )
 
     def record_selected_task_input(self, *, selected_execution: Any, source: Any,
                                    exact_stdin: bytes, target: Any) -> RootNativeInputEvent:
@@ -258,10 +283,32 @@ class RootNativeInputObserver:
             raise AuthorityDenied("native.input.delivery", "source and delivery handles differ")
         return receipt
 
+    def discard_task_input_observation(self, *, source_receipt_handle: str,
+                                      receipt_handle: str | None = None) -> None:
+        """Scrub a captured input if task binding fails before custody writes it."""
+        if not isinstance(source_receipt_handle, str) or not source_receipt_handle:
+            return
+        with self._lock:
+            if receipt_handle is not None:
+                self._task_receipts.pop(receipt_handle, None)
+            for event_id, event in tuple(self._events.items()):
+                if event.source_receipt_handle == source_receipt_handle:
+                    self._events.pop(event_id, None)
+        cancel = getattr(self.source_observers, "cancel_source_payload_capsule", None)
+        if callable(cancel):
+            try:
+                from .source_observers import SourceReceiptHandle
+                cancel(SourceReceiptHandle(source_receipt_handle))
+            except Exception:
+                # Revocation failures leave the coordinator fail-closed; this
+                # helper must not mask the original pre-stdin failure.
+                pass
+
     def record_admitted_task_input(self, root_admission_handle: str, node_id: str,
                                    owned_process_handle: Any,
                                    exact_initial_stdin_bytes: bytes) -> RootNativeInputEvent:
-        if (not _opaque(root_admission_handle) or not _text(node_id)
+        if (not callable(self.task_input_resolver)
+                or not _opaque(root_admission_handle) or not _text(node_id)
                 or not isinstance(exact_initial_stdin_bytes, bytes)):
             raise AuthorityDenied("native.input.task", "root task input capture is malformed")
         try:
@@ -278,7 +325,8 @@ class RootNativeInputObserver:
     def record_selected_health_input(self, health_observation_handle: str,
                                      owned_process_handle: Any,
                                      selected_fixture_artifact_id: str) -> RootNativeInputEvent:
-        if not _opaque(health_observation_handle) or not _text(selected_fixture_artifact_id):
+        if (not callable(self.health_input_resolver)
+                or not _opaque(health_observation_handle) or not _text(selected_fixture_artifact_id)):
             raise AuthorityDenied("native.input.health", "selected health fixture input is malformed")
         try:
             selected = self.health_input_resolver(
@@ -293,7 +341,8 @@ class RootNativeInputObserver:
     def record_authenticated_desktop_input(self, root_remote_session_handle: str,
                                            owned_native_process_handle: Any,
                                            observed_input_event: Any) -> RootNativeInputEvent:
-        if not _opaque(root_remote_session_handle) or observed_input_event is None:
+        if (not callable(self.desktop_input_resolver)
+                or not _opaque(root_remote_session_handle) or observed_input_event is None):
             raise AuthorityDenied("native.input.desktop", "authenticated desktop input is malformed")
         try:
             selected = self.desktop_input_resolver(

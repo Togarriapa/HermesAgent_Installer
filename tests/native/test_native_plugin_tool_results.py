@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import unittest
+import hashlib
+import json
+from pathlib import Path
+from types import MappingProxyType, SimpleNamespace
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from hermes_installer.native_plugin_loader import (
     _NativePluginContextResultAdapter,
@@ -35,8 +42,27 @@ class NativePluginToolResultTests(unittest.TestCase):
                 return kwargs
 
         handler = lambda _args: {"answer": 42}
-        registered = _NativePluginContextResultAdapter(Context()).register_tool(
-            "fixture", "fixture-tools", {"type": "object"}, handler,
+        parameters = {"type": "object", "properties": {}, "additionalProperties": False}
+        schema = {"name": "fixture", "description": "fixture", "parameters": parameters}
+        digest = hashlib.sha256(json.dumps(
+            parameters, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        candidate = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
+        candidate = candidate.SelectedNativeCandidate(
+            "fixture", "fixture-adapter", "fixture.action", MappingProxyType(parameters),
+            MappingProxyType({"type": "object"}), digest, (), "hermes-installer", "fixture",
+        )
+
+        class Package:
+            candidate_rows = ()
+            def __init__(self):
+                self.candidate_rows = (candidate,)
+            def candidate(self, name):
+                return next((item for item in self.candidate_rows if item.native_tool_name == name), None)
+            def _mark_candidate_registered(self, *_args): pass
+
+        registered = _NativePluginContextResultAdapter(Context(), Package(), "fixture-adapter").register_tool(
+            "fixture", "hermes-installer", schema, handler,
             check_fn="check", requires_env=["FIXTURE"], description="fixture",
             emoji="x", override=True,
         )
