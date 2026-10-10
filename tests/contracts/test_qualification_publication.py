@@ -5,6 +5,7 @@ import pytest
 from hermes_installer.authority.qualification_publication import (
     RootQualificationOwnedEntry,
     RootQualificationOwnedPublication,
+    RootQualificationEnrollmentSigner,
 )
 
 
@@ -25,3 +26,8 @@ def test_qualification_cleanup_directory_has_no_digest() -> None:
     with pytest.raises(ValueError, match="directory cannot carry"):
         RootQualificationOwnedEntry("fixture-policy", "directory", 1, 2,
                                     "0" * 64, 0o700)
+
+
+def test_qualification_enrollment_signer_is_registry_minted() -> None:
+    with pytest.raises(TypeError, match="minted by its held key registry"):
+        RootQualificationEnrollmentSigner(None, None, _seal=None)

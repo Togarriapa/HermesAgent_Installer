@@ -347,6 +347,18 @@ class RootQualificationAuthorityKeyRegistry:
         key = self._observations[observation.key_observation_handle][3]
         return hmac.new(bytes(key), _ENROLLMENT_DOMAIN + payload, hashlib.sha256).hexdigest()
 
+    def resolve_enrollment_signer(
+        self, key_observation: RootQualificationAuthorityKeyObservation,
+    ) -> "RootQualificationEnrollmentSigner":
+        if (self._closed or type(key_observation) is not RootQualificationAuthorityKeyObservation
+                or self._observations.get(key_observation.key_observation_handle, (None,))[0]
+                is not key_observation):
+            raise ValueError("qualification key observation is not retained by this registry")
+        self.verify_current(key_observation)
+        return RootQualificationEnrollmentSigner(
+            self, key_observation, _seal=_KEY_OBSERVATION_SEAL,
+        )
+
     def verify_current(self, observation: RootQualificationAuthorityKeyObservation) -> bool:
         if self._closed or type(observation) is not RootQualificationAuthorityKeyObservation:
             raise ValueError("qualification key registry is closed or proof malformed")
@@ -387,6 +399,56 @@ class RootQualificationAuthorityKeyRegistry:
             _zero(key)
         self._observations.clear()
         self._closed = True
+
+
+class RootQualificationEnrollmentSigner:
+    """Restricted signer for the one canonical v164 fixture envelope."""
+
+    __slots__ = ("_registry", "_observation", "_closed")
+
+    def __init__(self, registry: RootQualificationAuthorityKeyRegistry,
+                 observation: RootQualificationAuthorityKeyObservation, *, _seal: object):
+        if (_seal is not _KEY_OBSERVATION_SEAL
+                or type(registry) is not RootQualificationAuthorityKeyRegistry
+                or type(observation) is not RootQualificationAuthorityKeyObservation):
+            raise TypeError("qualification enrollment signer is minted by its held key registry")
+        self._registry, self._observation, self._closed = registry, observation, False
+
+    def sign_qualification_enrollment(
+        self, publication_fields: dict[str, object], authority_sha256: str,
+        catalog_sha256: str, generation_sha256: str,
+    ) -> str:
+        if self._closed:
+            raise ValueError("qualification enrollment signer is closed")
+        return self._registry.sign_qualification_enrollment(
+            self._observation, publication_fields=publication_fields,
+            authority_sha256=authority_sha256, catalog_sha256=catalog_sha256,
+            generation_sha256=generation_sha256,
+        )
+
+    def verify_qualification_enrollment(self, envelope: object) -> bool:
+        if self._closed or not isinstance(envelope, dict) or set(envelope) != {
+            "schema", "publication", "authority_sha256", "catalog_sha256",
+            "generation_sha256", "signature",
+        }:
+            return False
+        signature = envelope.get("signature")
+        if not isinstance(signature, str) or not _SHA256.fullmatch(signature):
+            return False
+        try:
+            expected = self.sign_qualification_enrollment(
+                envelope["publication"], envelope["authority_sha256"],
+                envelope["catalog_sha256"], envelope["generation_sha256"],
+            )
+        except (TypeError, ValueError, KeyError):
+            return False
+        return hmac.compare_digest(expected, signature)
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __repr__(self) -> str:
+        return "RootQualificationEnrollmentSigner(<root-private>)"
 
 
 def _zero(value: bytearray) -> None:
