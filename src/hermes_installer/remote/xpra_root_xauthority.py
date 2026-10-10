@@ -45,6 +45,8 @@ class XpraOverlayReceipt:
     output_sha256: Mapping[str, str]
     transformed_tree_sha256: str
     overlay_sha256: str
+    manifest_sha256: str
+    output_artifact_sha256: str
     patched_root: Path
 
 
@@ -54,7 +56,7 @@ def _sha256(data: bytes) -> str:
 
 def _tree_sha256(root: Path) -> str:
     root = root.resolve(strict=True)
-    digest = hashlib.sha256(b"hermes-xpra-tree-v1\0")
+    rows: list[dict[str, object]] = []
     entries: list[tuple[str, Path]] = []
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         base = Path(directory)
@@ -66,11 +68,7 @@ def _tree_sha256(root: Path) -> str:
             entries.append((rel, path))
     for rel, path in sorted(entries):
         st = path.lstat()
-        mode = stat.S_IMODE(st.st_mode)
-        name = rel.encode("utf-8")
-        if stat.S_ISDIR(st.st_mode):
-            record = b"D\0" + name + b"\0" + oct(mode).encode() + b"\n"
-        elif stat.S_ISREG(st.st_mode):
+        if stat.S_ISREG(st.st_mode):
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             try:
                 opened = os.fstat(fd)
@@ -81,17 +79,61 @@ def _tree_sha256(root: Path) -> str:
                     content.update(chunk)
             finally:
                 os.close(fd)
-            record = b"F\0" + name + b"\0" + oct(mode).encode() + b"\0" + content.hexdigest().encode() + b"\n"
+            rows.append({"path": rel, "sha256": content.hexdigest(),
+                         "size_bytes": st.st_size, "executable": bool(st.st_mode & 0o111)})
+        elif stat.S_ISDIR(st.st_mode):
+            continue
         elif stat.S_ISLNK(st.st_mode):
             target = os.readlink(path)
             resolved = (path.parent / target).resolve(strict=False)
             if not resolved.is_relative_to(root):
                 raise XpraOverlayDenied("Xpra tree contains an escaping symlink")
-            record = b"L\0" + name + b"\0" + target.encode("utf-8") + b"\n"
         else:
             raise XpraOverlayDenied("Xpra tree contains a special file")
-        digest.update(record)
-    return digest.hexdigest()
+    body = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return _sha256(body)
+
+
+def _deterministic_archive_sha256(root: Path) -> str:
+    import io
+
+    root = root.resolve(strict=True)
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.GNU_FORMAT) as archive:
+        for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+            base = Path(directory)
+            names.sort()
+            files.sort()
+            for name in names + files:
+                path = base / name
+                rel = path.relative_to(root).as_posix()
+                info = path.lstat()
+                item = tarfile.TarInfo(rel + ("/" if stat.S_ISDIR(info.st_mode) else ""))
+                item.uid = item.gid = 0
+                item.uname = item.gname = ""
+                item.mtime = 0
+                item.mode = stat.S_IMODE(info.st_mode)
+                item.size = info.st_size if stat.S_ISREG(info.st_mode) else 0
+                if stat.S_ISDIR(info.st_mode):
+                    item.type = tarfile.DIRTYPE
+                elif stat.S_ISREG(info.st_mode):
+                    item.type = tarfile.REGTYPE
+                elif stat.S_ISLNK(info.st_mode):
+                    item.type = tarfile.SYMTYPE
+                    item.linkname = os.readlink(path)
+                else:
+                    raise XpraOverlayDenied("Xpra tree contains a special artifact member")
+                with path.open("rb") if stat.S_ISREG(info.st_mode) else _null_context() as source:
+                    archive.addfile(item, source if stat.S_ISREG(info.st_mode) else None)
+    return _sha256(stream.getvalue())
+
+
+class _null_context:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *_exc):
+        return False
 
 
 def _replace_once(data: bytes, old: bytes, new: bytes, label: str) -> bytes:
@@ -314,15 +356,6 @@ def build_pinned_xpra_root_xauthority_overlay(source_root: Path,
     if commit != XPRA_SOURCE_COMMIT:
         raise XpraOverlayDenied("Xpra source revision differs from reviewed pin")
     try:
-        source_tree_sha256 = subprocess.run(
-            ["git", "-C", str(source_root), "rev-parse", f"{commit}^{{tree}}"],
-            check=True, capture_output=True, text=True, timeout=5,
-            env={"PATH": os.defpath, "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1"},
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        raise XpraOverlayDenied("cannot verify pinned Xpra source tree") from None
-    patched = _patch_sources(source_root)
-    try:
         archive = subprocess.run(
             ["git", "-C", str(source_root), "archive", "--format=tar", commit],
             check=True, capture_output=True, timeout=20,
@@ -333,6 +366,8 @@ def build_pinned_xpra_root_xauthority_overlay(source_root: Path,
         output_root.mkdir(mode=0o700, parents=True)
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source_archive:
             source_archive.extractall(output_root, filter="data")
+        source_tree_sha256 = _tree_sha256(output_root)
+        patched = _patch_sources(output_root)
         output_hashes: dict[str, str] = {}
         for relative, data in patched.items():
             target = output_root / relative
@@ -349,16 +384,18 @@ def build_pinned_xpra_root_xauthority_overlay(source_root: Path,
                 os.close(fd)
             output_hashes[relative] = _sha256(data)
         transformed_tree_sha256 = _tree_sha256(output_root)
+        overlay_sha256 = _sha256(Path(__file__).read_bytes())
         manifest = {
             "schema": 1, "overlay": OVERLAY_ARTIFACT_ID,
             "source_commit": commit, "source_tree_sha256": source_tree_sha256,
             "source_sha256": _PINNED_INPUTS,
             "output_sha256": output_hashes,
             "transformed_tree_sha256": transformed_tree_sha256,
+            "overlay_sha256": overlay_sha256,
         }
         manifest_bytes = json.dumps(manifest, sort_keys=True,
                                     separators=(",", ":")).encode()
-        digest = _sha256(manifest_bytes)
+        manifest_sha256 = _sha256(manifest_bytes)
         manifest_path = output_root / OVERLAY_MANIFEST
         fd = os.open(manifest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
         try:
@@ -368,9 +405,11 @@ def build_pinned_xpra_root_xauthority_overlay(source_root: Path,
             os.fsync(fd)
         finally:
             os.close(fd)
+        output_artifact_sha256 = _deterministic_archive_sha256(output_root)
         return XpraOverlayReceipt(1, commit, source_tree_sha256,
                                   dict(_PINNED_INPUTS), output_hashes,
-                                  transformed_tree_sha256, digest, output_root)
+                                  transformed_tree_sha256, overlay_sha256,
+                                  manifest_sha256, output_artifact_sha256, output_root)
     except Exception:
         shutil.rmtree(output_root, ignore_errors=True)
         raise
@@ -413,7 +452,8 @@ def verify_pinned_xpra_overlay(receipt: XpraOverlayReceipt, *, artifact_id: str,
             manifest_bytes = b"".join(manifest_chunks)
         finally:
             os.close(manifest_fd)
-        if _sha256(manifest_bytes) != expected_overlay_sha256:
+        if (_sha256(manifest_bytes) != receipt.manifest_sha256
+                or _sha256(Path(__file__).read_bytes()) != receipt.overlay_sha256):
             raise XpraOverlayDenied("Xpra patch receipt digest changed")
         manifest = json.loads(manifest_bytes)
     except (OSError, ValueError, json.JSONDecodeError):
@@ -425,6 +465,7 @@ def verify_pinned_xpra_overlay(receipt: XpraOverlayReceipt, *, artifact_id: str,
             "source_sha256": dict(_PINNED_INPUTS),
             "output_sha256": dict(receipt.output_sha256),
             "transformed_tree_sha256": receipt.transformed_tree_sha256,
+            "overlay_sha256": receipt.overlay_sha256,
     }):
         raise XpraOverlayDenied("Xpra patch receipt fields differ")
     for relative, expected in receipt.output_sha256.items():
@@ -458,4 +499,6 @@ def verify_pinned_xpra_overlay(receipt: XpraOverlayReceipt, *, artifact_id: str,
         raise XpraOverlayDenied("Xpra patch receipt is incomplete")
     if _tree_sha256(root) != receipt.transformed_tree_sha256:
         raise XpraOverlayDenied("transformed Xpra source tree digest changed")
+    if _deterministic_archive_sha256(root) != receipt.output_artifact_sha256:
+        raise XpraOverlayDenied("transformed Xpra output artifact digest changed")
     return True

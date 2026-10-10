@@ -304,6 +304,9 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
     def launcher(handle, node_id):
         observed_handles.append(handle)
         authority.consume_task_handle(handle, node_id)
+        assert authority.resolve_task_child_admission(handle, node_id) is child
+        with pytest.raises(AuthorityDenied, match="exact consumed handle"):
+            authority.resolve_task_child_admission(replace(handle), node_id)
         observed_sources.append(authority.resolve_admitted_task_source(handle, node_id))
         observed_tasks.append(authority.resolve_admitted_task(handle, node_id))
         with pytest.raises(AuthorityDenied, match="one-use"):
@@ -358,10 +361,19 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         )
 
     service.launch_resource_profile_task = launcher
-    service.consume_resource_task_completion = lambda _receipt, *, cancelled: {
-        "status": 200, "body": b'{"ok":true}', "headers": {"content-type": "application/json"},
-        "receipt_id": "root-result-receipt", "result_fields": {"ok": True},
-    }
+    capsule_digest_resolved = []
+    service.consume_resource_task_completion = lambda _receipt, *, cancelled: (
+        pytest.fail("result capsule was consumed before its digest was resolved")
+        if not capsule_digest_resolved else {
+            "status": 200, "body": b'{"ok":true}', "headers": {"content-type": "application/json"},
+            "receipt_id": "root-result-receipt", "result_fields": {"ok": True},
+        }
+    )
+    service.resource_task_runner = SimpleNamespace(
+        resolve_result_capsule_sha256=lambda _receipt: (
+            capsule_digest_resolved.append(True) or hashlib.sha256(b'{"ok":true}').hexdigest()
+        ),
+    )
     authority = ResourceJobAuthority(
         service=service, enrollments={("demo", enrollment.generation): enrollment},
         ledger=ledger, selected_generation=lambda _resource: enrollment.generation,
@@ -543,8 +555,23 @@ def test_root_event_admission_requires_exact_registry_handle_and_persists_once(t
         _profile_binding=lambda _enrollment: object(),
         resolve_for_event=lambda _candidate, _node: SimpleNamespace(
             controller_kind="root-scheduler", uid=0, service_generation_digest=service.service_generation_digest,
+            controller_profile_id=None, expires_monotonic=now() + 30,
             pidfd=os.open("/dev/null", os.O_RDONLY)),
     )
+    controller_registry._resource_job_authority = None
+    controller_registry._event_admissions = {}
+    def attach_job_authority(value):
+        if controller_registry._resource_job_authority is not None:
+            raise RuntimeError("already attached")
+        controller_registry._resource_job_authority = value
+    def bind_job_admission(candidate, value):
+        if candidate is not handle or controller_registry._resource_job_authority is not authority:
+            raise RuntimeError("wrong event or authority")
+        if not authority.is_root_admission_current(candidate, value):
+            raise RuntimeError("stale admission")
+        controller_registry._event_admissions[candidate.handle] = value
+    controller_registry.attach_resource_job_authority = attach_job_authority
+    controller_registry.bind_admitted_job = bind_job_admission
     issuer = SimpleNamespace(
         service=None,
         controller_registry=controller_registry,
@@ -580,6 +607,11 @@ def test_root_event_admission_requires_exact_registry_handle_and_persists_once(t
     authority._event_field_bytes = 0
     authority._root_event_admissions = {}
     authority._root_admission_objects = {}
+    authority._root_event_by_job = {}
+    authority._root_source_context_by_job = {}
+    authority._root_job_handles = {}
+    authority._result_capsules_by_job = {}
+    authority._root_result_closures = {}
 
     forged = replace(handle, event_id="forged-event")
     with pytest.raises(AuthorityDenied, match="stale or not selected"):
@@ -588,6 +620,8 @@ def test_root_event_admission_requires_exact_registry_handle_and_persists_once(t
     assert admission.resource_id == "demo"
     assert admission.generation == enrollment.generation
     assert authority._root_event_admissions[handle.handle] == (handle, admission)
+    assert controller_registry._resource_job_authority is authority
+    assert controller_registry._event_admissions[handle.handle] is admission
     retained = authority._source_closures_by_job[admission.job_id]
     assert retained[0] is context and retained[1] == (receipt,)
     with pytest.raises(AuthorityDenied, match="already admitted"):
