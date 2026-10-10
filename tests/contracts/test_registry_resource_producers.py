@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
@@ -11,6 +13,9 @@ from hermes_installer.registry.resource_producers import (
     AuthenticatedChannelIngress,
     CronTickObservation,
     ResourceObservationError,
+    CronOccurrenceStore,
+    RootSelectedCronProducer,
+    RootSelectedResourceScheduler,
     SelectedWebhookIngress,
     WebhookRequestObservation,
     build_selected_webhook_protocol_schema_resolver,
@@ -212,6 +217,61 @@ def test_cron_observation_requires_explicit_due_order_and_positive_sequence():
         )
     with pytest.raises(ResourceObservationError, match="timezone-aware"):
         CronTickObservation("daily-review", "schedule-1", 1, "2026-10-09T07:23:00", "2026-10-09T07:23:01Z")
+
+
+def test_cron_occurrence_store_is_durable_monotone_and_replay_bounded():
+    with tempfile.TemporaryDirectory() as temporary:
+        parent = Path(temporary)
+        parent.chmod(0o700)
+        database = parent / "cron.sqlite3"
+        store = CronOccurrenceStore(database, max_entries=2)
+
+        def key(due):
+            return hashlib.sha256(json_bytes({
+                "resource_id": "daily-review", "resource_generation": "a" * 64,
+                "schedule_enrollment_id": "schedule-daily", "scheduled_time_unix": due,
+            })).hexdigest()
+
+        first = key(1_800_000_000)
+        assert store.claim_occurrence(
+            resource_id="daily-review", resource_generation="a" * 64,
+            schedule_enrollment_id="schedule-daily", scheduled_time_unix=1_800_000_000,
+            replay_key_sha256=first,
+        ) == 1
+        assert store.claim_occurrence(
+            resource_id="daily-review", resource_generation="a" * 64,
+            schedule_enrollment_id="schedule-daily", scheduled_time_unix=1_800_000_000,
+            replay_key_sha256=first,
+        ) is None
+
+        reopened = CronOccurrenceStore(database, max_entries=2)
+        second = key(1_800_000_060)
+        assert reopened.claim_occurrence(
+            resource_id="daily-review", resource_generation="a" * 64,
+            schedule_enrollment_id="schedule-daily", scheduled_time_unix=1_800_000_060,
+            replay_key_sha256=second,
+        ) == 2
+        with pytest.raises(ResourceObservationError, match="ledger is full"):
+            reopened.claim_occurrence(
+                resource_id="daily-review", resource_generation="a" * 64,
+                schedule_enrollment_id="schedule-daily", scheduled_time_unix=1_800_000_120,
+                replay_key_sha256=key(1_800_000_120),
+            )
+
+
+def test_root_scheduler_has_no_unselected_callback_surface():
+    import inspect
+
+    assert tuple(inspect.signature(RootSelectedCronProducer.tick).parameters) == ("self",)
+    scheduler = RootSelectedResourceScheduler((), poll_seconds=1)
+    assert scheduler.tick_once() == ()
+    with pytest.raises(ResourceObservationError, match="selected cron producers"):
+        RootSelectedResourceScheduler((object(),))
+
+
+def json_bytes(value):
+    import json
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
 def test_webhook_observation_preserves_raw_body_and_rejects_duplicate_headers():

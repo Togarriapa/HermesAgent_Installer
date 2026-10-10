@@ -67,6 +67,242 @@ class _SelectedWebhookSourceProducer:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _RetainedCronObservation:
+    """One root-generated timer occurrence consumable only by its issuer."""
+
+    raw_observation_handle: str
+    raw_payload: bytes
+    event_id: str
+    replay_key_sha256: str
+    observed_monotonic: float
+    event_data: Mapping[str, Any]
+    resource_id: str
+    resource_generation: str
+    profile_id: str
+    backend_id: str
+    source_issuer_id: str
+    service_generation_digest: str
+
+
+class RootSelectedCronProducer:
+    """Root timer for one selected cron; callers cannot supply tick claims."""
+
+    def __init__(self, *, selected_resource: Any, job_enrollment: Any,
+                 selected_ingress_binding: Any, event_issuer: Any,
+                 occurrence_store: Any, job_authority: Any,
+                 service_generation_digest: str,
+                 wall_clock: Any = time.time, monotonic: Any = time.monotonic):
+        from ..authority.resource_event_issuance import ResourceEventContextIssuer
+        from ..authority.resource_source_controllers import RootResourceControllerRegistry
+        from ..authority.root_controller_custody import RootSelectedIngressBinding
+        from .resource_jobs import ResourceJobEnrollment
+        from .resources_runtime import SelectedResourceExecution, _validate_cron
+
+        if (not isinstance(selected_resource, SelectedResourceExecution)
+                or selected_resource.identity.kind != "crons" or not selected_resource.enabled
+                or not isinstance(job_enrollment, ResourceJobEnrollment)
+                or job_enrollment.kind != "crons"
+                or not isinstance(selected_ingress_binding, RootSelectedIngressBinding)
+                or not isinstance(event_issuer, ResourceEventContextIssuer)
+                or not isinstance(event_issuer.controller_registry, RootResourceControllerRegistry)
+                or not callable(getattr(occurrence_store, "claim_occurrence", None))
+                or not callable(getattr(job_authority, "admit_root_resource_event", None))
+                or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)
+                or not callable(wall_clock) or not callable(monotonic)):
+            raise ResourceObservationError("selected root cron producer inputs are unavailable")
+        backend_ids = {node.backend_enrollment_id for node in job_enrollment.nodes}
+        backends = [row for row in job_enrollment.backends.values() if row.backend_id in backend_ids]
+        binding = selected_ingress_binding
+        if (selected_resource.identity.resource_id != job_enrollment.resource_id
+                or selected_resource.generation_digest != job_enrollment.generation
+                or selected_resource.profile_id != job_enrollment.profile_id
+                or job_enrollment.selected_enabled is not True
+                or job_enrollment.source_policy != frozenset({"schedule-event"})
+                or len(backends) != 1
+                or binding.backend.backend_id != backends[0].backend_id
+                or binding.backend.resource_id != job_enrollment.resource_id
+                or binding.backend.profile_id != job_enrollment.profile_id
+                or binding.backend.generation != job_enrollment.generation
+                or binding.source_issuer.issuer_channel_id != job_enrollment.source_issuer_channel_id
+                or binding.source_observer.observer_enrollment_id != job_enrollment.observer_enrollment_id
+                or binding.resource_generation != job_enrollment.generation
+                or binding.service_generation_digest != service_generation_digest
+                or binding.role.controller_kind != "root-scheduler"
+                or binding.authority_epoch != event_issuer.service.authority_epoch
+                or event_issuer.service.service_generation_digest != service_generation_digest):
+            raise ResourceObservationError("cron selection, backend, issuer, or controller binding is stale")
+        _validate_cron(selected_resource.effective_spec,
+                       expected_source_revision=selected_resource.identity.source_revision)
+        self.selected, self.enrollment, self.binding = selected_resource, job_enrollment, binding
+        self.issuer, self.registry = event_issuer, event_issuer.controller_registry
+        self.store, self.jobs = occurrence_store, job_authority
+        self.service_generation_digest = service_generation_digest
+        self._wall_clock, self._monotonic = wall_clock, monotonic
+        self._pending: dict[int, _RetainedCronObservation] = {}
+        import threading
+        self._lock = threading.RLock()
+        self._capability = event_issuer.register_selected_source_producer(
+            self, selected_ingress_binding=binding,
+        )
+
+    def tick(self) -> Any | None:
+        """Generate, capture, and admit the due minute; no user-controlled inputs."""
+        from datetime import datetime, timezone
+        from ..authority.root_controller_custody import RootIngressControllerProof
+        from .resources_runtime import _cron_instant_matches
+
+        now = self._wall_clock()
+        observed = self._monotonic()
+        if (isinstance(now, bool) or not isinstance(now, (int, float))
+                or not 0 <= now < 4_102_444_800
+                or isinstance(observed, bool) or not isinstance(observed, (int, float))
+                or observed < 0):
+            raise ResourceObservationError("root scheduler clock is invalid")
+        due_unix = int(now) - int(now) % 60
+        scheduled = datetime.fromtimestamp(due_unix, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        if not _cron_instant_matches(self.selected.effective_spec, scheduled):
+            return None
+        proof = self.registry.resolve_selected_ingress_controller(
+            self.binding.role.id, self.binding.source_issuer.issuer_channel_id,
+            self.binding.backend.backend_id,
+        )
+        if (type(proof) is not RootIngressControllerProof or proof.revalidate() is not True
+                or proof.controller_kind != "root-scheduler"
+                or proof.resource_generation != self.enrollment.generation
+                or proof.service_generation_digest != self.service_generation_digest
+                or proof.authority_epoch != self.binding.authority_epoch
+                or proof.selected_ingress_binding_id != self.binding.selected_ingress_binding_id):
+            self._release_proof(proof)
+            raise ResourceObservationError("live root scheduler custody proof is unavailable")
+        event_id = "e" + secrets.token_urlsafe(32)
+        replay_key = hashlib.sha256(_canonical_json({
+            "resource_id": self.enrollment.resource_id,
+            "resource_generation": self.enrollment.generation,
+            "schedule_enrollment_id": self.enrollment.schedule_or_route_id,
+            "scheduled_time_unix": due_unix,
+        })).hexdigest()
+        handle = None
+        try:
+            sequence = self.store.claim_occurrence(
+                resource_id=self.enrollment.resource_id,
+                resource_generation=self.enrollment.generation,
+                schedule_enrollment_id=self.enrollment.schedule_or_route_id,
+                scheduled_time_unix=due_unix, replay_key_sha256=replay_key,
+            )
+            if sequence is None:
+                self._release_proof(proof)
+                return None
+            event_data = MappingProxyType({
+                "schedule_enrollment_id": self.enrollment.schedule_or_route_id,
+                "scheduled_time_unix": due_unix, "due_time_unix": due_unix,
+                "fired_time_unix": int(now), "event_id": event_id,
+                "occurrence_sequence": sequence,
+                "action_graph_sha256": _resource_action_graph_digest(self.enrollment),
+            })
+            observation = _RetainedCronObservation(
+                raw_observation_handle=secrets.token_urlsafe(32),
+                raw_payload=_canonical_json(dict(event_data)), event_id=event_id,
+                replay_key_sha256=replay_key, observed_monotonic=observed,
+                event_data=event_data, resource_id=self.enrollment.resource_id,
+                resource_generation=self.enrollment.generation,
+                profile_id=self.enrollment.profile_id,
+                backend_id=self.binding.backend.backend_id,
+                source_issuer_id=self.binding.source_issuer.issuer_channel_id,
+                service_generation_digest=self.service_generation_digest,
+            )
+            with self._lock:
+                if len(self._pending) >= 64:
+                    raise ResourceObservationError("root scheduler has too many outstanding observations")
+                self._pending[id(observation)] = observation
+            source_proof = self.issuer.mint_selected_source_proof(
+                self._capability, controller_proof=proof, raw_observation=observation,
+            )
+            handle = self.registry.capture_selected_ingress(proof.proof_handle, source_proof)
+            return self.jobs.admit_root_resource_event(handle)
+        except Exception:
+            if handle is not None:
+                try:
+                    self.registry.cancel_event(handle)
+                except Exception:
+                    pass
+            self._release_observation(event_id)
+            self._release_proof(proof)
+            raise
+
+    def consume_verified_raw_observation(self, raw_observation: object,
+                                         controller_proof: object) -> _RetainedCronObservation:
+        from ..authority.root_controller_custody import RootIngressControllerProof
+        with self._lock:
+            retained = self._pending.pop(id(raw_observation), None)
+        if (retained is None or retained is not raw_observation
+                or type(controller_proof) is not RootIngressControllerProof
+                or controller_proof.revalidate() is not True
+                or retained.resource_id != self.enrollment.resource_id
+                or retained.resource_generation != self.enrollment.generation
+                or retained.profile_id != self.enrollment.profile_id
+                or retained.backend_id != self.binding.backend.backend_id
+                or retained.source_issuer_id != self.binding.source_issuer.issuer_channel_id
+                or retained.service_generation_digest != self.service_generation_digest
+                or controller_proof.controller_role_id != self.binding.role.id
+                or controller_proof.selected_ingress_binding_id != self.binding.selected_ingress_binding_id):
+            raise ResourceObservationError("cron occurrence is stale, mismatched, or already consumed")
+        return retained
+
+    def _release_proof(self, proof: object) -> None:
+        self.registry.release_ingress_proof(getattr(proof, "proof_handle", ""))
+        close = getattr(proof, "close", None)
+        if callable(close):
+            close()
+
+    def _release_observation(self, event_id: str) -> None:
+        with self._lock:
+            for key, item in tuple(self._pending.items()):
+                if item.event_id == event_id:
+                    self._pending.pop(key, None)
+
+
+def _resource_action_graph_digest(enrollment: Any) -> str:
+    nodes = [{
+        "node_id": node.node_id, "action_id": node.action_id, "effect": node.effect,
+        "target": node.target, "recipient": node.recipient,
+        "request_schema_id": node.request_schema_id, "result_schema_id": node.result_schema_id,
+        "body_recipe_id": node.body_recipe_id, "backend_enrollment_id": node.backend_enrollment_id,
+        "scope_binding_id": node.scope_binding_id, "depends_on": list(node.depends_on),
+        "maximum_attempts": node.maximum_attempts, "payload_sha256": node.payload_sha256,
+    } for node in enrollment.nodes]
+    return hashlib.sha256(_canonical_json(nodes)).hexdigest()
+
+
+class RootSelectedResourceScheduler:
+    """Fixed root loop that polls only already selected, custody-bound crons."""
+
+    def __init__(self, producers: Sequence[RootSelectedCronProducer], *,
+                 poll_seconds: float = 1.0):
+        if (not isinstance(producers, (tuple, list))
+                or any(type(producer) is not RootSelectedCronProducer for producer in producers)
+                or len({producer.enrollment.resource_id for producer in producers}) != len(producers)
+                or type(poll_seconds) not in (int, float)
+                or not 0.1 <= poll_seconds <= 60.0):
+            raise ResourceObservationError("root scheduler requires unique selected cron producers")
+        self.producers = tuple(producers)
+        self.poll_seconds = float(poll_seconds)
+
+    def tick_once(self) -> tuple[Any, ...]:
+        """Poll every selected cron once; failures propagate to the supervisor."""
+        return tuple(result for producer in self.producers
+                     if (result := producer.tick()) is not None)
+
+    def run(self, stop_event: Any) -> None:
+        """Run the selected timer loop under the root daemon's stop event."""
+        import threading
+        if type(stop_event) is not type(threading.Event()):
+            raise TypeError("root scheduler stop event must be a threading.Event")
+        while not stop_event.is_set():
+            self.tick_once()
+            stop_event.wait(self.poll_seconds)
+
+
 def _canonical_json(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -154,6 +390,128 @@ class WebhookRequestObservation:
         if not isinstance(headers, (tuple, list)):
             raise ResourceObservationError("webhook headers must be an ordered sequence")
         return cls(resource_id, tuple(headers), body)
+
+
+class CronOccurrenceStore:
+    """Private SQLite occurrence ledger with monotone per-schedule counters."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS cron_sequences (
+            schedule_digest TEXT PRIMARY KEY,
+            sequence INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS cron_occurrences (
+            replay_key_sha256 TEXT PRIMARY KEY,
+            schedule_digest TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            UNIQUE(schedule_digest, sequence)
+        ) WITHOUT ROWID
+    """
+
+    def __init__(self, path: Any, *, max_entries: int = 1_000_000,
+                 timeout_seconds: float = 2.0):
+        from pathlib import Path
+        import os
+        import sqlite3
+        import stat
+
+        if not isinstance(path, Path) or not path.is_absolute():
+            raise ValueError("cron occurrence database path must be absolute")
+        if type(max_entries) is not int or not 1 <= max_entries <= 1_000_000:
+            raise ValueError("cron occurrence capacity is invalid")
+        if type(timeout_seconds) not in (int, float) or not 0.05 <= timeout_seconds <= 10:
+            raise ValueError("cron occurrence timeout is invalid")
+        parent = path.parent.lstat()
+        if (not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode)
+                or parent.st_uid != os.geteuid() or stat.S_IMODE(parent.st_mode) != 0o700):
+            raise ResourceObservationError("cron occurrence directory must be private and service-owned")
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            fd = None
+        except OSError as exc:
+            raise ResourceObservationError("cron occurrence database could not be created safely") from exc
+        if fd is not None:
+            os.close(fd)
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != os.geteuid() or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ResourceObservationError("cron occurrence database must be a private regular file")
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            path.chmod(0o600)
+        self.path, self.max_entries, self.timeout_seconds = path, max_entries, float(timeout_seconds)
+        db = self._connect()
+        try:
+            db.executescript(self._SCHEMA)
+        finally:
+            db.close()
+
+    def _connect(self):
+        import sqlite3
+        db = sqlite3.connect(self.path, timeout=self.timeout_seconds, isolation_level=None)
+        try:
+            db.execute("PRAGMA journal_mode=DELETE")
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute(f"PRAGMA busy_timeout={int(self.timeout_seconds * 1000)}")
+        except Exception:
+            db.close()
+            raise
+        return db
+
+    def claim_occurrence(self, *, resource_id: str, resource_generation: str,
+                         schedule_enrollment_id: str, scheduled_time_unix: int,
+                         replay_key_sha256: str) -> int | None:
+        """Atomically claim one scheduled instant and advance its sequence."""
+        if (not all(isinstance(value, str) and value for value in
+                    (resource_id, resource_generation, schedule_enrollment_id))
+                or not re.fullmatch(r"[0-9a-f]{64}", resource_generation)
+                or not re.fullmatch(r"[0-9a-f]{64}", replay_key_sha256)
+                or type(scheduled_time_unix) is not int or scheduled_time_unix < 0):
+            raise ResourceObservationError("cron occurrence identity is malformed")
+        expected_replay = hashlib.sha256(_canonical_json({
+            "resource_id": resource_id, "resource_generation": resource_generation,
+            "schedule_enrollment_id": schedule_enrollment_id,
+            "scheduled_time_unix": scheduled_time_unix,
+        })).hexdigest()
+        if replay_key_sha256 != expected_replay:
+            raise ResourceObservationError("cron replay key differs from its selected schedule occurrence")
+        schedule_digest = hashlib.sha256(_canonical_json({
+            "resource_id": resource_id, "resource_generation": resource_generation,
+            "schedule_enrollment_id": schedule_enrollment_id,
+        })).hexdigest()
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM cron_occurrences WHERE replay_key_sha256=?",
+                          (replay_key_sha256,)).fetchone():
+                db.execute("ROLLBACK")
+                return None
+            count = db.execute("SELECT COUNT(*) FROM cron_occurrences").fetchone()[0]
+            if count >= self.max_entries:
+                db.execute("ROLLBACK")
+                raise ResourceObservationError("cron occurrence ledger is full; scheduler is fail-closed")
+            row = db.execute("SELECT sequence FROM cron_sequences WHERE schedule_digest=?",
+                             (schedule_digest,)).fetchone()
+            sequence = (row[0] if row else 0) + 1
+            if row:
+                db.execute("UPDATE cron_sequences SET sequence=? WHERE schedule_digest=?",
+                           (sequence, schedule_digest))
+            else:
+                db.execute("INSERT INTO cron_sequences(schedule_digest,sequence) VALUES(?,?)",
+                           (schedule_digest, sequence))
+            db.execute(
+                "INSERT INTO cron_occurrences(replay_key_sha256,schedule_digest,sequence) VALUES(?,?,?)",
+                (replay_key_sha256, schedule_digest, sequence),
+            )
+            db.execute("COMMIT")
+            return sequence
+        except Exception:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()
 
 
 @dataclass(frozen=True, slots=True)
