@@ -193,6 +193,11 @@ def test_pre_active_source_and_lock_receipts_are_current_and_source_verified(tmp
         assert source_receipt.source_identity == "Graphify-Labs/graphify"
         assert source_receipt.source_revision == "5b74d7d74911cf435c8f1636b6f96ea202cc6246"
         assert source_receipt.lock_member_records[0]["sha256"] == lock_receipt.lock_sha256
+        lock_bytes = registry.read_current_lock_bytes(
+            lock_receipt.receipt_handle, current_selection.selection_handle,
+            source_receipt.receipt_handle,
+        )
+        assert isinstance(lock_bytes, bytes) and hashlib.sha256(lock_bytes).hexdigest() == lock_receipt.lock_sha256
         assert journal.owned("application-source")
         assert registry.record_prepared_verified_generation(
             source_receipt.receipt_handle, current_selection.selection_handle) is source_receipt
@@ -246,6 +251,9 @@ def test_pre_active_lock_receipt_and_namespace_currentness_are_sealed(tmp_path: 
                 preparation_selection_handle=selection.selection_handle,
                 prepared_source_receipt_handle=source.receipt_handle,
             )
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.read_current_lock_bytes(
+                lock.receipt_handle, selection.selection_handle, source.receipt_handle)
 
     now = [100.0]
     registry, binding, selection, _root, _journal = _registry(tmp_path / "namespace", now)

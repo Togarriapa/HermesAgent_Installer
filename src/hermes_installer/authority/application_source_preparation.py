@@ -686,6 +686,21 @@ class RootApplicationSourcePreparationRegistry:
             prepared_source_receipt_handle=prepared_source_receipt_handle,
         )
 
+    def read_current_lock_bytes(
+        self, receipt_handle: str, source_selection_handle: str,
+        source_receipt_handle: str,
+    ) -> bytes:
+        """Return a copy of the exact lock bytes after revalidating their full lineage."""
+        self.resolve_application_lock_receipt(
+            receipt_handle,
+            preparation_selection_handle=source_selection_handle,
+            prepared_source_receipt_handle=source_receipt_handle,
+        )
+        entry = self._locks.get(receipt_handle)
+        if entry is None:
+            raise ApplicationSourcePreparationDenied("application lock receipt is no longer retained")
+        return bytes(entry.lock_bytes)
+
     def record_prepared_verified_generation(self, prepared_source_receipt_handle: str,
                                             source_preparation_selection_handle: str) -> RootPreparedApplicationSourceReceipt:
         """Return the current typed pre-active source receipt; never consult an active row."""
