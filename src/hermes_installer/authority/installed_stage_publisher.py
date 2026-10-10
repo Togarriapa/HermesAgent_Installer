@@ -634,7 +634,7 @@ def _already_published(receipt: Any, receipt_path: Path, release_root: Path,
     try:
         record = InstalledRootReleaseVerifier._load_deployment_receipt(receipt_path,
                                                                        expected_uid=uid)
-        installed = InstalledRootReleaseVerifier._mint_release(record, expected_uid=uid)
+        installed = InstalledRootReleaseVerifier.verify_installed_release()
     except (BootstrapEnrollmentError, BootstrapEnrollmentPending, OSError):
         return False
     try:
@@ -818,8 +818,13 @@ def _rollback_update_transaction(root: Path, handle: str, receipt_path: Path, ui
                 or len(old_raw) > MAX_RECEIPT_BYTES):
             raise BootstrapEnrollmentError("update rollback predecessor bytes are invalid")
         old_record = json.loads(old_raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
-        old_verified = InstalledRootReleaseVerifier._mint_release(
-            {**old_record, "_receipt_sha256": _sha(old_raw)}, expected_uid=uid)
+        if receipt_path == DEPLOYMENT_RECEIPT_PATH and uid == 0:
+            old_verified = InstalledRootReleaseVerifier._verify_retained_predecessor_bytes(
+                old_raw, candidate=old_pointer.get("candidate_git_sha"),
+                expected_sha256=old_pointer.get("sha256"), expected_uid=uid)
+        else:
+            old_verified = InstalledRootReleaseVerifier._mint_release(
+                {**old_record, "_receipt_sha256": _sha(old_raw)}, expected_uid=uid)
         try:
             if (old_verified.release_commit != old_pointer.get("candidate_git_sha")
                     or old_verified.root_device != old_release_projection.get("root_device")
@@ -839,7 +844,9 @@ def _rollback_update_transaction(root: Path, handle: str, receipt_path: Path, ui
         restored_raw, restored_info = _read_record(receipt_path, uid)
         if restored_raw != old_raw:
             raise BootstrapEnrollmentPending("rollback did not restore the exact predecessor pointer bytes")
-        restored = InstalledRootReleaseVerifier.verify_installed_release()
+        restored = (InstalledRootReleaseVerifier.verify_installed_predecessor_release()
+                    if receipt_path == DEPLOYMENT_RECEIPT_PATH and uid == 0
+                    else InstalledRootReleaseVerifier.verify_installed_release())
         if (restored.release_commit != old_pointer.get("candidate_git_sha")
                 or restored.deployment_receipt_sha256 != _sha(old_raw)):
             restored.close()
@@ -887,8 +894,9 @@ def _verify_published_update_transaction(handle: str) -> dict[str, Any]:
     if _sha(old_raw) != old_pointer.get("sha256"):
         raise BootstrapEnrollmentError("published update predecessor bytes no longer match")
     old_record = json.loads(old_raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
-    previous = InstalledRootReleaseVerifier._mint_release(
-        {**old_record, "_receipt_sha256": _sha(old_raw)}, expected_uid=0)
+    previous = InstalledRootReleaseVerifier._verify_retained_predecessor_bytes(
+        old_raw, candidate=old_pointer.get("candidate_git_sha"),
+        expected_sha256=old_pointer.get("sha256"), expected_uid=0)
     try:
         if (previous.release_commit != old_pointer.get("candidate_git_sha")
                 or previous.closure_manifest_sha256 != old_projection.get("closure_manifest_sha256")

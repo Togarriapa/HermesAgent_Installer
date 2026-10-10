@@ -232,3 +232,7 @@ v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-
 
 
 v242 genuine source-update bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md`; BD-T242.1 → VD-T242.2 OPEN, retaining v235 tasks/source approval separately. Actual old predecessor/rootTTY/fixedoriginFD3/source actor required; all AC OPEN.
+
+## Version-aware predecessor v249
+
+Append-only `plans/amendments/2026-10-10-version-aware-predecessor-verification-v249.md` / `planning/version-aware-predecessor-verification-v249.json`; BD-T249.1, LC-T249.2, VD-T249.3 open. Exact reviewed whole historical cohort verifies old custody only, no old actor/newest pin bypass or instance-specific allowlist.

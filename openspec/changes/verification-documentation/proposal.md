@@ -193,3 +193,7 @@ v241 narrow candidate update source review: `plans/amendments/2026-10-10-candida
 
 
 v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md` / `planning/preinstalled-source-update-entry-v242.json` adds finite source-update entry using genuine present predecessor/current UPDATE TTY/fixed-origin CAS/FD3 and isolated source actor before new installed actor. Ordinary installed verifier is preserved; no oldrelease/pointer deletion, caller path/flag authority or restored seals. BD-T242.1 → VD-T242.2 and all AC OPEN.
+
+## Immutable historical predecessor refinement v249
+
+Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed historical whole cohort and dedicated predecessor-only receipt in `planning/version-aware-predecessor-verification-v249.json`; old installed code never becomes current actor. Full closed release/pointer custody and original deadlines remain; no target acceptance.

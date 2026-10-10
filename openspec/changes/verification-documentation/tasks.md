@@ -246,3 +246,9 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 
 - [ ] BD-T242.1: Implement fixed source-update entry and genuine held predecessor/currentTTY/source-bootstrap bridge without bypassing installed actor verification.
 - [ ] VD-T242.2: Review new committed bytes and verify genuine pre-v235 positive/failure/currentness/rollback/immutability on isolated and target environments; keep distribution/runtime acceptance separate.
+
+## Immutable historical predecessor refinement v249
+
+- [ ] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
+- [ ] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
+- [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.
