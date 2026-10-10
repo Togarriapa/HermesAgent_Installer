@@ -163,6 +163,10 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
     def test_normal_setup_adopts_and_reopens_same_durable_key_signer(self):
         from hermes_installer.authority import enrollment
         from hermes_installer.authority.bootstrap_enrollment import RootSetupSessionHandle, RootSetupSessionStore
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            RootInitialCompilationSession, RootInitialPublicationHandoff, RootSetupChoices,
+        )
+        from hermes_installer.authority.installer_release import VerifiedInstallerReleaseReceipt, _SEAL
 
         class LiveStore(RootSetupSessionStore):
             def _live(self, handle):
@@ -187,6 +191,22 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             key_path = root / "authority.key"
             key_path.write_bytes(b"z" * 32)
             key_path.chmod(0o600)
+            release_root = root / "release"
+            release_root.mkdir(mode=0o700)
+            release_fd = os.open(release_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            release_info = os.fstat(release_fd)
+            release_root.chmod(0o500)
+            release = VerifiedInstallerReleaseReceipt(
+                _SEAL, release_root=release_root, release_commit="a" * 40,
+                deployment_receipt_sha256="f" * 64, root_device=release_info.st_dev,
+                root_inode=release_info.st_ino, closure_manifest_relative_path="closure.json",
+                closure_manifest_sha256="1" * 64, baseline_tag_object="2" * 40,
+                baseline_commit="3" * 40, baseline_tree_sha256="4" * 64,
+                amendment_manifest_sha256="5" * 64, files=(),
+                selected_plan_artifact_id="setup-plan", selected_plan_sha256="1" * 64,
+                root_fd=release_fd, expected_uid=0,
+            )
+            self.assertFalse(hasattr(release, "receipt_handle"))
             key_info = key_path.stat()
             key_digest = hashlib.sha256(b"z" * 32).hexdigest()
             session_handle = RootSetupSessionHandle("setup-" + "a" * 32, "session-seal")
@@ -206,25 +226,38 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             store.revoked = False
             store.plan_resolver = SimpleNamespace(resolve=lambda _artifact: plan)
             store.actor_verifier = actor
-            stage0 = SimpleNamespace(
-                compilation_session_handle="b" * 64, compilation_transaction_handle="c" * 64,
-                plan_sha256=proof.plan_digest, verified_release_receipt_handle="release-receipt",
+            stage0 = RootInitialCompilationSession(
+                schema=1, phase="initial-compilation", compilation_session_handle="b" * 64,
+                compilation_transaction_handle="c" * 64, verified_release_receipt_handle="6" * 64,
+                actor_observation_receipt_handle="7" * 64, plan_artifact_id="setup-plan",
+                plan_sha256=proof.plan_digest, closed_template_artifact_id="closed-template",
+                closed_template_sha256="8" * 64, choices_sha256="9" * 64,
+                source_catalog_sha256="a" * 64, expected_predecessor_catalog_sha256=None,
+                issued_monotonic=time.monotonic(), expires_monotonic=time.monotonic() + 30,
+                _choices=RootSetupChoices("install", "hermes", None, (), ()), _release=release,
+                _actor=actor, _root_journal_root={}, _seal="stage0-seal",
             )
-            initial = SimpleNamespace(
-                resolve_adopted_handoff=lambda _handle: handoff,
-                actor=actor,
-                _session_store=store,
+            initial = SimpleNamespace(actor=actor, _seal="initial-registry-seal", _session_store=store,
             )
+            handoff = RootInitialPublicationHandoff(
+                1, "handoff-current", stage0.compilation_session_handle,
+                stage0.compilation_transaction_handle, "publication-receipt", "2" * 64,
+                stage0.plan_sha256, stage0.choices_sha256, None, (), time.monotonic(),
+                time.monotonic() + 300, session_handle.session_id, proof.transaction_handle,
+                _initial_session=stage0, _registry_seal=initial._seal,
+            )
+            initial.resolve_adopted_handoff = lambda _handle: handoff
             receipt = enrollment.RootAuthorityKeyReceipt(
                 1, "d" * 64, "authority-key-" + "e" * 32, "HMAC-SHA256",
-                key_info.st_dev, key_info.st_ino, 0, 0o600, "release-receipt",
+                key_info.st_dev, key_info.st_ino, 0, 0o600, stage0.verified_release_receipt_handle,
                 stage0.compilation_session_handle, time.monotonic(), time.monotonic() + 30, "issuer-seal",
             )
             registry = object.__new__(enrollment.RootAuthorityKeySelectionRegistry)
-            registry.release = SimpleNamespace(receipt_handle="release-receipt")
+            registry.release = release
             registry.actor_verifier = actor
             registry.root_journal = root
             registry.initial_compilation_registry = initial
+            registry._seal = initial._seal
             registry.private_root_name = "authority-key-receipts"
             registry._normal_signers = {}
             registry._key_fds = {receipt.receipt_handle: os.open(key_path, os.O_RDONLY)}
@@ -298,6 +331,8 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                         reopened.sign_choice("existing-model-selection", payload)
             finally:
                 os.close(registry._key_fds[receipt.receipt_handle])
+                release_root.chmod(0o700)
+                os.close(release_fd)
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{

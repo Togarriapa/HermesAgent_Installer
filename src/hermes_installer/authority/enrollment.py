@@ -441,6 +441,7 @@ class RootAuthorityKeySelectionRegistry:
             "normal-" + hashlib.sha256(session_id.encode("ascii")).hexdigest() + ".json")
 
     def _validate_normal_signer_record(self, row: Any, proof: Any, handoff: Any) -> dict[str, Any]:
+        release_receipt_handle = self._release_receipt_handle_for_handoff(handoff)
         fields = {"schema", "normal_setup_session_id", "normal_transaction_handle", "normal_plan_digest",
                   "compilation_session_handle", "compilation_transaction_handle", "publication_handoff_handle",
                   "publication_receipt_handle", "publication_sha256", "release_receipt_handle", "key_id",
@@ -454,7 +455,7 @@ class RootAuthorityKeySelectionRegistry:
                 or row.get("compilation_session_handle") != handoff.compilation_session_handle
                 or row.get("publication_sha256") != handoff.publication_sha256
                 or row.get("publication_receipt_handle") != handoff.publication_receipt_handle
-                or row.get("release_receipt_handle") != self.release.receipt_handle
+                or row.get("release_receipt_handle") != release_receipt_handle
                 or not re.fullmatch(r"authority-key-[0-9a-f]{32}", str(row.get("key_id")))
                 or type(row.get("key_device")) is not int or type(row.get("key_inode")) is not int
                 or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("key_sha256")))
@@ -468,6 +469,26 @@ class RootAuthorityKeySelectionRegistry:
                 or row["issued_unix"] > time.time()):
             raise AuthorityDenied("setup.choice", "normal setup signer record does not match current handoff")
         return row
+
+    def _release_receipt_handle_for_handoff(self, handoff: Any) -> str:
+        """Resolve the exact registry-issued release handle carried by the adopted session."""
+        from .bootstrap_runtime_factory import RootInitialCompilationSession, RootInitialPublicationHandoff
+        initial = getattr(handoff, "_initial_session", None)
+        if (not isinstance(handoff, RootInitialPublicationHandoff)
+                or not isinstance(initial, RootInitialCompilationSession)
+                or initial._release is not self.release
+                or initial._actor is not self.initial_compilation_registry.actor
+                or handoff._registry_seal != getattr(self.initial_compilation_registry, "_seal", None)
+                or initial.compilation_session_handle != handoff.compilation_session_handle
+                or initial.compilation_transaction_handle != handoff.compilation_transaction_handle
+                or not isinstance(initial.verified_release_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", initial.verified_release_receipt_handle)):
+            raise AuthorityDenied("setup.choice", "publication handoff lacks its current verified release receipt")
+        try:
+            self.release.verify_current()
+        except Exception:
+            raise AuthorityDenied("setup.choice", "selected installer release is no longer current") from None
+        return initial.verified_release_receipt_handle
 
     def resolve_selected_key(self, receipt_handle: str,
                              initial_compilation_session_handle: str) -> RootAuthorityKeyReceipt:
