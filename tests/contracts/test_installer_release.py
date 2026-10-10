@@ -80,8 +80,20 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         self.assertEqual(_artifact_id_for("lib/python/hermes_installer/authority/daemon.py", ["module"]),
                          "installer-module:hermes_installer.authority.daemon")
         _validate_fixed_layout_role("runtime/bin/python", "1" * 64, 10, ["interpreter"])
+        _validate_fixed_layout_role("runtime/bin/python3", "1" * 64, 10, ["runtime-member"])
+        _validate_fixed_layout_role("runtime/lib/python3.14/os.py", "1" * 64, 10, ["runtime-member"])
         with self.assertRaises(InstallerReleaseError):
             _validate_fixed_layout_role("runtime/bin/python3", "1" * 64, 10, ["interpreter"])
+        for path, roles in (
+            ("runtime/bin/python", ["runtime-member"]),
+            ("runtime/bin/python3", ["interpreter", "runtime-member"]),
+            ("lib/python/example.py", ["runtime-member"]),
+            ("runtime/lib/example.so", ["module"]),
+        ):
+            with self.subTest(path=path, roles=roles), self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, "1" * 64, 10, roles)
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("runtime/lib/example.so", "1" * 64, 10, ["runtime-member"], mode=0o755)
         with self.assertRaises(InstallerReleaseError):
             _validate_fixed_layout_role("templates/bootstrap-compiler-template-v1.json",
                                         "0" * 64, 4281, ["template"])

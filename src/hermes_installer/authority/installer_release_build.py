@@ -99,7 +99,8 @@ BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-ar
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
 RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "template", "plan",
-                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment"})
+                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                           "runtime-member"})
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
 STAGED_LAUNCHER_SOURCE = "scripts/hermes-installer-root-setup"
 STAGED_LAUNCHER_PATH = "bin/hermes-installer-root-setup"
@@ -131,6 +132,14 @@ _DEPLOYMENT_PREDECESSOR_RECEIPTS: dict[str, tuple["VerifiedDeploymentPredecessor
 
 class InstallerReleaseBuildError(BootstrapEnrollmentError):
     """Candidate source or release-build custody failed verification."""
+
+
+def _runtime_output_roles(relative_path: str) -> tuple[str, ...]:
+    if relative_path == STAGED_INTERPRETER_PATH:
+        return ("interpreter",)
+    if relative_path.startswith("runtime/"):
+        return ("runtime-member",)
+    raise InstallerReleaseBuildError("runtime output path is outside the fixed interpreter closure")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2531,7 +2540,8 @@ class RootInstalledReleaseBuilder:
         try:
             digest, size, body = _hash_and_read_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
             _write_relative(output_fd, STAGED_INTERPRETER_PATH, body, mode=0o555)
-            staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555, ("interpreter",)))
+            staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555,
+                           _runtime_output_roles(STAGED_INTERPRETER_PATH)))
         finally:
             os.close(runtime_fd)
         for row in interpreter.files:
@@ -2547,9 +2557,10 @@ class RootInstalledReleaseBuilder:
             path = "runtime/" + row.relative_path
             if path == STAGED_INTERPRETER_PATH:
                 continue
-            _write_relative(output_fd, path, body, mode=0o555 if row.mode & 0o111 else 0o444)
+            mode = 0o555 if row.mode & 0o111 else 0o444
+            _write_relative(output_fd, path, body, mode=mode)
             staged.append((path, row.sha256, row.size_bytes,
-                           0o555 if row.mode & 0o111 else 0o444, ("interpreter",)))
+                           mode, _runtime_output_roles(path)))
         for source_path, target, role, expected_sha256, expected_size in (
             (PLAN_TEMPLATE_PATH, STAGED_PLAN_TEMPLATE_PATH, "template", PLAN_TEMPLATE_SHA256, PLAN_TEMPLATE_BYTES),
             (COMPILER_TEMPLATE_PATH, STAGED_COMPILER_TEMPLATE_PATH, "template",

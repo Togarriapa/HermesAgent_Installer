@@ -232,6 +232,14 @@ def test_build_receipt_rejects_expiry_during_copy_and_unsealed_extra_file(tmp_pa
         receipt.close()
 
 
+def test_builder_assigns_one_interpreter_and_finite_runtime_member_roles():
+    assert release_build._runtime_output_roles("runtime/bin/python") == ("interpreter",)
+    assert release_build._runtime_output_roles("runtime/bin/python3") == ("runtime-member",)
+    assert release_build._runtime_output_roles("runtime/lib/python3.14/os.py") == ("runtime-member",)
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._runtime_output_roles("source/runtime/bin/python")
+
+
 def test_build_receipt_checks_copied_member_and_final_closure(tmp_path):
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
