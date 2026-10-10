@@ -158,3 +158,16 @@ OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/so
 HA setup receipt refinement v216: plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md supplies concrete live root-session signer/journal/transport sink/schema-to-functional-call ownership; setup evidence is distinct from daemon SourceReceipt/HostContext and cannot restore authority. All acceptance OPEN.
 
 SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.
+
+Officialremote roledefinition222: source-only held3roledescriptor→currentchoice/transaction-generated identityselection→actualNSS/roots/runtime/network→strictactiveadoption. planning/official-remote-role-definition-producer-v222.json; no preparedrecords/futureaccountauthority.
+
+CurrentpublishedPMhome runtime221: reuseexistingfreshcommittedPMresolver, exact11keyprojection/currentcore/receipt/venvFDproof; noexpiredsetupseal/newdurablehandle. planning/current-published-pm-home-runtime-v221.json HI-T221.1/.2 VD-T221.3 OPEN.
+
+
+Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN.
+
+
+Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.
+
+
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md` and `planning/typed-initial-pending-diagnostics-v232.json` govern only nine fixed initial source boundaries and exact-type safe formatting. Actor/currentness and nested account checks remain genuine; no exception contents, TTL/parser changes or source hash approvals. BD-T232.1 → VD-T232.2 remain OPEN, all AC OPEN.

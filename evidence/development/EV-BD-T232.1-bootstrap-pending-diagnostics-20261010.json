@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "evidence_id": "EV-BD-T232.1",
+  "state": "source_fixture_verification_only",
+  "acceptance_record_emitted": false,
+  "authenticated": false,
+  "source_checkpoint": {
+    "implementation_commit": "f7fc4b6f0d07465b9898b3098c2998a619ff2b0b",
+    "test_commit": "7e9abcf43faeb0e73a1eebbca6bd6e670af8479f",
+    "contract_api_followup_commit": "c05f0e4073be5c6623ae21df6cb0df20b09ab154",
+    "contract": "planning/typed-initial-pending-diagnostics-v232.json",
+    "changed_source_members": [
+      {
+        "path": "src/hermes_installer/authority/bootstrap_enrollment.py",
+        "sha256": "d491638ae8a27a3d1a6d3392a50e5e2d41935a181f85a6ff0eac66756429296c",
+        "size_bytes": 147164
+      },
+      {
+        "path": "src/hermes_installer/authority/bootstrap_runtime_factory.py",
+        "sha256": "949e4bce79bfff32c9a8bb15152540968aca84b575d253725c80e3ecf23f64b7",
+        "size_bytes": 691421
+      },
+      {
+        "path": "src/hermes_installer/root_setup.py",
+        "sha256": "39344727837d85224fda7cc721f2ad75521271df6c6e18f8a2cf5bd9cd1beae0",
+        "size_bytes": 62989
+      }
+    ],
+    "separately_authorized_nested_recipe_pin": {
+      "commit": "a8b33fc9136c5a8b77c97b255e5bb2d2a2849e32",
+      "path": "src/hermes_installer/authority/native_worker_start_recipe.py",
+      "sha256": "87cc2071f39e4cc2fe636cc9005c39f3c21d1c57f412944de474d198d7144afd",
+      "size_bytes": 20416,
+      "pinned_member": {
+        "path": "src/hermes_installer/registry/resource_backends.py",
+        "sha256": "b7e3fb94b20a21c03c7ae521bea1ca808f7de323c5edd0c3d6d9741b29174843",
+        "size_bytes": 27262
+      }
+    },
+    "review_state": "v228 source review pending; no source or builder self-pin updated"
+  },
+  "verification": {
+    "python": "cached CPython 3.14 cohort environment",
+    "command": "PYTHONPATH=src python -m pytest -q tests/contracts/test_root_setup.py tests/contracts/test_bootstrap_runtime_factory.py",
+    "passed": 65,
+    "failed": 0,
+    "skipped": 1,
+    "result": "passed",
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "validate_specs": "passed 13/13",
+    "validate_plan": "passed; frozen baseline 160 hashes verified; runtime acceptance not established",
+    "isolated_linux_arm64": {
+      "image": "hermes-display-arm64-python314-systemd:20261010",
+      "image_id": "sha256:6f1b374c072b1a6c8d9bf844a48b8111d27596f064f553dbbb7c8919b0bfab2a",
+      "architecture": "linux/arm64",
+      "python": "3.14.7",
+      "pytest": "8.4.2",
+      "source_mount": "read-only",
+      "command": "python -m pytest -p no:cacheprovider -q tests/contracts/test_root_setup.py tests/contracts/test_bootstrap_runtime_factory.py tests/contracts/test_native_worker_launch.py -k 'not test_factory_refuses_non_linux_or_uninstalled_root_trust'",
+      "passed": 76,
+      "failed": 0,
+      "deselected": 1,
+      "result": "passed",
+      "exclusion_reason": "That test enters the real root installed-release verifier in this Linux root container because it assumes an uninstalled host; the isolated fixture intentionally has no deployment receipt."
+    }
+  },
+  "pin_check": {
+    "command": "tests/contracts/test_installer_release_build.py::test_release_builder_pins_literal_model_store_template_and_native_source_modules",
+    "result": "expected source-pin failure pending coherent v228 review",
+    "first_observed_actual": {
+      "path": "src/hermes_installer/authority/active_policy_compiler.py",
+      "sha256": "a9a0f983aeab2c47274c8a3f46155ac7f97ebd2264cb15d888d5379ed550f568",
+      "size_bytes": 147437
+    },
+    "expected": {
+      "sha256": "61ae3576ac53e5ad5c6f1b0c74967110021fd961677353aae889b9f8bf04940b",
+      "size_bytes": 136868
+    },
+    "claim_limit": "This broad builder row predates this checkpoint and reports its first stale leaf; it is not a diagnostic of the Pi failure."
+  },
+  "target_observation": {
+    "candidate": "cc81",
+    "observed": "A generic BootstrapEnrollmentPending occurred after the existing-account prompt and before the identity prompt.",
+    "cause": "unknown",
+    "pi_retest_performed": false,
+    "acceptance": "not established"
+  },
+  "not_observed": [
+    "actual Pi diagnostic stage",
+    "successful root setup or identity selection",
+    "installed source-pin verification",
+    "candidate acceptance"
+  ],
+  "claim_limit": "Synthetic source-boundary and formatter tests establish bounded diagnostic behavior only. They do not identify the cc81 Pi failure cause or establish target readiness or acceptance."
+}

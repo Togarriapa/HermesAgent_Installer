@@ -19,6 +19,8 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootReleaseModuleReceipt,
     RootPreparedReleaseMemberReceipt,
     RootInitialCompilationRegistry,
+    RootInitialSetupAggregate,
+    RootSetupChoices,
     RootBootstrapSession,
     RootRunnableRoleReceiptProjection,
     RootRunnableRoleRow,
@@ -32,6 +34,96 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_initial_compilation_pending_steps_wrap_only_the_exact_pending_type(self):
+        import hermes_installer.authority.bootstrap_runtime_factory as factory
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapPendingStepFailure
+        from unittest.mock import patch
+
+        stages = (
+            "initial_compilation.validation", "initial_compilation.account",
+            "initial_compilation.install_mode", "initial_compilation.release_closure",
+            "initial_compilation.template", "initial_compilation.catalog",
+            "initial_compilation.journal", "initial_compilation.actor_write",
+        )
+        sentinel = "/secret/provider-token: stage-zero pending detail"
+
+        def registry():
+            value = object.__new__(RootInitialCompilationRegistry)
+            value.release = SimpleNamespace(selected_plan_artifact_id="plan", selected_plan_sha256="a" * 64)
+            value.actor = object()
+            value.root_journal = Path("/var/lib/hermes-installer/authority-journal")
+            value._seal = "seal"
+            value._sessions = {}
+            value._actor_receipt_root = Path("/tmp")
+            return value
+
+        choices = RootSetupChoices("install", "hermes", None, (), ())
+
+        for step in stages:
+            with self.subTest(step=step):
+                value = registry()
+                pending = BootstrapEnrollmentPending(sentinel)
+                if step == "initial_compilation.validation":
+                    value._validate_choices = lambda _choices, error=pending: (_ for _ in ()).throw(error)
+                elif step == "initial_compilation.account":
+                    with patch("hermes_installer.authority.bootstrap_runtime_factory.pwd.getpwnam",
+                               side_effect=KeyError("hidden-account-detail")):
+                        with self.assertRaises(BootstrapPendingStepFailure) as caught:
+                            value.begin_initial_compilation(choices)
+                    self.assertEqual(caught.exception.step, step)
+                    continue
+                elif step == "initial_compilation.install_mode":
+                    value._validate_choices = lambda _choices: RootSetupChoices(
+                        "repair", "hermes", None, (), ())
+                elif step == "initial_compilation.release_closure":
+                    value._validate_choices = lambda _choices: choices
+                    value._validate_release_closure = lambda error=pending: (_ for _ in ()).throw(error)
+                else:
+                    value._validate_choices = lambda _choices: choices
+                    value._validate_release_closure = lambda: None
+                    if step in {"initial_compilation.template", "initial_compilation.catalog"}:
+                        def read_file(artifact_id, error=pending):
+                            if step == "initial_compilation.template" or artifact_id == factory._CATALOG_ID:
+                                raise error
+                            return SimpleNamespace(sha256="b" * 64), b"fixture"
+                        value._release_file = read_file
+                    elif step == "initial_compilation.journal":
+                        value._release_file = lambda _artifact: (SimpleNamespace(sha256="b" * 64), b"fixture")
+                        value._root_journal_row = lambda error=pending: (_ for _ in ()).throw(error)
+                    else:
+                        value._release_file = lambda _artifact: (SimpleNamespace(sha256="b" * 64), b"fixture")
+                        value._root_journal_row = lambda: {}
+                        value._write_actor_receipt = lambda _session, error=pending: (_ for _ in ()).throw(error)
+
+                with self.assertRaises(BootstrapPendingStepFailure) as caught:
+                    value.begin_initial_compilation(choices)
+                self.assertEqual(caught.exception.step, step)
+                self.assertNotIn("provider-token", str(caught.exception))
+                self.assertNotIn("hidden-account-detail", str(caught.exception))
+
+        aggregate = object.__new__(RootInitialSetupAggregate)
+        aggregate._require_open = lambda: (_ for _ in ()).throw(BootstrapEnrollmentPending(sentinel))
+        with self.assertRaises(BootstrapPendingStepFailure) as actor_current:
+            aggregate.begin_install("hermes")
+        self.assertEqual(actor_current.exception.step, "initial_compilation.actor_current")
+
+        actor = SimpleNamespace(verify_current=lambda _release: (_ for _ in ()).throw(
+            BootstrapEnrollmentPending(sentinel)))
+        release = SimpleNamespace()
+        with patch("hermes_installer.authority.installer_release.VerifiedInstallerReleaseReceipt",
+                   SimpleNamespace), \
+             patch("hermes_installer.authority.installer_release.RootActorObservation", SimpleNamespace), \
+             patch("hermes_installer.authority.bootstrap_runtime_factory.os.geteuid", return_value=0), \
+             patch.object(factory.InstalledBootstrapPolicyResolver, "_linux", return_value=True), \
+             patch("hermes_installer.authority.bootstrap_runtime_factory._ensure_root_directory"), \
+             patch("hermes_installer.authority.bootstrap_runtime_factory._secure_directory_identity",
+                   return_value={"device": 1, "inode": 2}):
+            with self.assertRaises(BootstrapPendingStepFailure) as constructor_actor_current:
+                RootInitialCompilationRegistry(release, actor,
+                    Path("/var/lib/hermes-installer/authority-journal"))
+        self.assertEqual(constructor_actor_current.exception.step,
+                         "initial_compilation.actor_current")
+
     def test_native_home_target_requires_real_service_identity_traversal(self):
         import tempfile
         with tempfile.TemporaryDirectory() as temporary:
