@@ -599,6 +599,15 @@ class RootActivePolicyCompilationRegistry:
         self.verify_current_active_policy_claim(claim)
         return claim
 
+    def resolve_current_active_policy_predecessor(self, publication_handle: str) -> str:
+        """Return the predecessor only from a fully revalidated retained claim."""
+        claim = self._get_claim(publication_handle)
+        self.verify_current_active_policy_claim(claim)
+        if (not isinstance(claim.expected_selection_catalog_sha256, str)
+                or not _HEX.fullmatch(claim.expected_selection_catalog_sha256)):
+            raise BootstrapEnrollmentPending("active claim has no canonical predecessor selection digest")
+        return claim.expected_selection_catalog_sha256
+
     def verify_current_active_policy_claim(
             self, claim: RootActivePolicyCompilationClaim) -> RootActivePolicyCompilationClaim:
         if (not isinstance(claim, RootActivePolicyCompilationClaim)
