@@ -1157,5 +1157,11 @@
       }
     ],
     "acceptance": "All original AC remain open. Small source/license acquisition only; no model download, runtime install or deployment claim."
+  },
+  "supporting_model_source_receipts_v136": {
+    "refines": "v135 source receipt retention in v127 ExistingModelArtifactObservation; member_observation_sha256 remains exact member-only hash.",
+    "added_signed_observation_field": "supporting_source_receipt_sha256",
+    "digest": "SHA256 canonical UTF8 JSON sorted by artifact_id of exact supporting root source observations projected as {artifact_id,sha256,size_bytes,receipt_handle}; includes v135 glm52-quantized-readme-6bbb01e actual catalog receipt. No newline; same canonical sort_keys/separators/ensure_ascii=False. Root-held durable registry record retains the actual observation handles/pins/bytes and verifies current membership on restore; signature includes this digest. No caller supporting rows/active selection fields or model weight evidence is added.",
+    "implementation": "Models observer constructs supporting-source evidence from fixed held v135 contract and actual RootCatalogArtifactObserver. Host authority finite existing model-observation signer/verifier adds this exact claim; no private _sign or new key/source kind."
   }
 }

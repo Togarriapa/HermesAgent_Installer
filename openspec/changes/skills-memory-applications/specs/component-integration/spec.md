@@ -760,3 +760,10 @@ The installer SHALL observe the exact bounded inventory, upstream MIT license an
 #### Scenario: Source metadata is available but model is absent
 - **WHEN** the three small source blobs verify but no complete selected model directory or owned deployment is observed
 - **THEN** source provenance is retained and deployment remains pending; no weights are downloaded and no acceptance is promoted
+
+### Requirement: Current consent and actual lock-selected package source receipts v136
+The installer SHALL acquire only exact supported-origin integrity-locked package bytes under the explicit acquire-locked-runtime-packages qualification phase and retain genuine scoped CAS/license evidence; deployment SHALL exclude editable installs and default dependency groups.
+
+#### Scenario: Old source-only consent or missing package evidence
+- **WHEN** acquisition lacks the explicit phase, exact lock integrity, allowed origin, current held bytes or required reviewed license eligibility
+- **THEN** the affected phase remains pending and no static catalog handle, unchecked cache or metadata assertion substitutes for proof
