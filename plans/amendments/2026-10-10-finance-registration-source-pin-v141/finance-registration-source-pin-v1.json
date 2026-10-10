@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T08",
+    "HI-T120",
+    "HI-T121",
+    "R0060"
+  ],
+  "why": "Actual committed financial_data_read source now returns exact bounded v120/v121 observations with genuine selected account alias. Current source hash differs historical source-only v99 inventory and requires fresh held receipt/projection joins.",
+  "source_record": {
+    "module_name": "hermes_installer.components.plugin_finance",
+    "relative_path": "src/hermes_installer/components/plugin_finance.py",
+    "source_commit": "2d2889be426d55a6db0c0c836db8bdfc068e0a9a",
+    "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/2d2889be426d55a6db0c0c836db8bdfc068e0a9a/src/hermes_installer/components/plugin_finance.py",
+    "sha256": "ba87876d4bed36027822be008c85d094655226afcfab19d4509148685ff9e111",
+    "size_bytes": 61987,
+    "native_tool_names": [
+      "agent_live_wallet_action",
+      "agent_sandbox_wallet_action",
+      "financial_data_read",
+      "financial_execute_one_order"
+    ]
+  },
+  "source_review": "Independently measured actual clean committed source bytes. financial_data_read consumes exactly root effect {items,account_alias}, requires source-selected validated account alias (max128, no selected fallback) and normalizes provider/operation rows to exact v121 observations. Closed fields and scalar data<=64 keys, UTF8/scalar/nonfinite/2MiB bounds enforced; no credential/account blobs accepted or wrong provider/source alias promoted. This read result serialization does not grant financial trade/payment/wallet permissions or prove accounts functional. Execution/wallet bounded wrapper source and actual target/account/operation/task/destructive confirmation constraints remain v113/v120; a generic underlying object is untrusted bounded data, not successful verified execution.",
+  "producer_join": "Current RootReleaseModuleReceipt/source schema observation binds exact module SHA for all four affected registrations and source backend adapter schemas. Native projection owner re-runs actual typed register calls for current source and exact finite provider/operation/action selector maps, with genuine current target/effect/observer/schema policies v137. No backend action derived from native name or finance provider labels. Source-only v99 audit stays immutable/nonoperational; no old receipt hash alias/global replacement.",
+  "tasks": [
+    {
+      "id": "HI-T141.1",
+      "owner": "finance/native source/projection/factory",
+      "work": "Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny."
+    },
+    {
+      "id": "HI-T141.2",
+      "owner": "finance/native integration",
+      "work": "Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim."
+    }
+  ],
+  "acceptance": "Source/serialization/fixtures only. All original AC remain open."
+}
