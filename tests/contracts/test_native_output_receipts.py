@@ -224,7 +224,7 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
     class Binding:
         def authorize_native_output(self, *, artifact_role, output_kind,
                                     member_tree_sha256, output_sha256,
-                                    output_size_bytes):
+                                    output_size_bytes, assembly_selection_handle=None):
             artifact_id = ("native-candidate-index:package-1:generation-1"
                            if artifact_role == "native-candidate-index" else
                            f"native-output:{artifact_role}:package-1:generation-1")
@@ -236,6 +236,7 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
                 "3" * 64, "installer-module:native_materializer", "5" * 64,
                 ("A" * 48, "B" * 48), member_tree_sha256,
                 output_sha256, output_size_bytes, closure_tree_sha256, time.monotonic() + 10_000.0,
+                assembly_selection_handle,
             )
 
         current = True
@@ -255,12 +256,14 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
         rows = members if role == "native-compiled-closure" else (
             NativeOutputMember(path, hashlib.sha256(data).hexdigest(), len(data), 0o644),)
         receipts[role] = registry.publish_selected(
-            artifact_role=role, output_kind=kind, payload=data, members=rows)
+            artifact_role=role, output_kind=kind, payload=data, members=rows,
+            assembly_selection_handle="C" * 48)
     receipt = receipts["native-compiled-closure"]
     object_path = cas / receipt.sha256[:2] / receipt.sha256
     assert object_path.read_bytes() == payload
     assert object_path.stat().st_uid == 0 and object_path.stat().st_mode & 0o777 == 0o400
     assert receipt.artifact_id == "native-output:native-compiled-closure:package-1:generation-1"
+    assert receipt.assembly_selection_handle == "C" * 48
     output_ids = tuple(receipts[role].receipt_id for role in outputs)
     reservation = registry.reserve_for_active_compilation(
         output_ids, prepared_generation_id="generation-1",

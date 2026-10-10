@@ -852,7 +852,8 @@ class RootSelectedInstallationBinding:
 
     def authorize_native_output(self, *, artifact_role: str, output_kind: str,
                                 member_tree_sha256: str, output_sha256: str,
-                                output_size_bytes: int) -> Any:
+                                output_size_bytes: int,
+                                assembly_selection_handle: str | None = None) -> Any:
         """Resolve fixed output roles from current root-held source/assembly proofs."""
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native output binding is not owned by this setup session")
@@ -899,14 +900,35 @@ class RootSelectedInstallationBinding:
                 compiled_closure_sha256=None,
                 expires_monotonic=min(prepared.expires_monotonic, time.monotonic() + 30.0),
             )
-        native_packages = session._policy.catalog_selections.get("native_packages", ())
-        if not native_packages:
+        if (artifact_role not in {
+                "native-compiled-closure", "native-entrypoint-manifest",
+                "native-action-resolver", "native-boundary-overlay", "native-candidate-index",
+        } or not isinstance(assembly_selection_handle, str)):
+            raise BootstrapEnrollmentPending("generated native output lacks its fixed role or assembly selection")
+        selection = session._resolve_current_native_bootstrap_assembly(assembly_selection_handle)
+        policy = session.resolve_current_native_policy_selection(
+            selection.native_policy_preparation_handle)
+        records = session.resolve_current_prepared_native_policy_records(
+            selection.native_policy_preparation_handle)
+        if (selection.setup_session_id != session._handle.session_id
+                or selection.transaction_handle != session._authorization.transaction_handle
+                or selection.prepared_generation_id != prepared.generation_id
+                or selection.protected_enrollment_digest != prepared.generation_digest
+                or policy.selection_handle != selection.native_policy_preparation_handle
+                or records.native_policy_selection_handle != policy.selection_handle
+                or not _SHA.fullmatch(member_tree_sha256)
+                or not _SHA.fullmatch(output_sha256)
+                or type(output_size_bytes) is not int or output_size_bytes <= 0):
+            raise BootstrapEnrollmentPending("native output does not join current assembly, policy and prepared custody")
+        # No active package row is consulted here. A source inventory or schema
+        # receipt alone cannot authorize executable action/effect/observer rows.
+        missing = tuple(getattr(records, "missing_prerequisite_ids", ()))
+        if missing:
+            detail = ", ".join(sorted(set(str(item) for item in missing)))
             raise BootstrapEnrollmentPending(
-                "the selected prepared policy has no root-authorized native package/compiler selection")
-        # Until the reviewed package/output role join is supplied by installed
-        # policy, unknown role construction is never allowed through this seam.
+                "native output lacks source-backed action/effect/role authorization: " + detail)
         raise BootstrapEnrollmentPending(
-            "native output role cannot be authorized without a source-pinned compiler deployment receipt")
+            "native output definitions have no complete verified action/effect/observer projection")
 
     def revalidate_native_output(self, selection: Any) -> bool:
         from .native_output_receipts import NativeOutputSelection
@@ -934,6 +956,16 @@ class RootSelectedInstallationBinding:
                     member_tree_sha256=selection.member_tree_sha256,
                     output_sha256=selection.output_sha256,
                     output_size_bytes=selection.output_size_bytes,
+                )
+                return current == selection
+            if selection.assembly_selection_handle is not None:
+                current = self.authorize_native_output(
+                    artifact_role=selection.artifact_role,
+                    output_kind=selection.output_kind,
+                    member_tree_sha256=selection.member_tree_sha256,
+                    output_sha256=selection.output_sha256,
+                    output_size_bytes=selection.output_size_bytes,
+                    assembly_selection_handle=selection.assembly_selection_handle,
                 )
                 return current == selection
             return False
