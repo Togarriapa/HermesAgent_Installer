@@ -10,6 +10,7 @@ from unittest.mock import patch
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
 from hermes_installer.authority.setup_policy_publication import (
     _FileSpec, _atomic_replace, _ensure_generation, _read_fixed,
+    _receipt_from_record, _verify_active_receipt_descriptor, POLICY_GENERATIONS,
 )
 
 
@@ -84,6 +85,53 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                                     (info.st_dev, info.st_ino))
             self.assertEqual(path.read_bytes(), b"before")
             self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["selection.json"])
+
+    def _active_record(self):
+        digest = "a" * 64
+        return {
+            "schema": 1, "transaction_handle": "t" * 64,
+            "publication_sha256": digest, "publication_receipt_handle": "r" * 64,
+            "generation_id": "installer-bootstrap-policy-generation-v1",
+            "generation_root": str(POLICY_GENERATIONS / digest),
+            "generation_device": 1, "generation_inode": 2,
+            "policy_sha256": "b" * 64, "artifact_catalog_sha256": "c" * 64,
+            "selection_sha256": "d" * 64, "descriptor_sha256": "e" * 64,
+            "previous_selection_catalog_sha256": "f" * 64,
+            "current_selection_catalog_sha256": "0" * 64,
+            "input_receipt_handles": ["i" * 64], "state": "active-committed",
+            "updated_monotonic": 10.0, "publication_handle": "p" * 64,
+            "claim_digest": "1" * 64, "prepared_generation_id": "prepared-v1",
+            "service_generation_digest": "2" * 64,
+            "runtime_receipt_handles": ["3" * 64],
+            "materialization_receipt_handles": ["4" * 64],
+        }
+
+    def test_active_receipt_binds_claim_generation_and_native_receipts(self):
+        receipt = _receipt_from_record(self._active_record())
+        descriptor = {
+            "policy_sha256": receipt.policy_sha256,
+            "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
+            "selection_sha256": receipt.selection_sha256,
+            "inputs": {
+                "publication_handle": receipt.publication_handle,
+                "claim_digest": receipt.claim_digest,
+                "prepared_generation_id": receipt.prepared_generation_id,
+                "expected_service_generation_digest": receipt.service_generation_digest,
+                "transaction_handle": receipt.transaction_handle,
+                "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
+                "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+            },
+        }
+        _verify_active_receipt_descriptor(receipt, descriptor)
+        descriptor["inputs"]["claim_digest"] = "9" * 64
+        with self.assertRaises(BootstrapEnrollmentError):
+            _verify_active_receipt_descriptor(receipt, descriptor)
+
+    def test_active_receipt_rejects_empty_native_receipt_closure(self):
+        record = self._active_record()
+        record["materialization_receipt_handles"] = []
+        with self.assertRaises(BootstrapEnrollmentError):
+            _receipt_from_record(record)
 
 
 if __name__ == "__main__":
