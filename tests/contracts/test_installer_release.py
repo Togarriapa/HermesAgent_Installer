@@ -13,6 +13,7 @@ from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
+    _artifact_id_for, _module_name, _validate_fixed_layout_role,
 )
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
 
@@ -61,6 +62,32 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         for path in ("../etc/passwd", "a/../../x", "a\\b", "/absolute", "", "a//b"):
             self.assertFalse(_safe_relative(path), path)
         self.assertTrue(_safe_relative("plans/bootstrap-policy.json"))
+
+    def test_v63_installed_release_roles_use_exact_paths_and_module_ids(self):
+        self.assertEqual(_module_name("lib/python/hermes_installer/authority/daemon.py"),
+                         "hermes_installer.authority.daemon")
+        self.assertEqual(_module_name("lib/python/hermes_installer/__init__.py"),
+                         "hermes_installer")
+        for malformed in (
+            "src/hermes_installer/authority/daemon.py",
+            "lib/python/a..b.py",
+            "lib/python/trailing..py",
+            "lib/python/__init__.py",
+            "lib/python/a/b.pyc",
+        ):
+            with self.subTest(path=malformed), self.assertRaises(InstallerReleaseError):
+                _module_name(malformed)
+        self.assertEqual(_artifact_id_for("lib/python/hermes_installer/authority/daemon.py", ["module"]),
+                         "installer-module:hermes_installer.authority.daemon")
+        _validate_fixed_layout_role("runtime/bin/python", "1" * 64, 10, ["interpreter"])
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("runtime/bin/python3", "1" * 64, 10, ["interpreter"])
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("templates/bootstrap-compiler-template-v1.json",
+                                        "0" * 64, 4281, ["template"])
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role("plans/bootstrap-policy-v1.json",
+                                        "1" * 64, 10, ["bootstrap-policy"])
 
     def test_open_verified_file_checks_digest_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as td:

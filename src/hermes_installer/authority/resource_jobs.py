@@ -622,6 +622,23 @@ class ResourceJobAuthority:
         controller_registry = getattr(issuer, "controller_registry", None)
         if controller_registry is None or getattr(issuer, "service", None) is not self.service:
             raise AuthorityDenied("resource.event", "root resource event registry is unavailable")
+        # Attach only this exact job authority to the same root event registry
+        # that authenticated the capture. Runtime composition may have done
+        # this already; an unrelated authority is never replaced.
+        attach_jobs = getattr(controller_registry, "attach_resource_job_authority", None)
+        if not callable(attach_jobs):
+            raise AuthorityDenied("resource.admission", "root event registry has no job-authority binding")
+        bound_jobs = getattr(controller_registry, "_resource_job_authority", None)
+        if bound_jobs is None:
+            try:
+                attach_jobs(self)
+            except Exception:
+                # A concurrent exact attachment is harmless; a different
+                # authority or an invalid interface is not.
+                if getattr(controller_registry, "_resource_job_authority", None) is not self:
+                    raise AuthorityDenied("resource.admission", "root job authority attachment failed") from None
+        elif bound_jobs is not self:
+            raise AuthorityDenied("resource.admission", "another root job authority owns this event registry")
         key = (root_event_handle.resource_id, root_event_handle.resource_generation)
         enrollment = self.enrollments.get(key)
         if enrollment is None:
@@ -761,6 +778,15 @@ class ResourceJobAuthority:
             self._root_event_by_job[admission.job_id] = root_event_handle
             self._root_source_context_by_job[admission.job_id] = secrets.token_urlsafe(32)
             self._root_job_handles[admission.job_id] = secrets.token_urlsafe(32)
+        bind_job = getattr(controller_registry, "bind_admitted_job", None)
+        try:
+            if not callable(bind_job):
+                raise AuthorityDenied("resource.admission", "root event registry cannot bind durable admission")
+            bind_job(root_event_handle, admission)
+        except Exception:
+            self.ledger.cancel_job(admission.job_id, current_generation=enrollment.generation)
+            self._discard_job_event_fields(admission.job_id)
+            raise AuthorityDenied("resource.admission", "root durable admission could not bind to its event") from None
         if cancelled() or self._resource_generation(enrollment) != enrollment.generation:
             self.ledger.cancel_job(admission.job_id, current_generation=enrollment.generation)
             self._discard_job_event_fields(admission.job_id)
@@ -1404,6 +1430,68 @@ class ResourceJobAuthority:
                 raise AuthorityDenied("resource.process_task", "root task handle is already running")
             self._running_task_handles[handle.handle_id] = registered
         return handle
+
+    def resolve_task_child_admission(
+        self, handle: Any, node_id: str,
+    ) -> ResourceChildAdmission:
+        """Resolve the exact active ledger child for the root task grant issuer.
+
+        This is an in-process authority seam. It accepts only the identical
+        consumed task handle retained in ``_running_task_handles``; the child
+        admission is returned from that retained tuple, never reconstructed
+        from task/source DTO fields. The service calls it again at grant
+        consumption, so revocation or a stale retry cannot reuse the proof.
+        """
+        if (not isinstance(handle, RootResourceJobAdmissionHandle)
+                or not isinstance(node_id, str) or node_id != handle.node_id):
+            raise AuthorityDenied("resource.child", "task child admission lookup is malformed")
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+            if (registered is None or len(registered) != 4
+                    or registered[0] is not handle):
+                raise AuthorityDenied("resource.child", "task child admission requires the exact consumed handle")
+        _handle, child, enrollment, event = registered
+        backend = enrollment.backends.get(handle.backend_enrollment_id)
+        binding = backend.execution_binding if backend is not None else None
+        node = enrollment.node_map.get(node_id)
+        current_generation = self._resource_generation(enrollment)
+        now = self.service.monotonic()
+        if (backend is None or binding is None or node is None
+                or event.enrollment is not enrollment
+                or event.admission.job_id != child.job_id
+                or child.node_id != node_id or child.job_id != handle.job_id
+                or child.admission_id != handle.child_admission_id
+                or child.retry_index != handle.attempt_index
+                or enrollment.generation != handle.resource_generation
+                or backend.resource_id != enrollment.resource_id
+                or backend.generation != enrollment.generation
+                or backend.consent_revision != enrollment.consent_revision
+                or backend.profile_id != enrollment.profile_id
+                or backend.principal_id != enrollment.principal_id
+                or binding["process_enrollment_id"] != handle.process_enrollment_id
+                or binding["process_generation"] != handle.process_generation
+                or binding["operation_id"] != handle.operation_id
+                or binding["child_target_id"] != handle.child_target_id
+                or binding["child_capability"] != handle.child_capability
+                or binding["task_body_recipe_id"] != handle.task_body_recipe_id
+                or binding["task_request_schema_id"] != handle.task_request_schema_id
+                or current_generation != enrollment.generation
+                or self.service.profile_generations.get(enrollment.profile_id)
+                   != event.parent_context.generation
+                or now >= min(handle.expires_monotonic, event.admission.expires_monotonic)
+                or handle.parent_closure_digest != _admitted_source_closure_digest(
+                    event, child, node, backend)
+                or not self.ledger.is_child_admitted(child, current_generation=current_generation)):
+            raise AuthorityDenied("resource.child", "task child admission is stale or outside its selected job")
+        root_event = self._root_event_by_job.get(child.job_id)
+        if root_event is not None:
+            with self._event_lock:
+                root_row = self._root_event_admissions.get(root_event.handle)
+            if (root_row is None or root_row[0] is not root_event
+                    or root_row[1] is not event.admission
+                    or not self.is_root_admission_current(root_event, event.admission)):
+                raise AuthorityDenied("resource.child", "root event admission is no longer current")
+        return child
 
     def resolve_admitted_task_source(self, handle: Any, node_id: str) -> RootAdmittedTaskSource:
         """Resolve the original verified source closure for an actively consumed handle.
