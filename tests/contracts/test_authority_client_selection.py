@@ -90,6 +90,25 @@ class AuthorityClientSelectionContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.client.finish_selected_native_turn(turn_handle, response_handle)
 
+    def test_native_input_take_accepts_optional_root_turn_binding(self):
+        self.client.monotonic = lambda: 10.0
+        self.client._rpc = lambda operation, payload, **_kwargs: {
+            "schema": 1, "source_receipt_handle": "s" * 43,
+            "selected_execution_handle": "e" * 43, "input_sha256": "a" * 64,
+            "input_size_bytes": 12, "expires_monotonic": 15.0,
+            "turn_handle": "t" * 43,
+        }
+        delivery = self.client.take_selected_native_input()
+        self.assertEqual(delivery.turn_handle, "t" * 43)
+        self.client._rpc = lambda operation, payload, **_kwargs: {
+            "schema": 1, "source_receipt_handle": "s" * 43,
+            "selected_execution_handle": "e" * 43, "input_sha256": "a" * 64,
+            "input_size_bytes": 12, "expires_monotonic": 15.0,
+            "turn_handle": "bad handle",
+        }
+        with self.assertRaises(AuthorityDenied):
+            self.client.take_selected_native_input()
+
 
 if __name__ == "__main__":
     unittest.main()
