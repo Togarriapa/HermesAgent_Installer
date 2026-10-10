@@ -9,6 +9,7 @@ remain behind the enrolled root services.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ class AuthenticatedHttpRequest:
     access_jwt: bytes = field(repr=False)
     body: bytes = field(repr=False)
     request_receipt_handle: str
+    request_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,8 @@ class _HttpProof:
     proof_handle: str
     selection_id: str
     request_receipt_handle: str
+    request_id: str
+    session_id: str
     body: bytes = field(repr=False)
     subject: AuthenticatedSubjectReceipt = field(repr=False)
     body_digest: str
@@ -129,7 +133,8 @@ class RootSelectedHttpIngressObserver:
             raise ChannelIngressDenied("root JWT verifier did not issue a current selected subject receipt")
         now = self.monotonic()
         proof = _HttpProof(secrets.token_urlsafe(32), self.selection.id,
-                           request.request_receipt_handle, request.body, subject,
+                           request.request_receipt_handle, request.request_id, request.session_id,
+                           request.body, subject,
                            digest, self.controller_identity_digest, self.service_generation_digest,
                            now, min(now + 30.0, subject.expires_monotonic))
         self._proofs[proof.proof_handle] = proof
@@ -145,10 +150,17 @@ class RootSelectedHttpIngressObserver:
         subject = self.identity_verifier.current_selected_subject(selection, proof.subject)
         if subject is not proof.subject or not proof.issued_monotonic <= now_monotonic < proof.expires_monotonic:
             raise ChannelIngressDenied("HTTP JWT subject or selected session is no longer current")
+        body_obj = json.loads(proof.body)
+        if (set(body_obj) != {"text"} or not isinstance(body_obj["text"], str)
+                or not 1 <= len(body_obj["text"]) <= 65536):
+            raise ChannelIngressDenied("HTTP event body differs from the selected {text} schema")
         return {"schema": 1, "proof_handle": proof.proof_handle, "selection_id": proof.selection_id,
                 "session_handle": proof.subject.session_handle,
                 "authenticated_subject_receipt_handle": proof.subject.receipt_handle,
                 "request_receipt_handle": proof.request_receipt_handle,
+                "request_id": proof.request_id, "session_id": proof.session_id,
+                "subject_id": proof.subject.subject_digest, "text": body_obj["text"],
+                "raw_body_size_bytes": len(proof.body),
                 "body_sha256": proof.body_digest,
                 "controller_identity_digest": proof.controller_identity_digest,
                 "service_generation_digest": proof.service_generation_digest,
@@ -166,26 +178,12 @@ class RootSelectedHttpIngressObserver:
             self._resolved_receipt_proofs.discard(proof.proof_handle)
 
     def consume_source_receipts(self, proof: object) -> tuple[SourceReceipt, ...]:
-        """Resolve and validate actual authority-signed parent receipts once.
-
-        A caller-provided receipt object is never accepted. The root resolver
-        maps the proof's opaque observer handles to retained AuthorityService
-        receipts and the root validator checks signatures/currentness.
-        """
+        """Consume the retained transport proof; initial ingress has no parent receipt."""
         if not isinstance(proof, _HttpProof) or proof.proof_handle in self._resolved_receipt_proofs:
-            raise ChannelIngressDenied("HTTP source-receipt closure is not available or was already consumed")
-        if self.source_receipt_resolver is None or not callable(self.source_receipt_validator):
-            raise ChannelIngressDenied("root HTTP receipt lookup and signature verifier are not enrolled")
+            raise ChannelIngressDenied("HTTP source proof is unavailable or was already consumed")
         self.validate_http_observation(self.selection, proof, now_monotonic=self.monotonic())
-        handles = (proof.subject.receipt_handle, proof.request_receipt_handle)
-        rows = self.source_receipt_resolver(handles)
-        if (not isinstance(rows, tuple) or not rows or len(rows) > 64
-                or any(not isinstance(item, SourceReceipt) for item in rows)
-                or len({item.receipt_id for item in rows}) != len(rows)
-                or not all(self.source_receipt_validator(item) for item in rows)):
-            raise ChannelIngressDenied("HTTP upstream source receipts are absent, invalid or stale")
         self._resolved_receipt_proofs.add(proof.proof_handle)
-        return tuple(sorted(rows, key=lambda item: item.receipt_id))
+        return ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +196,8 @@ class SelectedAudioCaptureReceipt:
     session_handle: str
     consent_receipt_handle: str
     capture_receipt_handle: str
+    audio_artifact_receipt_handle: str
+    capture_id: str
     audio_artifact_id: str
     audio_sha256: str
     size_bytes: int
@@ -272,12 +272,19 @@ class RootSelectedAudioIngressObserver:
         if receipt is not proof.receipt:
             raise ChannelIngressDenied("audio consent, device or selected session is no longer current")
         self._validate_receipt(receipt)
+        duration_milliseconds = receipt.size_bytes * 1000 // (16000 * 2)
+        if receipt.size_bytes % 32 or not 1 <= duration_milliseconds <= 60000:
+            raise ChannelIngressDenied("audio capture size does not encode a complete bounded 16 kHz PCM frame")
         return {"schema": 1, "proof_handle": proof.proof_handle, "selection_id": proof.selection_id,
                 "session_handle": receipt.session_handle,
                 "consent_receipt_handle": receipt.consent_receipt_handle,
                 "capture_receipt_handle": receipt.capture_receipt_handle,
-                "audio_artifact_id": receipt.audio_artifact_id, "audio_sha256": receipt.audio_sha256,
+                "audio_artifact_id": receipt.audio_artifact_id,
+                "audio_artifact_receipt_handle": receipt.audio_artifact_receipt_handle,
+                "audio_sha256": receipt.audio_sha256,
                 "size_bytes": receipt.size_bytes, "format_schema_id": receipt.format_schema_id,
+                "session_id": receipt.session_handle, "capture_id": receipt.capture_id,
+                "duration_milliseconds": duration_milliseconds,
                 "controller_identity_digest": proof.controller_identity_digest,
                 "service_generation_digest": proof.service_generation_digest,
                 "issued_monotonic": proof.issued_monotonic, "expires_monotonic": proof.expires_monotonic}
@@ -288,21 +295,12 @@ class RootSelectedAudioIngressObserver:
             self._resolved_receipt_proofs.discard(proof.proof_handle)
 
     def consume_source_receipts(self, proof: object) -> tuple[SourceReceipt, ...]:
-        """Resolve actual signed consent/capture parents exactly once."""
+        """Consume actual root-retained device/consent proofs; no synthetic parents."""
         if not isinstance(proof, _AudioProof) or proof.proof_handle in self._resolved_receipt_proofs:
-            raise ChannelIngressDenied("audio source-receipt closure is not available or was already consumed")
-        if self.source_receipt_resolver is None or not callable(self.source_receipt_validator):
-            raise ChannelIngressDenied("root audio receipt lookup and signature verifier are not enrolled")
+            raise ChannelIngressDenied("audio source proof is unavailable or was already consumed")
         self.validate_audio_observation(self.selection, proof, now_monotonic=self.monotonic())
-        handles = (proof.receipt.consent_receipt_handle, proof.receipt.capture_receipt_handle)
-        rows = self.source_receipt_resolver(handles)
-        if (not isinstance(rows, tuple) or not rows or len(rows) > 64
-                or any(not isinstance(item, SourceReceipt) for item in rows)
-                or len({item.receipt_id for item in rows}) != len(rows)
-                or not all(self.source_receipt_validator(item) for item in rows)):
-            raise ChannelIngressDenied("audio upstream source receipts are absent, invalid or stale")
         self._resolved_receipt_proofs.add(proof.proof_handle)
-        return tuple(sorted(rows, key=lambda item: item.receipt_id))
+        return ()
 
     def _validate_receipt(self, receipt: object) -> None:
         if (not isinstance(receipt, SelectedAudioCaptureReceipt)
