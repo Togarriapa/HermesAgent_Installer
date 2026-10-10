@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import pytest
+from dataclasses import replace
 
 from hermes_installer.authority.active_policy_compiler import (
     ActiveSetupChoiceProjection,
@@ -154,6 +155,146 @@ def test_complete_active_publication_accepts_publishers_deduplicated_input_closu
         claim.observed_root_receipt_handle, *claim.source_receipt_handles)
     assert len(attempts) == 2
     assert journal_record_written[0]["publication_sha256"] == receipt.publication_sha256
+
+
+def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publication(monkeypatch, tmp_path):
+    from hermes_installer.authority import active_policy_compiler as compiler
+    from hermes_installer.authority.native_output_receipts import NativeOutputReservation
+    from hermes_installer.authority.setup_policy_publication import (
+        PolicyPublicationReceiptResolver,
+        RootSetupPublicationReceipt,
+        _SEAL,
+    )
+    import hermes_installer.authority.setup_policy_publication as publication
+
+    original = _claim()
+    output_handles = ("B" * 43, "C" * 43, "D" * 43, "E" * 43, "F" * 43)
+    source_handles = _ordered_unique_receipt_handles(
+        ("A" * 43, *output_handles, "9" * 64), "fixture")
+    original = replace(original, source_receipt_handles=source_handles,
+                       materialization_receipt_handles=output_handles, claim_digest="0" * 64)
+    original = replace(original, claim_digest=hashlib.sha256(_canonical(_manifest(original))).hexdigest())
+    manifest = _manifest(original)
+    receipt = RootSetupPublicationReceipt(
+        1, "Q" * 43, original.transaction_handle, "installer-bootstrap-policy-generation-v1",
+        "a" * 64, tmp_path / "generation", 1, 2, original.compiled_policy_sha256,
+        original.compiled_artifact_catalog_sha256, "b" * 64, "c" * 64,
+        original.expected_selection_catalog_sha256, "d" * 64,
+        (original.observed_root_receipt_handle, *source_handles), "active-committed", _SEAL,
+        original.publication_handle, original.claim_digest, original.prepared_generation_id,
+        original.expected_service_generation_digest, original.runtime_receipt_handles,
+        original.materialization_receipt_handles, ())
+    persisted_claim = {
+        "schema": 1, "publication_handle": original.publication_handle,
+        "claim_digest": original.claim_digest, "manifest": manifest,
+        "policy_sha256": original.compiled_policy_sha256,
+        "artifact_catalog_sha256": original.compiled_artifact_catalog_sha256,
+        "selection_sha256": original.compiled_selection_sha256,
+    }
+    state = {
+        "schema": 1, "publication_handle": original.publication_handle,
+        "claim_digest": original.claim_digest, "transaction_handle": original.transaction_handle,
+        "setup_session_id": original.setup_session_id,
+        "prepared_generation_id": original.prepared_generation_id,
+        "expected_selection_catalog_sha256": original.expected_selection_catalog_sha256,
+        "expected_service_generation_digest": original.expected_service_generation_digest,
+        "policy_sha256": original.compiled_policy_sha256,
+        "artifact_catalog_sha256": original.compiled_artifact_catalog_sha256,
+        "selection_sha256": original.compiled_selection_sha256,
+        "observed_root_receipt_handle": original.observed_root_receipt_handle,
+        "principal_selection_receipt_handle": original.principal_selection_receipt_handle,
+        "runtime_receipt_handles": list(original.runtime_receipt_handles),
+        "materialization_receipt_handles": list(original.materialization_receipt_handles),
+        "publication_receipt_handle": None,
+        "issued_monotonic": original.issued_monotonic,
+        "expires_monotonic": original.expires_monotonic,
+        "state": "claimed",
+    }
+    descriptor = {"inputs": {
+        "source_receipt_handles": list(source_handles),
+        "observed_root_receipt_handle": original.observed_root_receipt_handle,
+        "selection_catalog_sha256": original.selection_catalog_sha256,
+        "choice_projections": [], "publication_handle": original.publication_handle,
+        "claim_digest": original.claim_digest,
+        "prepared_generation_id": original.prepared_generation_id,
+        "expected_service_generation_digest": original.expected_service_generation_digest,
+        "transaction_handle": original.transaction_handle,
+        "runtime_receipt_handles": list(original.runtime_receipt_handles),
+        "materialization_receipt_handles": list(original.materialization_receipt_handles),
+    }}
+    monkeypatch.setattr(PolicyPublicationReceiptResolver, "resolve_current", lambda: receipt)
+    monkeypatch.setattr(publication, "_read_generation_descriptor", lambda *_args: (
+        descriptor, {}, {
+            "plans/bootstrap-policy-v1.json": original.policy_bytes,
+            "catalog/artifacts.json": original.artifact_catalog_bytes,
+        }))
+    monkeypatch.setattr(compiler, "_read_immutable_bytes", lambda path: {
+        ".policy": original.policy_bytes,
+        ".catalog": original.artifact_catalog_bytes,
+        ".selection": _canonical(original.selection_document),
+    }[path.suffix])
+    monkeypatch.setattr(compiler, "_read_json", lambda path: (
+        persisted_claim if path.name.endswith(".claim.json") else dict(state)))
+    state_writes = []
+    monkeypatch.setattr(compiler, "_write_json", lambda _path, value, **_kwargs:
+                        (state.update(value), state_writes.append(dict(value))))
+
+    reservation = NativeOutputReservation(
+        "V" * 43, original.publication_handle, original.claim_digest,
+        original.prepared_generation_id, original.materialization_receipt_handles)
+    recovered_rows = []
+    class Outputs:
+        def resolve_active_compilation_reservation(self, current_receipt):
+            assert current_receipt is receipt
+            return reservation
+
+        def complete_active_compilation(self, reservation_handle, current_receipt, **kwargs):
+            recovered_rows.append((reservation_handle, current_receipt, kwargs))
+            if len(recovered_rows) == 1:
+                raise BootstrapEnrollmentPending("simulated restart finalization interruption")
+            return tuple(type("RecoveredReceipt", (), {"receipt_id": item})()
+                         for item in original.materialization_receipt_handles)
+
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._require_root = lambda: None
+    registry._claim_root = tmp_path
+    registry._states = {}
+    registry.materialization_receipts = Outputs()
+    # Deliberately no in-memory claims/session, as after a compiler restart.
+    registry._claims = {}
+
+    with pytest.raises(BootstrapEnrollmentPending, match="finalization interruption"):
+        registry.complete_active_publication(receipt)
+    # A completion interruption must leave the durable claim recoverable and
+    # must not falsely mark it complete or release its output reservation.
+    assert registry._states == {}
+    assert state["state"] == "claimed"
+    assert state_writes == []
+    assert len(recovered_rows) == 1
+
+    assert registry.complete_active_publication(receipt) is receipt
+    assert registry._claims == {}
+    assert registry._states[original.publication_handle] == "active-committed"
+    assert state["state"] == "active-committed"
+    assert state["publication_receipt_handle"] == receipt.receipt_handle
+    assert recovered_rows == [(
+        reservation.reservation_handle, receipt, {
+            "prepared_generation_id": receipt.prepared_generation_id,
+            "publication_handle": receipt.publication_handle,
+            "claim_digest": receipt.claim_digest,
+        }), (
+        reservation.reservation_handle, receipt, {
+            "prepared_generation_id": receipt.prepared_generation_id,
+            "publication_handle": receipt.publication_handle,
+            "claim_digest": receipt.claim_digest,
+        })]
+    assert len(state_writes) == 1
+    stale_receipt = replace(receipt, publication_sha256="f" * 64)
+    monkeypatch.setattr(PolicyPublicationReceiptResolver, "resolve_current", lambda: stale_receipt)
+    with pytest.raises(BootstrapEnrollmentPending, match="not the current selected publication"):
+        registry.complete_active_publication(receipt)
+    assert len(recovered_rows) == 2
+    assert len(state_writes) == 1
 
 
 def test_caller_constructed_choice_projection_fails_compiler_seal_check():
