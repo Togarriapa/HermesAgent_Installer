@@ -148,6 +148,7 @@ _COMPOSIO_POLICY = {
 _GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
+_PREPARED_RELEASE_MEMBER_SEAL = object()
 
 
 def _fail(message: str) -> None:
@@ -237,6 +238,36 @@ class RootReleaseModuleReceipt:
     def read_current(self) -> bytes:
         """Read the exact installed module through the held release FD."""
         return self._session._read_release_member_receipt(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedReleaseMemberReceipt:
+    """Held-release source membership for code loaded later by a managed worker.
+
+    This proves release membership and bytes only. It deliberately does not
+    claim that the current setup actor imported the module; worker loader
+    evidence is a separate join.
+    """
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    release_commit: str
+    deployment_receipt_sha256: str
+    source_receipt_handle: str
+    setup_session_id: str = field(repr=False)
+    prepared_generation_id: str = field(repr=False)
+    _receipt_seal: object = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._receipt_seal is not _PREPARED_RELEASE_MEMBER_SEAL:
+            raise TypeError("prepared release members are minted by the current root setup session")
+
+    def read_current(self) -> bytes:
+        return self._session._read_prepared_release_member(self)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -462,6 +493,41 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("current setup identity is not owned by this setup session")
         return self._session.resolve_current_setup_identity()
 
+    def resolve_current_setup_choice_signer(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup-choice signer is not owned by this session")
+        return self._session.resolve_current_setup_choice_signer()
+
+    def resolve_setup_choice_registry(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup-choice registry is not owned by this session")
+        return self._session._root_setup_choice_registry()
+
+    def resolve_current_setup_choice(self, selection_handle: str, expected_purpose: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.resolve_current_setup_choice(selection_handle, expected_purpose)
+
+    def record_durable_setup_choice(self, actual_root_tty_choice: Any) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.record_durable_setup_choice(actual_root_tty_choice)
+
+    def resolve_current_release_receipt_handle(self) -> str:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("held installer release is not owned by this session")
+        return self._session.resolve_current_release_receipt_handle()
+
+    def resolve_current_setup_session_handle(self) -> RootSetupSessionHandle:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("setup session is not owned by this binding")
+        return self._session.resolve_current_setup_session_handle()
+
+    def resolve_durable_memory_enablement_choice_handle(self, choice_handle: str) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable memory choice is not owned by this session")
+        return self._session.resolve_durable_memory_enablement_choice_handle(choice_handle)
+
     def observe_existing_model_selection(self, private_profile_selection_handle: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("existing model selection is not owned by this setup session")
@@ -590,6 +656,11 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native target source modules are not owned by this setup session")
         return self._session._resolve_prepared_native_target_module_receipts()
+
+    def resolve_prepared_worker_role_module_receipts(self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("worker role source receipts are not owned by this setup session")
+        return self._session._resolve_prepared_worker_role_module_receipts()
 
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
@@ -3402,6 +3473,7 @@ class RootInitialSetupAggregate:
         factory = RootBootstrapRuntimeFactory(
             _release=self.release, _actor=self.actor,
             _initial_compilation_registry=self.initial_registry,
+            _authority_key_registry=self.key_registry,
             _initial_principal_registry=self.principal_registry,
             _initial_identity_observer=self.identity_observer,
             _initial_identity_intake=self.identity_intake)
@@ -3438,6 +3510,7 @@ class RootBootstrapRuntimeFactory:
 
     def __init__(self, *, _release: Any | None = None, _actor: Any | None = None,
                  _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None,
+                 _authority_key_registry: Any | None = None,
                  _initial_principal_registry: Any | None = None,
                  _initial_identity_observer: Any | None = None,
                  _initial_identity_intake: Any | None = None,
@@ -3466,6 +3539,16 @@ class RootBootstrapRuntimeFactory:
                      or _initial_compilation_registry.actor is not _actor)):
             raise BootstrapEnrollmentPending("initial publication registry is not bound to this held release actor")
         self._initial_compilation_registry = _initial_compilation_registry
+        self._authority_key_registry = _authority_key_registry
+        if _authority_key_registry is not None:
+            if (_initial_compilation_registry is None
+                    or getattr(_authority_key_registry, "initial_compilation_registry", None)
+                       is not _initial_compilation_registry
+                    or getattr(_authority_key_registry, "release", None) is not _release
+                    or not callable(getattr(_authority_key_registry,
+                                            "resolve_normal_setup_choice_signer", None))):
+                raise BootstrapEnrollmentPending(
+                    "authority-key signer registry is not bound to the transferred release and initial setup")
         if ((_initial_principal_registry is None)
                 != (_initial_identity_observer is None)
                 or (_initial_principal_registry is None)
@@ -3532,6 +3615,7 @@ class RootBootstrapRuntimeFactory:
         self._seal = secrets.token_hex(32)
         self._native_assembly_seal = object()
         self._sessions: dict[str, RootBootstrapSession] = {}
+        self._setup_choice_signers: dict[str, Any] = {}
 
     @classmethod
     def from_installed(cls) -> "RootBootstrapRuntimeFactory":
@@ -3608,6 +3692,24 @@ class RootBootstrapRuntimeFactory:
             session._adopted_identity_receipt_handle = identity_receipt_handle
             session._adopted_principal_registry = normal_principal_registry
             session._adopted_principal_selection_handle = principal_selection_handle
+            # Re-open the exact stage-zero key receipt and adopt it against the
+            # consumed publication handoff. Durable setup choices never use the
+            # process-local session seal as a signer.
+            key_registry = self._authority_key_registry
+            if key_registry is None:
+                raise BootstrapEnrollmentPending(
+                    "normal setup lacks the transferred stage-zero authority-key registry")
+            adopted_handoff = self._initial_compilation_registry.resolve_adopted_handoff(handle)
+            key_receipt = key_registry.resolve_selected_key_for_compilation_session(
+                adopted_handoff.compilation_session_handle)
+            signer = key_registry.adopt_for_normal_setup(
+                key_receipt.receipt_handle,
+                adopted_handoff.compilation_session_handle,
+                handle,
+                adopted_handoff.handoff_handle,
+            )
+            session._setup_choice_signer = signer
+            self._setup_choice_signers[handle.session_id] = signer
             return session
         except Exception:
             self.session_store.close_session(handle)
@@ -3730,6 +3832,10 @@ class RootBootstrapSession:
         self._adopted_identity_receipt_handle: str | None = None
         self._adopted_principal_registry: Any | None = None
         self._adopted_principal_selection_handle: str | None = None
+        self._setup_choice_signer: Any | None = None
+        self._setup_choice_registry: Any | None = None
+        self._durable_memory_choice_handles: dict[str, str] = {}
+        self._release_receipt_handle: str | None = None
         self._native_output_receipts: Any | None = None
         self._pm_runtime_registry: Any | None = None
         self._pm_runtime_handle: str | None = None
@@ -3758,6 +3864,7 @@ class RootBootstrapSession:
         self._native_assembly_definitions: dict[str, RootNativeAssemblyDefinitions] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._prepared_release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
+        self._prepared_release_file_receipts: dict[str, RootPreparedReleaseMemberReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
         self._native_schema_receipts: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
@@ -3781,6 +3888,87 @@ class RootBootstrapSession:
         if self._last_receipt is None or self._last_receipt.state != "prepared":
             raise BootstrapEnrollmentPending("selected installation binding requires committed prepared custody")
         return self._selected_installation
+
+    def resolve_current_setup_choice_signer(self) -> Any:
+        self._check_live()
+        registry = self._factory._authority_key_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("normal setup has no adopted authority-key signer registry")
+        try:
+            signer = registry.resolve_normal_setup_choice_signer(self._handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("durable root setup-choice signer is stale or unavailable") from None
+        if (self._setup_choice_signer is not None
+                and getattr(self._setup_choice_signer, "key_id", None) != getattr(signer, "key_id", None)):
+            raise BootstrapEnrollmentPending("normal setup-choice signer key changed after adoption")
+        self._setup_choice_signer = signer
+        return signer
+
+    def _root_setup_choice_registry(self) -> Any:
+        self._check_live()
+        self.resolve_current_setup_choice_signer()
+        if self._setup_choice_registry is None:
+            try:
+                from .root_setup_choices import RootSetupChoiceRegistry
+                self._setup_choice_registry = RootSetupChoiceRegistry.from_root_setup(
+                    self._factory._release, self._factory._actor, self._factory.session_store,
+                    self._current_root_journal_selection(), self._setup_choice_signer)
+            except Exception:
+                raise BootstrapEnrollmentPending("durable root setup-choice registry is not composed") from None
+        return self._setup_choice_registry
+
+    def resolve_current_setup_choice(self, selection_handle: str, expected_purpose: str) -> Any:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.resolve_current_setup_choice(selection_handle, expected_purpose)
+        except Exception:
+            raise BootstrapEnrollmentPending("durable setup choice is absent, stale, or has another purpose") from None
+
+    def record_durable_setup_choice(self, actual_root_tty_choice: Any) -> str | None:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.record_observed_choice(actual_root_tty_choice, self._selected_installation)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY choice could not be durably signed and retained") from None
+
+    def resolve_current_release_receipt_handle(self) -> str:
+        self._check_live()
+        self._factory._actor.verify_current(self._factory._release)
+        self._factory._release.verify_current()
+        initial = self._factory._initial_compilation_registry
+        if initial is None:
+            raise BootstrapEnrollmentPending("normal setup has no adopted release receipt lineage")
+        try:
+            handoff = initial.resolve_adopted_handoff(self._handle)
+            source_session = handoff._initial_session
+            if (not isinstance(source_session, RootInitialCompilationSession)
+                    or source_session.compilation_session_handle != handoff.compilation_session_handle
+                    or source_session.verified_release_receipt_handle == ""):
+                raise ValueError("adopted handoff has no exact release receipt lineage")
+            value = source_session.verified_release_receipt_handle
+        except Exception:
+            raise BootstrapEnrollmentPending("current normal session does not resolve its original held release receipt") from None
+        if self._release_receipt_handle is not None and self._release_receipt_handle != value:
+            raise BootstrapEnrollmentPending("adopted installer release receipt changed")
+        self._release_receipt_handle = value
+        return value
+
+    def resolve_current_setup_session_handle(self) -> RootSetupSessionHandle:
+        self._check_live()
+        live = self._factory.session_store._live(self._handle)
+        proof = self._factory.session_store._proof(live)
+        if (proof.setup_session_id != self._handle.session_id
+                or proof.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("current setup session binding changed")
+        return self._handle
+
+    def resolve_durable_memory_enablement_choice_handle(self, choice_handle: str) -> str | None:
+        self._check_live()
+        choice = self.resolve_current_memory_service_enablement_choice(choice_handle)
+        durable = self._durable_memory_choice_handles.get(choice_handle)
+        if choice.enabled and not durable:
+            raise BootstrapEnrollmentPending("memory service choice has not been durably signed")
+        return durable
 
     def resolve_adopted_principal_selection(self) -> Any:
         """Return the freshly re-observed principal bound to this normal session."""
@@ -3898,9 +4086,6 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("existing model selection requires the current empty prepared generation")
         if not isinstance(private_profile_selection_handle, str) or not private_profile_selection_handle:
             raise BootstrapEnrollmentPending("existing model selection requires a root-issued private-profile handle")
-        authority_service = self._factory._authority_service
-        if authority_service is None:
-            raise BootstrapEnrollmentPending("root model-store observation awaits the same-graph AuthorityService binding")
         profile = self.resolve_current_private_profile(
             private_profile_selection_handle, "existing-model-selection")
         if (profile.profile_id != "hermes-agent-native-v1"
@@ -3913,7 +4098,9 @@ class RootBootstrapSession:
         if self._model_store_filesystem_registry is None:
             self._model_store_filesystem_registry = RootOwnedFilesystemSelectionRegistry.from_root_setup(
                 self._selected_installation, self._root_private_profile_registry(),
-                self._selected_installation, self._current_root_journal_selection(), authority_service)
+                self._selected_installation, self._current_root_journal_selection(),
+                self._selected_installation.resolve_setup_choice_registry(),
+                self._selected_installation.resolve_current_setup_choice_signer())
         root_selection = self._model_store_filesystem_registry.observe_existing_model_store(
             private_profile_selection_handle)
         try:
@@ -4011,12 +4198,15 @@ class RootBootstrapSession:
             signature = hmac.new(self._seal.encode("ascii"), _canonical(signed), hashlib.sha256).hexdigest()
             choice = RootSelectedMemoryServiceEnablementChoice(
                 **signed, signature=signature, _session_seal=self._seal)
-            directory = self._factory.resolver.journal_root / "memory-service-enable-choices"
-            _ensure_root_directory(directory)
-            _atomic_root_file(directory / f"{handle}.json",
-                              _canonical({**signed, "signature": signature}), 0o600)
             self._memory_enablement_choices[handle] = choice
             self._memory_enablement_tty_proofs[handle] = proof
+            durable_handle = self._selected_installation.record_durable_setup_choice(choice)
+            if enabled and not durable_handle:
+                self._memory_enablement_choices.pop(handle, None)
+                self._memory_enablement_tty_proofs.pop(handle, None)
+                raise BootstrapEnrollmentPending("enabled memory configuration was not durably signed")
+            if durable_handle is not None:
+                self._durable_memory_choice_handles[handle] = durable_handle
             proof = None
             return self.resolve_current_memory_service_enablement_choice(handle)
         finally:
@@ -5598,6 +5788,56 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return tuple(output)
 
+    def _resolve_prepared_worker_role_module_receipts(
+            self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        """Retain release-pinned worker role modules without claiming actor imports.
+
+        The role modules are loaded in their eventual managed worker. Their
+        membership is checked here; a later worker-start receipt must prove the
+        actual loader closure before any role becomes executable.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("worker role modules require current empty prepared custody")
+        pins = (
+            ("src/hermes_installer/native_invocations.py",
+             "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226"),
+            ("src/hermes_installer/native_boundary.py",
+             "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb"),
+            ("src/hermes_installer/authority/native_source_definitions.py",
+             "79734566262e26c1a3e7dcb857d87e9f42743a5d579422739c8abb78276f7c33"),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootPreparedReleaseMemberReceipt] = []
+        for relative_path, digest in pins:
+            rows = [row for row in release.files
+                    if row.relative_path == relative_path and row.sha256 == digest
+                    and "module" in row.roles and row.artifact_id in plan.allowed_artifact_ids]
+            if len(rows) != 1:
+                raise BootstrapEnrollmentPending(
+                    "worker role module is not uniquely pinned in the selected installed release")
+            row = rows[0]
+            prior = next((item for item in self._prepared_release_file_receipts.values()
+                          if item.artifact_id == row.artifact_id
+                          and item.prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootPreparedReleaseMemberReceipt(
+                    row.artifact_id, row.relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, prepared.generation_id,
+                    _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self)
+                self._prepared_release_file_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Mint one of the fixed local-result schema receipts from the held root catalog.
@@ -6174,6 +6414,44 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return bytes(content)
 
+    def _read_prepared_release_member(
+            self, receipt: RootPreparedReleaseMemberReceipt) -> bytes:
+        self._check_live()
+        if (type(receipt) is not RootPreparedReleaseMemberReceipt
+                or receipt._session is not self
+                or receipt.setup_session_id != self._handle.session_id
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or self._prepared_release_file_receipts.get(receipt.source_receipt_handle) is not receipt):
+            raise BootstrapEnrollmentPending("prepared release member is not retained by this live setup session")
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or prepared.generation_id != receipt.prepared_generation_id):
+            raise BootstrapEnrollmentPending("prepared release member is stale for current custody")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
+        if (row is None or row.artifact_id not in plan.allowed_artifact_ids
+                or "module" not in row.roles or row.relative_path != receipt.relative_path
+                or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
+                or release.release_commit != receipt.release_commit
+                or release.deployment_receipt_sha256 != receipt.deployment_receipt_sha256):
+            raise BootstrapEnrollmentPending("prepared release member differs from its fixed receipt")
+        fd = release.open_file(receipt.artifact_id)
+        try:
+            content = bytearray()
+            while len(content) <= receipt.size_bytes:
+                block = os.read(fd, min(64 * 1024, receipt.size_bytes + 1 - len(content)))
+                if not block:
+                    break
+                content.extend(block)
+        finally:
+            os.close(fd)
+        if len(content) != receipt.size_bytes or hashlib.sha256(content).hexdigest() != receipt.sha256:
+            raise BootstrapEnrollmentPending("prepared release member bytes changed")
+        actor.verify_current(release)
+        return bytes(content)
+
     def _revalidate_native_assembly_selection(
             self, selection: RootNativeBootstrapAssemblySelection) -> None:
         """Revalidate a retained selection; no caller-created DTO can pass."""
@@ -6621,7 +6899,8 @@ __all__ = [
     "RootInitialCompilationRegistry", "RootInitialCompilationSession",
     "RootInitialPublicationHandoff", "RootInitialSetupAggregate",
     "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember", "RootReleaseModuleReceipt",
-    "RootInstalledReleaseMemberReceipt", "RootSelectedApplicationQualificationChoice",
+    "RootPreparedReleaseMemberReceipt", "RootInstalledReleaseMemberReceipt",
+    "RootSelectedApplicationQualificationChoice",
     "RootApplicationQualificationConsent",
     "RootApplicationSetupControllerBinding",
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",
