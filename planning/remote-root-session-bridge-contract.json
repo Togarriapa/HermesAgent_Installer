@@ -814,5 +814,74 @@
       "runtime_boundary": "This source transformation receipt does not prove a compiled Linux ARM64 Xpra executable, dependencies, Xvfb/Xauth sandbox, namespace/network, startup or native Desktop function. Exact actual selected runtime/build/package-set and process/kernel/overlay receipt proof still required before launch; do not use source tar/module version as executable SHA or mark acceptance. Broker owns exact static source catalog row and held derived output publication; remote owner produces actual reviewed transformation receipts."
     }
   },
-  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only."
+  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only.",
+  "inert_kernel_templates_v122": {
+    "schema": 1,
+    "id": "loopback-inert-kernel-templates-v1",
+    "requirements": [
+      "HI-T09",
+      "HI-T13",
+      "AC13",
+      "AC14",
+      "AC15"
+    ],
+    "supersedes": "v97 lo-only interface-name assertion only; all actual private-loopback isolation/receipt/kernel/nft/role/port obligations preserved",
+    "owner_module": "hermes_installer.authority.private_loopback_network",
+    "source_review": {
+      "primary": "https://github.com/torvalds/linux/blob/master/net/ipv4/ip_tunnel.c",
+      "facts": "Kernel fallback tunnel lookup requires IFF_UP; tunnel changes require namespace CAP_NET_ADMIN; fallback device deletion is explicitly restricted. This source explains inert fallback existence, not a proof any deployed kernel/namespace is protected.",
+      "diagnostic": "Owner observed LinuxKit7.0.14 disposable namespace loopback plus nine DOWN/unspecified tunnel templates. Current diagnostic lacks nft capabilities and proves no production policy/subject lease."
+    },
+    "allowed_optional_templates": {
+      "tunl0": "ipip",
+      "gre0": "gre",
+      "gretap0": "gretap",
+      "erspan0": "erspan",
+      "ip_vti0": "vti",
+      "ip6_vti0": "vti6",
+      "sit0": "sit",
+      "ip6tnl0": "ip6tnl",
+      "ip6gre0": "ip6gre"
+    },
+    "invariant": "Fresh retained CLONE_NEWNET kernel receipt: lo is the only administratively enabled/addressed usable interface. Optional subset of the exact named/kind fallback templates may exist only if all detailed invariants pass. Name alone never permits interface. No required template count or fixed ifindex across kernels.",
+    "template_fields": [
+      "ifindex",
+      "name",
+      "kind",
+      "flags",
+      "operstate",
+      "master_ifindex",
+      "link_ifindex",
+      "local_endpoint",
+      "remote_endpoint",
+      "address_records",
+      "route_records"
+    ],
+    "template_checks": [
+      "Unique positive actual ifindex/name with exact permitted name-kind pair, same held namespace and actual current kernel source/runtime receipt.",
+      "IFF_UP absent; operstate DOWN; no master, bridge membership, external lower link, endpoint/collect-metadata configuration or nonzero tunnel key.",
+      "No IP address, neighbour endpoint or route referencing template, no default/non-loopback route; local/remote unspecified or all-zero only.",
+      "No veth/TUN/TAP/physical interface, unreviewed kind, external route/address or namespace linkage. No host module mutation/deletion needed to satisfy invariant.",
+      "Subject has no CAP_NET_ADMIN/CAP_NET_RAW/CAP_SYS_ADMIN/module capability, no /dev/net/tun or namespace handle mutation access; fixed sandbox/device/AF/protocol restrictions retained.",
+      "Actual installed nft rules default-drop input/output/forward for both IP families and permit only exact protected role/UID/loopback/ports; any packet through non-lo interface is denied, even if kernel creates template later.",
+      "Before subject attachment, and every root currentness renewal/start, re-read link/address/route/nft/capability closure from exact held namespace. Unexpected transition invalidates lease and stops owned subjects."
+    ],
+    "proof_fields": [
+      "kernel_receipt_handle",
+      "namespace_device",
+      "namespace_inode",
+      "link_state_sha256",
+      "address_state_sha256",
+      "route_state_sha256",
+      "nft_ruleset_sha256",
+      "subject_capability_receipt_handles",
+      "observed_monotonic",
+      "expires_monotonic"
+    ],
+    "digest": "Canonical sorted typed current rtnetlink records, including detailed template fields, under existing root namespace receipt; raw ip output or caller JSON is not producer authority. Existing <=30s lease and active mutation/revocation currentness retained.",
+    "tasks": [
+      "HI-T122.1: network owner implement exact inert fallback invariant and retained typed root link/address/route/kernel/nft/subject proof.",
+      "HI-T122.2: kernel-capable isolated test proves known DOWN templates accepted only with actual nft/capability closure, UP/address/key/route/master/unknown/veth mutation denied. Missing privileges leaves test and live acceptance pending."
+    ]
+  }
 }

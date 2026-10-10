@@ -685,3 +685,12 @@ The system SHALL record v117 finite local qualification consent in the same expl
 #### Scenario: Qualification attempts provider egress
 - **WHEN** a selected fixture attempts an unrelated endpoint or metered operation
 - **THEN** qualification consent denies that effect.
+
+### Requirement: Current memory service enablement and active prestart closure
+
+The installer SHALL resolve selected memory service lifecycle enablement and actual active prestart artifact closure under v119, independently of capture consent and expired setup authorization.
+
+#### Scenario: Liveness without semantic evidence
+
+- **WHEN** a selected memory process passes only its liveness/status route
+- **THEN** the installer records that exact status and leaves semantic memory functionality pending until actual selected capability operations and private route gates are verified

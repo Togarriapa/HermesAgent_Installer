@@ -495,5 +495,119 @@
     "memory_factory": "RootPrivateMemoryEngine.from_selected_routes(selected_routes,private_provider_dispatcher); engine registry key(profile_id,namespace_id,provider). Implements existing extract(text,context,timeout,cancelled)->list[str], embed(facts,context,timeout,cancelled)->list[list[float]]. Root dispatcher checks actual current job consent/source ancestry/private route capability/model/dimensions/endpoint on EVERY request and retry then fresh effect; extraction output inherits private source closure and embedding does not declassify.",
     "lifecycle": "Configured external owned endpoint adapter never manages remote server startup. Local engine starts only through exact v64/v80 lifecycle_binding and preinstalled artifact/config/runtime receipts; no unpinned vllm serve, @latest, lazy iii/OpenViking/embedding install or copied LLM secrets. OpenViking /ready remains readiness only; AgentMemory /agentmemory/livez remains liveness only. Selected semantic extraction/retrieval proof is separate.",
     "status": "Protocol/producer obligations now exact, no private endpoint/model/account currently proven. Original required engine flows/GLM5.2/semantic memory and all18 acceptance stay open."
+  },
+  "active_lifecycle_closure_v119": {
+    "schema": 1,
+    "id": "memory-lifecycle-active-closure-v1",
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK01",
+      "HI-T03"
+    ],
+    "owner": "hermes_installer.authority.memory_lifecycle",
+    "scope": "Original selected memory process lifecycle only; capture, extraction/embedding and semantic functionality remain separate actual gates.",
+    "enablement": {
+      "source": "Actual root authenticated installer selected service enablement choice already describing exact provider/backend variant/private profile/namespace/service and fixed start operation. Same explicit enable choice records lifecycle purpose; no new repeated approval and no inferred choice from installed bytes, account login, capture consent or non-null handle.",
+      "type": "RootMemoryServiceEnablementSelection",
+      "fields": [
+        "selection_handle",
+        "choice_observation_id",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "provider",
+        "backend_variant",
+        "service_enrollment_id",
+        "service_generation",
+        "memory_owner_generation",
+        "start_operation_id",
+        "policy_revision",
+        "selection_digest",
+        "state",
+        "revocation_epoch"
+      ],
+      "state": "enabled|revoked; default absent disabled",
+      "registry": "Existing root setup choice registry retains source observation; active publisher stores digest-covered memory service enablement selection linkage. RootMemoryServiceLifecycle resolves current selected enablement through root registry before start/restart, not through RootMemoryCaptureConsentRegistry. No separate capture prompt just to start service.",
+      "permissions": "Finite start/status/stop/manual restart and selected bounded restart policy only, zero additional budget; no capture/history scan/extraction/embed/provider egress/account/model install or lazy download. Stop-owned cleanup remains available after revocation; new start/restart denied."
+    },
+    "prestart": {
+      "type": "RootMemoryPrestartReceipt",
+      "producer": "RootMemoryPrestartReceiptRegistry.from_root_runtime(active_bindings,artifact_catalog,managed_process_custody,root_journal).observe_selected_prestart(memory_enrollment_id)->opaque receipt handle",
+      "resolver": "resolve_selected_prestart(receipt_handle,memory_enrollment_id)->RootMemoryPrestartReceipt; root membership/signature/current closure independently rechecked",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "memory_enrollment_id",
+        "provider",
+        "backend_variant",
+        "profile_id",
+        "namespace_id",
+        "principal_id",
+        "service_enrollment_id",
+        "service_generation",
+        "enclosing_service_generation_digest",
+        "memory_owner_generation",
+        "start_operation_id",
+        "operation_recipe_sha256",
+        "artifact_records",
+        "config_records",
+        "source_revision",
+        "runtime_receipt_handles",
+        "enablement_selection_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "artifact_record_fields": [
+        "artifact_id",
+        "sha256",
+        "size_bytes",
+        "role",
+        "relative_member_path",
+        "device",
+        "inode",
+        "uid",
+        "gid",
+        "mode"
+      ],
+      "source": "Exact active ProtectedEnrollmentCatalog process profile/operation recipe and ArtifactCatalog/runtime receipt getter; actual executable/member bytes re-opened nofollow, held file identities and digests verified; all child artifacts/config/engine/model resources referenced by selected recipe. Relative member paths resolved only through selected held roots; source archive hash never executable hash.",
+      "persistent_join": "lifecycle_binding.prestart_receipt_handles refer to protected registry records retaining artifact closure selection, not expiring setup fetch handles. Active publisher validates selected closure and stores durable parent linkage; resolver issues fresh <=30s current snapshot under enclosing active generation and owner epoch. Record may survive setup, but signature alone cannot bypass changed artifacts/current generation/revocation. No prerequisite live setup authorization after activation.",
+      "missing": "Legacy opaque handles without retained active artifact/recipe/config/runtime proof fail closed with exact missing artifact/selection, never promote arbitrary strings. No active row inserted merely to satisfy prestart; actual installed receipt producer and active publication remain required."
+    },
+    "semantic_readiness": {
+      "type": "RootMemorySemanticReadinessReceipt",
+      "producer": "RootMemorySemanticReadinessRegistry.from_root_runtime(active_bindings,managed_process_custody,connector_registry,root_journal).observe_selected_readiness(memory_enrollment_id,owned_process_handle)->opaque receipt handle",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "memory_enrollment_id",
+        "provider",
+        "backend_variant",
+        "profile_id",
+        "namespace_id",
+        "service_enrollment_id",
+        "service_generation",
+        "enclosing_service_generation_digest",
+        "memory_owner_generation",
+        "process_identity_digest",
+        "prestart_receipt_handle",
+        "operation_receipt_handles",
+        "request_schema_ids",
+        "result_schema_ids",
+        "readiness_kind",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "source": "Execute only existing selected source-backed fixed readiness/capability routes through current managed namespace/process and bounded serializers. Bind actual request/result receipt handles and root validator schema/artifact identity; no caller boolean or status stdout promotes readiness.",
+      "readiness_kind": "liveness|backend-semantic; consumers require exact needed kind",
+      "rule": "OpenViking /ready and AgentMemory /agentmemory/livez remain process/backend status, never extraction/retrieval proof. Backend-semantic requires genuine existing selected remember/search or corresponding capability operations validated by exact provider protocol; fixture payload scoped to installer-owned isolated qualification namespace and authorized finite workflow, cleanup where actually supported. No fabricated route or unsupported deletion. If no source-backed semantic operation exists, backend-semantic remains unavailable with the exact missing operation.",
+      "privacy": "No user transcript/history is a readiness fixture. Model/provider operations require actual independent private route/model deployment/consent and budget gate; service enablement is not that consent.",
+      "currentness": "<=30s fresh snapshot and current selected process PIDFD/cgroup/profile/generation/namespace/owner/enablement. Process replacement revokes prior receipt; stop/start does not rewrite old immutable receipts."
+    },
+    "tasks": [
+      "SK-T119.1: lifecycle authority owner implement active closure prestart registry and current semantic readiness registry; no live setup authorization dependency.",
+      "SK-T119.2: factory/active publisher preserve actual same-choice purpose-specific memory service enablement and selected receipt closure linkage.",
+      "SK-T119.3: test stale/revoked enablement, replaced artifact/process, setup expiry, liveness-versus-semantic distinction, unknown engine/route and private provider denial; actual engine semantics/ARM/account acceptance open."
+    ]
   }
 }
