@@ -685,6 +685,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("PM uv tool selection is not owned by this setup session")
         return self._session._resolve_current_pm_uv_tool()
 
+    def resolve_current_pm_uv_tool_projection(self) -> Any:
+        """Resolve the official PM uv executable as a held current receipt FD."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("PM uv tool projection is not owned by this setup session")
+        return self._session._resolve_current_pm_uv_tool()
+
     def observe_memory_service_enablement(
             self, provider: str, backend_variant: str) -> "RootSelectedMemoryServiceEnablementChoice":
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -6030,6 +6036,7 @@ class RootBootstrapSession:
                 current_guard=current_guard,
                 catalog=self._factory._catalog,
                 artifact_root=self._factory._receipt_registry.artifact_root,
+                artifact_receipts=self._factory._receipt_registry,
             )
             provisioner = RootPMRuntimeProvisioner(
                 setup_session=self, artifact_fetcher=fetcher,
