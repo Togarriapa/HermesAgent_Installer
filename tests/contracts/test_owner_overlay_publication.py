@@ -14,6 +14,11 @@ from hermes_installer.authority.owner_overlay_publication import (
     _mint_published_local_owner_adoption,
     validate_owner_overlay_adoption_row,
 )
+from hermes_installer.authority.local_resource_effects import (
+    LocalProfileOverlayEffectsDenied,
+    RootActiveLocalOwnerPrincipalRegistry,
+    RootCurrentActiveLocalOwnerPrincipalSnapshot,
+)
 
 
 def _projection():
@@ -130,3 +135,23 @@ def test_projection_rejects_altered_or_incomplete_publication_facts(mutation):
     # Even a recomputed outer digest cannot repair contradictory source facts.
     with pytest.raises((TypeError, ValueError)):
         validate_owner_overlay_adoption_row(row)
+
+
+def test_active_local_owner_registry_rejects_untyped_runtime():
+    with pytest.raises(LocalProfileOverlayEffectsDenied):
+        RootActiveLocalOwnerPrincipalRegistry.from_root_runtime(object())
+
+
+def test_active_local_owner_snapshot_cannot_be_forged():
+    fields = dict(
+        snapshot_handle="s" * 40, identity_kind="linux-local-owner-v1",
+        source_choice_handle="c" * 40, source_choice_sha256="1" * 64,
+        choice_epoch=1, revocation_epoch=0, owner_account_binding_sha256="2" * 64,
+        principal_id="principal", profile_id="profile", namespace_id="namespace",
+        service_uid=1001, service_gid=1001, profile_generation="generation",
+        service_generation_digest="3" * 64, active_publication_receipt_handle="r" * 40,
+        owner_instance="boot", observed_monotonic=1.0, expires_monotonic=2.0,
+        adoption_sha256="4" * 64, _seal=object(), _issuer=object(),
+    )
+    with pytest.raises(TypeError):
+        RootCurrentActiveLocalOwnerPrincipalSnapshot(**fields)
