@@ -534,6 +534,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("active policy publication is not owned by this setup session")
         return self._session._resolve_current_active_policy_publication()
 
+    def resolve_current_active_policy_predecessor(self, publication_handle: str) -> str:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("active policy claim is not owned by this setup session")
+        return self._session._resolve_current_active_policy_predecessor(publication_handle)
+
     def resolve_adopted_principal_selector(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("principal selector is not owned by this setup session")
@@ -6100,6 +6105,14 @@ class RootBootstrapSession:
         if receipt.state != "active-committed":
             raise BootstrapEnrollmentPending("current root publication is not active")
         return receipt
+
+    def _resolve_current_active_policy_predecessor(self, publication_handle: str) -> str:
+        registry = self._resolve_current_active_policy_compilation_registry()
+        try:
+            return registry.resolve_current_active_policy_predecessor(publication_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending(
+                "active publication handle has no current root-verified predecessor") from None
 
     def resolve_runtime_receipt(self, role: str, receipt_handle: str,
                                 generation: str) -> RootRuntimeArtifactReceipt:

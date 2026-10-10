@@ -72,6 +72,19 @@ def test_active_claim_hashes_keep_predecessor_and_compiled_selection_domains_sep
     assert manifest["selection_catalog_sha256"] == claim.selection_catalog_sha256
 
 
+def test_predecessor_resolver_returns_only_the_verified_retained_claim_value():
+    claim = _claim()
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._claims = {claim.publication_handle: claim}
+    verified = []
+    registry.verify_current_active_policy_claim = lambda actual: verified.append(actual) or actual
+    assert registry.resolve_current_active_policy_predecessor(claim.publication_handle) == "7" * 64
+    assert verified == [claim]
+
+    with pytest.raises(BootstrapEnrollmentPending, match="claim is absent"):
+        registry.resolve_current_active_policy_predecessor("Z" * 43)
+
+
 def test_mutated_selection_output_is_rejected_before_claim_can_be_published():
     claim = _claim()
     claim.selection_document["plans"][0]["sha256"] = "0" * 64
