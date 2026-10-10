@@ -1076,3 +1076,48 @@ The installer SHALL apply only the root_setup source tuple in planning/bootstrap
 #### Scenario: Previous root setup source pin differs
 - **WHEN** the previous expected tuple rejects committed reconfirmation bytes
 - **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Current selected Jarvis delegate home custody
+The installer SHALL bind each protected selected delegate task to its current held owned home through planning/jarvis-selected-task-home-custody-v213.json and the existing consumed task effect grant.
+
+#### Scenario: Root discovers inaccessible delegate home
+- **WHEN** root discovery succeeds but serviceUID cannot traverse private host ancestors
+- **THEN** custody mounts only the held selected home at fixed/hermes and verifies actual unprivileged native load without loosening root permissions or granting primary rights
+
+#### Scenario: Home or authorization changes
+- **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
+- **THEN** task start fails closed and sibling/primary homes remain inaccessible
+
+
+## ADDED Requirements
+
+### Requirement: Source-owned HA metadata and whole context read
+The installer SHALL apply v210 complete metadata rules for selected filters and separately admit explicit whole GetLiveContext permission only through actual root selection, exact current source/schema/credential grants and genuine bounded functional MCP result. It SHALL preserve HA exposure policy and use only fixed authenticated TLS/DNS-pinned metadata WS reads with the reviewed installer-isolated dependency.
+
+#### Scenario: Partial or permission-limited metadata
+- **WHEN** registry aliases/current explicit exposure are incomplete, expose_new is true or metadata admin permission is unavailable
+- **THEN** no unique selected-filter proof is issued and exposure policy remains unchanged; the user may separately select the whole source-approved GetLiveContext resource
+
+#### Scenario: Actual whole-context semantic read
+- **WHEN** informed rootTTY whole-context selection produces a one-use exact Assist GetLiveContext({}) grant and authentic bounded nonempty response
+- **THEN** only its genuine whole-context membership and functional receipt are recorded, with later membership changes denied before worker data release and no entity-ID/admin/control authority inferred
+
+## ADDED Requirements
+
+### Requirement: Published home facts and live task proof separation
+The installer SHALL use the corrected field split in planning/jarvis-published-home-live-task-split-v214.json without fabricating future task enrollments in published source-home rows.
+
+#### Scenario: Compile home crosswalk before tasks exist
+- **WHEN** verified source homes are published before task admission
+- **THEN** only actual source/home/runtime/principal/namespace facts are compiled and live task/context/process/resource facts are resolved later through genuine current grants
+
+## ADDED Requirements
+
+### Requirement: Distinct selected source profile and service identity
+The installer SHALL use planning/jarvis-source-profile-task-identity-v215.json to distinguish verified source_profile_id from actual protected service profile_id and derive task home leases from retained typed live admissions.
+
+#### Scenario: Delegate source differs from task service profile
+- **WHEN** a current protected backend selects an internal source profile
+- **THEN** source_profile_id resolves exact current owned home while service profile/principal/namespace/grant checks remain unchanged and no additional serviceprofile identity is fabricated

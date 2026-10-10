@@ -63,3 +63,6 @@ Native registration projection v99: `plans/amendments/2026-10-10-native-registra
 
 - [ ] MC-R0101.3 HA/factory/consent/parser/broker: actual typed choice/exposure/current scope/schema/result/grant joins.
 - [ ] MC-R0101.4 HA: real-schema Assist read fixtures, ambiguity/new exposure/unfiltered/action/revoke/TLS denial and distinct actual-target acceptance.
+
+- [ ] MC-R0101.5: Implement v210 source-owned fixed HA WS metadata transport plus exact complete-filter or whole-context mode, actual root choice/grant and genuine MCP functional read.
+- [ ] MC-R0101.6: Validate protocol/dependency/TLS/DNS/auth/admin/metadata/scope/currentness failures and actual protected GetLiveContext semantic result separately from setup/acceptance.

@@ -149,3 +149,13 @@ Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected
 - [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
 - [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
 - [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+
+- [ ] RB-T213.1: Produce current held-home completed materialization/active source crosswalk joins.
+- [ ] HI-T213.2: Wire selected task/home digest/grant to actual fixed/hermes custody mount.
+- [ ] VD-T213.3: Verify unprivileged delegate effects, isolation, stale/grant/source denial and cleanup.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v214): Implement exact published source-home vs live selected-task split, current core claim/readback and actual delegate grant/mount evidence.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v215): Implement distinct protected source mapping, typed live admission/home binding, unchanged service identity and genuine prepared/publication claim joins.

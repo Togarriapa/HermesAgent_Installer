@@ -1,0 +1,9 @@
+# Jarvis published source-home and live task split v214
+
+Corrects the v213 active row field conflation from actual producer audit; v213 history remains immutable. At publication there is no SelectedResourceProfileTask and no207 task service profile enrollments. Published RootPublishedNativeProfileHomeRow contains only the exact16 producer-available source/home/materialization/PM/principal/namespace/behavioral facts in planning/jarvis-published-home-live-task-split-v214.json. Core member envelope binds installed publication/generation/current output claim.
+
+Live RootSelectedResourceTaskHomeBinding adds the actual selected task/profile/resource/process generations and existing RootResourceTaskContext authority_epoch/policy_revision/service_generation_digest plus current member/claim and heldFD evidence. Existing task grant/current principal/namespace/source/runtime/toolpolicy joins remain mandatory; no prediction or fake epochs. Registry/getter/mount APIs from213 unchanged. All207 remain required usable aftersetup through genuine current core/restart/live grants.
+
+Jarvis and taskhome owners confirmed the split and exact fields. Existing RB-T213.1, HI-T213.2 and VD-T213.3 remain OPEN for actual producer/compiler/kernel integration and effects. All original scope/AC01..18 OPEN; baseline unchanged.
+
+Compiler owner confirms the current core proves only authority/enrollment.json;214 therefore requires a real separate authority/native-profile-home-crosswalk-v213.json member. Canonical schema/rows bytes and native_profile_home_crosswalk={schema,relative_path,sha256,size_bytes} bind identically through claim member manifest, immutable descriptor and signed receipt. Typed getter verifies exact current member readback; no existing core-alone claim. Compiler owner confirmed this finite additive schema and task-vs-source split.

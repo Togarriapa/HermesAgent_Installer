@@ -143,3 +143,18 @@ Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observa
 Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
 
 Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md; exact26cf/root_setup sole leaf, BD-T208.1/VD-T208.2 application/tests/targetOPEN; no widercohort/allACOPEN.
+
+Jarvis selected task home custody v213: plans/amendments/2026-10-10-jarvis-selected-task-home-custody-v213.md; RB-T213.1/HI-T213.2/VD-T213.3 OPEN; actualheldhome currenttaskgrant fixed/hermes, all208/soleJarvis preserved/allACOPEN.
+
+
+Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`; RT-T209.1..4 → VD-T209.5, all OPEN. Actual npm/Electron/Xpra/gateway acquisition, managed build and materialized current runtime are distinct; all AC OPEN.
+
+
+Production remote NSS/roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md`; RT-T212.1 → RT-T212.2 → VD-T212.3 OPEN, exact production three identities/owned roots/current adoption/verified-dead rollback; v209 AppDir finite targets corrected, all source pins/AC OPEN.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md extends MC-R0101/MC-F01 with MC-R0101.5/.6 actual WS metadata and genuine whole-context functional read; no HA exposure mutation, source/runtime/account evidence separate, all AC OPEN.
+
+Jarvis source-home/live-task correction v214: plans/amendments/2026-10-10-jarvis-published-home-live-task-split-v214.md; exact16publishedfacts/live taskcontextjoins, RB-T213.1/HI-T213.2/VD-T213.3 OPEN; all207/postsetup required/allACOPEN.
+
+Jarvis source-profile task identity v215: plans/amendments/2026-10-10-jarvis-source-profile-task-identity-v215.md; actualserviceprofile distinctprotectedsourcehome, typedliveadmission, prepared/publishedclaimjoins; existing213tasks/allACOPEN.
