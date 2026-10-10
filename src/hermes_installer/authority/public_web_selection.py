@@ -633,6 +633,14 @@ class RootPublicWebSelectionRegistry:
             raw = _read_tty_line(proof.stdin_fd, max_bytes=4096)
             _verify_root_tty_proof(proof)
             if not raw.strip():
+                profile_ids = {getattr(row, "profile_id", None) for row in candidates}
+                if len(profile_ids) != 1 or not next(iter(profile_ids)):
+                    raise PublicWebSelectionDenied(
+                        "blank public choice cannot revoke without one exact candidate profile")
+                revoke = getattr(binding, "revoke_durable_setup_choice_purpose", None)
+                if not callable(revoke):
+                    raise PublicWebSelectionDenied("durable public-choice revocation is unavailable")
+                revoke("public-free-web-read", next(iter(profile_ids)))
                 return None
             try:
                 selected_ids = tuple(item.strip() for item in raw.decode("utf-8").split(","))
