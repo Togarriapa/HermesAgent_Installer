@@ -61,6 +61,15 @@ _HEALTH_ACCEPTED_FIELDS = frozenset({
 _HEALTH_COMPLETED_FIELDS = frozenset({
     "schema", "operation", "intent_handle", "completion_handle", "completion_sha256",
 })
+_STARTUP_REQUEST_FIELDS = frozenset({
+    "schema", "operation", "intent_handle", "intent_sha256", "nonce",
+})
+_STARTUP_ACCEPTED_FIELDS = frozenset({
+    "schema", "operation", "intent_handle", "intent_sha256",
+})
+_STARTUP_COMPLETED_FIELDS = frozenset({
+    "schema", "operation", "intent_handle", "outcome_handle", "outcome_sha256",
+})
 _HEALTH_INTENT_FIELDS = frozenset({
     "schema", "purpose", "intent_handle", "nonce_sha256",
     "setup_actor_witness_handle", "setup_actor_witness_sha256", "activation_id",
@@ -1720,6 +1729,9 @@ def _validate_channel_message(message: Any) -> dict[str, Any]:
         "health-request": _HEALTH_REQUEST_FIELDS,
         "health-accepted": _HEALTH_ACCEPTED_FIELDS,
         "health-completed": _HEALTH_COMPLETED_FIELDS,
+        "startup-request": _STARTUP_REQUEST_FIELDS,
+        "startup-accepted": _STARTUP_ACCEPTED_FIELDS,
+        "startup-completed": _STARTUP_COMPLETED_FIELDS,
     }.get(operation)
     if expected_fields is None or set(message) != expected_fields:
         raise ListenerActivationUnavailable("channel message fields differ from its fixed operation schema")
@@ -1739,6 +1751,25 @@ def _validate_channel_message(message: Any) -> dict[str, Any]:
             if (not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
                     or not isinstance(digest, str) or not _HEX64.fullmatch(digest)):
                 raise ListenerActivationUnavailable("health completion reference is malformed")
+    elif operation in {"startup-request", "startup-accepted", "startup-completed"}:
+        handle = message.get("intent_handle")
+        if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+            raise ListenerActivationUnavailable("startup intent handle is malformed")
+        if operation in {"startup-request", "startup-accepted"}:
+            digest = message.get("intent_sha256")
+            if not isinstance(digest, str) or not _HEX64.fullmatch(digest):
+                raise ListenerActivationUnavailable("startup intent digest is malformed")
+        if operation == "startup-request":
+            nonce = message.get("nonce")
+            if not isinstance(nonce, str) or not _HEX64.fullmatch(nonce):
+                raise ListenerActivationUnavailable("startup intent nonce is malformed")
+        elif operation == "startup-completed":
+            outcome = message.get("outcome_handle")
+            digest = message.get("outcome_sha256")
+            if (not isinstance(outcome, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", outcome)
+                    or not isinstance(digest, str) or not _HEX64.fullmatch(digest)):
+                raise ListenerActivationUnavailable("startup outcome reference is malformed")
     return message
 
 
@@ -2045,6 +2076,7 @@ class RootAuthorityListenerActivationSupervisor:
         self._transactions: dict[str, RootActiveAuthorityListenerReceipt] = {}
         self._health_connection: socket.socket | None = None
         self._health_intent_issuer: RootSetupHealthIntentIssuer | None = None
+        self._selected_startup_intent_issuer: Any | None = None
         self._closed = False
 
     @classmethod
@@ -2474,6 +2506,65 @@ class RootAuthorityListenerActivationSupervisor:
                                     self.binding._session._resolve_current_active_policy_publication())
         return receipt
 
+    def request_selected_startup(self, intent: Any) -> tuple[str, str]:
+        """Send the fixed v197 request and await its journaled terminal result."""
+        from .selected_startup_intents import RootSetupSelectedStartupIntent
+        if (type(intent) is not RootSetupSelectedStartupIntent
+                or intent.issuer.supervisor is not self
+                or intent.expires_monotonic <= time.monotonic()
+                or self._health_connection is None):
+            raise ListenerActivationUnavailable("current one-use startup intent or retained channel is unavailable")
+        self._check_setup_actor()
+        receipt = next((item for item in self._transactions.values()
+                        if item.activation_id == intent.body["activation_id"]), None)
+        if receipt is None:
+            raise ListenerActivationUnavailable("startup request has no retained adopted listener")
+        self.verify_active_current(receipt)
+        selection = _selection_from_release(self.held_release, receipt.activation_id)
+        peer = self.inspector.inspect_authority_daemon(selection)
+        expected = (peer.pid, 0, 0)
+        try:
+            if ((peer.pid, peer.start_ticks, peer.invocation_id)
+                    != (receipt.daemon_pid, receipt.daemon_start_ticks, receipt.daemon_invocation_id)
+                    or _read_peer_cred(self._health_connection) != expected):
+                raise ListenerActivationUnavailable("startup channel daemon peer changed")
+            intent.issuer.verify_current(intent)
+            _send_packet(self._health_connection, {
+                "schema": 1, "operation": "startup-request",
+                "intent_handle": intent.intent_handle,
+                "intent_sha256": intent.intent_sha256,
+                "nonce": intent.nonce.hex(),
+            })
+            accepted, fds = _recv_packet(self._health_connection,
+                                         expected_peer=expected, expected_fd_count=0)
+            if (fds or accepted["operation"] != "startup-accepted"
+                    or accepted["intent_handle"] != intent.intent_handle
+                    or accepted["intent_sha256"] != intent.intent_sha256):
+                raise ListenerActivationUnavailable("daemon did not accept the exact startup intent")
+            completed, fds = _recv_packet(self._health_connection,
+                expected_peer=expected, expected_fd_count=0, timeout=300.0)
+            if (fds or completed["operation"] != "startup-completed"
+                    or completed["intent_handle"] != intent.intent_handle):
+                raise ListenerActivationUnavailable("daemon did not return the exact startup outcome")
+            outcome = intent.issuer.journal.resolve_current_completed_intent(
+                intent.intent_handle, completed["outcome_handle"], completed["outcome_sha256"])
+            if (outcome["outcome_handle"] != completed["outcome_handle"]
+                    or outcome["outcome_sha256"] != completed["outcome_sha256"]):
+                raise ListenerActivationUnavailable("startup outcome differs from its protected journal")
+            return completed["outcome_handle"], completed["outcome_sha256"]
+        except ListenerActivationUnavailable:
+            try:
+                intent.issuer.journal.cancel_for_activation()
+            except Exception:
+                pass
+            raise
+        except (TimeoutError, ConnectionError, OSError):
+            try:
+                intent.issuer.journal.cancel_for_activation()
+            except Exception:
+                pass
+            raise ListenerActivationUnavailable("startup channel disconnected before its outcome") from None
+
     def resolve_current_functional_health_witness(self, intent_handle: str,
                                                    completion_handle: str) -> Mapping[str, Any]:
         self._check_setup_actor()
@@ -2513,6 +2604,10 @@ class RootAuthorityListenerActivationSupervisor:
     def close(self) -> None:
         if self._closed:
             return
+        issuer = self._selected_startup_intent_issuer
+        journal = getattr(issuer, "journal", None)
+        if journal is not None:
+            journal.cancel_for_activation()
         self._closed = True
         self._selections.clear()
         self._transactions.clear()
@@ -2561,6 +2656,7 @@ class RootAuthorityListenerActivationReceiver:
         self._adopted_monotonic: float | None = None
         self._health_connection: socket.socket | None = None
         self._health_intent_journal: RootSetupHealthIntentJournal | None = None
+        self._selected_startup_intent_journal: Any | None = None
 
     @classmethod
     def from_current_installed_daemon(cls, runtime: Any, activation_id: str,
@@ -2794,6 +2890,11 @@ class RootAuthorityListenerActivationReceiver:
             peer.close()
 
     def close(self) -> None:
+        if self._selected_startup_intent_journal is not None:
+            try:
+                self._selected_startup_intent_journal.cancel_for_activation()
+            except Exception:
+                pass
         if self._health_intent_journal is not None:
             self._health_intent_journal.close()
             self._health_intent_journal = None
@@ -2830,6 +2931,152 @@ class RootAuthorityListenerActivationReceiver:
             raise ListenerActivationUnavailable("daemon receiver already owns another health journal")
         journal.receiver, journal.active_receipt = self, receipt
         self._health_intent_journal = journal
+
+    def attach_selected_startup_intent_journal(self, journal: Any) -> None:
+        from .selected_startup_intents import RootSetupSelectedStartupIntentJournal
+        receipt = self.current_active_receipt()
+        if (type(journal) is not RootSetupSelectedStartupIntentJournal
+                or journal.receiver not in (None, self)
+                or journal.active_receipt not in (None, receipt)
+                or journal.activation_id != self.activation_id):
+            raise ListenerActivationUnavailable(
+                "startup journal does not match the adopted daemon receiver")
+        if (self._selected_startup_intent_journal is not None
+                and self._selected_startup_intent_journal is not journal):
+            raise ListenerActivationUnavailable("daemon receiver already owns another startup journal")
+        journal.receiver, journal.active_receipt = self, receipt
+        self._selected_startup_intent_journal = journal
+
+    def receive_selected_startup_intent(self, journal: Any, *, timeout: float = 3.0) -> Any:
+        """Accept one setup-issued startup request over the retained channel."""
+        receipt = self.current_active_receipt()
+        connection = self._health_connection
+        if (journal is None or journal is not self._selected_startup_intent_journal
+                or journal.receiver is not self or journal.active_receipt is not receipt
+                or connection is None or journal.activation_id != self.activation_id):
+            raise ListenerActivationUnavailable("daemon startup channel lacks its exact receiver journal")
+        record = self._read_current_adopted_record()
+        expected_peer = self._verify_setup_peer(record)
+        if _read_peer_cred(connection) != expected_peer:
+            raise ListenerActivationUnavailable("startup request came from a different setup actor")
+        self.observe_active_current(receipt)
+        request, descriptors = _recv_packet(connection, expected_peer=expected_peer,
+                                             expected_fd_count=0, timeout=timeout)
+        if descriptors or request["operation"] != "startup-request":
+            raise ListenerActivationUnavailable("channel did not carry the fixed startup request")
+        accepted = journal.accept(request["intent_handle"], request["intent_sha256"],
+                                  request["nonce"], self, receipt)
+        self.observe_active_current(receipt)
+        _send_packet(connection, {"schema": 1, "operation": "startup-accepted",
+                                  "intent_handle": accepted.intent_handle,
+                                  "intent_sha256": accepted.intent_sha256})
+        return accepted
+
+    def receive_next_selected_control_intent(self, startup_journal: Any,
+                                            health_journal: RootSetupHealthIntentJournal,
+                                            *, timeout: float = 3.0) -> Any:
+        """Read exactly one known setup control frame and dispatch by its tag.
+
+        This avoids consuming a startup request in a health-only receive loop
+        (or vice versa) on the shared adopted SOCK_SEQPACKET connection.
+        """
+        if (startup_journal is not self._selected_startup_intent_journal
+                or health_journal is not self._health_intent_journal):
+            raise ListenerActivationUnavailable("control receive requires both exact attached journals")
+        receipt = self.current_active_receipt()
+        connection = self._health_connection
+        if connection is None:
+            raise ListenerActivationUnavailable("adopted setup control channel is unavailable")
+        record = self._read_current_adopted_record()
+        peer = self._verify_setup_peer(record)
+        if _read_peer_cred(connection) != peer:
+            raise ListenerActivationUnavailable("control request came from another setup actor")
+        self.observe_active_current(receipt)
+        request, fds = _recv_packet(connection, expected_peer=peer,
+                                    expected_fd_count=0, timeout=timeout)
+        if fds:
+            raise ListenerActivationUnavailable("setup control request unexpectedly carried a descriptor")
+        operation = request["operation"]
+        if operation == "startup-request":
+            accepted = startup_journal.accept(request["intent_handle"], request["intent_sha256"],
+                                              request["nonce"], self, receipt)
+            self.observe_active_current(receipt)
+            _send_packet(connection, {"schema": 1, "operation": "startup-accepted",
+                                      "intent_handle": accepted.intent_handle,
+                                      "intent_sha256": accepted.intent_sha256})
+            return accepted
+        if operation == "health-request":
+            accepted = health_journal.accept(request["intent_handle"], request["intent_sha256"],
+                                             request["nonce"], self, receipt)
+            self.observe_active_current(receipt)
+            _send_packet(connection, {"schema": 1, "operation": "health-accepted",
+                                      "intent_handle": accepted.intent_handle,
+                                      "intent_sha256": accepted.intent_sha256})
+            return accepted
+        raise ListenerActivationUnavailable("setup control operation is outside the fixed startup/health set")
+
+    def send_selected_startup_completion(self, accepted: Any, outcome_handle: str,
+                                         outcome_sha256: str) -> tuple[str, str]:
+        """Send only an outcome already committed by the selected startup owner."""
+        from .selected_startup_intents import RootAcceptedSelectedStartupIntent
+        receipt = self.current_active_receipt()
+        journal, connection = self._selected_startup_intent_journal, self._health_connection
+        if (type(accepted) is not RootAcceptedSelectedStartupIntent
+                or accepted._journal is not journal or accepted.activation_id != self.activation_id
+                or journal is None or journal.receiver is not self
+                or journal.active_receipt is not receipt or connection is None):
+            raise ListenerActivationUnavailable("startup completion is not tied to this accepted intent")
+        outcome = journal.resolve_current_completed_intent(
+            accepted.intent_handle, outcome_handle, outcome_sha256)
+        record = self._read_current_adopted_record()
+        expected_peer = self._verify_setup_peer(record)
+        if _read_peer_cred(connection) != expected_peer:
+            raise ListenerActivationUnavailable("setup actor changed before startup completion")
+        self.observe_active_current(receipt)
+        _send_packet(connection, {"schema": 1, "operation": "startup-completed",
+            "intent_handle": accepted.intent_handle, "outcome_handle": outcome_handle,
+            "outcome_sha256": outcome_sha256})
+        return outcome_handle, outcome_sha256
+
+    def resolve_current_setup_controller_pidfd(self, accepted: Any) -> tuple[int, Mapping[str, Any]]:
+        """Duplicate the actual setup PIDFD retained by the v187 adopted receiver."""
+        from .selected_startup_intents import RootAcceptedSelectedStartupIntent
+        receipt = self.current_active_receipt()
+        journal = self._selected_startup_intent_journal
+        if (type(accepted) is not RootAcceptedSelectedStartupIntent
+                or accepted._journal is not journal or accepted.activation_id != self.activation_id
+                or journal is None or journal.receiver is not self
+                or journal.active_receipt is not receipt or self._setup_peer_pidfd is None):
+            raise ListenerActivationUnavailable("accepted startup has no current adopted setup PIDFD")
+        journal.resolve_current_accepted_intent_for_handle(
+            accepted.intent_handle, self, receipt)
+        record = self._read_current_adopted_record()
+        peer = self._verify_setup_peer(record)
+        if peer[0] != record["setup_pid"]:
+            raise ListenerActivationUnavailable("accepted setup PIDFD changed process identity")
+        proc = Path("/proc") / str(peer[0])
+        try:
+            cgroup = (proc / "cgroup").read_text(encoding="utf-8").splitlines()
+            selected_cgroup = next(line.split(":", 2)[2] for line in cgroup
+                                   if line.startswith("0::"))
+            mount_inode = (proc / "ns/mnt").stat().st_ino
+            network_inode = (proc / "ns/net").stat().st_ino
+            fd = os.dup(self._setup_peer_pidfd)
+            identity = MappingProxyType({
+                "pid": peer[0], "uid": peer[1], "gid": peer[2],
+                "start_ticks": record["setup_start_ticks"],
+                "launcher_sha256": record["setup_launcher_sha256"],
+                "interpreter_sha256": record["setup_interpreter_sha256"],
+                "actor_witness_sha256": accepted.body["setup_actor_witness_sha256"],
+                "setup_session_id": accepted.body["setup_session_id"],
+                "cgroup_identity": selected_cgroup,
+                "mount_namespace_inode": mount_inode,
+                "network_namespace_inode": network_inode,
+                "activation_id": self.activation_id,
+            })
+            return fd, identity
+        except Exception:
+            raise ListenerActivationUnavailable("current setup controller identity could not be observed") from None
 
     def receive_health_intent(self, journal: RootSetupHealthIntentJournal, *, timeout: float = 3.0
                               ) -> RootAcceptedHealthIntent:
