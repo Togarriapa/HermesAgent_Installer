@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T108",
+    "SK-T125",
+    "SK-T127",
+    "SK-T128"
+  ],
+  "why": "A configured engine must identify a selected endpoint/model before the managed listener/load is observed. v108 active rows incorrectly require future minted endpoint/model observation handles. Stable protected binding identity is distinct runtime observation proof.",
+  "active_key": "service_generations.private_memory_engine_selections",
+  "row_replacements": {
+    "endpoint_selection_receipt_handle": "endpoint_binding_id",
+    "extraction_model_deployment_receipt_handle": "extraction_model_binding_id",
+    "embedding_model_deployment_receipt_handle": "embedding_model_binding_id"
+  },
+  "rules": "All other exact v108 row fields remain. New three fields are exact IDs of digest-covered v125/v128 private_memory_endpoint_selections/private_memory_model_selections, not source/model aliases/receipt handles. Each model endpoint_binding_id equals engine endpoint_binding_id, extraction capability extraction-text and exact GLM5.2 source/served ID, embedding capability embedding with separate actual source/license/dimensions. Profile/namespace/principal/service/profile generation/current enclosing digest exact joins. Missing selected binding unavailable; no runtime ready claim from configured row. Reject old transient runtime observation handles as active selection FK, do not alias string domains.",
+  "runtime_order": [
+    "Active source-selected endpoint/model binding rows publish genuine config/source/choice provenance independent live managed process. No fabricated listener/load/weights.",
+    "Actual selected lifecycle/managed process startup and private network ownership observation -> RootPrivateMemoryDeploymentRegistry.observe_selected_endpoint(selected_endpoint_binding)->fresh genuine endpoint observation handle.",
+    "Actual held model source/license/tree/runtime/load config and owned live process joins -> observe_selected_model_deployment(actual_endpoint_receipt_handle,selected_model_binding)->fresh genuine model deployment handle. No v1/models alias proof or endpoint-only source claim.",
+    "RootPrivateMemoryRouteResolver resolves engine stable binding IDs to current genuine runtime endpoint/extract/embed observation handles, verifies all IDs/source/policy/current source/recipient/private consent and actual capability/dimensions, then returns RootSelectedPrivateMemoryEngineRoutes. Every dispatch/retry revalidates actual current runtime proofs."
+  ],
+  "runtime_dto": "Existing route_dto fields endpoint_selection_receipt_handle/extraction_model_deployment_receipt_handle/embedding_model_deployment_receipt_handle now mean actual freshly resolved runtime observation handles ONLY. Add endpoint_binding_id/extraction_model_binding_id/embedding_model_binding_id to runtime DTO for exact stable join. No serialized active row copy of runtime handles. Source registry may retain runtime observation index by binding ID but cannot invent receipt membership.",
+  "retention": "Configured stable IDs/durable signed source choice survive runtime lease expiry. Current runtime receipt <=30s/current boot/PIDFD/config/model/member/network proof; fresh reobservation does not revive old receipt, modify stable selection or infer startup success.",
+  "tasks": [
+    {
+      "id": "SK-T151.1",
+      "owner": "host enrollment/factory/active compiler",
+      "work": "Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins."
+    },
+    {
+      "id": "SK-T151.2",
+      "owner": "models/private providers/runtime composer",
+      "work": "Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute."
+    }
+  ],
+  "acceptance": "Model weights/load/embedding/private memory semantics not observed by configuration; no downloads/acceptance/baseline change."
+}

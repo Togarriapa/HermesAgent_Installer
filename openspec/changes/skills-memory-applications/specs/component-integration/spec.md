@@ -809,3 +809,24 @@ The installer SHALL distinguish the container interpreter used in dependency rec
 #### Scenario: Container version matches selected PM version
 - **WHEN** the fixture interpreter reports Python3.14.7
 - **THEN** no PM origin or actual setup environment receipt is inferred from that version match
+
+### Requirement: Selected large toolchain source observation v150
+The installer SHALL obtain Node and Bun source bytes through a finite selected-plan-bound held artifact observation before toolchain extraction.
+
+#### Scenario: Toolchain private CAS has no selected source observation
+- **WHEN** an archive was independently fetched without the actual selected source observer
+- **THEN** it cannot mint a trusted toolchain receipt merely from matching local CAS syntax
+
+### Requirement: Stable private binding and current observation separation v151
+The installer SHALL select private endpoint/model binding IDs before startup and resolve genuine current runtime observations only after actual listener/load/source proof.
+
+#### Scenario: Configured private endpoint has no live process
+- **WHEN** only the protected endpoint binding exists
+- **THEN** no runtime route or deployment receipt is fabricated from that configured identity
+
+### Requirement: Separate finite PEP517 backend closure v152
+The installer SHALL bind project wheel builds to exact separately reviewed backend source/license/CAS receipts rather than claiming absent backend packages belong to the runtime lock.
+
+#### Scenario: Backend adds an undeclared build requirement
+- **WHEN** a backend requests a package outside the selected reviewed offline closure
+- **THEN** the build denies without fetching network packages or widening the original lock and backend table
