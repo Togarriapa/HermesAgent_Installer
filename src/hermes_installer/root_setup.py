@@ -570,6 +570,51 @@ def run_root_setup_action(
                 return _result(
                     selected_action, RootSetupState.PENDING, "runtime",
                     "The selected installer release is published and verified; its compatible active-runtime update adapter is unavailable, so the prior active generation remains in place.")
+            recovery_selection_registry = RootBootstrapCandidateSelectionRegistry()
+            try:
+                recovery_registry = RootInstallerUpdateTransitionRegistry.from_root_bootstrap(
+                    recovery_selection_registry)
+                recoverable = recovery_registry.discover_recoverable_installed_update(
+                    release.release_commit)
+                if recoverable is not None:
+                    with bootstrap_runtime_error_step("bootstrap.tty_selection"):
+                        recovery_choices = recovery_selection_registry.issue_explicit_tty_choice(
+                            RootSetupAction.UPDATE)
+                        recovery_selection = recovery_selection_registry.resolve(recovery_choices)
+                    with bootstrap_runtime_error_step("installed_update.intent"):
+                        recovery_registry.adopt_recoverable_installed_update(
+                            recovery_selection, recoverable)
+                    try:
+                        launcher_rows = [row for row in release.files
+                                         if row.relative_path == "bin/hermes-installer-root-setup"
+                                         and "launcher" in row.roles]
+                        if len(launcher_rows) != 1 or not launcher_rows[0].mode & 0o111:
+                            raise InstallerReleaseBuildError(
+                                "verified installed release has no exact recovery launcher")
+                        launcher = release.release_root / launcher_rows[0].relative_path
+                        launcher_fd = release.open_file("installer-root-setup-launcher-v1")
+                        try:
+                            launcher_info = os.fstat(launcher_fd)
+                            if (launcher_info.st_dev != launcher_rows[0].device
+                                    or launcher_info.st_ino != launcher_rows[0].inode):
+                                raise InstallerReleaseBuildError(
+                                    "verified installed recovery launcher identity changed")
+                        finally:
+                            os.close(launcher_fd)
+                        os.execve(launcher, [str(launcher), "update"],
+                                  {"PATH": "/usr/bin:/bin", "HOME": "/root",
+                                   "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
+                    except BaseException:
+                        from .authority.installed_stage_publisher import RootInstalledStagePublisher
+                        restored = RootInstalledStagePublisher.rollback_owned_update(recoverable)
+                        restored.close()
+                        raise BootstrapEnrollmentPending(
+                            "recovered update entry failed and the exact predecessor was restored") from None
+                    raise BootstrapEnrollmentPending("recovered installed update exec returned unexpectedly")
+            finally:
+                recovery_selection_registry.close()
+            if recoverable is not None:
+                raise BootstrapEnrollmentPending("recovered installed update exec returned unexpectedly")
             selection_registry = RootBootstrapCandidateSelectionRegistry()
             try:
                 with bootstrap_runtime_error_step("bootstrap.tty_selection"):

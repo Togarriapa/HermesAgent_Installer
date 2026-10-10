@@ -12,6 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -1683,3 +1684,86 @@ def test_deployment_predecessor_present_invalid_release_fails_closed(monkeypatch
     monkeypatch.setitem(sys.modules, module.__name__, module)
     with pytest.raises(release_build.InstallerReleaseBuildError, match="not a verified"):
         release_build.observe_deployment_predecessor()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() != 0,
+                    reason="root-owned update journal recovery requires isolated Linux root")
+def test_cold_update_recovery_denies_ambiguous_owned_transactions(tmp_path, monkeypatch):
+    from hermes_installer.authority import installed_stage_publisher as publisher
+
+    transaction_root = tmp_path / "transactions"
+    transaction_root.mkdir(mode=0o700)
+    candidate = "a" * 40
+    pointer_raw = release_build._canonical_json({"candidate_git_sha": candidate, "release": "fixed"})
+    pointer_path = tmp_path / "current.json"
+    pointer_path.write_bytes(pointer_raw)
+    pointer_info = pointer_path.stat()
+    for first in ("x", "y"):
+        handle = first * 43
+        value = {
+            "schema": 1,
+            "state": "pointer-published",
+            "update_transaction_handle": handle,
+            "candidate_git_sha": candidate,
+            "candidate_pointer_b64": __import__("base64").b64encode(pointer_raw).decode("ascii"),
+            "candidate_pointer_sha256": hashlib.sha256(pointer_raw).hexdigest(),
+        }
+        publisher._write_update_transaction(transaction_root, handle, value, os.getuid())
+    lock_file = tmp_path / "lock"
+    lock_file.touch(mode=0o600)
+    lock_fd = os.open(lock_file, os.O_RDWR)
+    registry = release_build.RootInstallerUpdateTransitionRegistry(object())
+    try:
+        with (patch.object(release_build, "_require_linux_root", return_value=None),
+              patch.object(release_build, "_open_update_publication_lock", return_value=os.dup(lock_fd)),
+              patch.object(publisher, "_read_record", return_value=(pointer_raw, pointer_info)),
+              patch.object(publisher, "_UPDATE_TRANSACTION_ROOT", transaction_root),
+              patch.object(publisher, "_verify_update_transaction_root", return_value=None)):
+            with pytest.raises(release_build.BootstrapEnrollmentPending, match="multiple installed update transactions"):
+                registry.discover_recoverable_installed_update(candidate)
+    finally:
+        os.close(lock_fd)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="sealed memfd inheritance requires Linux")
+def test_recovered_update_entry_keeps_fd3_open_when_memfd_is_allocated_as_fd3(monkeypatch):
+    if not hasattr(os, "memfd_create"):
+        pytest.skip("sealed memfd is a Linux kernel facility")
+    child = os.fork()
+    if child == 0:
+        try:
+            try:
+                os.close(3)
+            except OSError:
+                pass
+            from hermes_installer.authority import installed_stage_publisher as publisher
+            transition = SimpleNamespace(
+                update_transaction_handle="t" * 43,
+                candidate_git_sha="a" * 40,
+                selection_choice_sha256="b" * 64,
+                snapshot=lambda: {"schema": 1, "update_transaction_handle": "t" * 43,
+                                 "candidate_git_sha": "a" * 40,
+                                 "selection_choice_sha256": "b" * 64,
+                                 "pointer": {"candidate_git_sha": "c" * 40},
+                                 "release": {}},
+            )
+            adoption = {"schema": 1, "candidate_git_sha": "a" * 40}
+            monkeypatch.setattr(release_build, "_write_handoff_record", lambda *_args: None)
+            monkeypatch.setattr(
+                publisher, "_verify_published_update_transaction",
+                lambda _handle: {"recovery_adoption": adoption, "candidate_git_sha": "a" * 40},
+            )
+            release_build._create_recovered_installed_update_entry(
+                transition, {"expires_monotonic": time.monotonic() + 30}, adoption)
+            assert os.get_inheritable(3)
+            code = ("import fcntl,json,os,sys; "
+                    "assert fcntl.fcntl(3,fcntl.F_GET_SEALS) & 15 == 15; "
+                    "value=json.loads(os.read(3,4097)); "
+                    "assert set(value)=={'schema','handoff_handle','nonce'}; "
+                    "assert len(value['handoff_handle'])==43; sys.exit(0)")
+            os.execve(sys.executable, [sys.executable, "-I", "-S", "-c", code],
+                      {"PATH": "/usr/bin:/bin"})
+        except BaseException:
+            os._exit(120)
+    _, status = os.waitpid(child, 0)
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
