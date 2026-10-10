@@ -25,6 +25,7 @@ def _service(manager=None, catalog=None):
 def test_bind_uses_only_current_peer_loaded_package_and_read_is_peer_bound(monkeypatch):
     proof = SimpleNamespace(
         process_id="a" * 32, profile_id="profile-a", generation="generation-a",
+        kernel_uid=os.getuid(),
         mount=SimpleNamespace(package_id="package-a", resolver_sha256="b" * 64),
     )
     package = SimpleNamespace(
@@ -74,6 +75,7 @@ def test_binding_denies_missing_loaded_process_and_caller_selectors():
 def test_binding_read_revokes_lease_when_loaded_package_currentness_changes(monkeypatch):
     proof = SimpleNamespace(
         process_id="a" * 32, profile_id="profile-a", generation="generation-a",
+        kernel_uid=os.getuid(),
         mount=SimpleNamespace(package_id="package-a", resolver_sha256="b" * 64),
     )
     package = SimpleNamespace(

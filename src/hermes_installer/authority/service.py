@@ -3845,7 +3845,9 @@ class AuthorityService:
             return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled,
                                         peer_pidfd=peer_pidfd)
         if operation == "native.package.bind":
-            if payload != {"schema": 1} or peer_pidfd is None:
+            if (not isinstance(payload, dict) or set(payload) != {"schema"}
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or peer_pidfd is None):
                 raise AuthorityDenied("native.package", "native package binding request is malformed")
             return self._bind_selected_native_package(uid, peer_pid, peer_pidfd)
         if operation == "native.package.resolver.read":
@@ -4072,7 +4074,7 @@ class AuthorityService:
                 or not callable(resolve_peer) or peer_pidfd is None):
             raise AuthorityDenied("native.package", "active native package custody is unavailable")
         proof = resolve_peer(peer_pid, peer_pidfd)
-        if proof is None:
+        if proof is None or getattr(proof, "kernel_uid", None) != peer_uid:
             raise AuthorityDenied("native.package", "peer has no current loaded native package")
         try:
             package = catalog.resolve_profile_native_package(proof.profile_id, proof.generation)
@@ -4121,7 +4123,8 @@ class AuthorityService:
             raise AuthorityDenied("native.package", "active native package custody is unavailable")
         try:
             proof = resolve_peer(peer_pid, peer_pidfd)
-            if (proof is None or proof.process_id != lease[2]
+            if (proof is None or getattr(proof, "kernel_uid", None) != peer_uid
+                    or proof.process_id != lease[2]
                     or proof.profile_id != lease[6] or proof.generation != lease[4]
                     or proof.mount.package_id != lease[3]
                     or proof.mount.resolver_sha256 != lease[7]):
