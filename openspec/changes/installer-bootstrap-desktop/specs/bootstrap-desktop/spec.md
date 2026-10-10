@@ -650,3 +650,10 @@ The installer SHALL retain live fixture session authority only in its current se
 #### Scenario: Historical session file is reopened
 - **WHEN** no current genuine fixture lease and session registry membership exist
 - **THEN** the historical file cannot authorize an effect
+
+### Requirement: Native precompile reservation v169
+The installer SHALL authorize and reserve actual generated outputs from genuine current setup source selection before compiling their strict active rows.
+
+#### Scenario: Prepared native package catalog is empty
+- **WHEN** genuine source-backed assembly has produced five valid selected outputs
+- **THEN** authorization resolves the sealed setup selection and never requires future active package policy

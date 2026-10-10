@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T84",
+    "HI-T113",
+    "HI-T137",
+    "HI-T165"
+  ],
+  "why": "Actual authorize_native_output reads intentionally empty prepared native_packages; compiler creates its claim after compiling documents although generated role rows are inputs. Output authorization must use genuine sealed preactive source assembly, not its future active policy.",
+  "authorization": {
+    "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+    "method": "RootSelectedInstallationBinding.authorize_prepared_native_output(assembly_selection_handle,artifact_role,output_kind,member_tree_sha256,output_sha256,output_size_bytes)->RootAuthorizedNativeOutputSelection",
+    "source": "Resolve genuine RootNativeBootstrapAssemblySelection and its current native policy preparation/explicit root TTY choice/principal/namespace/session/transaction/prepared generation. Reverify held compiler native_materialization module and import closure/current release, actual action/registration/workflow/schema/effect/source observer/process role definitions and source receipts, PM/materialization/input roots, root-held owned output FD/store and exact finite source-selected package/profile/package generation. No active native_packages lookup, arbitrary caller definitions/package/profile or prepared-empty capability inference.",
+    "roles": [
+      "native-compiled-closure",
+      "native-entrypoint-manifest",
+      "native-action-resolver",
+      "native-candidate-index",
+      "native-overlay-archive"
+    ],
+    "semantics": "Only these selected five generated roles/output kinds and current actual observed CAS members may be authorized. Existing materialization producer validations/size/mode/path/member/digest/source/role/action/registration relationships stay unchanged. Output bytes never become authority merely because they hash. Missing source choice/schema/effect/observer/compiler/identity proof stays pending. Current selected role source truth comes from sealed setup selection, not future active rows."
+  },
+  "precompile": {
+    "owner_module": "hermes_installer.authority.native_output_receipts",
+    "method": "RootMaterializationReceiptRegistry.reserve_for_precompile(assembly_selection_handle,receipt_ids,publication_handle)->RootNativePrecompileOutputReservation",
+    "fields": [
+      "schema",
+      "reservation_handle",
+      "publication_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_digest",
+      "prepared_generation_id",
+      "assembly_selection_handle",
+      "assembly_selection_sha256",
+      "receipt_ids",
+      "output_closure_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "semantics": "Exactly five distinct current genuine output receipt IDs from same assembly/source/transaction/store; reopen and verify actual CAS/member relations through authorize_prepared_native_output. Atomic reserve state before strict document compilation; no compiled policy digest yet. Do not consume each activation receipt again or treat an issued root lease as durable after expiry. Owned durable reservation descriptor is historical source binding for later fresh revalidation, not restored FD/seal."
+  },
+  "role_projection": {
+    "method": "RootRunnableRoleProjectionRegistry.resolve_selected_runnable_roles(pm_runtime_receipt_handle,precompile_reservation_handle)->RootSelectedRunnableRoleClosure",
+    "correction": "Supersedes v165 native_output_claim_handle input with genuine RootNativePrecompileOutputReservation handle. PM current source/runtime proof and five typed reserved native role records become compiler inputs before documents. Exact v165 role row field/digest schema unchanged; internally retain reservation/source identity. No active package needed at this phase."
+  },
+  "claim": {
+    "method": "RootMaterializationReceiptRegistry.bind_compiled_policy_claim(precompile_reservation_handle,compiled_active_policy_handle)->RootNativeOutputClaim",
+    "semantics": "After strict compiler verifies all same source/role/runtime rows and emits immutable compiled policy descriptor, registry re-resolves genuine compiled descriptor, current reservation/CAS/source/identity and binds canonical compiled policy/closure digest plus output_closure_sha256/publication/transaction/prepared generation. Compiler handle is retained registry membership, not caller hash/JSON. Exact existing RootNativeOutputClaim/reserve_for_active_compilation fields/current validators then apply; this is a finite staged transition, not a duplicate reservation/consumption.",
+    "order": [
+      "current source-authorized actual output issuance",
+      "precompile reservation",
+      "typed PM/native runnable role projection",
+      "strict active document compilation",
+      "same-reservation compiled policy claim binding",
+      "atomic active pointer/enrollment publication",
+      "idempotent same-claim output finalization",
+      "actual committed enrollment health with ordinary enablement withheld"
+    ],
+    "recovery": "Before CAS, failure keeps outputs pending/reserved and no active claim. After CAS, truthful active-committed reservation remains retained for idempotent finalization. Restart only fresh root reopens durable actual descriptors/CAS/current source/actor; expired process snapshots not recreated. No future active row authorizes an earlier output or replacement claim from caller metadata."
+  },
+  "tasks": [
+    {
+      "id": "HI-T169.1",
+      "owner": "factory/native output registry/active compiler/publisher",
+      "work": "Implement current sealed preactive source output authorization, precompile reservation and same-reservation compiled claim transition; verify five outputs/projected rows and deny wrong source/transaction/member/currentness without active-before-assembly cycle."
+    }
+  ],
+  "acceptance": "No operational/native/health acceptance implied. All AC open; baseline unchanged."
+}

@@ -717,3 +717,10 @@ The installer SHALL bind the regular environment interpreter to actual held PM e
 #### Scenario: Script requests ambient interpreter
 - **WHEN** installed script depends on /usr/bin/env or an unrelated interpreter path
 - **THEN** materialization denies until exact selected interpreter normalization is verified
+
+### Requirement: Native precompile reservation v169
+The installer SHALL authorize and reserve actual generated outputs from genuine current setup source selection before compiling their strict active rows.
+
+#### Scenario: Prepared native package catalog is empty
+- **WHEN** genuine source-backed assembly has produced five valid selected outputs
+- **THEN** authorization resolves the sealed setup selection and never requires future active package policy
