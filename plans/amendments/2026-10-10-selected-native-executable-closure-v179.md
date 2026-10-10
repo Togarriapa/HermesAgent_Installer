@@ -18,3 +18,9 @@ The prepared policy owner composes the actual owned overlay view, effect rules, 
 
 - HI-T179.1: implement source-owner selected closure, both factory resolvers and exact selected projector/assembler composition. Verify positive source-owned local operation compilation and currentness/source/schema/choice/member denials, omitted selected-required joins and unexpected extra executable rows. Keep HI-T178.1 open until its full source join acceptance is demonstrated.
 - HI-T179.2: later live loaded-worker/PIDFD, target/account/provider/device acceptance remains OPEN. No canonical runtime spec sync/archive.
+
+## Exact separately pending fixture phase cycle
+
+Read-only bridge audit: `36fc078ffbe5412fa32878f1e8085a6b3c9d27df`, ledger correction `34bb8ac7`. Normal root_setup constructs the factory with release/actor only, stages source/PM, returns pending and closes its session. The separate qualify dispatcher has no retained setup session. The fixture registry currently requires ManagedProcessEffectHandler from `_authority_service.process_effect_handler`, but the ordinary daemon constructs that handler only after protected active enrollment. HI-T178.2 therefore remains OPEN despite the implemented source/PM bridge.
+
+HI-T179.2 additionally requires a genuine independent preactive fixture custody producer and caller with retained setup lifetime, exact finite source/unit/PIDFD proof and ownership-aware cleanup. No injected AuthorityService, fake manager, historical receipt renewal or production binding may fill this phase cycle. This appendix records a verified missing producer; the current source composition work does not alter fixture custody or active enrollment.
