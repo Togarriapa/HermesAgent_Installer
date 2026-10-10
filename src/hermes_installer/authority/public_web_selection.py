@@ -535,6 +535,55 @@ class RootPublicInputDisclosureRegistry:
         self._consumed.add(disclosure.disclosure_observation_handle)
         return True
 
+    def verify_consumed_input_disclosure(self, disclosure: Any, proof: Any,
+                                         execution: Any) -> bool:
+        """Revalidate an already-consumed TTY proof without making it reusable.
+
+        Source material can be checked after the source consumer has atomically
+        consumed its one-use nonce. This path never resolves or renews the
+        pending source observation and never removes the consumed marker.
+        """
+        if type(disclosure) is not RootTTYPublicInputDisclosure:
+            return False
+        handle = disclosure.disclosure_observation_handle
+        if (self._by_handle.get(handle) is not disclosure
+                or handle not in self._consumed
+                or disclosure._issuer_token is not _DISCLOSURE_SEAL):
+            return False
+        try:
+            _validate_disclosure(disclosure, time.monotonic())
+            retained_proof, retained_execution, raw = self._input_proofs[handle]
+            if (retained_proof is not proof or retained_execution is not execution
+                    or type(raw) is not bytes
+                    or hashlib.sha256(raw).hexdigest() != disclosure.input_sha256
+                    or len(raw) != disclosure.input_size_bytes
+                    or getattr(proof, "proof_nonce", None)
+                        != disclosure.retained_observed_input_handle
+                    or getattr(execution, "selection_handle", None)
+                        != disclosure.selected_execution_handle
+                    or getattr(execution, "public_input_permission_selection_handle", None)
+                        != disclosure.public_permission_selection_handle
+                    or getattr(proof, "selected_execution", None) is not execution):
+                return False
+            if not self._same_current_permission_selection(disclosure, handle):
+                return False
+            # The original root controller must still be the current root TTY
+            # controller; merely presenting a copied DTO cannot pass this join.
+            session = self._session
+            session._check_live()
+            from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+            tty = _capture_root_tty_proof()
+            try:
+                _verify_root_tty_proof(tty)
+                return (tty.controller_uid == 0
+                        and tty.controller_pid == os.getpid()
+                        and _tty_controller_digest(tty)
+                            == disclosure.tty_controller_observation_handle)
+            finally:
+                tty.close()
+        except Exception:
+            return False
+
 
 class RootPublicWebSelectionRegistry:
     """Compose exact preactive targets into one signed durable root TTY choice."""
@@ -584,6 +633,14 @@ class RootPublicWebSelectionRegistry:
             raw = _read_tty_line(proof.stdin_fd, max_bytes=4096)
             _verify_root_tty_proof(proof)
             if not raw.strip():
+                profile_ids = {getattr(row, "profile_id", None) for row in candidates}
+                if len(profile_ids) != 1 or not next(iter(profile_ids)):
+                    raise PublicWebSelectionDenied(
+                        "blank public choice cannot revoke without one exact candidate profile")
+                revoke = getattr(binding, "revoke_durable_setup_choice_purpose", None)
+                if not callable(revoke):
+                    raise PublicWebSelectionDenied("durable public-choice revocation is unavailable")
+                revoke("public-free-web-read", next(iter(profile_ids)))
                 return None
             try:
                 selected_ids = tuple(item.strip() for item in raw.decode("utf-8").split(","))

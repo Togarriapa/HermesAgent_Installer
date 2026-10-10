@@ -434,17 +434,47 @@ class RootPublicInputPermissionRegistry:
             material = resolver(proof) if consumed else resolver(proof, execution)
         except Exception:
             return False
-        return bool(
+        common = bool(
             material.observation is proof
             and material.selected_execution is execution
             and len(material.payload_bytes) == proof.input_size_bytes
             and hashlib.sha256(material.payload_bytes).hexdigest() == proof.input_sha256
             and tuple(material.parent_receipt_handles) == proof.parent_source_receipt_handles
             and len(material.parent_receipts) == len(proof.parent_source_receipt_handles)
-            and bool(material.parent_receipts)
-            and all(receipt.sensitivity is Sensitivity.PUBLIC
-                    for receipt in material.parent_receipts)
         )
+        if not common:
+            return False
+        # Every public input now has an exact root TTY disclosure bound to the
+        # bytes. A genuinely fresh disclosed input can have no parent receipts;
+        # that exception is tied to the source registry's retained one-use
+        # disclosure proof. Any inherited parent chain remains public-only.
+        disclosure = getattr(material, "disclosure", None)
+        try:
+            from .public_web_selection import RootTTYPublicInputDisclosure
+        except ImportError:
+            return False
+        disclosure_handle = getattr(disclosure, "disclosure_observation_handle", None)
+        if (type(disclosure) is not RootTTYPublicInputDisclosure
+                or not isinstance(disclosure_handle, str) or not disclosure_handle
+                or disclosure_handle != getattr(proof, "disclosure_observation_handle", None)
+                or getattr(disclosure, "input_sha256", None) != proof.input_sha256
+                or getattr(disclosure, "input_size_bytes", None) != proof.input_size_bytes
+                or getattr(disclosure, "selected_execution_handle", None) != execution.selection_handle
+                or getattr(disclosure, "public_permission_selection_handle", None)
+                    != proof.public_permission_selection_handle):
+            return False
+        if consumed:
+            verify = getattr(self.sources, "verify_consumed_public_input_disclosure", None)
+            if not callable(verify) or verify(proof, material) is not True:
+                return False
+        else:
+            verify = getattr(self.sources, "verify_current_public_input_observation", None)
+            if not callable(verify) or verify(proof, execution) is not True:
+                return False
+        if material.parent_receipts:
+            return all(receipt.sensitivity is Sensitivity.PUBLIC
+                       for receipt in material.parent_receipts)
+        return bool(consumed is False or getattr(material, "consumed", False) is True)
 
     def _current_scopes(self, selection: RootPublicInputPermissionSelection) -> tuple[Any, ...]:
         resolver = getattr(self.bindings, "resolve_current_public_web_scopes", None)
