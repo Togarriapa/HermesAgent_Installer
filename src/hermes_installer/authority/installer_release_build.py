@@ -1313,12 +1313,12 @@ def _append_runtime_member(rows: list[tuple[str, str, int, int, str | None]], ro
         # extraction, rather than rejecting them as stand-alone source paths.
         _resolve_runtime_archive_symlink(f"python/{rel}", target)
         rows.append((rel, hashlib.sha256(target.encode()).hexdigest(), len(target.encode()), 0o777, target))
-    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0:
+    elif (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0
+          and stat.S_IMODE(info.st_mode) in {0o444, 0o555}):
         digest, size = _hash_path(path, MAX_SOURCE_FILE_BYTES)
-        # The provisional tree is sealed after its closure key is derived.
-        # Hash the post-seal mode so the same tree revalidates after sealing.
-        sealed_mode = _sealed_runtime_mode(info.st_mode)
-        rows.append((rel, digest, size, sealed_mode, None))
+        rows.append((rel, digest, size, stat.S_IMODE(info.st_mode), None))
+    elif stat.S_ISREG(info.st_mode):
+        raise InstallerReleaseBuildError("runtime file mode is not read-only sealed")
     else:
         raise InstallerReleaseBuildError("materialized runtime closure contains a hardlink or special member")
 
@@ -1509,6 +1509,9 @@ class RootInstallerInterpreterRegistry:
                 site_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
                 _materialize_pyyaml_wheel(wheel_bytes, site_dir)
                 runtime_probe = _probe_materialized_runtime(executable, python_dir, site_dir)
+                # The closure ID names the immutable tree we will retain, so
+                # seal modes before calculating its digest and before rename.
+                _seal_runtime_tree(python_dir)
                 runtime_rows = _runtime_archive_rows(python_dir)
                 runtime_closure = hashlib.sha256(_canonical_json([
                     {"path": row[0], "sha256": row[1], "size_bytes": row[2],
@@ -1519,7 +1522,6 @@ class RootInstallerInterpreterRegistry:
                     _verify_runtime_materialization(final / "python", runtime_closure)
                     _remove_tree_no_follow(stage)
                 else:
-                    _seal_runtime_tree(python_dir)
                     os.rename(stage_name, runtime_closure, src_dir_fd=root_fd, dst_dir_fd=root_fd)
                     os.fsync(root_fd)
                 prefix = final if final.exists() else BOOTSTRAP_RUNTIME_ROOT / runtime_closure
