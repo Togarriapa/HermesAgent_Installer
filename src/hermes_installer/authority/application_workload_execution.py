@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.server
 import ipaddress
 import json
 import math
+import os
 import secrets
+import sqlite3
+import stat
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -222,6 +227,380 @@ class RootApplicationQualificationContext:
     fixture_url: str | None
     observed_request_sha256: str
     revocation_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class RootApplicationFixtureReceipt:
+    """Receipt for a live, root-owned loopback fixture listener."""
+    schema: int
+    handle: str
+    fixture_id: str
+    setup_session_id: str
+    controller_binding_handle: str
+    service_generation_digest: str
+    url: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
+class RootOwnedApplicationFixtureServer:
+    """Serve one fixed bounded fixture on an owned IPv4 loopback socket.
+
+    The listener owns its socket and thread and emits a receipt only after the
+    socket is listening. It has no URL, content, or bind-address inputs.
+    """
+    _BODY = b"<!doctype html><title>Hermes qualification fixture</title><p>fixture only</p>"
+
+    def __init__(self, *, controllers: Any, monotonic: Any, service_generation_digest: str,
+                 ttl_seconds: float = 120.0):
+        if (not _digest(service_generation_digest) or not 0 < ttl_seconds <= 300
+                or not callable(monotonic)):
+            raise ValueError("application fixture server configuration is invalid")
+        self._controllers = controllers
+        self._clock = monotonic
+        self._generation = service_generation_digest
+        self._ttl = float(ttl_seconds)
+        self._lock = threading.RLock()
+        self._server: http.server.ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self._receipt: RootApplicationFixtureReceipt | None = None
+
+    def start(self, *, setup_session_id: str, controller_binding_handle: str) -> RootApplicationFixtureReceipt:
+        if (not isinstance(setup_session_id, str) or not setup_session_id
+                or not _handle(controller_binding_handle)):
+            raise AuthorityDenied("application.fixture", "fixture requires a live setup session and controller")
+        with self._lock:
+            if self._receipt is not None:
+                raise AuthorityDenied("application.fixture", "fixture listener is one-use")
+            binding = self._controllers.resolve_binding(controller_binding_handle)
+            if binding is None or self._controllers.verify_binding(binding) is not True:
+                raise AuthorityDenied("application.fixture", "setup controller binding is not current")
+            body = self._BODY
+
+            class Handler(http.server.BaseHTTPRequestHandler):
+                def do_GET(self) -> None:
+                    if self.path != "/fixture" or self.headers.get("Host", "").split(":", 1)[0] not in {"127.0.0.1", "localhost"}:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *_: Any) -> None:
+                    return
+
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            server.daemon_threads = True
+            server.timeout = 0.25
+            thread = threading.Thread(target=server.serve_forever, name="hermes-app-fixture", daemon=True)
+            thread.start()
+            now = self._clock()
+            expiry = min(now + self._ttl, float(binding.expires_monotonic))
+            if expiry <= now:
+                server.shutdown()
+                server.server_close()
+                raise AuthorityDenied("application.fixture", "setup controller lease has expired")
+            host, port = server.server_address
+            receipt = RootApplicationFixtureReceipt(1, secrets.token_urlsafe(32), "browser-fixture",
+                setup_session_id, controller_binding_handle, self._generation,
+                f"http://{host}:{port}/fixture", now, expiry)
+            self._server, self._thread, self._receipt = server, thread, receipt
+            return receipt
+
+    def resolve(self, handle: str, *, setup_session_id: str,
+                 service_generation_digest: str) -> RootApplicationFixtureReceipt:
+        with self._lock:
+            receipt, server, thread = self._receipt, self._server, self._thread
+        if (receipt is None or receipt.handle != handle or receipt.setup_session_id != setup_session_id
+                or receipt.service_generation_digest != service_generation_digest
+                or service_generation_digest != self._generation or receipt.expires_monotonic <= self._clock()
+                or server is None or thread is None or not thread.is_alive()
+                or server.socket.fileno() < 0 or server.server_address[0] != "127.0.0.1"
+                or not _owned_loopback_url(receipt.url)):
+            raise AuthorityDenied("application.fixture", "owned fixture listener receipt is stale")
+        binding = self._controllers.resolve_binding(receipt.controller_binding_handle)
+        if binding is None or self._controllers.verify_binding(binding) is not True:
+            raise AuthorityDenied("application.fixture", "fixture controller binding is stale")
+        return receipt
+
+    def close(self) -> None:
+        with self._lock:
+            server, self._server, self._thread = self._server, None, None
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+
+
+class RootApplicationExecutionJournal:
+    """Durable replay ledger for root-selected application execution.
+
+    The database is bound to one protected journal directory and one active
+    service generation. DTO objects remain process-local capabilities: after a
+    daemon restart, the durable rows prevent replay but never recreate handles.
+    """
+
+    def __init__(self, selection: Any, *, selection_resolver: Any,
+                 expected_uid: int = 0,
+                 monotonic: Any = time.monotonic):
+        from hermes_installer.protected_enrollment import RootJournalSelection
+        if (type(selection) is not RootJournalSelection or not selection.path.is_absolute()
+                or not _digest(selection.service_generation_digest)
+                or not isinstance(selection.generation, str) or not 1 <= len(selection.generation) <= 256
+                or type(expected_uid) is not int or expected_uid < 0 or not callable(monotonic)
+                or not callable(selection_resolver)):
+            raise AuthorityDenied("application.journal", "protected application journal selection is malformed")
+        try:
+            root_info = selection.path.lstat()
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != expected_uid
+                    or stat.S_IMODE(root_info.st_mode) != 0o700
+                    or (root_info.st_dev, root_info.st_ino) != (selection.device, selection.inode)):
+                raise ValueError
+            path = selection.path / "application-execution-v1.sqlite3"
+            fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise ValueError
+            finally:
+                os.close(fd)
+            self._db = sqlite3.connect(path, timeout=5.0, isolation_level=None,
+                                       check_same_thread=False)
+            os.chmod(path, 0o600)
+            self._db.execute("PRAGMA journal_mode=DELETE")
+            self._db.execute("PRAGMA synchronous=FULL")
+            self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS qualification (
+                    handle TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL,
+                    request BLOB NOT NULL, projected BLOB NOT NULL,
+                    consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)));
+                CREATE TABLE IF NOT EXISTS admission (
+                    handle TEXT PRIMARY KEY, service_generation_digest TEXT NOT NULL,
+                    expires REAL NOT NULL, request_sha256 TEXT NOT NULL, current INTEGER NOT NULL DEFAULT 1);
+                CREATE TABLE IF NOT EXISTS step (
+                    handle TEXT PRIMARY KEY, admission_handle TEXT NOT NULL,
+                    step_id TEXT NOT NULL, payload BLOB NOT NULL, current INTEGER NOT NULL DEFAULT 1,
+                    UNIQUE(admission_handle, step_id));
+                CREATE TABLE IF NOT EXISTS capsule (
+                    handle TEXT PRIMARY KEY, admission_handle TEXT NOT NULL,
+                    capsule BLOB NOT NULL, payload BLOB NOT NULL, terminal BLOB NOT NULL);
+            """)
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("application.journal", "protected application journal storage is unsafe") from None
+        self.selection = selection
+        self._selection_resolver = selection_resolver
+        self.expected_uid = expected_uid
+        self.monotonic = monotonic
+        self._lock = threading.RLock()
+        self._requests: dict[str, tuple[Any, Any, bytes]] = {}
+        self._admissions: dict[str, Any] = {}
+        self._steps: dict[str, Any] = {}
+        self._capsules: dict[str, tuple[Any, bytes, Any]] = {}
+
+    def _verify_selection(self) -> None:
+        try:
+            current = self._selection_resolver()
+        except Exception:
+            raise AuthorityDenied("application.journal", "protected application journal selection is stale") from None
+        if (type(current) is not type(self.selection)
+                or current.root_id != self.selection.root_id or current.path != self.selection.path
+                or current.device != self.selection.device or current.inode != self.selection.inode
+                or current.generation != self.selection.generation
+                or current.service_generation_digest != self.selection.service_generation_digest):
+            raise AuthorityDenied("application.journal", "protected application journal selection changed")
+
+    def _transaction(self, operation: Any) -> Any:
+        with self._lock:
+            self._verify_selection()
+            try:
+                self._db.execute("BEGIN IMMEDIATE")
+                result = operation()
+                self._db.execute("COMMIT")
+                return result
+            except Exception:
+                self._db.execute("ROLLBACK")
+                raise
+
+    def retain_application_qualification_request(self, request: Any, context: Any,
+                                                   projected: bytes) -> None:
+        if (type(request) is not RootApplicationQualificationRequest
+                or type(context) is not RootApplicationQualificationContext
+                or not isinstance(projected, bytes) or hashlib.sha256(projected).hexdigest()
+                != request.canonical_workload_sha256):
+            raise AuthorityDenied("application.journal", "qualification journal input is malformed")
+        encoded = canonical_bytes({name: getattr(request, name) for name in request.__dataclass_fields__})
+        def write() -> None:
+            self._db.execute("INSERT INTO qualification(handle,request_sha256,request,projected) VALUES(?,?,?,?)",
+                (request.request_handle, request.canonical_workload_sha256, encoded, projected))
+        self._transaction(write)
+        with self._lock:
+            self._requests[request.request_handle] = (request, context, projected)
+
+    def resolve_application_qualification_request(self, handle: str) -> Any:
+        self._verify_selection()
+        with self._lock:
+            item = self._requests.get(handle)
+            row = self._db.execute("SELECT consumed FROM qualification WHERE handle=?", (handle,)).fetchone()
+        if item is None or row is None or row[0] != 0:
+            raise AuthorityDenied("application.journal", "qualification request is consumed or unavailable")
+        return item[0]
+
+    def is_application_qualification_request_current(self, handle: str) -> bool:
+        try:
+            self._verify_selection()
+        except AuthorityDenied:
+            return False
+        with self._lock:
+            return bool(handle in self._requests and self._db.execute(
+                "SELECT 1 FROM qualification WHERE handle=? AND consumed=0", (handle,)).fetchone())
+
+    def consume_application_qualification_request(self, handle: str) -> bool:
+        def consume() -> bool:
+            cursor = self._db.execute("UPDATE qualification SET consumed=1 WHERE handle=? AND consumed=0", (handle,))
+            return cursor.rowcount == 1
+        return self._transaction(consume)
+
+    def _admit(self, *, application_id: str, profile_id: str, profile_generation: str,
+               principal_id: str, service_generation_digest: str,
+               source_receipt_handles: tuple[str, ...], source_context_digest: str,
+               expires_monotonic: float, workload_id: str, payload: bytes,
+               selection: Any, request_sha256: str, observed_sha256: str,
+               source_receipt_handle: str, controller_binding_handle: str,
+               qualification_handle: str = "") -> RootApplicationWorkloadAdmission:
+        from hermes_installer.components.workloads import _REGISTERED
+        definition = _REGISTERED.get(workload_id)
+        if definition is None or not isinstance(payload, bytes) or not _digest(request_sha256):
+            raise AuthorityDenied("application.journal", "selected workload recipe is unavailable")
+        now = self.monotonic()
+        expiry = min(now + float(definition.timeout_seconds), expires_monotonic)
+        admission_handle = secrets.token_urlsafe(32)
+        operation_id = getattr(selection, "operation_id", None)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise AuthorityDenied("application.journal", "selected operation recipe is unavailable")
+        admission = RootApplicationWorkloadAdmission(
+            1, admission_handle, application_id, workload_id, profile_id,
+            profile_generation, principal_id, service_generation_digest,
+            request_sha256, tuple(source_receipt_handles), source_context_digest,
+            controller_binding_handle, source_receipt_handle, selection.runtime_receipt_handle,
+            (operation_id,), 1, expiry, 0, now, expiry, observed_sha256, qualification_handle)
+        step_handle = secrets.token_urlsafe(32)
+        step = RootApplicationSelectedStep(1, step_handle, admission_handle, application_id,
+            workload_id, f"{workload_id}:0", 1, profile_id, profile_generation,
+            service_generation_digest, operation_id, request_sha256,
+            source_receipt_handle, selection.runtime_receipt_handle, source_context_digest,
+            controller_binding_handle, payload, expiry)
+        def write() -> None:
+            self._db.execute("INSERT INTO admission(handle,service_generation_digest,expires,request_sha256) VALUES(?,?,?,?)",
+                (admission_handle, service_generation_digest, expiry, request_sha256))
+            self._db.execute("INSERT INTO step(handle,admission_handle,step_id,payload) VALUES(?,?,?,?)",
+                (step_handle, admission_handle, step.step_id, payload))
+        self._transaction(write)
+        with self._lock:
+            self._admissions[admission_handle] = admission
+            self._steps[step_handle] = step
+        return admission
+
+    def admit_selected_application_qualification_workload(self, *, request: Any, context: Any,
+            workload_bytes: bytes, selection: Any) -> RootApplicationWorkloadAdmission:
+        if (type(request) is not RootApplicationQualificationRequest
+                or not isinstance(workload_bytes, bytes)
+                or hashlib.sha256(workload_bytes).hexdigest() != request.canonical_workload_sha256):
+            raise AuthorityDenied("application.journal", "qualification workload bytes differ from retained request")
+        workload = json.loads(workload_bytes.decode("utf-8"))
+        return self._admit(application_id=request.application_id, profile_id=request.profile_id,
+            profile_generation=request.profile_generation, principal_id=request.principal_id,
+            service_generation_digest=request.enclosing_service_generation_digest,
+            source_receipt_handles=request.source_receipt_handles,
+            source_context_digest=request.source_context_digest,
+            expires_monotonic=request.expires_monotonic,
+            workload_id=workload["id"], payload=workload_bytes, selection=selection,
+            request_sha256=request.canonical_workload_sha256,
+            observed_sha256=context.observed_request_sha256,
+            source_receipt_handle=selection.source_generation_receipt_handle,
+            controller_binding_handle=context.controller_binding_handle,
+            qualification_handle=request.request_handle)
+
+    def admit_selected_application_workload(self, *, invocation: Any, action: Any, workload: Any,
+            selection: Any, request_sha256: str, source_closure_sha256: str) -> RootApplicationWorkloadAdmission:
+        payload = canonical_bytes({"id": workload.id, "arguments": dict(workload.arguments)})
+        return self._admit(application_id=action.application_id, profile_id=action.profile_id,
+            profile_generation=action.profile_generation, principal_id=invocation.principal_id,
+            service_generation_digest=action.service_generation_digest,
+            source_receipt_handles=(action.source_receipt_handle,),
+            source_context_digest=source_closure_sha256,
+            expires_monotonic=invocation.expires_monotonic,
+            workload_id=workload.id, payload=payload, selection=selection, request_sha256=request_sha256,
+            observed_sha256=request_sha256, source_receipt_handle=action.source_receipt_handle,
+            controller_binding_handle=action.controller_binding_handle)
+
+    def resolve_application_admission(self, handle: str) -> Any:
+        with self._lock:
+            admission = self._admissions.get(handle)
+        if admission is None or not self.is_application_admission_current(handle):
+            raise AuthorityDenied("application.journal", "application admission is stale")
+        return admission
+
+    def is_application_admission_current(self, handle: str) -> bool:
+        try:
+            self._verify_selection()
+        except AuthorityDenied:
+            return False
+        with self._lock:
+            admission = self._admissions.get(handle)
+            row = self._db.execute("SELECT service_generation_digest,expires,current FROM admission WHERE handle=?", (handle,)).fetchone()
+        return bool(admission is not None and row is not None and row[2] == 1
+                    and row[0] == self.selection.service_generation_digest
+                    and row[1] > self.monotonic()
+                    and admission.service_generation_digest == row[0])
+
+    def application_step_handle(self, step: RootApplicationSelectedStep) -> str:
+        return step.handle if self._steps.get(step.handle) is step else ""
+
+    def resolve_application_step(self, admission_handle: str, step_id: str) -> Any:
+        with self._lock:
+            matches = [item for item in self._steps.values()
+                       if item.admission_handle == admission_handle and item.step_id == step_id]
+        if len(matches) != 1 or not self.is_application_step_current(matches[0].handle):
+            raise AuthorityDenied("application.journal", "application step is stale")
+        return matches[0]
+
+    def is_application_step_current(self, handle: str) -> bool:
+        try:
+            self._verify_selection()
+        except AuthorityDenied:
+            return False
+        with self._lock:
+            step = self._steps.get(handle)
+            row = self._db.execute("SELECT admission_handle,current FROM step WHERE handle=?", (handle,)).fetchone()
+        return bool(step is not None and row is not None and row[1] == 1
+                    and row[0] == step.admission_handle and self.is_application_admission_current(row[0]))
+
+    def retain_application_result_capsule(self, capsule: Any, payload: bytes, terminal: Any) -> None:
+        if (type(capsule) is not RootApplicationResultCapsule or not isinstance(payload, bytes)
+                or not 1 <= len(payload) <= 4 * 1024 * 1024):
+            raise AuthorityDenied("application.journal", "result capsule exceeds its journal bound")
+        capsule_bytes = canonical_bytes(capsule.claims() | {"signature": capsule.signature})
+        terminal_bytes = canonical_bytes(terminal.claims() | {"signature": terminal.signature})
+        def write() -> None:
+            self._db.execute("INSERT INTO capsule(handle,admission_handle,capsule,payload,terminal) VALUES(?,?,?,?,?)",
+                (capsule.handle, capsule.admission_handle, capsule_bytes, payload, terminal_bytes))
+        self._transaction(write)
+        with self._lock:
+            self._capsules[capsule.handle] = (capsule, payload, terminal)
+
+    def resolve_application_result_capsule(self, handle: str) -> Any:
+        with self._lock:
+            item = self._capsules.get(handle)
+        if item is None or not self.is_application_admission_current(item[0].admission_handle):
+            raise AuthorityDenied("application.journal", "application capsule is stale")
+        return item
 
 
 @dataclass(frozen=True, slots=True)
