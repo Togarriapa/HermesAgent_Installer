@@ -1826,7 +1826,17 @@ class RootSourceBootstrapActorVerifier:
         for path in sys.path:
             if not path:
                 raise InstallerReleaseBuildError("bootstrap actor imports from the ambient working directory")
-            resolved = Path(path).resolve(strict=True)
+            candidate = Path(path)
+            try:
+                resolved = candidate.resolve(strict=True)
+            except FileNotFoundError:
+                # CPython includes an optional stdlib zip archive in sys.path
+                # even when the standalone runtime ships the expanded stdlib
+                # directory only. Permit only that exact absent runtime path;
+                # all other missing import roots remain a closed failure.
+                if _is_absent_optional_stdlib_zip(candidate, prefix):
+                    continue
+                raise InstallerReleaseBuildError("bootstrap actor import path is unavailable") from None
             if not any(_is_beneath(resolved, Path(base)) for base in allowed_paths):
                 raise InstallerReleaseBuildError("bootstrap actor import path is outside selected source/runtime closure")
         for name, module in tuple(sys.modules.items()):
@@ -3515,6 +3525,31 @@ def _runtime_site_search_paths() -> list[str]:
         if resolved not in paths:
             paths.append(resolved)
     return paths
+
+
+def _is_absent_optional_stdlib_zip(path: Path, runtime_prefix: Path) -> bool:
+    """Recognize CPython's one optional archive entry when it is truly absent."""
+    expected = runtime_prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+    if path != expected:
+        return False
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    else:
+        # Existing files, directories, and even dangling symlinks must go
+        # through normal strict resolution and closure verification.
+        return False
+    try:
+        library_info = os.lstat(path.parent)
+        if not stat.S_ISDIR(library_info.st_mode):
+            return False
+        library_dir = (runtime_prefix / "lib").resolve(strict=True)
+        return path.parent.resolve(strict=True) == library_dir
+    except OSError:
+        return False
 
 
 def _verify_bundled_pip_distribution(dist: Any, prefix: Path) -> None:

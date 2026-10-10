@@ -219,6 +219,20 @@ def test_runtime_site_search_paths_deduplicate_purelib_and_platlib(monkeypatch, 
     assert release_build._runtime_site_search_paths() == [str(tmp_path.resolve())]
 
 
+def test_only_absent_fixed_optional_stdlib_zip_is_ignored(tmp_path):
+    runtime = tmp_path / "runtime"
+    library = runtime / "lib"
+    library.mkdir(parents=True)
+    optional_zip = library / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+
+    assert release_build._is_absent_optional_stdlib_zip(optional_zip, runtime)
+    assert not release_build._is_absent_optional_stdlib_zip(library / "python999.zip", runtime)
+    assert not release_build._is_absent_optional_stdlib_zip(runtime / "missing.zip", runtime)
+
+    optional_zip.symlink_to(library / "missing-target.zip")
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime)
+
+
 def test_bundled_pip_is_bound_to_fixed_cpython_site_directory(tmp_path):
     relative_files = (
         Path("pip/__init__.py"),
