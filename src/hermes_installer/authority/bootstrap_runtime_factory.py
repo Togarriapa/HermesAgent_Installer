@@ -151,6 +151,10 @@ _NATIVE_ASSEMBLY_SUPPORT_MODULES = (
     "installer-module:hermes_installer.authority.native_materialization",
     "installer-module:hermes_installer.authority.native_registration_projection",
     "installer-module:hermes_installer.authority.native_output_receipts",
+    "installer-module:hermes_installer.authority.native_definition_composition",
+    "installer-module:hermes_installer.authority.native_policy_preparation",
+    "installer-module:hermes_installer.authority.native_source_definitions",
+    "installer-module:hermes_installer.authority.local_resource_effects",
 )
 _CAPABILITY_MAP_TEMPLATE_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
 _CAPABILITY_MAP_TEMPLATE_PATH = "templates/reviewed-native-capability-map-v1.json"
@@ -865,6 +869,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native source definition receipt is not owned by this setup session")
         return self._session._resolve_prepared_native_source_definition_module_receipt()
 
+    def resolve_prepared_native_capture_profile_receipts(
+            self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native capture profile receipts are not owned by this setup session")
+        return self._session._resolve_prepared_native_capture_profile_receipts()
+
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -1395,6 +1405,7 @@ class RootNativeBootstrapAssemblySelection:
     resources_source_receipt_handle: str
     definitions_handle: str
     definitions_sha256: str
+    native_policy_preparation_handle: str
     issued_monotonic: float
     expires_monotonic: float
     _registry_seal: object = field(repr=False, compare=False)
@@ -1418,6 +1429,24 @@ class RootNativeAssemblyDefinitions:
     selection_handle: str
     definitions_sha256: str
     adapter_records: tuple[Mapping[str, Any], ...]
+    dependency_records: tuple[Mapping[str, Any], ...]
+    source_issuer_records: tuple[Mapping[str, Any], ...]
+    native_schema_records: tuple[Mapping[str, Any], ...]
+    action_registration_records: tuple[Mapping[str, Any], ...]
+    registration_records: tuple[Mapping[str, Any], ...]
+    candidate_records: tuple[Mapping[str, Any], ...]
+    process_role_records: tuple[Mapping[str, Any], ...]
+    boundary_overlay_bytes: bytes
+    boundary_overlay_source_commit: str
+    closure_members: tuple[RootNativeAssemblyMember, ...]
+    native_schema_bytes: tuple[tuple[str, bytes], ...]
+    effect_selection_receipt_handles: tuple[str, ...]
+    action_records: tuple[Mapping[str, Any], ...]
+    workflow_records: tuple[Mapping[str, Any], ...]
+    result_schema_receipts: tuple["RootNativeRegistrationSchemaReceipt", ...]
+    release_module_receipts: tuple[RootReleaseModuleReceipt, ...]
+    native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    _registry_seal: object = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1597,25 +1626,6 @@ class RootRunnableRoleProjectionRegistry:
         if current is not closure:
             raise BootstrapEnrollmentPending("runnable role closure changed during currentness check")
         return closure
-    dependency_records: tuple[Mapping[str, Any], ...]
-    native_schema_records: tuple[Mapping[str, Any], ...]
-    native_schema_bytes: tuple[tuple[str, bytes], ...]
-    source_issuer_records: tuple[Mapping[str, Any], ...]
-    process_role_records: tuple[Mapping[str, Any], ...]
-    native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
-    action_records: tuple[Mapping[str, Any], ...]
-    workflow_records: tuple[Mapping[str, Any], ...]
-    action_registration_records: tuple[Mapping[str, Any], ...]
-    registration_records: tuple[Mapping[str, Any], ...]
-    candidate_records: tuple[Mapping[str, Any], ...]
-    closure_members: tuple[RootNativeAssemblyMember, ...]
-    boundary_overlay_receipt_handle: str
-    boundary_overlay_bytes: bytes
-    boundary_overlay_source_commit: str
-    effect_selection_receipt_handles: tuple[str, ...]
-    _registry_seal: object = field(repr=False, compare=False)
-    release_module_receipts: tuple[RootReleaseModuleReceipt, ...] = ()
-    result_schema_receipts: tuple[RootNativeRegistrationSchemaReceipt, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -4405,6 +4415,8 @@ class RootBootstrapSession:
         self._prepared_native_bundle: RootPreparedNativeBundle | None = None
         self._native_assembly_selections: dict[str, RootNativeBootstrapAssemblySelection] = {}
         self._native_assembly_definitions: dict[str, RootNativeAssemblyDefinitions] = {}
+        self._native_assembly_member_owners: dict[str, dict[str, Any]] = {}
+        self._native_assembly_definition_contexts: dict[str, Mapping[str, Any]] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._prepared_release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._prepared_release_file_receipts: dict[str, RootPreparedReleaseMemberReceipt] = {}
@@ -4587,6 +4599,7 @@ class RootBootstrapSession:
             from .native_component_targets import RootNativeComponentTargetRegistry
             from .native_registration_projection import RootNativeRegistrationProjectionRegistry
             from .native_policy_preparation import RootNativePolicyPreparationRegistry
+            from . import native_definition_composition  # selected compiler source closure
             from .native_source_definitions import RootNativeSourceDefinitionRegistry
             from .native_schema_derivation import RootNativeSchemaDerivationRegistry
             journal = self._current_root_journal_selection().path
@@ -7073,6 +7086,17 @@ class RootBootstrapSession:
             _registry_seal=self._factory._native_assembly_seal,
         )
         self._native_assembly_selections[handle] = selection
+        try:
+            definitions = self._retain_native_assembly_definitions(selection, policy_records)
+            selection = replace(selection, definitions_sha256=definitions.definitions_sha256)
+            self._native_assembly_selections[handle] = selection
+            self._resolve_native_assembly_definitions(handle)
+        except Exception:
+            self._native_assembly_selections.pop(handle, None)
+            self._native_assembly_definitions.pop(handle, None)
+            self._native_assembly_member_owners.pop(handle, None)
+            self._native_assembly_definition_contexts.pop(handle, None)
+            raise
         actor.verify_current(release)
         return selection
 
@@ -7085,6 +7109,196 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("native assembly selection is not retained by this session")
         self._revalidate_native_assembly_selection(selection)
         return selection
+
+    def _retain_native_assembly_definitions(
+            self, selection: RootNativeBootstrapAssemblySelection, records: Any
+    ) -> RootNativeAssemblyDefinitions:
+        """Compose current source owners once, before any active publication."""
+        from .native_definition_composition import freeze
+        from .native_registration_projection import build_root_native_registration_projection
+        registry = self._native_policy_preparation_registry
+        composition = registry._selected_source_compositions.get(records.records_handle)
+        if (composition is None or not records.registration_records
+                or not records.process_role_records or not records.effect_policy_receipt_handles):
+            raise BootstrapEnrollmentPending("selected native executable source/effect closure is pending")
+        sources = self._resolve_prepared_release_module_receipts()
+        source_bundle = registry._source_definition_bundles[records.records_handle]
+        owners = {row.source_receipt_handle: row
+                  for row in sources + source_bundle.role_module_receipts}
+        closure = []
+        release = self._factory._release
+        for handle, receipt in sorted(owners.items(), key=lambda item: item[1].relative_path):
+            content = receipt.read_current()
+            descriptor = next(row for row in release.files if row.artifact_id == receipt.artifact_id)
+            if descriptor.relative_path != receipt.relative_path:
+                raise BootstrapEnrollmentPending("native member descriptor changed")
+            fd = release.open_file(receipt.artifact_id)
+            try:
+                mode = stat.S_IMODE(os.fstat(fd).st_mode)
+            finally:
+                os.close(fd)
+            if mode not in {0o644, 0o600}:
+                raise BootstrapEnrollmentPending("native Python source member mode is unsupported")
+            path = receipt.relative_path
+            if path.startswith("src/"):
+                path = path[4:]
+            elif path.startswith("lib/python/"):
+                path = path[len("lib/python/"):]
+            if not path.startswith("hermes_installer/"):
+                raise BootstrapEnrollmentPending("native member is outside descriptor-owned Python source")
+            closure.append(RootNativeAssemblyMember(path, hashlib.sha256(content).hexdigest(),
+                                                     len(content), mode, handle))
+        if len({row.relative_path for row in closure}) != len(closure):
+            raise BootstrapEnrollmentPending("native selected source closure contains path collisions")
+        overlay = _canonical({
+            "schema": 1, "source_commit": release.release_commit,
+            "compiler_artifact_id": selection.compiler_artifact_id,
+            "compiler_sha256": selection.compiler_sha256,
+            "members": [{"path": row.relative_path, "sha256": row.sha256,
+                         "size_bytes": row.size_bytes, "mode": row.mode} for row in closure],
+        })
+        self._native_assembly_definition_contexts[selection.selection_handle] = freeze({
+            "choice_selection": records.native_policy_selection_handle,
+            "choice_sha256": records.selection_sha256, "records_sha256": records.records_sha256,
+            "definition_source_receipt_handles": records.definition_source_receipt_handles,
+            "capture_profile_receipt_handles": records.capture_profile_receipt_handles,
+            "source_role_selection_handles": records.source_role_selection_handles,
+            "target_selection_handles": records.target_selection_handles,
+            "materialization_receipt_handle": selection.materialization_receipt_handle,
+            "pm_runtime_receipt_handle": selection.pm_runtime_receipt_handle,
+            "hermes_source_receipt_handle": selection.hermes_source_receipt_handle,
+            "resources_source_receipt_handle": selection.resources_source_receipt_handle,
+            "release_commit": release.release_commit,
+        })
+        # Adapter metadata describes the actual source class. It is not an
+        # imported-worker observation, and empty backend action IDs do not
+        # turn local overlay methods into PluginActionSchema authorities.
+        from ..components.native_plugins import resolve_native_plugin_implementation
+        implementation = resolve_native_plugin_implementation("resource-overlay-store")
+        implementation_type = type(implementation)
+        module_path = implementation_type.__module__.replace(".", "/") + ".py"
+        adapter_member = next((row for row in closure if row.relative_path == module_path), None)
+        if adapter_member is None:
+            raise BootstrapEnrollmentPending("selected native adapter source module is absent from closure")
+        dependencies = tuple(freeze({
+            "artifact_id": owners[row.artifact_receipt_handle].artifact_id,
+            "sha256": row.sha256,
+            "module_names": (row.relative_path[:-3].replace("/", "."),),
+        }) for row in closure if row.relative_path != module_path)
+        adapters = (freeze({
+            "adapter_id": "resource-overlay-store", "relative_module_path": module_path,
+            "module_name": implementation_type.__module__,
+            "entrypoint_symbol": implementation_type.__name__, "artifact_sha256": adapter_member.sha256,
+            "allowed_internal_modules": tuple(sorted(name for row in dependencies for name in row["module_names"])),
+            "allowed_dependency_artifact_ids": tuple(sorted(row["artifact_id"] for row in dependencies)),
+            "action_ids": (),
+        }),)
+        definitions = RootNativeAssemblyDefinitions(
+            selection.selection_handle, "0" * 64, adapters, dependencies,
+            freeze(records.source_issuer_records), freeze(records.native_schema_records),
+            freeze(records.action_records), freeze(records.registration_records), (),
+            freeze(records.process_role_records), overlay, release.release_commit, tuple(closure),
+            records.native_schema_bytes, records.effect_policy_receipt_handles,
+            freeze(records.action_records), freeze(records.workflow_records),
+            composition.result_schema_receipts, sources, (), self._factory._native_assembly_seal)
+        # Strict projection resolves only this retained, sealed current source graph.
+        self._native_assembly_definitions[selection.selection_handle] = definitions
+        self._native_assembly_member_owners[selection.selection_handle] = owners
+        projection = build_root_native_registration_projection(selection, definitions)
+        definitions = replace(definitions, candidate_records=freeze(projection.candidate_records))
+        digest = self._native_definition_digest(definitions)
+        definitions = replace(definitions, definitions_sha256=digest)
+        self._native_assembly_definitions[selection.selection_handle] = definitions
+        return definitions
+
+    def _native_definition_digest(self, definitions: RootNativeAssemblyDefinitions) -> str:
+        """Canonical row/byte/receipt identity; seals and live objects stay private."""
+        row_fields = ("adapter_records", "dependency_records", "source_issuer_records",
+                      "native_schema_records", "action_registration_records", "registration_records",
+                      "candidate_records", "process_role_records", "effect_selection_receipt_handles",
+                      "action_records", "workflow_records", "native_mcp_tool_bindings")
+        body = {name: _plain_json(getattr(definitions, name)) for name in row_fields}
+        body.update({
+            "source_context": _plain_json(self._native_assembly_definition_contexts[definitions.selection_handle]),
+            "selection_handle": definitions.selection_handle,
+            "overlay_source": definitions.boundary_overlay_source_commit,
+            "overlay_sha256": hashlib.sha256(definitions.boundary_overlay_bytes).hexdigest(),
+            "members": [{"path": row.relative_path, "sha256": row.sha256, "size": row.size_bytes,
+                         "mode": row.mode, "handle": row.artifact_receipt_handle}
+                        for row in definitions.closure_members],
+            "schema_bytes": [{"id": key, "sha256": hashlib.sha256(value).hexdigest(), "size": len(value)}
+                             for key, value in definitions.native_schema_bytes],
+            "release_sources": [{"artifact_id": row.artifact_id, "sha256": row.sha256,
+                                 "size": row.size_bytes, "handle": row.source_receipt_handle}
+                                for row in definitions.release_module_receipts],
+            "result_sources": [{"artifact_id": row.artifact_id, "sha256": row.sha256,
+                                "size": row.size_bytes, "handle": row.artifact_receipt_handle}
+                               for row in definitions.result_schema_receipts],
+        })
+        return hashlib.sha256(_canonical(body)).hexdigest()
+
+    def _resolve_native_assembly_definitions(self, selection_handle: str) -> RootNativeAssemblyDefinitions:
+        selection = self._resolve_current_native_bootstrap_assembly(selection_handle)
+        records = self.resolve_current_prepared_native_policy_records(selection.native_policy_preparation_handle)
+        definitions = self._native_assembly_definitions.get(selection_handle)
+        if (type(definitions) is not RootNativeAssemblyDefinitions
+                or definitions._registry_seal is not self._factory._native_assembly_seal
+                or definitions.selection_handle != selection_handle
+                or definitions.registration_records != records.registration_records
+                or definitions.action_records != records.action_records
+                or definitions.workflow_records != records.workflow_records
+                or definitions.source_issuer_records != records.source_issuer_records
+                or definitions.process_role_records != records.process_role_records
+                or definitions.native_schema_records != records.native_schema_records
+                or definitions.native_schema_bytes != records.native_schema_bytes
+                or definitions.effect_selection_receipt_handles != records.effect_policy_receipt_handles
+                or definitions.definitions_sha256 != selection.definitions_sha256
+                or self._native_definition_digest(definitions) != definitions.definitions_sha256):
+            raise BootstrapEnrollmentPending("native retained definitions changed or belong to another selection")
+        context = self._native_assembly_definition_contexts[selection_handle]
+        if (context["choice_sha256"] != records.selection_sha256
+                or context["records_sha256"] != records.records_sha256
+                or context["definition_source_receipt_handles"] != records.definition_source_receipt_handles
+                or context["capture_profile_receipt_handles"] != records.capture_profile_receipt_handles
+                or context["source_role_selection_handles"] != records.source_role_selection_handles
+                or context["target_selection_handles"] != records.target_selection_handles):
+            raise BootstrapEnrollmentPending("native definition source-receipt context changed")
+        for receipt in definitions.release_module_receipts + definitions.result_schema_receipts:
+            receipt.read_current()
+        # Revalidate each member with its privately retained source owner.
+        for member in definitions.closure_members:
+            self._read_native_assembly_member(selection, definitions, member.artifact_receipt_handle)
+        self._revalidate_native_assembly_selection(selection)
+        if self.resolve_current_prepared_native_policy_records(selection.native_policy_preparation_handle) is not records:
+            raise BootstrapEnrollmentPending("native policy changed while resolving definitions")
+        return definitions
+
+    def _read_native_assembly_member(self, selection: Any, definitions: Any,
+                                     artifact_receipt_handle: str) -> bytes:
+        members = [row for row in definitions.closure_members
+                   if row.artifact_receipt_handle == artifact_receipt_handle]
+        owner = self._native_assembly_member_owners.get(selection.selection_handle, {}).get(artifact_receipt_handle)
+        if len(members) != 1 or owner is None or owner.source_receipt_handle != artifact_receipt_handle:
+            raise BootstrapEnrollmentPending("native member is outside the retained selected closure")
+        member = members[0]
+        content = owner.read_current()
+        fd = self._factory._release.open_file(owner.artifact_id)
+        try:
+            mode = stat.S_IMODE(os.fstat(fd).st_mode)
+        finally:
+            os.close(fd)
+        if (mode != member.mode or len(content) != member.size_bytes
+                or hashlib.sha256(content).hexdigest() != member.sha256):
+            raise BootstrapEnrollmentPending("native member bytes, size or mode changed")
+        return bytes(content)
+
+    def _resolve_native_assembly_member(self, selection_handle: str,
+                                        artifact_receipt_handle: str) -> bytes:
+        definitions = self._resolve_native_assembly_definitions(selection_handle)
+        selection = self._resolve_current_native_bootstrap_assembly(selection_handle)
+        content = self._read_native_assembly_member(selection, definitions, artifact_receipt_handle)
+        self._revalidate_native_assembly_selection(selection)
+        return content
 
     def _persist_resource_profile_choice(self, receipt: RootSelectedResourceProfile,
                                          tty_proof: Any) -> None:
@@ -7477,14 +7691,18 @@ class RootBootstrapSession:
                        if row[1] == str(release.release_root / path) and row[4] == digest]
             if len(matches) != 1:
                 raise BootstrapEnrollmentPending("registration module is outside current root actor import closure")
-            handle = secrets.token_urlsafe(36)
-            receipt = RootReleaseModuleReceipt(
-                artifact_id, path, digest, size,
-                release.release_commit, release.deployment_receipt_sha256,
-                handle, self._handle.session_id, self._seal, self,
-                prepared.generation_id,
-            )
-            self._prepared_release_member_receipts[handle] = receipt
+            receipt = next((item for item in self._prepared_release_member_receipts.values()
+                            if item.artifact_id == artifact_id
+                            and item._prepared_generation_id == prepared.generation_id), None)
+            if receipt is None:
+                handle = secrets.token_urlsafe(36)
+                receipt = RootReleaseModuleReceipt(
+                    artifact_id, path, digest, size,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, self._seal, self,
+                    prepared.generation_id,
+                )
+                self._prepared_release_member_receipts[handle] = receipt
             receipt.read_current()
             output.append(receipt)
         actor.verify_current(release)
@@ -7620,7 +7838,7 @@ class RootBootstrapSession:
 
     def _resolve_prepared_native_capture_profile_receipts(
             self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
-        """Read the three exact v158 capture profiles from the held release.
+        """Read the three v158 profiles and exact v171 discovery profile.
 
         These amendment files define capture validation limits and source IDs;
         the receipts prove only their selected-release bytes. They do not
@@ -7643,6 +7861,9 @@ class RootBootstrapSession:
             ("installer-native-provider-result-capture-profile-v1",
              "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
              "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
+            ("installer-native-mcp-discovery-capture-profile-v171",
+             "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+             "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4601),
         )
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
@@ -8522,7 +8743,8 @@ class RootBootstrapSession:
                 or receipt._session is not self
                 or receipt._session_id != self._handle.session_id
                 or not secrets.compare_digest(receipt._session_seal, self._seal)
-                or self._release_member_receipts.get(receipt.source_receipt_handle) is not receipt):
+                or (self._release_member_receipts.get(receipt.source_receipt_handle) is not receipt
+                    and self._prepared_release_member_receipts.get(receipt.source_receipt_handle) is not receipt)):
             raise BootstrapEnrollmentPending("release member receipt is not retained by this live setup session")
         if receipt._prepared_generation_id is not None:
             prepared = self._last_receipt
@@ -8633,6 +8855,11 @@ class RootBootstrapSession:
                 or selection.package_id != "hermes-agent-native-package-v1"
                 or selection.service_profile_id != "hermes-agent-native-v1"):
             raise BootstrapEnrollmentPending("native assembly selection differs from its retained prepared bundle")
+        policy_selection = self.resolve_current_native_policy_selection(selection.native_policy_preparation_handle)
+        if (self._current_native_policy_selection_handle != policy_selection.selection_handle
+                or policy_selection.native_package_generation != selection.native_package_generation
+                or policy_selection.prepared_generation_id != selection.prepared_generation_id):
+            raise BootstrapEnrollmentPending("native assembly root choice changed")
         compiler = self._prepared_release_member_receipts.get(
             selection.compiler_release_receipt_handle)
         if (not isinstance(compiler, RootReleaseModuleReceipt)

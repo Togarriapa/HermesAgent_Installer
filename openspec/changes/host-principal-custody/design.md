@@ -282,3 +282,5 @@ Selected window input v177: `plans/amendments/2026-10-10-selected-window-input-o
 
 
 Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v178.md`. Exact retained setup/source/PM/native definition/member, finite fixture descriptor/service observation and local overlay invocation producers; all AC01..18 OPEN, baseline unchanged. Producer ownership/order and acceptance remain in HI-T178.1..5.
+
+Selected native executable closure v179: `plans/amendments/2026-10-10-selected-native-executable-closure-v179.md`. Exact selected completeness, full42/61/2 inventory and18 obligations preserved; unavailable effects pending, preactive declarations distinct from loaded proof; all AC01..18 OPEN.

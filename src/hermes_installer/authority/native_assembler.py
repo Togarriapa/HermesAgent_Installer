@@ -117,6 +117,15 @@ def assemble_native_package(selection: _Selection, definitions: Any,
     }
     resolver_bytes = _canonical(resolver)
     resolver_sha = hashlib.sha256(resolver_bytes).hexdigest()
+    # v113 source definitions retain schema IDs; the emitted registration also
+    # carries the exact server selected by the strict candidate projector.
+    candidates_by_id = {row.get("registration_id"): row for row in candidates}
+    for registration in native_registrations:
+        if "argument_schema_id" in registration:
+            candidate = candidates_by_id.get(registration.get("registration_id"))
+            if candidate is None or not isinstance(candidate.get("native_server_name"), str):
+                raise NativeAssemblyDenied("selected registration has no exact projected native server")
+            registration["native_server_name"] = candidate["native_server_name"]
     registration_projection_sha = hashlib.sha256(_canonical(native_registrations)).hexdigest()
     candidate_index = {
         "schema": 1,

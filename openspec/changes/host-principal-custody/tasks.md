@@ -337,3 +337,7 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] `HI-T178.3` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
 
 - [ ] `HI-T178.4` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [x] HI-T179.1 Implement/verify retained source-owner selected executable closure and exact projector/assembler/member/currentness denials under v179. Evidence: `docs/native-selected-source-composition-v179.md`; local source fixture only, HI-T178.1 and live acceptance remain OPEN.
+
+- [ ] HI-T179.2 Live loaded-worker/PIDFD and external target/account/provider/device acceptance; all AC01..18 remain OPEN.

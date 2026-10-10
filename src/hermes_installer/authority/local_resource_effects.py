@@ -376,10 +376,10 @@ class RootOwnedProfileOverlayViewRegistry:
                 or receipt.native_policy_selection_handle != native_policy_selection_handle
                 or receipt.resource_profile_receipt_handle != resource_profile_selection_handle):
             raise LocalProfileOverlayEffectsDenied("factory returned an unbound profile overlay receipt")
-        prior = self._views.get(receipt.view_selection_handle)
+        prior = self._views.get(receipt.profile_view_selection_handle)
         if prior is not None and prior is not receipt:
             raise LocalProfileOverlayEffectsDenied("profile overlay view handle was rebound")
-        self._views[receipt.view_selection_handle] = receipt
+        self._views[receipt.profile_view_selection_handle] = receipt
         return receipt
 
     def resolve_current(self, view_selection_handle: str,
@@ -548,6 +548,14 @@ class RootOwnerProfileOverlayEffects:
         body = _canonical({"schema": 1, "rows": canonical_rows,
                            "pending": [dict(item) for item in pending]})
         now = time.monotonic()
+        digest = hashlib.sha256(body).hexdigest()
+        prior = next((item for item in self._bundles.values()
+                      if item.native_policy_selection_handle == native_policy_selection_handle
+                      and item.profile_view_selection_handle == profile_view_selection_handle
+                      and item.operation_records_sha256 == digest
+                      and item.expires_monotonic > now), None)
+        if prior is not None:
+            return prior
         bundle = RootPreparedLocalProfileOperationBundle(
             1, secrets.token_urlsafe(32), selection.setup_session_id,
             selection.transaction_handle, selection.prepared_generation_id,
@@ -578,7 +586,7 @@ class RootOwnerProfileOverlayEffects:
                 or current.operation_records != bundle.operation_records
                 or current.pending_registration_records != bundle.pending_registration_records
                 or selection.prepared_generation_id != bundle.prepared_generation_id
-                or view.view_selection_handle != bundle.profile_view_selection_handle):
+                or view.profile_view_selection_handle != bundle.profile_view_selection_handle):
             raise LocalProfileOverlayEffectsDenied("owner-overlay operation joins changed")
         return bundle
 
@@ -711,7 +719,7 @@ class RootOwnerProfileOverlayEffects:
     def _persist_bundle(self, bundle: RootPreparedLocalProfileOperationBundle) -> None:
         from hermes_installer.state import Journal
         try:
-            Journal(self._journal).event(
+            Journal(self._journal / "native-owner-overlay-operations.sqlite3").event(
                 "native-owner-overlay:" + bundle.bundle_handle,
                 "bundle", "prepared", {
                     "bundle_sha256": bundle.operation_records_sha256,

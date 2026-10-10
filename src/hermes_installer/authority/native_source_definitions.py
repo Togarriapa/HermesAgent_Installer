@@ -13,6 +13,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from types import MappingProxyType
 
 
 class NativeSourceDefinitionUnavailable(PermissionError):
@@ -81,6 +82,14 @@ _CAPTURE_PROFILES = (
         ("root-provider-response-v1",), 4_194_304,
         "hermes-native-boundary-v1", "register_provider_response",
     ),
+    NativeCaptureProfileDeclaration(
+        "installer-native-mcp-discovery-capture-profile-v171",
+        "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+        "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a",
+        4601, "native-root-mcp-discovery-response-v1", "tool-result",
+        ("root-mcp-tools-list-discovery-v1",), 1_048_576,
+        "hermes-native-invocations-v1", "dispatch_native_mcp_tool_call",
+    ),
 )
 
 
@@ -102,8 +111,9 @@ _ROLE_DECLARATIONS = (
             "finish_selected_native_turn",
         ),
         source_kinds=("native-input", "tool-result"),
-        capture_schema_ids=("native-authenticated-input-v1", "native-registered-tool-result-v1"),
-        source_action_ids=("authenticated-input",),
+        capture_schema_ids=("native-authenticated-input-v1", "native-registered-tool-result-v1",
+                            "native-root-mcp-discovery-response-v1"),
+        source_action_ids=("authenticated-input", "root-mcp-tools-list-discovery-v1"),
     ),
     NativeSourceRoleDeclaration(
         role_id="hermes-native-boundary-v1",
@@ -159,6 +169,7 @@ class RootNativeSourceDefinitionRegistry:
         self._monotonic = monotonic
         self._token = object()
         self._bundles: dict[str, RootPreparedSourceDefinitionBundle] = {}
+        self._selected_roles: dict[tuple[str, str], tuple[Any, ...]] = {}
 
     @classmethod
     def from_selected_installation(cls, binding: Any, *, monotonic=time.monotonic):
@@ -251,13 +262,21 @@ class RootNativeSourceDefinitionRegistry:
                 parsed = json.loads(raw)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 raise NativeSourceDefinitionUnavailable("capture profile JSON is invalid") from None
+            # v171 is an append-only amendment describing a dedicated
+            # discovery event, so its reviewed profile lives under `profile`
+            # and intentionally has no self-referential artifact_id.
+            declaration = (parsed.get("profile") if type(parsed) is dict
+                           and profile.artifact_id == "installer-native-mcp-discovery-capture-profile-v171"
+                           else parsed)
             if (type(parsed) is not dict or parsed.get("schema") != 1
-                    or parsed.get("artifact_id") != profile.artifact_id
-                    or parsed.get("capture_schema_id") != profile.capture_schema_id
-                    or parsed.get("source_kind") != profile.source_kind
-                    or parsed.get("max_payload_bytes") != profile.max_payload_bytes):
+                    or type(declaration) is not dict
+                    or (profile.artifact_id != "installer-native-mcp-discovery-capture-profile-v171"
+                        and parsed.get("artifact_id") != profile.artifact_id)
+                    or declaration.get("capture_schema_id") != profile.capture_schema_id
+                    or declaration.get("source_kind") != profile.source_kind
+                    or declaration.get("max_payload_bytes") != profile.max_payload_bytes):
                 raise NativeSourceDefinitionUnavailable("capture profile fields differ from the reviewed declaration")
-            if profile.source_action_ids and parsed.get("source_action_id") not in profile.source_action_ids:
+            if profile.source_action_ids and declaration.get("source_action_id") not in profile.source_action_ids:
                 raise NativeSourceDefinitionUnavailable("capture profile source action differs from its reviewed declaration")
             retained_profiles.append(receipt)
             available_profiles.append(profile)
@@ -301,6 +320,92 @@ class RootNativeSourceDefinitionRegistry:
                                        profile.artifact_id, profile.size_bytes):
                 raise NativeSourceDefinitionUnavailable("capture profile receipt is no longer current")
         return bundle
+
+    def resolve_current_owner_overlay_role(self, selection_handle: str,
+                                           registration_id: str) -> tuple[Any, ...]:
+        """Retain source-only declarations; never assert a loaded process.
+
+        The observer key is a preactivation foreign key whose runtime observer
+        still needs the separate publication and loaded-worker proof.
+        """
+        selection = self._binding.resolve_current_native_policy_selection(selection_handle)
+        bundle = self._bundles.get(selection_handle)
+        if (bundle is None or bundle.selection_sha256 != selection.selection_sha256
+                or registration_id not in selection.selected_owner_overlay_registration_ids):
+            raise NativeSourceDefinitionUnavailable("owner-overlay role is not selected")
+        self.resolve_current(bundle)
+        role = next((row for row in bundle.declarations
+                     if row.role_id == "hermes-native-invocations-v1"), None)
+        profile = next((row for row in bundle.capture_profiles
+                        if row.capture_schema_id == "native-registered-tool-result-v1"), None)
+        receipts = {row.relative_path: row for row in bundle.role_module_receipts}
+        if role is None or profile is None or role.release_member_path not in receipts:
+            raise NativeSourceDefinitionUnavailable("owner-overlay source role/profile is unavailable")
+        receipt = receipts[role.release_member_path]
+        key = (selection_handle, registration_id)
+        identity = hashlib.sha256(json.dumps({
+            "selection": selection.selection_sha256, "registration": registration_id,
+            "role": receipt.source_receipt_handle, "profile": profile.sha256,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        row = ("native-source-selection:" + identity,
+               ("native-source-observer:" + identity,), role.role_id,
+               "native-source-issuer:" + identity)
+        prior = self._selected_roles.get(key)
+        if prior is not None and prior != row:
+            raise NativeSourceDefinitionUnavailable("owner-overlay source declaration changed")
+        self._selected_roles[key] = row
+        return row
+
+    def selected_owner_overlay_source_rows(self, selection: Any) -> tuple[Any, ...]:
+        """Source-receipted role/issuer rows for only the guarded selected set."""
+        bundle = self._bundles.get(selection.selection_handle)
+        if bundle is None:
+            raise NativeSourceDefinitionUnavailable("selected source declarations are absent")
+        self.resolve_current(bundle)
+        role = next(row for row in bundle.declarations
+                    if row.role_id == "hermes-native-invocations-v1")
+        receipt = next(row for row in bundle.role_module_receipts
+                       if row.relative_path == role.release_member_path)
+        issuer_rows, observer_rows, handles, observer_ids = [], [], [], []
+        for registration_id in sorted(selection.selected_owner_overlay_registration_ids):
+            handle, ids, role_id, issuer_id = self.resolve_current_owner_overlay_role(
+                selection.selection_handle, registration_id)
+            observer_id = ids[0]
+            handles.append(handle)
+            observer_ids.append(observer_id)
+            issuer_rows.append(MappingProxyType({
+                "issuer_channel_id": issuer_id,
+                "producer_profile_id": selection.service_profile_id,
+                "producer_role_artifact_id": receipt.artifact_id,
+                "producer_role_sha256": receipt.sha256,
+                "capture_schema_id": "native-registered-tool-result-v1",
+                "allowed_parent_channels": (), "generation": selection.service_generation,
+                "observer_enrollment_id": observer_id, "source_action_ids": (registration_id,),
+            }))
+            observer_rows.append(MappingProxyType({
+                "observer_enrollment_id": observer_id, "source_role_selection_handle": handle,
+                "role_id": role_id, "issuer_channel_id": issuer_id,
+                "source_kind": "tool-result", "capture_schema_id": "native-registered-tool-result-v1",
+                "source_action_ids": (registration_id,), "generation": selection.service_generation,
+                "source_receipt_handle": receipt.source_receipt_handle,
+                "evidence_kind": "preactive-source-declaration",
+            }))
+        role_rows = ()
+        if observer_ids:
+            role_rows = (MappingProxyType({
+                "role_id": role.role_id, "package_id": selection.package_id,
+                "native_package_generation": selection.native_package_generation,
+                "profile_id": selection.service_profile_id, "profile_generation": selection.service_generation,
+                "role_artifact_id": receipt.artifact_id, "role_sha256": receipt.sha256,
+                "role_source_receipt_handle": receipt.source_receipt_handle,
+                "module_name": role.module_name, "closure_member_path": role.closure_member_path,
+                "role_source_revision": receipt.release_commit,
+                "role_source_tree_sha256": receipt.deployment_receipt_sha256,
+                "observer_enrollment_ids": tuple(sorted(observer_ids)),
+                "registration_ids": tuple(sorted(selection.selected_owner_overlay_registration_ids)),
+                "action_binding_ids": (), "workflow_ids": (),
+            }),)
+        return role_rows, tuple(issuer_rows), tuple(observer_rows), tuple(handles)
 
     @staticmethod
     def _check_receipt(receipt: Any, path: str, expected_digest: str | None = None,

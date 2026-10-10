@@ -243,6 +243,8 @@ class RootNativePolicyPreparationRegistry:
         self._schema_derivations: Any | None = None
         self._source_definition_bundles: dict[str, Any] = {}
         self._schema_definition_bundles: dict[str, Any] = {}
+        self._selected_source_composer: Any | None = None
+        self._selected_source_compositions: dict[str, Any] = {}
         self._seal = secrets.token_bytes(32)
         self._selections: dict[str, RootNativePolicyPreparationSelection] = {}
         self._records: dict[str, RootPreparedNativePolicyRecords] = {}
@@ -491,6 +493,29 @@ class RootNativePolicyPreparationRegistry:
                 raise NativePolicyPreparationDenied("capture profile receipt is not a held release member")
             definition_source_receipt_handles = tuple(
                 row.source_receipt_handle for row in source_receipts if row is not None)
+        composition = None
+        if source_bundle is not None and selection.selected_owner_overlay_registration_ids:
+            from .native_definition_composition import RootSelectedNativeSourceComposer
+            if self._selected_source_composer is None:
+                self._selected_source_composer = RootSelectedNativeSourceComposer(
+                    self._binding, self._registration, self._source_definitions, self._targets, self._journal)
+            try:
+                composition = self._selected_source_composer.prepare(selection)
+            except (PermissionError, BootstrapEnrollmentPending):
+                composition = None
+        if composition is not None:
+            complete = {row["registration_id"] for row in composition.registration_records}
+            coverage = tuple(replace(row, configuration_state="selected-complete",
+                                     missing_prerequisite_ids=())
+                             if row.registration_id in complete else row for row in coverage)
+        from .native_definition_composition import plain
+        selected_schema_records = tuple(action_schema_definitions.native_schema_records
+                                        if action_schema_definitions is not None else ())
+        selected_schema_bytes = tuple(action_schema_definitions.schema_bytes
+                                      if action_schema_definitions is not None else ())
+        if composition is not None:
+            selected_schema_records += composition.native_schema_records
+            selected_schema_bytes += composition.native_schema_bytes
         body = {
             "selection": selection.selection_sha256,
             "targets": target_handles,
@@ -498,13 +523,14 @@ class RootNativePolicyPreparationRegistry:
             "capture_profiles": [_capture_profile_payload(row) for row in capture_profile_records],
             "action_schema_definitions": _schema_definitions_payload(action_schema_definitions),
             "coverage": [_coverage_payload(row) for row in coverage],
-            "actions": [], "registrations": [], "workflows": [], "roles": [],
-            "issuers": [], "observers": [],
-            "schemas": ([dict(row) for row in action_schema_definitions.native_schema_records]
-                        if action_schema_definitions is not None else []),
+            "actions": [], "registrations": plain(composition.registration_records) if composition else [],
+            "workflows": [], "roles": plain(composition.process_role_records) if composition else [],
+            "issuers": plain(composition.source_issuer_records) if composition else [],
+            "observers": plain(composition.source_observer_policy_records) if composition else [],
+            "effects": list(composition.effect_policy_receipt_handles) if composition else [],
+            "schemas": plain(selected_schema_records),
             "schema_bytes": ([(schema_id, content.decode("utf-8"))
-                              for schema_id, content in action_schema_definitions.schema_bytes]
-                             if action_schema_definitions is not None else []),
+                              for schema_id, content in selected_schema_bytes]),
         }
         digest = hashlib.sha256(_canonical(body)).hexdigest()
         now = time.monotonic()
@@ -516,21 +542,22 @@ class RootNativePolicyPreparationRegistry:
             capture_profile_receipt_handles=capture_profile_receipt_handles,
             capture_profile_records=capture_profile_records,
             target_selection_handles=tuple(target_handles),
-            effect_policy_receipt_handles=(),
-            source_role_selection_handles=(),
+            effect_policy_receipt_handles=composition.effect_policy_receipt_handles if composition else (),
+            source_role_selection_handles=composition.source_role_selection_handles if composition else (),
             action_schema_definitions=action_schema_definitions,
-            action_records=(), registration_records=(), workflow_records=(),
-            process_role_records=(), source_issuer_records=(),
-            source_observer_policy_records=(),
-            native_schema_records=(action_schema_definitions.native_schema_records
-                                   if action_schema_definitions is not None else ()),
-            native_schema_bytes=(action_schema_definitions.schema_bytes
-                                 if action_schema_definitions is not None else ()),
+            action_records=(), registration_records=composition.registration_records if composition else (), workflow_records=(),
+            process_role_records=composition.process_role_records if composition else (),
+            source_issuer_records=composition.source_issuer_records if composition else (),
+            source_observer_policy_records=composition.source_observer_policy_records if composition else (),
+            native_schema_records=selected_schema_records,
+            native_schema_bytes=selected_schema_bytes,
             coverage_records=tuple(coverage),
             records_sha256=digest, issued_monotonic=now,
             expires_monotonic=min(now + _TTL_SECONDS, selection.expires_monotonic),
             _seal=_RECORDS_SEAL)
         self._records[records_handle] = records
+        if composition is not None:
+            self._selected_source_compositions[records_handle] = composition
         if source_bundle is not None:
             self._source_definition_bundles[records_handle] = source_bundle
         if action_schema_definitions is not None:
@@ -578,6 +605,22 @@ class RootNativePolicyPreparationRegistry:
             # source-action field must not silently widen this profile into a
             # different action family, and the dynamic tool-result profile
             # must remain explicitly deferred to the selected schema join.
+            if declaration.artifact_id == "installer-native-mcp-discovery-capture-profile-v171":
+                nested = document.get("profile") if type(document) is dict else None
+                if (type(nested) is not dict or nested.get("capture_schema_id") != declaration.capture_schema_id
+                        or nested.get("source_kind") != declaration.source_kind
+                        or nested.get("source_action_id") != declaration.source_action_ids[0]
+                        or nested.get("max_payload_bytes") != declaration.max_payload_bytes):
+                    raise NativePolicyPreparationDenied("discovery capture profile differs from reviewed bytes")
+                now = time.monotonic()
+                rows.append(RootPreparedNativeCaptureProfile(
+                    selection.selection_handle, definition_receipt.source_receipt_handle,
+                    declaration.artifact_id, declaration.relative_path, declaration.sha256,
+                    declaration.size_bytes, declaration.capture_schema_id, declaration.source_kind,
+                    declaration.source_action_ids, declaration.max_payload_bytes, declaration.role_id,
+                    declaration.call_site, receipt.source_receipt_handle, now,
+                    min(now + _TTL_SECONDS, selection.expires_monotonic), _CAPTURE_PROFILE_SEAL))
+                continue
             expected_action = (declaration.source_action_ids[0]
                                if len(declaration.source_action_ids) == 1 else None)
             if (type(document) is not dict
@@ -640,13 +683,19 @@ class RootNativePolicyPreparationRegistry:
                        != records.capture_profile_receipt_handles):
                 raise NativePolicyPreparationDenied("prepared native capture profile receipt set changed")
         schema_bundle = self._schema_definition_bundles.get(records_handle)
-        if self._schema_derivations is not None:
+        if self._schema_derivations is not None and selection.selected_action_binding_ids:
             if schema_bundle is None:
                 raise NativePolicyPreparationDenied("prepared native action schema definitions are absent")
             if self._schema_derivations.resolve_current(schema_bundle, selection) is not schema_bundle:
                 raise NativePolicyPreparationDenied("prepared native action schema definitions changed")
             if records.action_schema_definitions is not schema_bundle:
                 raise NativePolicyPreparationDenied("prepared native action schema definition identity changed")
+        composition = self._selected_source_compositions.get(records_handle)
+        if composition is not None:
+            current = self._selected_source_composer.resolve_current(selection)
+            if (current is not composition or records.registration_records != current.registration_records
+                    or records.effect_policy_receipt_handles != current.effect_policy_receipt_handles):
+                raise NativePolicyPreparationDenied("selected native composition changed")
         for target_handle in records.target_selection_handles:
             target = self._targets.resolve_current_target(target_handle, selection.selection_handle)
             if getattr(target, "selection_handle", None) != target_handle:
