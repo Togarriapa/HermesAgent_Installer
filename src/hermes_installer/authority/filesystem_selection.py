@@ -22,6 +22,7 @@ from .bootstrap_enrollment import (
     _atomic_root_file,
     _canonical,
     _ensure_root_directory,
+    _read_json_if_owned,
 )
 
 
@@ -236,6 +237,13 @@ class RootOwnedFilesystemSelectionRegistry:
                                  selection.uid, selection.gid, selection.mode)
         finally:
             os.close(path_fd)
+        try:
+            journal_record = _read_json_if_owned(
+                self._receipt_root / f"{selection.model_store_root_receipt_handle}.json")
+        except Exception:
+            raise RootFilesystemSelectionDenied("model-store root receipt is absent or unreadable") from None
+        if journal_record != _selection_record(selection, selected_path):
+            raise RootFilesystemSelectionDenied("model-store root journal receipt changed")
         self._verify_choice_generation(root_choice, self._choice_values(root_choice))
         return selection
 
