@@ -298,6 +298,68 @@ class VerifiedSourceObservation:
             raise AuthorityDenied("source.observation", "root source observation is malformed")
 
 
+@dataclass(frozen=True, slots=True)
+class RootPublicNativeInputObservation:
+    """Opaque proof for separately permissioned PUBLIC input.
+
+    Bytes and receipt objects remain in the source registry's private retained
+    record and are available only through a currentness-checked resolver.
+    """
+
+    observation_handle: str
+    retained_input_selection_handle: str
+    input_sha256: str
+    input_size_bytes: int
+    source_observation_handle: str
+    public_permission_selection_handle: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    profile_generation: str
+    service_generation_digest: str
+    source_classification: Sensitivity
+    parent_source_receipt_handles: tuple[str, ...]
+    controller_binding_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _issuer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        for name in ("observation_handle", "retained_input_selection_handle",
+                     "source_observation_handle", "public_permission_selection_handle",
+                     "principal_id", "profile_id", "namespace_id", "profile_generation",
+                     "service_generation_digest", "controller_binding_handle"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or len(value) > 256:
+                raise ValueError(f"{name} is malformed")
+        if (not re.fullmatch(r"[0-9a-f]{64}", self.input_sha256)
+                or type(self.input_size_bytes) is not int
+                or not 1 <= self.input_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
+                or self.source_classification is not Sensitivity.PUBLIC
+                or not isinstance(self.parent_source_receipt_handles, tuple)
+                or len(self.parent_source_receipt_handles) > MAX_PARENT_RECEIPTS
+                or len(set(self.parent_source_receipt_handles)) != len(self.parent_source_receipt_handles)
+                or not all(isinstance(item, str) and item for item in self.parent_source_receipt_handles)
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or self.expires_monotonic <= self.issued_monotonic
+                or self.expires_monotonic - self.issued_monotonic > 30.0):
+            raise ValueError("public input observation bounds or classification are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class RootPublicInputSourceMaterial:
+    observation: RootPublicNativeInputObservation = field(repr=False)
+    source_proof: VerifiedSourceObservation = field(repr=False)
+    selected_execution: Any = field(repr=False)
+    selection_registry: Any = field(repr=False)
+    payload_bytes: bytes = field(repr=False)
+    parent_context: HostContext = field(repr=False)
+    parent_receipts: tuple[SourceReceipt, ...] = field(repr=False)
+    parent_receipt_handles: tuple[str, ...] = field(repr=False)
+    consumed: bool = False
+
+
 @dataclass(slots=True)
 class _PendingObservation:
     observer: SourceObserverEnrollment
@@ -476,6 +538,7 @@ class SourceObserverRegistry:
         self._consumed_selected_input_proofs: dict[str, tuple[int, Any, Any, float, str]] = {}
         self._selected_input_selections: dict[str, tuple[Any, Any, float, str]] = {}
         self._selected_input_consents: dict[str, RetainedSelectedInputConsent] = {}
+        self._public_input_proofs: dict[str, RootPublicInputSourceMaterial] = {}
         self._channel_peer_registry: Any = None
         self._resource_controller_registry: Any = None
         self._channel_delivery_tokens: dict[int, RootChannelSourceRegistrationToken] = {}
@@ -633,6 +696,7 @@ class SourceObserverRegistry:
         reserved_receipt_slot = False
         proof_registered = False
         proof: VerifiedSourceObservation | None = None
+        public_input_proof: RootPublicNativeInputObservation | None = None
         try:
             observer = self.observers.get(observer_enrollment_id)
             now = self.service.monotonic()
@@ -763,9 +827,18 @@ class SourceObserverRegistry:
                 proof_registered = True
             issue_selected = getattr(self.service, "issue_selected_input_source", None)
             if _selected_execution is not None:
-                if not callable(issue_selected):
-                    raise AuthorityDenied("source.native_input", "selected private input issuer is unavailable")
-                result = issue_selected(proof)
+                public_selection = getattr(
+                    _selected_execution, "public_input_permission_selection_handle", None)
+                if public_selection is not None:
+                    public_issuer = getattr(self.service, "issue_public_input_source", None)
+                    if not callable(public_issuer):
+                        raise AuthorityDenied("source.public_input", "public input issuer is unavailable")
+                    public_input_proof = self.create_public_input_observation(proof)
+                    result = public_issuer(public_input_proof, _selected_execution)
+                else:
+                    if not callable(issue_selected):
+                        raise AuthorityDenied("source.native_input", "selected private input issuer is unavailable")
+                    result = issue_selected(proof)
             else:
                 result = self.service.issue_observed_source(proof)
             if not isinstance(result, SourceReceiptHandle):
@@ -779,7 +852,8 @@ class SourceObserverRegistry:
                     or receipt.source_kind != observer.source_kind
                     or receipt.origin_id != expected_origin
                     or receipt.payload_digest != event.payload_sha256
-                    or receipt.sensitivity is not Sensitivity.PRIVATE
+                    or receipt.sensitivity is not (
+                        Sensitivity.PUBLIC if public_input_proof is not None else Sensitivity.PRIVATE)
                     or receipt.profile_id != observer.profile_id
                     or receipt.principal_id != observer.principal_id
                     or receipt.namespace_id != observer.namespace_id
@@ -855,7 +929,13 @@ class SourceObserverRegistry:
                 with self._lock:
                     has_consent = key in self._selected_input_consents
                     has_selection = key in self._selected_input_selections
-                if proof.private_consent_selection_handle is None and not has_selection:
+                public_selected = getattr(
+                    proof.selected_execution, "public_input_permission_selection_handle", None) is not None
+                if public_selected:
+                    if public_input_proof is None:
+                        self.revoke_source_handle(result)
+                        raise AuthorityDenied("source.public_input", "public source proof was not retained")
+                elif proof.private_consent_selection_handle is None and not has_selection:
                     self.retain_selected_input_without_egress_consent(
                         proof, proof.selected_execution, result)
                 elif proof.private_consent_selection_handle is not None and not has_consent:
@@ -869,6 +949,8 @@ class SourceObserverRegistry:
                 with self._lock:
                     self._proofs_pending.pop(proof.proof_nonce, None)
                     self._selected_input_proofs.pop(proof.proof_nonce, None)
+                    if public_input_proof is not None:
+                        self._public_input_proofs.pop(public_input_proof.observation_handle, None)
             raise
         finally:
             if reserved_receipt_slot:
@@ -1715,6 +1797,147 @@ class SourceObserverRegistry:
                 raise AuthorityDenied("source.native_input", "selected input registry binding is stale")
             return retained[1]
 
+    def create_public_input_observation(
+        self, observation: VerifiedSourceObservation,
+    ) -> RootPublicNativeInputObservation:
+        """Derive public proof only from a retained all-public input closure."""
+        if type(observation) is not VerifiedSourceObservation:
+            raise AuthorityDenied("source.public_input", "public input proof source type is invalid")
+        selected = observation.selected_execution
+        if not self.verify_current_selected_input_proof(observation, selected):
+            raise AuthorityDenied("source.public_input", "public input source observation is stale")
+        observer = self.observers.get(observation.observer_enrollment_id)
+        if (selected.public_input_permission_selection_handle is None
+                or selected.private_consent_selection_handle is not None
+                or observation.source_kind != "native-input"
+                or observation.private_consent_selection_handle is not None
+                or observer is None or not observer.public_web_scope_ids
+                or not observation.parent_receipts
+                or len(observation.parent_receipts) != len(observation.parent_receipt_handles)
+                or any(item.sensitivity is not Sensitivity.PUBLIC
+                       for item in observation.parent_receipts)):
+            raise AuthorityDenied("source.public_input", "input is not an explicitly permitted public-only source")
+        for receipt, handle in zip(observation.parent_receipts, observation.parent_receipt_handles):
+            with self.service._lock:
+                retained = self.service._source_receipt_handles.get(handle)
+            if retained is not receipt:
+                raise AuthorityDenied("source.public_input", "public input parent receipt handle is stale")
+            self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+        now = self.service.monotonic()
+        expiry = min(observation.expires_monotonic, selected.expires_monotonic, now + 30.0)
+        if now >= expiry:
+            raise AuthorityDenied("source.public_input", "public input observation lease expired")
+        with self._lock:
+            retained_pair = self._selected_input_proofs.get(observation.proof_nonce)
+            if (retained_pair is None or retained_pair[0] is not selected
+                    or retained_pair[1] is None
+                    or len(self._public_input_proofs) >= MAX_RETAINED_CAPSULES):
+                raise AuthorityDenied("source.public_input", "selected public input material is unavailable")
+            proof = RootPublicNativeInputObservation(
+                observation_handle=secrets.token_urlsafe(32),
+                retained_input_selection_handle=selected.selection_handle,
+                input_sha256=observation.payload_sha256,
+                input_size_bytes=len(observation.payload_bytes),
+                source_observation_handle=observation.proof_nonce,
+                public_permission_selection_handle=selected.public_input_permission_selection_handle,
+                principal_id=observation.principal_id,
+                profile_id=observation.profile_id,
+                namespace_id=observation.namespace_id,
+                profile_generation=observation.generation,
+                service_generation_digest=selected.service_generation_digest,
+                source_classification=Sensitivity.PUBLIC,
+                parent_source_receipt_handles=tuple(observation.parent_receipt_handles),
+                controller_binding_handle=selected.selection_handle,
+                issued_monotonic=now,
+                expires_monotonic=expiry,
+                _issuer_token=self._proof_token,
+            )
+            material = RootPublicInputSourceMaterial(
+                proof, observation, selected, retained_pair[1], bytes(observation.payload_bytes),
+                observation.parent_context, tuple(observation.parent_receipts),
+                tuple(observation.parent_receipt_handles), False,
+            )
+            self._public_input_proofs[proof.observation_handle] = material
+            return proof
+
+    def verify_current_public_input_observation(
+        self, proof: RootPublicNativeInputObservation, selected_execution: Any,
+    ) -> bool:
+        if type(proof) is not RootPublicNativeInputObservation or proof._issuer_token is not self._proof_token:
+            return False
+        with self._lock:
+            material = self._public_input_proofs.get(proof.observation_handle)
+            if material is None or material.observation is not proof or material.consumed:
+                return False
+        if (material.selected_execution is not selected_execution
+                or proof.retained_input_selection_handle != selected_execution.selection_handle
+                or proof.public_permission_selection_handle
+                    != selected_execution.public_input_permission_selection_handle
+                or proof.input_sha256 != hashlib.sha256(material.payload_bytes).hexdigest()
+                or proof.input_size_bytes != len(material.payload_bytes)
+                or proof.source_classification is not Sensitivity.PUBLIC
+                or proof.parent_source_receipt_handles != material.parent_receipt_handles
+                or not material.parent_receipts
+                or any(item.sensitivity is not Sensitivity.PUBLIC for item in material.parent_receipts)
+                or proof.profile_id != selected_execution.profile_id
+                or proof.profile_generation != selected_execution.generation
+                or proof.service_generation_digest != selected_execution.service_generation_digest
+                or proof.expires_monotonic <= self.service.monotonic()
+                or self.service.authority_epoch != material.source_proof.authority_epoch):
+            return False
+        try:
+            return material.selection_registry.resolve_current_execution(selected_execution) is selected_execution
+        except Exception:
+            return False
+
+    def consume_public_input_observation(
+        self, proof: RootPublicNativeInputObservation, selected_execution: Any,
+    ) -> None:
+        if not self.verify_current_public_input_observation(proof, selected_execution):
+            raise AuthorityDenied("source.public_input", "public input observation is forged, stale, or consumed")
+        with self._lock:
+            material = self._public_input_proofs.get(proof.observation_handle)
+            if material is None or material.observation is not proof or material.consumed:
+                raise AuthorityDenied("source.public_input", "public input observation is already consumed")
+            self._public_input_proofs[proof.observation_handle] = RootPublicInputSourceMaterial(
+                proof, material.source_proof, selected_execution, material.selection_registry,
+                material.payload_bytes, material.parent_context, material.parent_receipts,
+                material.parent_receipt_handles, True)
+            self._proofs_pending.pop(material.source_proof.proof_nonce, None)
+            self._selected_input_proofs.pop(material.source_proof.proof_nonce, None)
+
+    def resolve_public_input_source_material(
+        self, proof: RootPublicNativeInputObservation, selected_execution: Any,
+    ) -> RootPublicInputSourceMaterial:
+        if not self.verify_current_public_input_observation(proof, selected_execution):
+            raise AuthorityDenied("source.public_input", "public input material is stale or unknown")
+        with self._lock:
+            material = self._public_input_proofs.get(proof.observation_handle)
+            if material is None or material.observation is not proof:
+                raise AuthorityDenied("source.public_input", "public input material is unavailable")
+            return material
+
+    def resolve_consumed_public_input_source_material(
+        self, proof: RootPublicNativeInputObservation,
+    ) -> RootPublicInputSourceMaterial:
+        if type(proof) is not RootPublicNativeInputObservation or proof._issuer_token is not self._proof_token:
+            raise AuthorityDenied("source.public_input", "public input material proof is invalid")
+        with self._lock:
+            material = self._public_input_proofs.get(proof.observation_handle)
+            if (material is None or material.observation is not proof or not material.consumed
+                    or proof.expires_monotonic <= self.service.monotonic()
+                    or self.service.authority_epoch != material.source_proof.authority_epoch):
+                raise AuthorityDenied("source.public_input", "consumed public input material is stale")
+            try:
+                if material.selection_registry.resolve_current_execution(material.selected_execution) \
+                        is not material.selected_execution:
+                    raise AuthorityDenied("source.public_input", "selected public input is no longer current")
+            except AuthorityDenied:
+                raise
+            except Exception:
+                raise AuthorityDenied("source.public_input", "selected public input is no longer current") from None
+            return material
+
     def retain_selected_input_consent(
         self, observation: VerifiedSourceObservation,
         selected_execution: Any, source_receipt_handle: SourceReceiptHandle,
@@ -2143,6 +2366,10 @@ class SourceObserverRegistry:
         return proof
 
     def _prune_locked(self, now: float) -> None:
+        for handle, material in tuple(self._public_input_proofs.items()):
+            if (material.observation.expires_monotonic <= now
+                    or self.service.authority_epoch != material.source_proof.authority_epoch):
+                self._public_input_proofs.pop(handle, None)
         for event_id, event in tuple(self._pending.items()):
             if event.expires <= now or event.authority_epoch != self.service.authority_epoch:
                 self._pending.pop(event_id, None)
@@ -2193,6 +2420,7 @@ class SourceObserverRegistry:
             self._consumed_selected_input_proofs.clear()
             self._selected_input_selections.clear()
             self._selected_input_consents.clear()
+            self._public_input_proofs.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
