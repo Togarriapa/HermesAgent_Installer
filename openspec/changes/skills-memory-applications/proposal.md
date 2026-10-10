@@ -59,3 +59,5 @@ Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selecte
 Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
 
 Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Selected application workload binding v89: `plans/amendments/2026-10-10-selected-application-workload-binding-v89.md`; existing SK-F03/R0067/R0138/AC12 implementation and acceptance obligations remain open.
