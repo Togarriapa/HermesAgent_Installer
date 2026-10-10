@@ -954,8 +954,10 @@ def _read_archive_member(payload: bytes, path: str) -> bytes:
 
 def _verify_candidate_index(payload: bytes) -> None:
     value = _parse_canonical_json(payload)
-    expected = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
-    if not isinstance(value, dict) or set(value) != expected or value.get("schema") != 1:
+    legacy = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
+    projected = legacy | {"registration_projection_sha256", "registrations"}
+    if (not isinstance(value, dict) or frozenset(value) not in {frozenset(legacy), frozenset(projected)}
+            or value.get("schema") != 1):
         raise NativeOutputReceiptDenied("native candidate index schema is unsupported")
     if (not isinstance(value["package_id"], str) or not _PACKAGE_GENERATION.fullmatch(value["package_id"])
             or not isinstance(value["profile_id"], str) or not _PACKAGE_GENERATION.fullmatch(value["profile_id"])
@@ -963,11 +965,46 @@ def _verify_candidate_index(payload: bytes) -> None:
             or not isinstance(value["resolver_sha256"], str) or not _HEX.fullmatch(value["resolver_sha256"])
             or not isinstance(value["candidates"], list) or len(value["candidates"]) > 1024):
         raise NativeOutputReceiptDenied("native candidate index identity fields are malformed")
+    is_projected = set(value) == projected
+    registration_rows = value.get("registrations", [])
+    if is_projected:
+        projection_digest = value["registration_projection_sha256"]
+        if (not isinstance(projection_digest, str) or not _HEX.fullmatch(projection_digest)
+                or not isinstance(registration_rows, list) or not 1 <= len(registration_rows) <= 1024
+                or hashlib.sha256(_canonical(registration_rows)).hexdigest() != projection_digest
+                or len(registration_rows) != len(value["candidates"])):
+            raise NativeOutputReceiptDenied("native registration projection digest or cardinality is invalid")
+        registration_fields = {
+            "registration_id", "native_tool_name", "native_server_name", "toolset", "family",
+            "adapter_id", "argument_schema", "result_schema", "native_schema_sha256",
+            "registration_source_artifact_id", "registration_source_sha256",
+            "registration_source_receipt_handle", "handler_kind", "handler_id",
+            "selector_fields", "action_bindings", "observer_enrollment_ids",
+        }
+        registration_ids = set()
+        for row in registration_rows:
+            if not isinstance(row, dict) or set(row) != registration_fields:
+                raise NativeOutputReceiptDenied("native registration projection row is malformed")
+            reg_id = row["registration_id"]
+            if (not isinstance(reg_id, str) or not _valid_identifier(reg_id)
+                    or reg_id in registration_ids or not isinstance(row["argument_schema"], dict)
+                    or not isinstance(row["result_schema"], dict)
+                    or row["native_schema_sha256"] != hashlib.sha256(_canonical(row["argument_schema"])).hexdigest()
+                    or not isinstance(row["registration_source_sha256"], str)
+                    or not _HEX.fullmatch(row["registration_source_sha256"])
+                    or not isinstance(row["registration_source_receipt_handle"], str)
+                    or not _valid_identifier(row["registration_source_receipt_handle"])
+                    or not isinstance(row["observer_enrollment_ids"], list)
+                    or not row["observer_enrollment_ids"]):
+                raise NativeOutputReceiptDenied("native registration identity or root source/observer proof is invalid")
+            registration_ids.add(reg_id)
     candidate_fields = {"native_tool_name", "adapter_id", "action_id", "argument_schema",
                         "result_schema", "native_schema_sha256", "observer_enrollment_ids",
                         "native_server_name", "description"}
+    if is_projected:
+        candidate_fields |= {"registration_id", "toolset", "family", "handler_kind"}
     names, actions = set(), set()
-    for candidate in value["candidates"]:
+    for index, candidate in enumerate(value["candidates"]):
         if not isinstance(candidate, dict) or set(candidate) != candidate_fields:
             raise NativeOutputReceiptDenied("native candidate row schema is malformed")
         string_limits = {"native_tool_name": 256, "adapter_id": 128, "action_id": 128,
@@ -994,6 +1031,14 @@ def _verify_candidate_index(payload: bytes) -> None:
         action = candidate["adapter_id"], candidate["action_id"]
         if name in names or action in actions:
             raise NativeOutputReceiptDenied("native candidate tool and adapter/action identities must be unique")
+        if is_projected:
+            registration = registration_rows[index]
+            if (candidate["registration_id"] != registration["registration_id"]
+                    or any(candidate.get(key) != registration.get(key) for key in (
+                        "native_tool_name", "adapter_id", "native_server_name", "toolset", "family",
+                        "argument_schema", "result_schema", "native_schema_sha256",
+                        "observer_enrollment_ids", "handler_kind"))):
+                raise NativeOutputReceiptDenied("native candidate differs from its projected registration")
         names.add(name)
         actions.add(action)
 

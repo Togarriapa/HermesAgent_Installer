@@ -77,6 +77,8 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         issuer_rows = [_thaw(row) for row in definitions.source_issuer_records]
         schema_rows = [_thaw(row) for row in definitions.native_schema_records]
         registrations = [_thaw(row) for row in definitions.action_registration_records]
+        native_registrations = [_thaw(row) for row in definitions.registration_records]
+        candidates = [_thaw(row) for row in definitions.candidate_records]
         overlay = definitions.boundary_overlay_bytes
         overlay_source = definitions.boundary_overlay_source_commit
         closure_defs = tuple(definitions.closure_members)
@@ -93,10 +95,6 @@ def assemble_native_package(selection: _Selection, definitions: Any,
     if set(schema_bytes) != {row.get("schema_id") for row in schema_rows}:
         raise NativeAssemblyDenied("native schema documents do not match selected schema records")
 
-    # Candidate rows must be root-projected from exact Hermes tool registrations.
-    # They are validated by the same immutable model used by the native loader.
-    from hermes_installer.mcp.native_schema_catalog import NativeCandidateIndex
-
     resolver = {
         "schema": 1,
         "package_id": package_id,
@@ -110,11 +108,18 @@ def assemble_native_package(selection: _Selection, definitions: Any,
     }
     resolver_bytes = _canonical(resolver)
     resolver_sha = hashlib.sha256(resolver_bytes).hexdigest()
-    candidates = tuple(definitions.candidate_records)
-    candidate_index = NativeCandidateIndex(
-        package_id, profile_id, generation, resolver_sha, candidates,
-    )
-    candidate_bytes = candidate_index.to_bytes()
+    registration_projection_sha = hashlib.sha256(_canonical(native_registrations)).hexdigest()
+    candidate_index = {
+        "schema": 1,
+        "package_id": package_id,
+        "profile_id": profile_id,
+        "generation": generation,
+        "resolver_sha256": resolver_sha,
+        "registration_projection_sha256": registration_projection_sha,
+        "registrations": native_registrations,
+        "candidates": candidates,
+    }
+    candidate_bytes = _canonical(candidate_index)
 
     closure: dict[str, tuple[bytes, int]] = {}
     for row in closure_defs:

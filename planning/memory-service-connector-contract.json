@@ -918,5 +918,250 @@
       "SK-T128.2: factory/owned-root owner actual staged configuration/existing-tree selection registry resolve/verify/open seam; models observer consumes duplicated held directory only.",
       "SK-T128.3: test forged typed objects/unknown IDs/wrong FK/stale enclosing generation and arbitrary relative member/FD; real private endpoint/model/embedding proof open."
     ]
+  },
+  "setup_selector_private_profile_v133": {
+    "schema": 1,
+    "requirements": [
+      "HI-T03",
+      "SK-F02",
+      "SK-T01",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "Actual setup choice exact-compares ephemeral principal/namespace receipt IDs after long source/runtime phases. v124 also asks a distinct private profile selection without an issuer. v91 already supplies exact owner-private native profile/namespace source; create a genuine purpose selection from it, not Resources or namespace alias.",
+    "identity_owner": "hermes_installer.authority.setup_principal.RootSetupPrincipalSelectionRegistry",
+    "principal_selector_type": "RootSetupPrincipalSelector",
+    "principal_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "principal_id",
+      "authentik_subject_id",
+      "username",
+      "email",
+      "authentik_policy_selection_handle",
+      "policy_selection_sha256",
+      "policy_revision",
+      "direct_group_ids",
+      "effective_group_ids",
+      "system_member",
+      "service_profile_id",
+      "reviewed_capability_map_sha256",
+      "selected_capability_ceiling",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "namespace_selector_type": "RootSetupNamespaceSelector",
+    "namespace_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_handle",
+      "principal_binding_sha256",
+      "target_profile_id",
+      "namespace_id",
+      "namespace_policy",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "selector_API": [
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_principal_selector(normal_session_store,normal_session_handle)->RootSetupPrincipalSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_namespace_selector(normal_session_store,normal_session_handle)->RootSetupNamespaceSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_current_setup_identity(principal_selection_handle,namespace_selection_handle,normal_session_handle)->RootCurrentSetupIdentitySnapshot"
+    ],
+    "snapshot_type": "RootCurrentSetupIdentitySnapshot",
+    "snapshot_fields": [
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_binding_sha256",
+      "namespace_binding_sha256",
+      "principal",
+      "namespace",
+      "identity_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selector_semantics": "Selectors are root-retained immutable setup intent, bound actual adopted current subject and v30 fixed service profile/v91 private namespace source through current normal session deadline only. They confer no authority, no proof that Authentik is currently valid, no System/action permission or persistent receipt lease. Actual policy/vault references remain root-only. Every phase resolves current actual TLS Authentik identity against held selected policy and same subject/email/groups/System/policy/profile/namespace/capability ceiling; change/revocation/unknown response denies rather than auto-widens or silently adopts another subject. Current setup/controller/plan/prepared predecessor must match. New boot/session requires explicit verified adoption linkage/current actor, not saved monotonic lease revival.",
+    "fresh_semantics": "principal and namespace are existing VerifiedRootSetupPrincipalSelection and VerifiedRootNamespaceSelection CURRENT authority snapshots, each <=30s and <=all actual evidence/session deadlines; namespace.principal_selection_receipt_id equals same returned pair principal.receipt_id. Expired snapshots are never extended/reused as authority. Re-observe actual identity before each authorization/phase resolution, issue a new fresh pair or retain a still-current same-evidence pair only within original lease. Returning pair atomically prevents convenience getters independently minting inconsistent IDs. Stable selector binding hashes/IDs remain unchanged. Root snapshot binds real newly observed identity receipt and current selected effect source; no ambient permission.",
+    "consumer_correction": "RootBootstrapSession exposes resolve_adopted_principal_selector/resolve_adopted_namespace_selector and resolve_current_setup_identity() root-only. Root TTY application/memory/model/profile choices and their source/runtime selections add principal_selection_handle and namespace_selection_handle, comparing stable registry membership+binding digest. Existing *_selection_receipt_handle fields refer only actual snapshot evidence for the current phase; initial choice may retain them as historical evidence but never exact-equal a newly refreshed receipt ID or treat history current. Source receipt/probe/admission phases resolve fresh pair using stable selectors before effects/minting and maintain currentness during live effect leases. This is explicit v117/v124/v127/v130 field refinement, not a blanket validator bypass.",
+    "activation": "Prepared capability ceiling remains v91 empty. Active effect selection requires separate verified active publication/current rules and fresh active principal binding, never upgrading a prepared selector into worker effect authority. Purpose intent can project only exact same subject/profile/namespace through verified publication handoff with independent actual selected source/operation/account/consent checks.",
+    "private_profile": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "registry": "RootPrivateProfileSelectionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_journal)",
+      "choice_type": "RootPrivateProfileSelection",
+      "choice_API": "RootBootstrapSession.observe_private_profile_selection(purpose)->RootPrivateProfileSelection; internal root TTY configuration transaction only. Allowed purposes memory-service-enablement and existing-model-selection. May be recorded in SAME explicit v124 enablement or v127 existing-model choice, no additional repeated approval prompt. No caller profile/namespace/receipt/boolean authority.",
+      "choice_fields": [
+        "selection_handle",
+        "choice_observation_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_binding_sha256",
+        "namespace_binding_sha256",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "purpose",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "source_template_receipt_handles",
+        "reviewed_capability_map_sha256",
+        "controller_binding_handle",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic",
+        "revocation_epoch"
+      ],
+      "source": "Resolve actual adopted principal/service_profile_id hermes-agent-native-v1 and independent namespace through current pair/stable selectors, verified installed v30 installer-bootstrap-compiler-template-v1 and v91 installer-reviewed-native-capability-map-v1 (SHA41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565). Namespace policy exactly per-selected-principal-native-profile-v1 and namespace ID v91 SHA recipe; rederive/validate, not caller input. The semantic private-purpose receipt is newly minted from these actual sources/current choice; it is distinct from namespace and Resources selection, although profile ID correctly remains the same native service profile. No phantom private OS/profile ID, no Resources identity reuse.",
+      "private_constraints": "privacy_classification=private; public_egress_allowed=false; additional_metered_budget_usd=0 for this purpose-scoped selection. Enforces owner-private selected namespace and no public/metered fallback for memory/model purpose. Does not globally relabel every tool in the native profile or authorize any new route. Capture opt-in, private input/provider egress consent, service-start enablement and model ownership/loading proofs remain independently required. No account/license/endpoint/model availability inferred.",
+      "resolver_API": "RootPrivateProfileSelectionRegistry.resolve_current_private_profile(selection_handle,purpose)->VerifiedRootPrivateProfileSelection",
+      "snapshot_fields": [
+        "receipt_handle",
+        "selection_handle",
+        "purpose",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_selection_receipt_handle",
+        "namespace_selection_receipt_handle",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "currentness": "Non-consuming resolver verifies exact registry membership/purpose/source/choice/controller/session/prepared binding/revocation and obtains current setup identity pair; <=30s private-purpose snapshot with actual new principal/namespace receipt IDs. Intent is persistent only through session deadline. Disable/selectionchange invalidates purpose projection; no persistent intent alone is start/capture/egress permission.",
+      "consumers": "v124 RootSelectedMemoryServiceEnablementChoice adds private_profile_selection_handle, principal_selection_handle, namespace_selection_handle; historical *_receipt_handle fields remain evidence only. Current phase resolves VerifiedRootPrivateProfileSelection before issuing enablement snapshot. v127 existing-model directory selection adds same stable selector handles and private_profile_selection_handle; source observer privately opens genuine root TTY selected held directory separately, never substitutes profile/namespace receipt for directory/root FD. Active publication projects exact private-purpose choice to actual owner/profile/namespace/generation only with actual enrollment/source/runtime receipts."
+    },
+    "tasks": [
+      "HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests",
+      "SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease",
+      "SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies"
+    ],
+    "status": "All original scope and AC open; no baseline edit, live account/weights/endpoint effect or privileged Mac install."
+  },
+  "glm_source_license_pins_v135": {
+    "schema": 1,
+    "requirements": [
+      "SK-F02",
+      "SK-T125.1",
+      "SK-T127.1",
+      "R0063"
+    ],
+    "why": "Actual model observer requires RootCatalogArtifactObserver membership; source inventory and independent upstream license lacked finite catalog rows. No weights are enrolled by this refinement.",
+    "catalog_rows": [
+      {
+        "artifact_id": "glm52-artifact-metadata-v1",
+        "filename": "glm52-artifact-metadata.json",
+        "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/653ac5fbc7a02613c9951859a7d794599603459b/planning/glm52-artifact-metadata.json",
+        "version": "653ac5fbc7a02613c9951859a7d794599603459b",
+        "sha256": "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+        "size_bytes": 56232,
+        "max_bytes": 56232,
+        "archive_format": null,
+        "archive_root": null,
+        "max_tree_bytes": 1,
+        "tree_files": [],
+        "redirect_hosts": [],
+        "git_blob_id": null
+      },
+      {
+        "artifact_id": "glm52-upstream-mit-license-cf457fa",
+        "filename": "glm52-upstream-MIT-LICENSE.txt",
+        "source_url": "https://huggingface.co/api/resolve-cache/models/zai-org/GLM-5.2/cf457fa734ab149ffef225f80893eb38c6ff5cdc/LICENSE",
+        "version": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+        "sha256": "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+        "size_bytes": 1065,
+        "max_bytes": 1065,
+        "archive_format": null,
+        "archive_root": null,
+        "max_tree_bytes": 1,
+        "tree_files": [],
+        "redirect_hosts": [],
+        "git_blob_id": "e14ce68b0a559601dc936eba5e7c4d1c3d8ffc84"
+      },
+      {
+        "artifact_id": "glm52-quantized-readme-6bbb01e",
+        "filename": "glm52-quantized-README.md",
+        "source_url": "https://huggingface.co/api/resolve-cache/models/mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp/6bbb01ed3e515a8730b694dfae73aadfd6774581/README.md",
+        "version": "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+        "sha256": "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+        "size_bytes": 17468,
+        "max_bytes": 17468,
+        "archive_format": null,
+        "archive_root": null,
+        "max_tree_bytes": 1,
+        "tree_files": [],
+        "redirect_hosts": [],
+        "git_blob_id": "b2fbf0a82a999cee8a52fb6a51f208c05b7878c0"
+      }
+    ],
+    "catalog_row_projection": "Use existing exact ArtifactSpec keys only; git_blob_id is source evidence retained in this contract, not a new ArtifactCatalog parser field. The metadata source is unchanged checked-in planning bytes at the immutable baseline commit. Broker enrolls these three bounded non-executable blob rows and verifies actual packaged release members or verified TLS acquisition against exact SHA/size before observing. No redirects are authorized by these direct endpoints.",
+    "release_members": [
+      {
+        "artifact_id": "glm52-artifact-metadata-v1",
+        "relative_path": "planning/glm52-artifact-metadata.json"
+      },
+      {
+        "artifact_id": "glm52-upstream-mit-license-cf457fa",
+        "relative_path": "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt"
+      },
+      {
+        "artifact_id": "glm52-quantized-readme-6bbb01e",
+        "relative_path": "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md"
+      }
+    ],
+    "selection_join": "RootExistingModelArtifactSelection source_manifest_artifact_id/sha256 resolves glm52-artifact-metadata-v1; license_artifact_id/sha256 resolves glm52-upstream-mit-license-cf457fa. Retain independent quantized README source receipt and its MIT/base_model declaration as additional selected source evidence. Root model observer independently verifies all 149 exact selected model members under held chosen directory FD; cataloging this metadata does not catalog model weights.",
+    "license_scope": "The upstream HuggingFace GLM-5.2 LICENSE is MIT, Copyright 2026 Zhipu AI. The selected quantized repository README independently declares license: mit and base_model: zai-org/GLM-5.2. Preserve copyright/license notices when redistributing actual covered artifacts. Do not substitute the Apache-2.0 license from the separate zai-org/GLM-5 code repository, assert legal eligibility from a /v1/models alias, or interpret either small blob as an actual model deployment.",
+    "source_evidence": {
+      "observed_at": "2026-10-10",
+      "upstream_api": "https://huggingface.co/api/models/zai-org/GLM-5.2?blobs=true",
+      "upstream_revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+      "quantized_revision": "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+      "inventory_files": 149,
+      "inventory_total_bytes": 429276220139,
+      "no_weights_downloaded": true
+    },
+    "tasks": [
+      {
+        "id": "SK-T135.1",
+        "owner": "artifact broker",
+        "work": "Enroll exact three blob catalog/source rows, actual release-member receipt association and held-byte observer tests; no weights rows or broad catalog namespace."
+      },
+      {
+        "id": "SK-T135.2",
+        "owner": "models/factory",
+        "work": "Consume exact source/license/README observations in existing-model selection and current directory verification; preserve absent tree/runtime/load/embedding/account evidence as pending."
+      }
+    ],
+    "acceptance": "All original AC remain open. Small source/license acquisition only; no model download, runtime install or deployment claim."
+  },
+  "supporting_model_source_receipts_v136": {
+    "refines": "v135 source receipt retention in v127 ExistingModelArtifactObservation; member_observation_sha256 remains exact member-only hash.",
+    "added_signed_observation_field": "supporting_source_receipt_sha256",
+    "digest": "SHA256 canonical UTF8 JSON sorted by artifact_id of exact supporting root source observations projected as {artifact_id,sha256,size_bytes,receipt_handle}; includes v135 glm52-quantized-readme-6bbb01e actual catalog receipt. No newline; same canonical sort_keys/separators/ensure_ascii=False. Root-held durable registry record retains the actual observation handles/pins/bytes and verifies current membership on restore; signature includes this digest. No caller supporting rows/active selection fields or model weight evidence is added.",
+    "implementation": "Models observer constructs supporting-source evidence from fixed held v135 contract and actual RootCatalogArtifactObserver. Host authority finite existing model-observation signer/verifier adds this exact claim; no private _sign or new key/source kind."
   }
 }

@@ -83,7 +83,6 @@ class Profile:
     max_lifetime_seconds = 600
     output_root_id = "build-output"
     output_owner_uid = _test_builder_uid()
-    output_owner_gid = pwd.getpwuid(output_owner_uid).pw_gid
     output_specs = constraints()
 
     def __init__(self, output_root: Path):
@@ -185,7 +184,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                 return profile, SimpleNamespace(
                     enrollment_id=profile.build_service_enrollment_id,
                     generation=profile.build_service_generation,
-                    service_uid=profile.output_owner_uid, service_gid=profile.output_owner_gid)
+                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
 
         class Launcher:
             seen = False

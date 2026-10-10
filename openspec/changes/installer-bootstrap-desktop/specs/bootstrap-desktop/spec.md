@@ -573,3 +573,10 @@ The system SHALL apply only the v116 exact publicCPython artifact redirect polic
 #### Scenario: Unexpected redirect destination
 - **WHEN** the response redirects to an unlisted authority, protocol, port or a second hop
 - **THEN** acquisition denies without publishing any runtime artifactreceipt.
+
+### Requirement: Exact pinned PyYAML compatibility package
+The system SHALL permit the v131 exact `_yaml/` and `_yaml/__init__.py` members only for the unchanged pinned installer PyYAML wheel, preserving complete RECORD, archive bounds, isolated site directory and actual import/extension checks.
+
+#### Scenario: Additional unreviewed compatibility member
+- **WHEN** a wheel adds another `_yaml` descendant or fails the exact artifact or RECORD checks
+- **THEN** materialization denies without publishing a runtime receipt.
