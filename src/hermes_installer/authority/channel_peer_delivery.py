@@ -136,7 +136,7 @@ class ChannelEventDelivery:
         return base64.b64decode(self.normalized_payload_b64, validate=True)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _BoundPeer:
     binding: ChannelRuntimeBinding
     row: Mapping[str, Any] = field(repr=False)
@@ -196,6 +196,7 @@ class RootChannelPeerDeliveryRegistry:
     def bind(self, *, peer_uid: int, peer_pid: int, peer_pidfd: int) -> ChannelRuntimeBinding:
         """Bind the actual connected profile process to its unique current package row."""
         from .native_custody_proof import LivePeerProcess, LoadedPackageClosureProof
+        from .source_observers import SourceObserverEnrollment
         if (type(peer_uid) is not int or peer_uid <= 0 or type(peer_pid) is not int or peer_pid <= 0
                 or type(peer_pidfd) is not int or peer_pidfd < 0):
             raise AuthorityDenied("channel.binding", "authenticated channel peer is unavailable")
