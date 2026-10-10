@@ -508,5 +508,95 @@
     ],
     "truth": "Assertions resolve actual source/ownership/kernel/native/provider/JWT/session/account receipts as applicable, independently of fixture tests. Runtime/task receipts must carry actual observed origin registered by concrete root collector; fixture provenance never promoted. Candidate/target/generation drift/expiredadmission/replay/ambiguous terminal/partial assertions denies accepted. Success requires every original profile assertion; all18 AC remain pending until actual proof. CI/bodyfixture coverage separate.",
     "root_only": "Local firstsetup uses same root runtime actual deployed candidate receipt and selected prepared/active context; no privileged Mac verifier/installer execution or claim of Pi enrollment from baseline. Physical Pi verifier commands remain assigned authorized browser owner only."
+  },
+  "xpra_managed_transform_v106": {
+    "schema": 1,
+    "operation_id": "xpra-root-xauthority-transform-v1",
+    "target_id": "xpra-root-xauthority-transform:start",
+    "parameter_schema_id": "no-caller-parameters-v1",
+    "parameters": {},
+    "profile_id": "xpra-root-xauthority-transform-v1",
+    "service_join": "RootSelectedInstallationBinding resolves dedicated build_service_enrollment_id/build_service_generation/current UID/GID from held setup transaction and protected build profile; output_owner_uid is that dedicated build UID. No active native package/display profile prerequisite. Source/runtime/compiler receipts current under same setup transaction.",
+    "root_selection_api": "RootSelectedInstallationBinding.resolve_xpra_transform(source_receipt_handle,pm_runtime_receipt_handle) -> sealed RootSelectedXpraBuildSelection",
+    "selection_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "build_service_enrollment_id",
+      "build_service_generation",
+      "source_artifact_id",
+      "source_sha256",
+      "source_receipt_handle",
+      "source_manifest_sha256",
+      "compiled_source_manifest_sha256",
+      "pm_runtime_receipt_handle",
+      "builder_artifact_id",
+      "builder_sha256",
+      "toolchain_artifact_id",
+      "toolchain_sha256",
+      "output_root_id",
+      "recipe_sha256",
+      "controller_binding_handle",
+      "expires_monotonic"
+    ],
+    "builder": "Root PM receipt resolver reopens exact committed official PM CPython3.14 interpreter/runtime closure. builder_artifact_id and builder_sha256 are actual receipt-derived executable artifact identity/hash, NOT Python archive artifact/hash, assumed member or ambient system Python. RootBuildExecutionService resolves private executable directly through current PM receipt. Duplicate held runtime descriptors/mounts remain root-owned.",
+    "toolchain": {
+      "artifact_id": "installer-xpra-root-xauthority-transform-module-v1",
+      "installed_release_role": "xpra-root-xauthority-transform-module",
+      "source_relative_path": "src/hermes_installer/remote/xpra_root_xauthority.py",
+      "sha256": "0297ccaa4c760c0531037d9193d76ed578a8133522e21c7b1bc10d60cda87b8a",
+      "size_bytes": 50135,
+      "member": "xpra_root_xauthority.py",
+      "imports": "stdlib only from exact PM runtime closure; installed release verifies actual module/origin pin, no caller code"
+    },
+    "argv_recipe": [
+      {
+        "build_path": {
+          "mount_id": "builder",
+          "relative_path": "executable"
+        }
+      },
+      {
+        "literal": "-I"
+      },
+      {
+        "build_path": {
+          "mount_id": "toolchain",
+          "relative_path": "xpra_root_xauthority.py"
+        }
+      }
+    ],
+    "environment": {},
+    "max_lifetime_seconds": 300,
+    "output_root": "Held root journal child builds/xpra/<SHA256(selection_handle)>; distinct service-owned mutable work/output, fixed mount paths per existing build contract, root retains parent nofollow identity. No caller root/path.",
+    "source": "Exact v101 xpra archive/full manifest is root consumed into verified build source. For generic regular-only mount, stage only full manifest regular files/modes into distinct compiled source tree, retain original full manifest SHA separately. Fixed module copies to private mutable work and reconstructs ONLY the five v101 source manifest symlink path/target/target-byte-SHA/size rows; all are within verified tree, then checks full original regular tree digest. No generic symlink permission or substitution of compiled staging digest for original source identity.",
+    "source_link_rules": "Exactly the five mode120000 rows in v101 committed tree manifest; compiled_source_tree_files and compiled_source_manifest_sha256 are separately observed canonical regular tree rows, bound in selection/ResolvedBuildInputs/recipe/result.",
+    "output_specs": [
+      {
+        "relative_path": "xpra-overlay.tar",
+        "kind": "file",
+        "maximum_bytes": 134217728,
+        "executable_role": null,
+        "target_facts": {
+          "encoding": "deterministic tar emitted by pinned module",
+          "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+          "source_manifest_sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+          "manifest_member": "hermes-installer-xpra-root-xauthority-overlay-v1.json",
+          "required_observed_facts": [
+            "source_tree_digest",
+            "transform_module_sha256",
+            "patched_file_sha256s",
+            "transformed_tree_sha256",
+            "output_archive_sha256",
+            "patch_manifest_sha256"
+          ]
+        }
+      }
+    ],
+    "authority": "Existing root build execution admission consumes sealed current RootSelectedXpraBuildSelection once; issues independent finite process.start setup build effect, verifies separate retained root setup controller PIDFD/current actor/transaction and dedicated selected build subject. Reuse existing root-selected build custody issuer; do not impersonate setup PID as build worker, use display service grant or generic worker delegated RPC. Fixed parameters {} and exact recipe digest only. Terminal bookkeeping root manager internal; parent consumed grant audit-only, no reuse.",
+    "result": "Actual ManagedBuildResult/BuildAttestation terminal plus held ContentAddressedBuildStore.publish observation. Dynamic BuildOutput ID build-output:<actual archive SHA>:file:d and current source/toolchain/builder/recipe/generation/manifest facts join; no preknown output SHA. Overlay patch receipt consumes actual attestation and archive manifest. Local f964 fixture output is measurement only, not managed success.",
+    "status": "Implementation and actual ARM build/runtime/display/kernel acceptance pending; all18ACopen"
   }
 }
