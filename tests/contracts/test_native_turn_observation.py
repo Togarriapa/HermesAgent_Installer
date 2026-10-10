@@ -10,7 +10,9 @@ from unittest.mock import patch
 from hermes_installer.authority.native_turn_observation import (
     RootNativeTurnObservationRegistry,
     RootProviderResponseObservation,
+    RootTurnTranscriptEvent,
     _Turn,
+    build_root_turn_transcript,
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.authority.types import canonical_digest
@@ -58,6 +60,22 @@ def _response(*, source_handles: tuple[str, ...], pending=()) -> RootProviderRes
 
 
 class NativeTurnObservationContracts(unittest.TestCase):
+    def test_root_transcript_is_canonical_ordered_event_serialization(self):
+        events = (
+            RootTurnTranscriptEvent("input", _handle("i"), "task-input", b"user bytes"),
+            RootTurnTranscriptEvent("request", _handle("q"), "native-request", b'{"model":"x"}'),
+        )
+        payload = build_root_turn_transcript(events)
+        decoded = __import__("json").loads(payload)
+        self.assertEqual(decoded["schema"], 1)
+        self.assertEqual(decoded["format"], "root-observed-turn-events-v1")
+        self.assertEqual([row["sequence"] for row in decoded["events"]], [0, 1])
+        self.assertEqual(decoded["events"][0]["payload_b64"], "dXNlciBieXRlcw==")
+        self.assertEqual(decoded["events"][1]["payload_sha256"], hashlib.sha256(b'{"model":"x"}').hexdigest())
+        with self.assertRaises(AuthorityDenied):
+            build_root_turn_transcript((RootTurnTranscriptEvent(
+                "worker-claim", _handle("w"), "task-input", b"user bytes"),))
+
     def _registry(self, response, *, pending=()):
         registry = object.__new__(RootNativeTurnObservationRegistry)
         registry.monotonic = lambda: 10.0

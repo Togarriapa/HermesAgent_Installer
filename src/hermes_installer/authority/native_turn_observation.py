@@ -7,6 +7,7 @@ reconstructed transcript stays behind the root memory-capture boundary.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -17,11 +18,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from .types import AuthorityDenied, canonical_digest
+from .types import AuthorityDenied, canonical_bytes, canonical_digest
 
 _MAX_TURNS = 256
 _MAX_TURN_EVENTS = 512
 _MAX_TRANSCRIPT_BYTES = 1_048_576
+_MAX_TRANSCRIPT_EVENTS = 4096
 _HANDLE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -167,6 +169,50 @@ class RootTurnTranscriptEvent:
     receipt_handle: str
     source_kind: str
     payload_bytes: bytes = field(repr=False)
+
+
+def build_root_turn_transcript(events: tuple[RootTurnTranscriptEvent, ...]) -> bytes:
+    """Serialize only the exact root-retained ordered event bytes.
+
+    This representation is intentionally an event transcript, not a claim
+    that the underlying SDK payloads are already normalized chat messages.
+    Downstream memory extraction treats the bounded JSON as private captured
+    text and applies its own selected serializer/consent policy.
+    """
+    allowed_kinds = {"input", "request", "response", "tool-result", "delegation-result"}
+    if not isinstance(events, tuple) or not 1 <= len(events) <= _MAX_TRANSCRIPT_EVENTS:
+        raise AuthorityDenied("native.turn.transcript", "root event transcript is outside its event bound")
+    rows: list[dict[str, Any]] = []
+    total_payload_bytes = 0
+    for sequence, event in enumerate(events):
+        if (type(event) is not RootTurnTranscriptEvent
+                or event.kind not in allowed_kinds
+                or not isinstance(event.receipt_handle, str)
+                or _HANDLE.fullmatch(event.receipt_handle) is None
+                or not isinstance(event.source_kind, str) or not event.source_kind
+                or len(event.source_kind) > 128
+                or not isinstance(event.payload_bytes, bytes)):
+            raise AuthorityDenied("native.turn.transcript", "root event transcript contains a malformed event")
+        total_payload_bytes += len(event.payload_bytes)
+        if total_payload_bytes > _MAX_TRANSCRIPT_BYTES:
+            raise AuthorityDenied("native.turn.transcript", "root event transcript exceeds its payload bound")
+        rows.append({
+            "sequence": sequence,
+            "event_kind": event.kind,
+            "receipt_handle": event.receipt_handle,
+            "source_kind": event.source_kind,
+            "payload_sha256": hashlib.sha256(event.payload_bytes).hexdigest(),
+            "payload_size_bytes": len(event.payload_bytes),
+            "payload_b64": base64.b64encode(event.payload_bytes).decode("ascii"),
+        })
+    result = canonical_bytes({
+        "schema": 1,
+        "format": "root-observed-turn-events-v1",
+        "events": rows,
+    })
+    if len(result) > _MAX_TRANSCRIPT_BYTES:
+        raise AuthorityDenied("native.turn.transcript", "serialized root event transcript exceeds its bound")
+    return result
 
 
 @dataclass(slots=True)
