@@ -577,3 +577,10 @@ The installer SHALL authorize public web egress only from genuine root-observed 
 #### Scenario: Private input requests an enrolled public website
 - **WHEN** any retained parent/input source is PRIVATE or UNKNOWN or the public permission is absent/revoked/expired
 - **THEN** public web dispatch and retries are denied without dropping ancestry, widening private consent or adding budget
+
+### Requirement: Current web registration source receipt cohort v140
+The installer SHALL select all registrations sharing the updated web/voice/epic source module only against its current actual held release module receipt and renewed source capture; old audit inventory SHALL NOT authenticate changed bytes.
+
+#### Scenario: Source receipt identifies historical module bytes
+- **WHEN** current selected module SHA differs from the retained registration/action source receipt
+- **THEN** assembly denies the stale join and requires actual current source observation without editing immutable audit evidence
