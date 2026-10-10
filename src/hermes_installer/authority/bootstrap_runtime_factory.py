@@ -9,6 +9,7 @@ same root registry resolves to immutable CAS objects.
 from __future__ import annotations
 
 import copy
+import grp
 import hashlib
 import hmac
 import json
@@ -509,6 +510,11 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("active enrollment is not owned by this setup session")
         return self._session._resolve_current_active_enrollment()
+
+    def resolve_current_prepared_enrollment(self) -> EnrollmentReceipt:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("prepared enrollment is not owned by this setup session")
+        return self._session._resolve_current_prepared_enrollment()
 
     def resolve_adopted_principal_selector(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -3733,7 +3739,14 @@ class RootBootstrapRuntimeFactory:
         self._actor.verify_current(self._release)
         handle = self.session_store.begin_local(mode=mode, selected_plan_artifact_id=_PLAN_ID,
                                                 target_account_name=target_account_name)
-        return self._wrap_live_session(handle)
+        session = self._wrap_live_session(handle)
+        if mode == "resume":
+            try:
+                session._restore_current_prepared_checkpoint()
+            except Exception:
+                session.close()
+                raise
+        return session
 
     def begin_from_initial_publication(self, handoff_handle: str) -> "RootBootstrapSession":
         """Adopt the same-process stage-zero publication into a normal session."""
@@ -3795,7 +3808,7 @@ class RootBootstrapRuntimeFactory:
             authorization = self.session_store._proof(live)
             policy = self.resolver.resolve_policy(
                 authorization.plan_artifact_id,
-                compilation_phase="prepared" if authorization.mode == "install" else "active")
+                compilation_phase="prepared" if authorization.mode in {"install", "resume"} else "active")
             identity_policy = policy.identity_policy
             marker = Path("/var/lib/hermes-installer/identities") / f"{identity_policy['service_account_name']}.json"
             identity = SystemIdentityAdapter(marker, name=identity_policy["service_account_name"])
@@ -4572,6 +4585,145 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentError("first setup did not publish the required empty prepared generation")
         self._last_receipt = receipt
         self._refresh_authorization()
+        return receipt
+
+    def _restore_current_prepared_checkpoint(self) -> EnrollmentReceipt:
+        """Reissue a short-lived receipt from the current protected prepared snapshot.
+
+        Resume never deserializes old in-memory capabilities. It accepts only a
+        committed empty prepared generation that is still the exact authority
+        snapshot, and verifies the matching root transaction and service identity
+        without creating or changing host state.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        auth = self._authorization
+        if auth.mode != "resume":
+            raise BootstrapEnrollmentPending("prepared checkpoint restore requires a live resume session")
+        receipt = self._read_current_prepared_checkpoint_receipt()
+        self._last_receipt = receipt
+        return receipt
+
+    def _read_current_prepared_checkpoint_receipt(self) -> EnrollmentReceipt:
+        self._check_live()
+        self._refresh_authorization()
+        auth = self._authorization
+        authority = self._factory.session_store.authority_loader_for_session()
+        if not isinstance(authority, Mapping):
+            raise BootstrapEnrollmentPending("resume has no current protected prepared authority snapshot")
+        try:
+            _validate_authority_base(authority)
+            generation = authority.get("service_generations")
+            from .enrollment import _validate_service_generations
+            normalized = _validate_service_generations(generation)
+        except Exception:
+            raise BootstrapEnrollmentPending("resume authority snapshot is not strictly valid") from None
+        if (not isinstance(generation, Mapping)
+                or generation.get("service_records")
+                or any(generation.get(name) for name in (
+                    "protected_devices", "protected_build_records", "native_packages",
+                    "memory_enrollments", "operation_parameter_schemas", "source_issuers",
+                    "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
+                    "resource_body_recipes", "resource_scope_bindings", "resource_validators",
+                    "resource_controller_roles", "native_mcp_tool_bindings",
+                    "remote_observation_enrollments", "native_schema_artifacts",
+                    "composio_channel_enrollments", "channel_delivery_bindings",
+                    "remote_startup_enrollments", "private_loopback_networks",
+                    "selected_resource_executions", "selected_application_runtimes",
+                    "private_memory_endpoint_selections", "private_memory_model_selections",
+                    "public_web_scopes"))):
+            raise BootstrapEnrollmentPending("resume snapshot is not an empty prepared generation")
+        digest = normalized.get("generation_digest")
+        generation_id = normalized.get("generation_id")
+        if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or not isinstance(generation_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", generation_id)):
+            raise BootstrapEnrollmentPending("resume prepared generation identity is malformed")
+        matches: list[tuple[Path, Mapping[str, Any]]] = []
+        for path in self._factory.session_store.transaction_root.glob("[0-9a-f]" * 32 + ".json"):
+            row = _read_json_if_owned(path)
+            setup = row.get("setup_authorization") if isinstance(row, Mapping) else None
+            if (isinstance(row, Mapping) and isinstance(setup, Mapping)
+                    and row.get("state") == "committed"
+                    and setup.get("transaction_handle") == auth.transaction_handle
+                    and setup.get("target_id") == auth.target_id
+                    and setup.get("plan_artifact_id") == auth.plan_artifact_id
+                    and setup.get("plan_digest") == auth.plan_digest
+                    and row.get("generation_digest") == digest
+                    and row.get("previous_generation_digest")
+                        == setup.get("expected_previous_generation_digest")
+                    and re.fullmatch(r"[0-9a-f]{48}", str(row.get("provision_receipt_handle", "")))):
+                matches.append((path, row))
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("resume checkpoint does not identify one committed prepared transaction")
+        journal_path, journal = matches[0]
+        journal_id = journal_path.stem
+        if journal.get("transaction_id") != journal_id or not re.fullmatch(r"[0-9a-f]{32}", journal_id):
+            raise BootstrapEnrollmentPending("resume transaction journal identity is malformed")
+        prior_setup = journal.get("setup_authorization")
+        prior_session_id = prior_setup.get("setup_session_id") if isinstance(prior_setup, Mapping) else None
+        if not isinstance(prior_session_id, str) or not re.fullmatch(r"setup-[0-9a-f]{32}", prior_session_id):
+            raise BootstrapEnrollmentPending("resume checkpoint has no durable originating setup session")
+        prior_session = _read_json_if_owned(
+            self._factory.session_store.session_root / f"{prior_session_id}.json")
+        if (not isinstance(prior_session, Mapping)
+                or prior_session.get("schema") != 1
+                or prior_session.get("setup_session_id") != prior_session_id
+                or prior_session.get("target_id") != auth.target_id
+                or prior_session.get("transaction_handle") != auth.transaction_handle
+                or prior_session.get("plan_artifact_id") != auth.plan_artifact_id
+                or prior_session.get("plan_digest") != auth.plan_digest
+                or prior_session.get("mode") not in {"install", "repair", "resume"}):
+            raise BootstrapEnrollmentPending("resume originating session record does not match the checkpoint")
+        identity = journal.get("identity")
+        if (not isinstance(identity, Mapping)
+                or set(identity) != {"name", "uid", "gid", "created"}
+                or identity.get("name") != self._identity.name
+                or type(identity.get("uid")) is not int or identity["uid"] <= 0
+                or type(identity.get("gid")) is not int or identity["gid"] <= 0
+                or type(identity.get("created")) is not bool):
+            raise BootstrapEnrollmentPending("resume checkpoint lacks the reviewed service identity receipt")
+        try:
+            account = pwd.getpwnam(identity["name"])
+            group = grp.getgrnam(identity["name"])
+            marker = _read_json_if_owned(self._identity.marker)
+        except (KeyError, OSError):
+            raise BootstrapEnrollmentPending("prepared service identity is no longer present") from None
+        if (account.pw_uid != identity["uid"] or account.pw_gid != identity["gid"]
+                or group.gr_gid != identity["gid"] or account.pw_dir not in {"/nonexistent", "/"}
+                or account.pw_shell not in {"/usr/sbin/nologin", "/sbin/nologin"}
+                or marker != {"schema": 1, "name": identity["name"],
+                              "uid": identity["uid"], "gid": identity["gid"]}):
+            raise BootstrapEnrollmentPending("prepared service identity no longer matches its root marker")
+        issued = time.monotonic()
+        try:
+            deadline = self._factory.session_store.current_deadline(self._handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("resume setup session deadline is unavailable") from None
+        expires = min(issued + 300.0, deadline)
+        if expires <= issued:
+            raise BootstrapEnrollmentPending("resume setup session expires before prepared receipt issuance")
+        return EnrollmentReceipt(
+            schema=1, transaction_handle=auth.transaction_handle,
+            provision_receipt_handle=str(journal["provision_receipt_handle"]),
+            generation_id=generation_id, generation_digest=digest,
+            previous_generation_digest=journal.get("previous_generation_digest"),
+            state="prepared", enrollment_ids=(), issued_monotonic=issued,
+            expires_monotonic=expires)
+
+    def _resolve_current_prepared_enrollment(self) -> EnrollmentReceipt:
+        self._check_live()
+        self._refresh_authorization()
+        receipt = self._last_receipt
+        current = self._read_current_prepared_checkpoint_receipt()
+        if (not isinstance(receipt, EnrollmentReceipt)
+                or receipt.state != "prepared" or receipt.enrollment_ids
+                or receipt.transaction_handle != self._authorization.transaction_handle
+                or receipt.generation_id != current.generation_id
+                or receipt.generation_digest != current.generation_digest
+                or receipt.provision_receipt_handle != current.provision_receipt_handle
+                or receipt.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("current setup has no revalidated prepared enrollment receipt")
         return receipt
 
     def _resolve_current_active_enrollment(self) -> EnrollmentReceipt:
@@ -6175,13 +6327,13 @@ class RootBootstrapSession:
                 or not prepared.provision_receipt_handle):
             raise BootstrapEnrollmentPending(
                 "native source definition adapter requires current empty prepared custody")
-        relative_path = "src/hermes_installer/authority/native_source_definitions.py"
-        digest = "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7"
+        relative_path = "lib/python/hermes_installer/authority/native_source_definitions.py"
+        digest = "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c"
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
         rows = [row for row in release.files if row.relative_path == relative_path
-                and row.sha256 == digest and "module" in row.roles
+                and row.sha256 == digest and row.size_bytes == 10_311 and "module" in row.roles
                 and row.artifact_id in plan.allowed_artifact_ids]
         if len(rows) != 1:
             raise BootstrapEnrollmentPending(
