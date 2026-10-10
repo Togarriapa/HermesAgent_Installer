@@ -1604,6 +1604,22 @@ class RootNativeExecutionSelectionRegistry:
             raise AuthorityDenied("resource.native_selection", "selected package action closure changed")
         return selected_execution
 
+    def resolve_selection_handle(self, selection_handle: str) -> RootSelectedNativeExecution:
+        """Resolve an opaque root-issued handle to its exact live selection.
+
+        This is an in-process root lookup for turn-delivery composition. A
+        worker presenting the same string over RPC cannot select a task.
+        """
+        if (not isinstance(selection_handle, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", selection_handle) is None):
+            raise AuthorityDenied("resource.native_selection", "selected execution handle is malformed")
+        with self._lock:
+            record = self._selections.get(selection_handle)
+            if record is None:
+                raise AuthorityDenied("resource.native_selection", "selected execution handle is unknown or consumed")
+            selected = record.selection
+        return self.resolve_current_execution(selected)
+
     def attach_native_input_target_resolver(self, resolver: Any) -> None:
         """Attach the concrete PIDFD/loaded-package target resolver exactly once."""
         from .native_custody_proof import RootNativeInputTargetResolver
@@ -1791,11 +1807,12 @@ class NativeInitialInputDelivery:
                 or type(self.input_size_bytes) is not int
                 or not 1 <= self.input_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
                 or not math.isfinite(self.expires_monotonic)
-                or self.turn_handle is not None and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None):
+                or (self.turn_handle is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None)):
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        result = {
+        wire = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -1804,8 +1821,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            result["turn_handle"] = self.turn_handle
-        return result
+            wire["turn_handle"] = self.turn_handle
+        return wire
 
 
 @dataclass(slots=True)
@@ -1821,6 +1838,7 @@ class _PendingNativeInputDelivery:
     authority_epoch: str
     service_generation_digest: str
     expires_monotonic: float
+    turn_handle: str | None = None
     state: str = "pending"
     response: NativeInitialInputDelivery | None = None
 
@@ -1866,7 +1884,7 @@ class RootNativeInputDeliveryRegistry:
                    process_custody_registry)
 
     def queue_selected_input(self, selected_execution: RootSelectedNativeExecution,
-                             event: Any) -> None:
+                             event: Any, *, turn_handle: str | None = None) -> None:
         """Retain an actual root-captured input event until its producer takes it."""
         from .native_input_observer import RootNativeInputEvent
 
@@ -1883,7 +1901,9 @@ class RootNativeInputDeliveryRegistry:
                 or event.parent_closure_digest != selected.execution_handle.parent_closure_digest
                 or event.expires_monotonic <= self.monotonic()
                 or event.native_loader_ready_event_id
-                != self.selected_executions.loader_ready_event_id(selected)):
+                != self.selected_executions.loader_ready_event_id(selected)
+                or (turn_handle is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle) is None)):
             raise AuthorityDenied("native.input.delivery", "captured event differs from selected native task")
         source = self.source_observers
         with source._lock:
@@ -1936,7 +1956,7 @@ class RootNativeInputDeliveryRegistry:
             service_generation_digest=selected.service_generation_digest,
             expires_monotonic=min(
                 float(event.expires_monotonic), float(delivery.expires),
-                float(selected.expires_monotonic)),
+                float(selected.expires_monotonic)), turn_handle=turn_handle,
         )
         with self._changed:
             self._prune_locked(self.monotonic())
@@ -1980,6 +2000,7 @@ class RootNativeInputDeliveryRegistry:
                 input_sha256=row.event.payload_sha256,
                 input_size_bytes=row.event.payload_size_bytes,
                 expires_monotonic=row.expires_monotonic,
+                turn_handle=row.turn_handle,
             )
         except BaseException:
             with self._changed:
