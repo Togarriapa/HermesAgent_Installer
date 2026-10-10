@@ -165,9 +165,9 @@ class RootRuntimeBindings:
         if schema_kind not in {"arguments", "result"}:
             raise EnrollmentDenied("native schema kind is invalid")
         try:
-            package = self.enrollment_catalog.resolve_native_package(
-                native_package_id, native_package_generation,
-            )
+            # The package resolver verifies the selected immutable workflow
+            # artifact ID/SHA pins as well as the active package generation.
+            package = self.resolve_native_package(native_package_id, native_package_generation)
         except Exception:
             raise EnrollmentDenied("native schema package generation is unavailable") from None
         adapter = package.adapter_records.get(adapter_id)
@@ -176,6 +176,25 @@ class RootRuntimeBindings:
         expected_schema_id = (adapter.argument_schema_id if schema_kind == "arguments"
                               else adapter.result_schema_id)
         eligible = schema_id == expected_schema_id
+        # External workflow schemas are selected by the package's strict
+        # adapter_workflow_bindings, whose artifact IDs/SHA pins were checked
+        # by resolve_native_package above. The schema-artifact row remains
+        # bound to the enclosing package adapter action, while the workflow
+        # binding supplies the exact external action/schema association.
+        if not eligible:
+            workflow_schema_field = ("external_argument_schema_id" if schema_kind == "arguments"
+                                     else "external_result_schema_id")
+            matching_workflows = [workflow for workflow in adapter.workflow_bindings
+                                  if workflow.get(workflow_schema_field) == schema_id]
+            if len(matching_workflows) > 1:
+                raise EnrollmentDenied("native workflow schema is ambiguous across selected external actions")
+            if len(matching_workflows) == 1:
+                workflow = matching_workflows[0]
+                if not all(workflow.get(name) for name in (
+                    "external_tool_name", "external_action_id", "workflow_artifact_id", "workflow_sha256",
+                )):
+                    raise EnrollmentDenied("native workflow schema lacks its exact selected action binding")
+                eligible = True
         if not eligible:
             # Native MCP request/result schemas are separately selected by the
             # protected MCP dispatch rows but still use the exact package,

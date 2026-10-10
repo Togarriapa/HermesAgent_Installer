@@ -252,9 +252,11 @@ class AuthorityService:
         self.native_input_delivery_registry = None
         self.native_turn_observation_registry = None
         self.native_mcp_dispatcher = None
+        self.selected_application_router = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
         self.resource_job_authority = None
+        self.resource_task_authority = None
         self.resource_event_context_issuer = None
         self.root_selected_startup_authority = None
         self.root_selected_memory_authority = None
@@ -387,6 +389,56 @@ class AuthorityService:
                 or not callable(getattr(dispatcher, "dispatch_native_mcp", None))):
             raise AuthorityDenied("native.mcp", "root native MCP dispatcher binding is invalid")
         self.native_mcp_dispatcher = dispatcher
+
+    def attach_selected_application_router(self, router: Any) -> None:
+        """Attach the concrete root-selected application router once."""
+        from .application_runtime import RootSelectedApplicationRuntimeRouter
+
+        if (self.selected_application_router is not None
+                or type(router) is not RootSelectedApplicationRuntimeRouter
+                or router.service is not self
+                or not callable(getattr(router, "dispatch", None))):
+            raise AuthorityDenied("application.dispatch", "root selected application router is invalid")
+        self.selected_application_router = router
+
+    def dispatch_selected_application(
+        self, invocation_context_handle: str, application_id: str,
+        canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
+        peer_pidfd: int | None, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Dispatch one invocation through the attached typed root router.
+
+        This in-process entrypoint carries kernel-authenticated peer identity
+        from its caller. The router resolves the selected application/action
+        and source closure; these arguments do not define a backend or target.
+        """
+        from .application_runtime import RootApplicationRunReceipt
+
+        router = self.selected_application_router
+        if (router is None or not isinstance(invocation_context_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_context_handle)
+                or not isinstance(application_id, str) or not application_id
+                or len(application_id) > 256
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 1_048_576
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("application.dispatch", "selected application invocation is unavailable")
+        try:
+            receipt = router.dispatch(
+                invocation_context_handle, application_id, canonical_arguments,
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=cancelled,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.dispatch", "selected application invocation failed") from None
+        if type(receipt) is not RootApplicationRunReceipt or cancelled():
+            raise AuthorityDenied("application.dispatch", "application receipt is not root retained")
+        return receipt
 
     def attach_native_input_delivery_registry(self, registry: Any) -> None:
         """Attach the fixed selected-input queue/consumer once during assembly."""
@@ -775,7 +827,9 @@ class AuthorityService:
         for grant_id, entry in tuple(self._root_selected_service_effects.items()):
             if entry["grant"].expires_monotonic <= now:
                 self._root_selected_service_effects.pop(grant_id, None)
-                self._root_selected_nonce_states.pop(entry["grant"].nonce, None)
+        for nonce, (_state, expires) in tuple(self._root_selected_nonce_states.items()):
+            if expires <= now:
+                self._root_selected_nonce_states.pop(nonce, None)
 
     def _is_current_root_selected_service_effect(self, effect: VerifiedRootSelectedServiceEffect,
                                                 seal: object) -> bool:
@@ -823,7 +877,6 @@ class AuthorityService:
             for grant_id, entry in tuple(self._root_selected_service_effects.items()):
                 if entry.get("verified") is effect:
                     self._root_selected_service_effects.pop(grant_id, None)
-                    self._root_selected_nonce_states.pop(effect._nonce, None)
                     return
 
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
@@ -853,6 +906,48 @@ class AuthorityService:
         self.process_effect_handler.task_admission_current = current_admission
         self.resource_task_runner = runner
         self.resource_job_authority = job_authority
+
+    def attach_resource_task_authority(self, authority: Any) -> None:
+        """Attach the service-bound RB-T08 signer/consumer exactly once."""
+        from .resource_task_authority import RootResourceTaskAuthority
+
+        if (self.resource_task_authority is not None
+                or type(authority) is not RootResourceTaskAuthority
+                or authority.service is not self
+                or authority.jobs is not self.resource_job_authority):
+            raise AuthorityDenied("resource.task_authority", "root resource task authority is invalid")
+        self.resource_task_authority = authority
+
+    def issue_root_resource_task_start(self, child_admission: Any, task_source: Any,
+                                       task_admission: Any, selected_execution: Any, *,
+                                       task_handle: Any, controller: Any) -> Any:
+        authority = self.resource_task_authority
+        if authority is None:
+            raise AuthorityDenied("resource.task_start", "root resource task authority is unavailable")
+        return authority.issue_root_resource_task_start(
+            child_admission, task_source, task_admission, selected_execution,
+            task_handle=task_handle, controller=controller,
+        )
+
+    def consume_root_resource_task_start(self, grant: Any, child_admission: Any,
+                                         task_source: Any, task_admission: Any,
+                                         canonical_selection_payload: bytes, *,
+                                         task_handle: Any) -> Any:
+        authority = self.resource_task_authority
+        if authority is None:
+            raise AuthorityDenied("resource.task_start", "root resource task authority is unavailable")
+        return authority.consume_root_resource_task_start(
+            grant, child_admission, task_source, task_admission,
+            canonical_selection_payload, task_handle=task_handle,
+        )
+
+    def verify_consumed_resource_task_start(self, proof: Any, canonical_selection_payload: bytes, *,
+                                            task_admission: Any, selected_profile: Any) -> bool:
+        authority = self.resource_task_authority
+        return bool(authority is not None and authority.verify_consumed_start(
+            proof, canonical_selection_payload, task_admission=task_admission,
+            selected_profile=selected_profile,
+        ))
 
     def attach_resource_event_context_issuer(self, issuer: Any) -> None:
         """Attach the root source-event context issuer once during assembly."""
@@ -1149,6 +1244,78 @@ class AuthorityService:
         )
         if not isinstance(result, ManagedTaskHandle) or cancelled():
             raise AuthorityDenied("resource.task_start", "managed process task did not start cleanly")
+        return result
+
+    def perform_root_admitted_resource_process_start(
+        self, admission: Any, task: Any, source: Any, controller: Any, selection: Any,
+        *, exact_stdin: bytes, timeout: float, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Start a root-controlled admitted task with a distinct sealed proof.
+
+        Root controller identity is verified as provenance by the job and task
+        authorities. It is never passed as the selected child process's peer.
+        """
+        from .resource_task_authority import RootResourceTaskAuthority
+        from hermes_installer.registry.resource_jobs import (
+            RootAdmittedTask, RootAdmittedTaskSource, RootResourceJobAdmissionHandle,
+            RootTaskController,
+        )
+        from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+        from hermes_installer.managed_process_custodian import ManagedTaskHandle
+
+        jobs, authority, manager = (self.resource_job_authority,
+                                    self.resource_task_authority,
+                                    self.process_effect_handler)
+        if (jobs is None or type(authority) is not RootResourceTaskAuthority
+                or authority.service is not self or authority.jobs is not jobs
+                or manager is None
+                or not isinstance(admission, RootResourceJobAdmissionHandle)
+                or not isinstance(task, RootAdmittedTask)
+                or not isinstance(source, RootAdmittedTaskSource)
+                or not isinstance(controller, RootTaskController)
+                or controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                or not isinstance(selection, SelectedResourceProfileTask)
+                or not isinstance(exact_stdin, bytes) or not 1 <= len(exact_stdin) <= 262_144
+                or not callable(cancelled) or cancelled()
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0):
+            raise AuthorityDenied("resource.task_start", "root-controlled selected task is unavailable")
+        if (jobs.verify_admitted_root_task_controller(admission, task, source, controller) is not True
+                or hashlib.sha256(exact_stdin).hexdigest() != task.stdin_sha256
+                or len(exact_stdin) != task.stdin_size_bytes
+                or task.node_id != admission.node_id or source.parent_closure_digest != task.parent_closure_digest
+                or self.monotonic() >= min(admission.expires_monotonic, task.deadline_monotonic,
+                                           source.expires_monotonic, controller.expires_monotonic)):
+            raise AuthorityDenied("resource.task_start", "root task provenance, input or lease changed")
+        child = jobs.resolve_task_child_admission(admission, admission.node_id)
+        profile = getattr(manager, "profiles", {}).get(selection.profile_id)
+        if profile is None:
+            raise AuthorityDenied("resource.task_start", "selected task process profile is unavailable")
+        payload = authority.selection_payload(admission, task, selection, profile)
+        grant = self.issue_root_resource_task_start(
+            child, source, task, selection, task_handle=admission, controller=controller,
+        )
+        proof = self.consume_root_resource_task_start(
+            grant, child, source, task, payload, task_handle=admission,
+        )
+        if (not self.verify_consumed_resource_task_start(
+                proof, payload, task_admission=task, selected_profile=profile)
+                or cancelled()):
+            raise AuthorityDenied("resource.task_start", "sealed root task proof is no longer current")
+        start = getattr(manager, "start_selected_resource_task", None)
+        coordinator = getattr(manager, "task_input_coordinator", None)
+        if not callable(start) or coordinator is None:
+            raise AuthorityDenied("resource.task_start", "root selected task custodian is unavailable")
+        result = start(
+            profile, proof, payload, task_admission=task,
+            admission_handle=admission, node_id=task.node_id, admitted_source=source,
+            exact_stdin=exact_stdin,
+            expected_stdin_sha256=task.stdin_sha256,
+            timeout=min(float(timeout), max(0.001, proof.authorization.expires_monotonic - self.monotonic())),
+            cancelled=cancelled, initial_input_coordinator=coordinator,
+        )
+        if not isinstance(result, ManagedTaskHandle) or cancelled():
+            raise AuthorityDenied("resource.task_start", "root selected task did not start cleanly")
         return result
 
     def consume_resource_task_completion(self, receipt: Any, *,

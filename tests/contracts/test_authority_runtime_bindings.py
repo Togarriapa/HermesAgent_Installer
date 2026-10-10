@@ -370,11 +370,23 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
 
     adapter = SimpleNamespace(
         adapter_id="adapter-a", action_id="action-a",
-        argument_schema_id="arguments-v1", result_schema_id="result-v1",
+        argument_schema_id="direct-arguments-v1", result_schema_id="direct-result-v1",
+        adapter_artifact_id="adapter-artifact-a", adapter_sha256="b" * 64,
+        workflow_bindings=({
+            "external_tool_name": "lookup", "external_action_id": "external-lookup",
+            "external_argument_schema_id": "workflow-arguments-v1",
+            "external_result_schema_id": "workflow-result-v1",
+            "workflow_artifact_id": "workflow-artifact-a", "workflow_sha256": "f" * 64,
+        },),
     )
-    package = SimpleNamespace(adapter_records={"adapter-a": adapter})
+    package = SimpleNamespace(
+        adapter_records={"adapter-a": adapter},
+        entrypoint_artifact_id="entrypoint-a", entrypoint_sha256="c" * 64,
+        resolver_artifact_id="resolver-a", resolver_sha256="d" * 64,
+        compiled_closure_artifact_id="closure-a",
+    )
     row = {
-        "id": "arguments-v1", "artifact_id": "schema-arguments-v1", "sha256": "a" * 64,
+        "id": "workflow-arguments-v1", "artifact_id": "schema-arguments-v1", "sha256": "a" * 64,
         "schema_kind": "arguments", "native_package_id": "package-a",
         "native_package_generation": "generation-a", "adapter_id": "adapter-a",
         "action_id": "action-a", "source_receipt_handle": "receipt-a",
@@ -386,21 +398,41 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
                 raise EnrollmentDenied("package generation unavailable")
             return package
 
+    artifact_specs = {
+        "closure-a": SimpleNamespace(tree_files=(object(),)),
+        "entrypoint-a": SimpleNamespace(sha256="c" * 64),
+        "resolver-a": SimpleNamespace(sha256="d" * 64),
+        "adapter-artifact-a": SimpleNamespace(sha256="b" * 64),
+        "workflow-artifact-a": SimpleNamespace(sha256="f" * 64),
+    }
+
     runtime = RootRuntimeBindings(
         enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
-        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={},
+        artifact_catalog=SimpleNamespace(artifacts=artifact_specs),
         build_store=None, service_connector=None, native_schema_artifact_records=(row,),
     )
     assert runtime.resolve_native_schema_record(
-        "arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+        "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
     ) is row
-    with pytest.raises(EnrollmentDenied, match="not selected"):
+    adapter.workflow_bindings += ({
+        "external_tool_name": "lookup-copy", "external_action_id": "external-lookup-copy",
+        "external_argument_schema_id": "workflow-arguments-v1",
+        "external_result_schema_id": "workflow-result-v1",
+        "workflow_artifact_id": "workflow-artifact-b", "workflow_sha256": "1" * 64,
+    },)
+    artifact_specs["workflow-artifact-b"] = SimpleNamespace(sha256="1" * 64)
+    with pytest.raises(EnrollmentDenied, match="ambiguous across selected external actions"):
         runtime.resolve_native_schema_record(
-            "result-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+            "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
         )
     with pytest.raises(EnrollmentDenied, match="not selected"):
         runtime.resolve_native_schema_record(
-            "arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "result",
+            "workflow-result-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+        )
+    with pytest.raises(EnrollmentDenied, match="not selected"):
+        runtime.resolve_native_schema_record(
+            "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "result",
         )
 
 
