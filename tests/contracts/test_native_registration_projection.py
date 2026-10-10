@@ -191,3 +191,17 @@ def test_native_registration_projection_rows_are_root_issued_only():
         assert "issued by the root resolver" in str(exc)
     else:
         raise AssertionError("caller-created projection row was accepted")
+
+
+def test_projection_builder_requires_the_sealed_factory_selection_and_definitions():
+    from hermes_installer.authority.native_registration_projection import (
+        NativeRegistrationProjectionDenied,
+        build_root_native_registration_projection,
+    )
+
+    try:
+        build_root_native_registration_projection(None, None)
+    except NativeRegistrationProjectionDenied as exc:
+        assert "root selected native assembly definitions" in str(exc)
+    else:
+        raise AssertionError("projection builder accepted caller-supplied authority inputs")
