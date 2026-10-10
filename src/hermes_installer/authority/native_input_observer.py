@@ -40,6 +40,18 @@ class RootNativeInputSelection:
     compiled_closure_sha256: str
     expires_monotonic: float
     invocation_id: str
+    # Root-selected current profile preference. A null value means no private
+    # provider egress consent; this is never supplied by the worker.
+    private_consent_selection_handle: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.private_consent_selection_handle is not None
+                and (not isinstance(self.private_consent_selection_handle, str)
+                     or len(self.private_consent_selection_handle) < 32
+                     or len(self.private_consent_selection_handle) > 128
+                     or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                            for char in self.private_consent_selection_handle))):
+            raise ValueError("private consent selection handle is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +70,16 @@ class RootNativeInputEvent:
     observed_monotonic: float
     expires_monotonic: float
     native_loader_ready_event_id: str | None = None
+    private_consent_selection_handle: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.private_consent_selection_handle is not None
+                and (not isinstance(self.private_consent_selection_handle, str)
+                     or len(self.private_consent_selection_handle) < 32
+                     or len(self.private_consent_selection_handle) > 128
+                     or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                            for char in self.private_consent_selection_handle))):
+            raise ValueError("private consent selection handle is malformed")
 
 
 class RootNativeInputObserver:
@@ -214,6 +236,8 @@ class RootNativeInputObserver:
                     observed_monotonic=now,
                     expires_monotonic=min(lease, receipt.monotonic_expires_at),
                     native_loader_ready_event_id=target_proof.loader_ready_event_id,
+                    private_consent_selection_handle=(
+                        selected_execution.private_consent_selection_handle),
                 )
                 with self._lock:
                     if event_id in self._events:
@@ -403,6 +427,7 @@ class RootNativeInputObserver:
                 observed_monotonic=now,
                 expires_monotonic=min(selected.expires_monotonic, receipt.monotonic_expires_at),
                 native_loader_ready_event_id=getattr(proof, "loader_ready_event_id", None),
+                private_consent_selection_handle=selected.private_consent_selection_handle,
             )
             with self._lock:
                 if any(item.input_event_id == event.input_event_id for item in self._events.values()):
