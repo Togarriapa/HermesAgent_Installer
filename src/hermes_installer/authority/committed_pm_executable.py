@@ -13,6 +13,7 @@ import math
 import os
 import re
 import stat
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,8 @@ from hermes_installer.protected_enrollment import (
     ProtectedEnrollmentCatalog, ProtectedRootJournalCatalog,
 )
 from .types import AuthorityDenied
+
+_MAX_PM_IDENTITIES = 4
 
 
 class CommittedPMExecutableUnavailable(AuthorityDenied):
@@ -64,17 +67,40 @@ class RootVerifiedCommittedPMExecutableIdentity:
     executable_mode: int
     expires_monotonic: float
     member_fds: tuple[int, ...] = field(repr=False)
+    _custody: "_IdentityCustody" = field(repr=False, compare=False)
     _issuer: object = field(repr=False, compare=False)
 
     def __repr__(self) -> str:
         return "RootVerifiedCommittedPMExecutableIdentity(<root-private>)"
 
     def close(self) -> None:
-        for fd in set(self.member_fds):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        self._custody.release(self)
+
+
+class _IdentityCustody:
+    """Idempotent descriptor owner shared by identity and resolver registry."""
+
+    def __init__(self, handle: str, fds: tuple[int, ...],
+                 issued: dict[str, RootVerifiedCommittedPMExecutableIdentity],
+                 owner_lock: threading.RLock):
+        self.handle = handle
+        self.fds = tuple(set(fds))
+        self.issued = issued
+        self.owner_lock = owner_lock
+        self.closed = False
+        self.lock = threading.Lock()
+
+    def release(self, identity: RootVerifiedCommittedPMExecutableIdentity) -> None:
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = True
+            fds = self.fds
+            self.fds = ()
+        _close_fds(list(fds))
+        with self.owner_lock:
+            if self.issued.get(self.handle) is identity:
+                self.issued.pop(self.handle, None)
 
 
 class RootActiveCommittedPMExecutableResolver:
@@ -97,6 +123,8 @@ class RootActiveCommittedPMExecutableResolver:
         self._actor = actor
         self._issuer = object()
         self._issued: dict[str, RootVerifiedCommittedPMExecutableIdentity] = {}
+        self._identity_lock = threading.RLock()
+        self._pending_resolutions = 0
         self._closed = False
 
     @classmethod
@@ -110,7 +138,7 @@ class RootActiveCommittedPMExecutableResolver:
 
     def resolve_selected(self) -> RootVerifiedCommittedPMExecutableIdentity:
         """Select and independently observe the unique active native worker."""
-        self._require_live()
+        self._begin_resolution()
         try:
             from .setup_policy_publication import PolicyPublicationReceiptResolver
             publication = PolicyPublicationReceiptResolver.resolve_current()
@@ -132,6 +160,7 @@ class RootActiveCommittedPMExecutableResolver:
                 raise ValueError("current runtime row selects a stale root journal")
             row_digest = _digest(_plain(runtime))
             member_fds = self._observe_source_members(runtime)
+            identity: RootVerifiedCommittedPMExecutableIdentity | None = None
             try:
                 observed, pm_fds = self._observe_pm(runtime, root_journal.path)
                 member_fds.extend(pm_fds)
@@ -150,8 +179,9 @@ class RootActiveCommittedPMExecutableResolver:
                         or _digest(_plain(current_candidates[0][2])) != row_digest):
                     raise ValueError("selected PM runtime row changed during observation")
                 self._require_live()
+                identity_handle = os.urandom(32).hex()
                 identity = RootVerifiedCommittedPMExecutableIdentity(
-                    identity_handle=os.urandom(32).hex(),
+                    identity_handle=identity_handle,
                     service_generation_digest=self._catalog.digest,
                     publication_receipt_handle=publication.receipt_handle,
                     publication_sha256=publication.publication_sha256,
@@ -180,33 +210,50 @@ class RootActiveCommittedPMExecutableResolver:
                     # the active proof gets its own short lease.
                     expires_monotonic=min(_fresh_active_lease(time.monotonic()),
                                           choice["active_lease_expires_monotonic"]),
-                    member_fds=tuple(member_fds), _issuer=self._issuer,
+                    member_fds=tuple(member_fds),
+                    _custody=_IdentityCustody(identity_handle, tuple(member_fds), self._issued,
+                                               self._identity_lock),
+                    _issuer=self._issuer,
                 )
                 if identity.expires_monotonic <= time.monotonic():
                     raise ValueError("original adopted setup deadline has expired")
-                self._issued[identity.identity_handle] = identity
+                with self._identity_lock:
+                    if self._closed:
+                        identity.close()
+                        raise CommittedPMExecutableUnavailable("pre-profile PM resolver is closed")
+                    self._issued[identity.identity_handle] = identity
                 return identity
             except BaseException:
-                _close_fds(member_fds)
+                if identity is not None:
+                    identity.close()
+                else:
+                    _close_fds(member_fds)
                 raise
         except CommittedPMExecutableUnavailable:
             raise
         except Exception:
             raise CommittedPMExecutableUnavailable(
                 "current signed worker source or committed PM executable is unavailable") from None
+        finally:
+            self._end_resolution()
 
     def verify_current(self, identity: RootVerifiedCommittedPMExecutableIdentity
                        ) -> RootVerifiedCommittedPMExecutableIdentity:
         self._require_live()
         if (type(identity) is not RootVerifiedCommittedPMExecutableIdentity
-                or identity._issuer is not self._issuer
-                or self._issued.get(identity.identity_handle) is not identity
-                or identity.expires_monotonic <= time.monotonic()):
+                or identity._issuer is not self._issuer):
+            raise CommittedPMExecutableUnavailable("PM executable identity is foreign or stale")
+        with self._identity_lock:
+            owned = self._issued.get(identity.identity_handle) is identity
+        if not owned or identity._custody.closed:
+            raise CommittedPMExecutableUnavailable("PM executable identity is foreign or stale")
+        if identity.expires_monotonic <= time.monotonic():
+            identity.close()
             raise CommittedPMExecutableUnavailable("PM executable identity is foreign or stale")
         current = self.resolve_selected()
         try:
             if _identity_values(current) != _identity_values(identity):
-                self._issued.pop(identity.identity_handle, None)
+                identity.close()
                 raise CommittedPMExecutableUnavailable("current PM executable identity changed")
         finally:
             current.close()
@@ -214,10 +261,27 @@ class RootActiveCommittedPMExecutableResolver:
         return identity
 
     def close(self) -> None:
-        self._closed = True
-        for identity in self._issued.values():
+        with self._identity_lock:
+            self._closed = True
+            identities = tuple(self._issued.values())
+        for identity in identities:
             identity.close()
-        self._issued.clear()
+
+    def _begin_resolution(self) -> None:
+        self._require_live()
+        with self._identity_lock:
+            expired = tuple(identity for identity in self._issued.values()
+                            if identity.expires_monotonic <= time.monotonic())
+            for identity in expired:
+                identity.close()
+            if len(self._issued) + self._pending_resolutions >= _MAX_PM_IDENTITIES:
+                raise CommittedPMExecutableUnavailable(
+                    "too many outstanding PM executable observations; close or verify an existing identity")
+            self._pending_resolutions += 1
+
+    def _end_resolution(self) -> None:
+        with self._identity_lock:
+            self._pending_resolutions = max(0, self._pending_resolutions - 1)
 
     def _require_live(self) -> None:
         if self._closed:
