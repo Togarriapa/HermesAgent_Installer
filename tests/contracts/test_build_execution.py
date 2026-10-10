@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import fcntl
 import base64
 import pwd
 import sys
@@ -59,6 +60,21 @@ def test_application_held_member_staging_rehashes_and_rejects_mutated_bytes(tmp_
             sha256="0" * 64, size_bytes=len(payload), executable=False)
         with pytest.raises(AuthorityDenied):
             ManagedBuildJobRunner._stage_application_held_members((changed,), tmp_path / "denied")
+
+        if hasattr(os, "memfd_create") and hasattr(fcntl, "F_ADD_SEALS"):
+            memfd = os.memfd_create("sealed-app-member", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+            try:
+                os.write(memfd, payload)
+                os.fsync(memfd)
+                fcntl.fcntl(memfd, fcntl.F_ADD_SEALS,
+                    fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+                sealed = SimpleNamespace(relative_path="sealed.whl", fd=memfd,
+                    sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload), executable=False)
+                sealed_rows = ManagedBuildJobRunner._stage_application_held_members(
+                    (sealed,), tmp_path / "staged-sealed")
+                assert sealed_rows[0].sha256 == sealed.sha256
+            finally:
+                os.close(memfd)
     finally:
         os.close(fd)
 

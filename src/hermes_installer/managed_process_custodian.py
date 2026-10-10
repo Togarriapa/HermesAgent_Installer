@@ -7070,8 +7070,20 @@ class ManagedBuildJobRunner:
                 source_info = os.fstat(fd)
             except OSError:
                 raise AuthorityDenied("build.application_input", "held application member FD is stale") from None
+            sealed = False
+            immutable = not (source_info.st_mode & 0o222)
+            if hasattr(fcntl, "F_GET_SEALS"):
+                try:
+                    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+                    required_seals = (fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                                      | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+                    sealed = seals & required_seals == required_seals
+                    immutable = immutable or sealed
+                except OSError:
+                    pass
             if (not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
-                    or source_info.st_mode & 0o222 or source_info.st_nlink != 1
+                    or not immutable
+                    or (source_info.st_nlink != 1 and not (sealed and source_info.st_nlink == 0))
                     or source_info.st_size != size):
                 raise AuthorityDenied("build.application_input", "held application member is not immutable root data")
 
