@@ -123,6 +123,13 @@ _NATIVE_ASSEMBLY_SUPPORT_MODULES = (
 _CAPABILITY_MAP_TEMPLATE_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
 _CAPABILITY_MAP_TEMPLATE_PATH = "templates/reviewed-native-capability-map-v1.json"
 _CAPABILITY_MAP_TEMPLATE_SIZE = 2026
+_EXISTING_MODEL_STORE_TEMPLATE = (
+    "installer-existing-model-store-root-template-v1",
+    "templates/existing-model-store-root-template-v1.json",
+    "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
+    712,
+    "existing-model-store-root-template",
+)
 _RECEIPT_TEMPLATE_SHA256 = "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609"
 _RECEIPT_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 _RECEIPT_TEMPLATE_SIZE = 10195
@@ -249,6 +256,33 @@ class RootInstalledReleaseMemberReceipt:
 
     def read_current(self) -> bytes:
         return self._session._read_installed_release_member_receipt(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootExistingModelStoreTemplateReceipt:
+    """Held installed-release receipt for the fixed v139 model-store root policy."""
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    role: str
+    release_commit: str
+    deployment_receipt_sha256: str
+    receipt_handle: str
+    _session_id: str = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+
+    def read_current(self) -> bytes:
+        return self._session._read_existing_model_store_template(self)
+
+    def verify_current(self) -> "RootExistingModelStoreTemplateReceipt":
+        # The held release member is re-opened and checked on every use.  A
+        # successful read is the currentness proof; the receipt itself stays
+        # bound to this exact live session object.
+        self.read_current()
+        return self
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -428,10 +462,10 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("current setup identity is not owned by this setup session")
         return self._session.resolve_current_setup_identity()
 
-    def observe_existing_model_store_root(self) -> "RootOwnedFilesystemSelection":
+    def observe_existing_model_selection(self, private_profile_selection_handle: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
-            raise BootstrapEnrollmentPending("model-store root choice is not owned by this setup session")
-        return self._session.observe_existing_model_store_root()
+            raise BootstrapEnrollmentPending("existing model selection is not owned by this setup session")
+        return self._session.observe_existing_model_selection(private_profile_selection_handle)
 
     def observe_private_profile_selection(self, purpose: str) -> "RootPrivateProfileSelection":
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -478,6 +512,16 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("installed Xpra toolchain is not owned by this setup session")
         return self._session._resolve_installed_xpra_transform_module()
+
+    def resolve_existing_model_store_template(self) -> "RootExistingModelStoreTemplateReceipt":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("model-store root template is not owned by this setup session")
+        return self._session.resolve_existing_model_store_template()
+
+    def resolve_held_installer_release_receipt(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("held installer release is not owned by this setup session")
+        return self._session.resolve_held_installer_release_receipt()
 
     def resolve_prepared_build_service(self, build_profile_id: str) -> RootPreparedBuildServiceSelection:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -541,6 +585,11 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("prepared release modules are not owned by this setup session")
         return self._session._resolve_prepared_release_module_receipts()
+
+    def resolve_prepared_native_target_module_receipts(self) -> tuple[RootReleaseModuleReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native target source modules are not owned by this setup session")
+        return self._session._resolve_prepared_native_target_module_receipts()
 
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
@@ -878,39 +927,6 @@ class RootSelectedMemoryServiceEnablementChoice:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
-class RootExistingModelStoreRootChoice:
-    """One explicit root-TTY choice of an existing protected model-store root."""
-
-    choice_handle: str
-    setup_session_id: str
-    transaction_handle: str
-    plan_sha256: str
-    prepared_generation_id: str
-    prepared_generation_digest: str
-    principal_selection_handle: str
-    namespace_selection_handle: str
-    principal_binding_sha256: str
-    namespace_binding_sha256: str
-    principal_id: str
-    profile_id: str
-    namespace_id: str
-    private_profile_selection_handle: str
-    controller_binding_handle: str
-    model_store_root_id: str
-    selected_root_path: Path = field(repr=False, compare=False)
-    issued_monotonic: float
-    expires_monotonic: float
-    _session: Any = field(repr=False, compare=False)
-    _session_seal: str = field(repr=False, compare=False)
-    _tty_proof: Any = field(repr=False, compare=False)
-
-    def verify_current(self) -> "RootExistingModelStoreRootChoice":
-        if not isinstance(self._session, RootBootstrapSession):
-            raise BootstrapEnrollmentPending("model-store root choice lost its root setup session")
-        return self._session._verify_current_model_store_root_choice(self)
-
-
-@dataclass(frozen=True, slots=True, repr=False)
 class RootPrivateProfileSelection:
     """Stable, purpose-limited private profile intent; it grants no dispatch authority."""
 
@@ -963,6 +979,11 @@ class VerifiedRootPrivateProfileSelection:
     issued_monotonic: float
     expires_monotonic: float
     _selection: RootPrivateProfileSelection = field(repr=False, compare=False)
+
+    @property
+    def controller_binding_handle(self) -> str:
+        """Opaque handle joined to the retained root TTY proof for this choice."""
+        return self._selection.controller_binding_handle
 
 
 _PRIVATE_PROFILE_PURPOSES = frozenset({
@@ -3419,7 +3440,8 @@ class RootBootstrapRuntimeFactory:
                  _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None,
                  _initial_principal_registry: Any | None = None,
                  _initial_identity_observer: Any | None = None,
-                 _initial_identity_intake: Any | None = None):
+                 _initial_identity_intake: Any | None = None,
+                 _authority_service: Any | None = None):
         if os.getuid() != 0 or os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
             raise BootstrapEnrollmentPending("root bootstrap runtime exists only in the installed Linux root process")
         from .installer_release import (InstalledRootReleaseVerifier,
@@ -3433,6 +3455,11 @@ class RootBootstrapRuntimeFactory:
         _actor.verify_current(_release)
         self._release = _release
         self._actor = _actor
+        if _authority_service is not None:
+            from .service import AuthorityService
+            if type(_authority_service) is not AuthorityService:
+                raise BootstrapEnrollmentPending("model-store authority binding must be the actual root AuthorityService")
+        self._authority_service = _authority_service
         if (_initial_compilation_registry is not None
                 and (not isinstance(_initial_compilation_registry, RootInitialCompilationRegistry)
                      or _initial_compilation_registry.release is not _release
@@ -3718,9 +3745,9 @@ class RootBootstrapSession:
         self._application_qualification_consents: dict[str, RootApplicationQualificationConsent] = {}
         self._private_profile_registry: RootPrivateProfileSelectionRegistry | None = None
         self._private_profile_proofs: dict[str, Any] = {}
-        self._model_store_choices: dict[str, RootExistingModelStoreRootChoice] = {}
-        self._model_store_tty_proofs: dict[str, Any] = {}
         self._model_store_filesystem_registry: Any | None = None
+        self._existing_model_selection_registry: Any | None = None
+        self._existing_model_store_template_receipt: RootExistingModelStoreTemplateReceipt | None = None
         self._memory_enablement_choices: dict[str, RootSelectedMemoryServiceEnablementChoice] = {}
         self._memory_enablement_tty_proofs: dict[str, Any] = {}
         self._verified_resources: dict[str, tuple[Any, Any]] = {}
@@ -3862,90 +3889,48 @@ class RootBootstrapSession:
         return self._root_private_profile_registry().resolve_current_private_profile(
             selection_handle, purpose)
 
-    def observe_existing_model_store_root(self) -> Any:
-        """Select an existing root-owned model-store directory through the root TTY."""
+    def observe_existing_model_selection(self, private_profile_selection_handle: str) -> Any:
+        """Observe only the fixed v139 store, then ask the model owner for a child choice."""
         self._check_live()
         prepared = self._last_receipt
-        if prepared is None or prepared.state != "prepared" or prepared.enrollment_ids:
-            raise BootstrapEnrollmentPending("model-store selection requires the current empty prepared generation")
-        if not (sys.stdin.isatty() and sys.stderr.isatty()):
-            raise BootstrapEnrollmentPending("model-store selection requires the root controlling TTY")
-        from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
-        proof = _capture_root_tty_proof()
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or prepared.provision_receipt_handle is None):
+            raise BootstrapEnrollmentPending("existing model selection requires the current empty prepared generation")
+        if not isinstance(private_profile_selection_handle, str) or not private_profile_selection_handle:
+            raise BootstrapEnrollmentPending("existing model selection requires a root-issued private-profile handle")
+        authority_service = self._factory._authority_service
+        if authority_service is None:
+            raise BootstrapEnrollmentPending("root model-store observation awaits the same-graph AuthorityService binding")
+        profile = self.resolve_current_private_profile(
+            private_profile_selection_handle, "existing-model-selection")
+        if (profile.profile_id != "hermes-agent-native-v1"
+                or profile.privacy_classification != "private"
+                or profile.public_egress_allowed or profile.additional_metered_budget_usd != 0.0
+                or not profile.controller_binding_handle):
+            raise BootstrapEnrollmentPending("model-store selection is not joined to the current private profile/controller")
+        self._refresh_authorization()
+        from .filesystem_selection import RootOwnedFilesystemSelectionRegistry
+        if self._model_store_filesystem_registry is None:
+            self._model_store_filesystem_registry = RootOwnedFilesystemSelectionRegistry.from_root_setup(
+                self._selected_installation, self._root_private_profile_registry(),
+                self._selected_installation, self._current_root_journal_selection(), authority_service)
+        root_selection = self._model_store_filesystem_registry.observe_existing_model_store(
+            private_profile_selection_handle)
         try:
-            _verify_root_tty_proof(proof)
-            if proof.controller_uid != 0 or proof.controller_pid != os.getpid():
-                raise BootstrapEnrollmentPending("model-store choice is not joined to the live root setup actor")
-            print("\nSelect an existing root-owned model-store directory. The installer will inspect it in place; it will not create, copy, download, or change ownership of model files.")
-            path_text = input("Absolute model-store directory path (blank cancels): ").strip()
-            _verify_root_tty_proof(proof)
-            if not path_text:
-                raise BootstrapEnrollmentPending("model-store directory selection was cancelled")
-            selected_path = Path(path_text)
-            if not selected_path.is_absolute() or selected_path == Path("/") or ".." in selected_path.parts:
-                raise BootstrapEnrollmentPending("model-store directory must be an explicit absolute non-root path")
-            acknowledgement = input(f"Use this existing directory for read-only model inspection: {selected_path}? Type YES: ").strip()
-            _verify_root_tty_proof(proof)
-            if acknowledgement != "YES":
-                raise BootstrapEnrollmentPending("model-store directory choice was not explicitly confirmed")
-            current = self.resolve_current_setup_identity()
-            private_choice = self.observe_private_profile_selection("existing-model-selection")
-            private_snapshot = self.resolve_current_private_profile(
-                private_choice.selection_handle, "existing-model-selection")
-            principal_selector = self.resolve_adopted_principal_selector()
-            namespace_selector = self.resolve_adopted_namespace_selector()
-            if (private_snapshot.principal_selection_handle != principal_selector.selection_handle
-                    or private_snapshot.namespace_selection_handle != namespace_selector.selection_handle
-                    or private_snapshot.principal_id != current.principal.principal_id
-                    or private_snapshot.namespace_id != current.namespace.namespace_id
-                    or private_snapshot.profile_id != "hermes-agent-native-v1"
-                    or private_snapshot.privacy_classification != "private"
-                    or private_snapshot.public_egress_allowed
-                    or private_snapshot.additional_metered_budget_usd != 0.0):
-                raise BootstrapEnrollmentPending("model-store choice is not joined to the current private profile")
-            now = time.monotonic()
-            expiry = min(private_snapshot.expires_monotonic,
-                         self._factory.session_store.current_deadline(self._handle))
-            if expiry <= now:
-                raise BootstrapEnrollmentPending("model-store choice lease expired")
-            controller_handle = secrets.token_urlsafe(36)
-            choice_handle = secrets.token_urlsafe(36)
-            choice = RootExistingModelStoreRootChoice(
-                choice_handle=choice_handle,
-                setup_session_id=self._handle.session_id,
-                transaction_handle=self._authorization.transaction_handle,
-                plan_sha256=self._authorization.plan_digest,
-                prepared_generation_id=prepared.generation_id,
-                prepared_generation_digest=prepared.generation_digest,
-                principal_selection_handle=principal_selector.selection_handle,
-                namespace_selection_handle=namespace_selector.selection_handle,
-                principal_binding_sha256=principal_selector.binding_sha256,
-                namespace_binding_sha256=namespace_selector.binding_sha256,
-                principal_id=private_snapshot.principal_id,
-                profile_id=private_snapshot.profile_id,
-                namespace_id=private_snapshot.namespace_id,
-                private_profile_selection_handle=private_choice.selection_handle,
-                controller_binding_handle=controller_handle,
-                model_store_root_id="model-store-" + secrets.token_hex(16),
-                selected_root_path=selected_path,
-                issued_monotonic=now,
-                expires_monotonic=expiry,
-                _session=self,
-                _session_seal=self._seal,
-                _tty_proof=proof,
-            )
-            self._model_store_choices[choice_handle] = choice
-            self._model_store_tty_proofs[choice_handle] = proof
-            proof = None
-            choice.verify_current()
-            if self._model_store_filesystem_registry is None:
-                from .filesystem_selection import RootOwnedFilesystemSelectionRegistry
-                self._model_store_filesystem_registry = RootOwnedFilesystemSelectionRegistry.from_root_setup(
-                    self._selected_installation, self._current_root_journal_selection())
-            return self._model_store_filesystem_registry.observe_model_store_root(choice)
-        finally:
-            if proof is not None:
-                proof.close()
+            from .source_artifact_receipts import RootSetupCatalogArtifactObserver
+            observer = RootSetupCatalogArtifactObserver.from_root_setup(
+                self._factory._catalog, self._factory._receipt_registry.artifact_root,
+                self._authorization)
+            from ..models.private_deployment import RootExistingModelSelectionRegistry
+            if self._existing_model_selection_registry is None:
+                self._existing_model_selection_registry = RootExistingModelSelectionRegistry.from_root_setup(
+                    self._selected_installation, self._model_store_filesystem_registry,
+                    self._current_root_journal_selection(), observer,
+                    verified_installer_release_receipt=self.resolve_held_installer_release_receipt())
+            return self._existing_model_selection_registry.observe_existing_model_directory(
+                root_selection.selection_handle, private_profile_selection_handle)
+        except (ImportError, AttributeError):
+            raise BootstrapEnrollmentPending("root model source/tree observer is not composed in this release") from None
 
     def observe_memory_service_enablement(
             self, provider: str, backend_variant: str) -> RootSelectedMemoryServiceEnablementChoice:
@@ -4085,49 +4070,6 @@ class RootBootstrapSession:
         signed = hmac.new(self._seal.encode("ascii"), _canonical(content), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signed, choice.signature):
             raise BootstrapEnrollmentPending("memory enablement choice signature differs")
-        return choice
-
-    def _verify_current_model_store_root_choice(
-            self, choice: RootExistingModelStoreRootChoice) -> RootExistingModelStoreRootChoice:
-        self._check_live()
-        if (type(choice) is not RootExistingModelStoreRootChoice
-                or choice._session is not self or choice._session_seal != self._seal
-                or self._model_store_choices.get(choice.choice_handle) is not choice
-                or self._model_store_tty_proofs.get(choice.choice_handle) is not choice._tty_proof
-                or choice.expires_monotonic <= time.monotonic()):
-            raise BootstrapEnrollmentPending("model-store choice is not current in this setup session")
-        prepared = self._last_receipt
-        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
-                or choice.setup_session_id != self._handle.session_id
-                or choice.transaction_handle != self._authorization.transaction_handle
-                or choice.plan_sha256 != self._authorization.plan_digest
-                or choice.prepared_generation_id != prepared.generation_id
-                or choice.prepared_generation_digest != prepared.generation_digest):
-            raise BootstrapEnrollmentPending("model-store choice no longer matches prepared setup custody")
-        principal_selector = self.resolve_adopted_principal_selector()
-        namespace_selector = self.resolve_adopted_namespace_selector()
-        current = self.resolve_current_setup_identity()
-        private = self.resolve_current_private_profile(
-            choice.private_profile_selection_handle, "existing-model-selection")
-        if (principal_selector.selection_handle != choice.principal_selection_handle
-                or principal_selector.binding_sha256 != choice.principal_binding_sha256
-                or namespace_selector.selection_handle != choice.namespace_selection_handle
-                or namespace_selector.binding_sha256 != choice.namespace_binding_sha256
-                or current.principal_selection_handle != choice.principal_selection_handle
-                or current.namespace_selection_handle != choice.namespace_selection_handle
-                or current.principal_binding_sha256 != choice.principal_binding_sha256
-                or current.namespace_binding_sha256 != choice.namespace_binding_sha256
-                or private.principal_id != choice.principal_id
-                or private.profile_id != choice.profile_id
-                or private.namespace_id != choice.namespace_id
-                or private.principal_selection_handle != choice.principal_selection_handle
-                or private.namespace_selection_handle != choice.namespace_selection_handle
-                or private.privacy_classification != "private"
-                or private.public_egress_allowed or private.additional_metered_budget_usd != 0.0):
-            raise BootstrapEnrollmentPending("model-store choice no longer matches current private identity selection")
-        from ..root_setup import _verify_root_tty_proof
-        _verify_root_tty_proof(choice._tty_proof)
-        self._factory._actor.verify_current(self._factory._release)
         return choice
 
     def provision(self) -> EnrollmentReceipt:
@@ -5611,6 +5553,51 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return tuple(output)
 
+    def _resolve_prepared_native_target_module_receipts(self) -> tuple[RootReleaseModuleReceipt, ...]:
+        """Issue current member receipts for the two fixed native target source modules."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("native target modules require current empty prepared custody")
+        pins = (
+            ("src/hermes_installer/components/native_plugins.py",
+             "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7"),
+            ("src/hermes_installer/components/public_registries.py",
+             "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f"),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootReleaseModuleReceipt] = []
+        for relative_path, digest in pins:
+            rows = [row for row in release.files if row.relative_path == relative_path
+                    and row.sha256 == digest and "module" in row.roles
+                    and row.artifact_id in plan.allowed_artifact_ids]
+            if len(rows) != 1:
+                raise BootstrapEnrollmentPending("native target source module is not uniquely pinned in the installed release")
+            row = rows[0]
+            if not any(origin[1] == str(release.release_root / relative_path)
+                       and origin[4] == digest for origin in actor.module_origins):
+                raise BootstrapEnrollmentPending("native target source module is outside the current root actor import closure")
+            prior = next((item for item in self._prepared_release_member_receipts.values()
+                          if item.artifact_id == row.artifact_id
+                          and item._prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootReleaseModuleReceipt(
+                    row.artifact_id, relative_path, digest, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, self._seal, self,
+                    prepared.generation_id)
+                self._release_member_receipts[handle] = prior
+                self._prepared_release_member_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Mint one of the fixed local-result schema receipts from the held root catalog.
@@ -5757,6 +5744,91 @@ class RootBootstrapSession:
         receipt.read_current()
         actor.verify_current(release)
         return receipt
+
+    def resolve_existing_model_store_template(self) -> RootExistingModelStoreTemplateReceipt:
+        """Issue only the exact v139 root-store template from the held release."""
+        self._check_live()
+        self._refresh_authorization()
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        artifact_id, relative_path, digest, size_bytes, role = _EXISTING_MODEL_STORE_TEMPLATE
+        plan = self._factory.resolver.resolve(_PLAN_ID)
+        if artifact_id not in plan.allowed_artifact_ids:
+            raise BootstrapEnrollmentPending("selected setup plan does not include the fixed model-store root template")
+        rows = [row for row in release.files if row.artifact_id == artifact_id]
+        if (len(rows) != 1 or rows[0].relative_path != relative_path
+                or rows[0].sha256 != digest or rows[0].size_bytes != size_bytes
+                or role not in rows[0].roles):
+            raise BootstrapEnrollmentPending("installed release lacks the exact v139 model-store root template role")
+        receipt = RootExistingModelStoreTemplateReceipt(
+            artifact_id, relative_path, digest, size_bytes, role,
+            release.release_commit, release.deployment_receipt_sha256,
+            secrets.token_urlsafe(36), self._handle.session_id, self._seal, self)
+        if self._existing_model_store_template_receipt is not None:
+            previous = self._existing_model_store_template_receipt
+            if previous != receipt:
+                receipt = previous
+        else:
+            self._existing_model_store_template_receipt = receipt
+        receipt.read_current()
+        actor.verify_current(release)
+        return receipt
+
+    def _read_existing_model_store_template(
+            self, receipt: RootExistingModelStoreTemplateReceipt) -> bytes:
+        self._check_live()
+        if (type(receipt) is not RootExistingModelStoreTemplateReceipt
+                or receipt._session is not self or receipt._session_id != self._handle.session_id
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or self._existing_model_store_template_receipt is not receipt):
+            raise BootstrapEnrollmentPending("model-store root template receipt is not retained by this session")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        artifact_id, relative_path, digest, size_bytes, role = _EXISTING_MODEL_STORE_TEMPLATE
+        plan = self._factory.resolver.resolve(_PLAN_ID)
+        rows = [row for row in release.files if row.artifact_id == artifact_id]
+        if (artifact_id not in plan.allowed_artifact_ids or len(rows) != 1
+                or role not in rows[0].roles or rows[0].relative_path != relative_path
+                or rows[0].sha256 != digest or rows[0].size_bytes != size_bytes
+                or receipt.artifact_id != artifact_id or receipt.relative_path != relative_path
+                or receipt.sha256 != digest or receipt.size_bytes != size_bytes
+                or receipt.role != role or receipt.release_commit != release.release_commit
+                or receipt.deployment_receipt_sha256 != release.deployment_receipt_sha256):
+            raise BootstrapEnrollmentPending("model-store template no longer matches fixed release pin")
+        fd = release.open_file(artifact_id)
+        try:
+            raw = bytearray()
+            while len(raw) <= size_bytes:
+                block = os.read(fd, min(64 * 1024, size_bytes + 1 - len(raw)))
+                if not block:
+                    break
+                raw.extend(block)
+        finally:
+            os.close(fd)
+        if len(raw) != size_bytes or hashlib.sha256(raw).hexdigest() != digest:
+            raise BootstrapEnrollmentPending("model-store root template bytes differ from fixed source")
+        document = self._factory.resolver._json(bytes(raw), "existing model-store root template")
+        expected = {
+            "id": artifact_id,
+            "root_id": "installer-existing-model-store-v1",
+            "absolute_path": "/var/lib/hermes-installer/model-store",
+            "owner_uid": 0,
+            "directory_mode": 0o700,
+            "selection_kind": "existing-model-store",
+            "public_egress_allowed": False,
+            "additional_metered_budget_usd": 0,
+        }
+        if not isinstance(document, dict) or any(document.get(key) != value for key, value in expected.items()):
+            raise BootstrapEnrollmentPending("installed model-store root policy differs from v139")
+        actor.verify_current(release)
+        return bytes(raw)
+
+    def resolve_held_installer_release_receipt(self) -> Any:
+        """Return the same held release only after rechecking actor and session."""
+        self._check_live()
+        self._refresh_authorization()
+        self._factory._actor.verify_current(self._factory._release)
+        return self._factory._release
 
     def _resolve_prepared_build_service(self, build_profile_id: str) -> RootPreparedBuildServiceSelection:
         """Resolve the fixed setup-only Xpra builder against actual NSS/root custody."""
@@ -6215,8 +6287,12 @@ class RootBootstrapSession:
             except Exception:
                 pass
             self._model_store_filesystem_registry = None
-        self._model_store_choices.clear()
-        self._model_store_tty_proofs.clear()
+        if self._existing_model_selection_registry is not None:
+            try:
+                self._existing_model_selection_registry.close()
+            except Exception:
+                pass
+            self._existing_model_selection_registry = None
         self._private_profile_registry = None
         for proof in self._memory_enablement_tty_proofs.values():
             try:
@@ -6410,6 +6486,13 @@ class RootPrivateProfileSelectionRegistry:
             selection.public_egress_allowed, selection.additional_metered_budget_usd,
             selection.selection_sha256, now, expiry, selection)
 
+    def resolve_current(self, selection_handle: str, *, purpose: str
+                        ) -> VerifiedRootPrivateProfileSelection:
+        """Typed registry API used by root-owned filesystem/model selectors."""
+        if self._session is not self._binding._session:
+            raise BootstrapEnrollmentPending("private profile registry lost its setup binding")
+        return self.resolve_current_private_profile(selection_handle, purpose)
+
     def _read_reviewed_sources(self) -> tuple[tuple[str, str, str, str, int], ...]:
         session = self._session
         release, actor = session._factory._release, session._factory._actor
@@ -6514,6 +6597,9 @@ class RootPrivateProfileSelectionRegistry:
 # placed after the factory/session definitions to avoid an import cycle.
 from .setup_principal import (  # noqa: E402
     AuthentikIdentityReceipt,
+    RootCurrentSetupIdentitySnapshot,
+    RootSetupNamespaceSelector,
+    RootSetupPrincipalSelector,
     RootSetupAuthentikIdentityObserver,
     RootSetupIdentityIntake,
     RootSetupPrincipalSelectionRegistry,
@@ -6541,9 +6627,11 @@ __all__ = [
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",
     "RootSetupChoices", "RootSetupPolicyGenerationPublisher",
     "RootSetupPrincipalSelectionRegistry", "RootFirstStagePolicyCompiler",
+    "RootSetupPrincipalSelector", "RootSetupNamespaceSelector",
+    "RootCurrentSetupIdentitySnapshot", "RootExistingModelStoreTemplateReceipt",
     "RootPreparedNativeBundle",
     "RootPrivateProfileSelection", "VerifiedRootPrivateProfileSelection",
-    "RootPrivateProfileSelectionRegistry", "RootExistingModelStoreRootChoice",
+    "RootPrivateProfileSelectionRegistry",
     "RootSelectedMemoryServiceEnablementChoice",
     "RootOwnedFilesystemSelection", "RootHeldFilesystemDirectory",
     "RootOwnedFilesystemSelectionRegistry",
