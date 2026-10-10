@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "evidence_id": "EV-VD-T213.3-arm64-systemd-task-home-bind-effect-2026-10-10",
+  "change": "resources-bundle-native-enrichment",
+  "planning_amendment": "plans/amendments/2026-10-10-jarvis-selected-task-home-custody-v213.md",
+  "requirement_ids": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0060"
+  ],
+  "task_ids": ["HI-T213.2", "VD-T213.3"],
+  "tested_source": {
+    "commit": "894eedd9fcea8e979a3c3f7c83da6b20d93e5773",
+    "tree": "03cccc21e9ececc1aaa2a2729e5f339ec7e81b94",
+    "checkout_clean": true,
+    "read_only_mount": "/private/tmp/hermes-linux-task-custody-ci-audit-20261010:/workspace:ro"
+  },
+  "fixture": {
+    "base_image": "python:3.14.7-slim",
+    "base_image_id": "sha256:1195f96420d020fef9906988b14813d770ced8a16651abc546efb60e50b56d00",
+    "image_tag": "hermes-display-arm64-python314-systemd:20261010",
+    "image_id": "sha256:6f1b374c072b1a6c8d9bf844a48b8111d27596f064f553dbbb7c8919b0bfab2a",
+    "architecture": "linux/arm64",
+    "os": "Debian GNU/Linux 13.7 (trixie)",
+    "python": "3.14.7",
+    "pytest": "8.4.2",
+    "pyyaml": "6.0.3",
+    "systemd": "257.13-1~deb13u1",
+    "systemd_features": "+BPF_FRAMEWORK",
+    "dbus": "1.16.2-2",
+    "package_sources": "Official Debian archive using Signed-By=/usr/share/keyrings/debian-archive-keyring.pgp; HTTPS enabled after installing ca-certificates. PyPI TLS used for pytest and PyYAML wheels.",
+    "downloads": "Debian apt reported 5636 kB of systemd/dbus archives; pytest/PyYAML wheels and dependencies downloaded approximately 2.6 MiB.",
+    "docker_server": "29.8.1",
+    "host_kernel": "Linux 7.0.14-linuxkit aarch64",
+    "host_cgroup_version": 2,
+    "container": {
+      "id": "9a753b75863c0053100fe1ca20283e29d9cfb06da71fde52dc533e45935a4af3",
+      "network": "none",
+      "cgroup_namespace": "private",
+      "cgroup_mount": "cgroup2 rw,nosuid,nodev,noexec,relatime",
+      "available_cgroup_controllers": ["cpuset", "cpu", "io", "memory", "hugetlb", "pids", "rdma"],
+      "cgroup_subtree_control": ["memory", "pids"],
+      "capability_mode": "Docker privileged container, confined to its own network/cgroup/mount namespaces; no host namespace was joined. Container and all transient units were owned and disposable.",
+      "source_mount_read_only": true
+    }
+  },
+  "checks": [
+    {
+      "command": "PYTHONPATH=/workspace/src PYTHONDONTWRITEBYTECODE=1 python -B -m pytest -p no:cacheprovider -q /workspace/tests/contracts/test_native_profile_task_homes.py",
+      "result": "passed",
+      "summary": "3 passed in 1.10s"
+    },
+    {
+      "kind": "systemd_kernel_mount_effect_fixture",
+      "unit": "hermes-home-bind-effect-138.service",
+      "systemd_run_result": "0/SUCCESS",
+      "bind_source": "/proc/138/fd/3",
+      "bind_target": "/hermes",
+      "home_device": 1048648,
+      "home_inode": 29,
+      "home_owner_uid": 65534,
+      "home_owner_gid": 65534,
+      "home_mode": "0700",
+      "unit_identity": "User=nobody (uid 65534), Group=nogroup (gid 65534)",
+      "working_directory": "/hermes",
+      "environment": {"HOME": "/hermes", "HERMES_HOME": "/hermes"},
+      "selected_home_effect": "Child wrote /hermes/profiles/default/effect-proof; the root-side held-home observation read back selected-home-effect.",
+      "sibling_denial": "Child write to a separate root-owned mode-0700 sibling home failed; no sibling effect-proof file existed.",
+      "classification": "Real isolated systemd BindPaths/UID effect only; this direct fixture does not exercise the production RootNativeProfileTaskHomeRegistry issuer or ManagedProcessEffectHandler typed-binding branch."
+    },
+    {
+      "kind": "hard_wrong_port_denial_probe",
+      "systemd_unit": "run-p133-i222301.service",
+      "properties": ["SocketBindDeny=any", "SocketBindAllow=ipv4:tcp:14500"],
+      "allowed_port_14500": "BOUND",
+      "forbidden_port_14501": "BOUND",
+      "result": "failed as required with systemd_run_rc=31; the hard forbidden-port assertion remains failing in this fixture.",
+      "post_collect_attachment_observation": "The unit used --collect and was unloaded; no post-run BPF attachment was observable.",
+      "classification": "Nested Docker kernel/systemd fixture did not enforce SocketBind restrictions despite systemd +BPF_FRAMEWORK. This is not a passing network-isolation or CI result."
+    }
+  ],
+  "scope_limitations": [
+    "The three task-home tests cover currentness and FD lifecycle only; no current, source-backed RootSelectedResourceTaskHomeBinding is issued and passed through the production manager in this checkout's test fixture.",
+    "The manual positive proves the isolated kernel BindPaths, fixed HOME/HERMES_HOME/cwd, unprivileged selected-home write, and sibling denial effect, not Jarvis publication currentness, source/runtime/principal joins, native loading, or target acceptance.",
+    "SocketBindDeny/Allow did not deny port 14501. Keep the real CI assertion hard and require a runner whose kernel actually enforces the cgroup socket-BPF policy."
+  ],
+  "runtime_acceptance": "not-established",
+  "ac01_ac18": "open",
+  "target_acceptance": "not-established",
+  "physical_pi_or_host_install": "not-performed",
+  "foreign_container_or_host_service_mutation": "not-performed"
+}
