@@ -6,11 +6,11 @@ import hmac
 import json
 import os
 import platform
+import secrets
 import shutil
 import sys
 import time
 import unittest
-import uuid
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -81,13 +81,16 @@ class XauthorityMountKernelTests(unittest.TestCase):
     def test_selected_display_mount_is_readonly_pinned_and_removed_on_stop(self) -> None:
         fixture = self.fixture
         selected = SelectedDisplayStartup(
-            remote_enrollment_id="ci-remote-" + fixture.token[:12],
-            native_profile_id="ci-native-" + fixture.token[:12],
+            # Reuse the active fixture enrollment/profile/generation as the
+            # selected subject. These values are issued by the real disposable
+            # service-profile fixture, rather than synthetic display IDs.
+            remote_enrollment_id=fixture.enrollment_id,
+            native_profile_id=fixture.profile.profile_id,
             native_generation=fixture.profile.generation,
             display_profile_id=fixture.profile.profile_id,
             display_generation=fixture.profile.generation,
             display_name=":0",
-            receipt_handle=uuid.uuid4().hex,
+            receipt_handle=secrets.token_urlsafe(32),
             display_uid=fixture.uid,
             display_gid=fixture.gid,
             xauthority_reader_gid=fixture.gid,
