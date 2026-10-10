@@ -697,6 +697,18 @@ class RootRuntimeBindings:
         # getter only returns the immutable selected row.
         return row
 
+    def resolve_selected_native_process_role(
+        self, package_id: str, native_package_generation: str, role_id: str,
+    ) -> Any:
+        """Resolve one explicit v123 process-role artifact independently of actions."""
+        role = self.enrollment_catalog.resolve_selected_native_process_role(
+            package_id, native_package_generation, role_id,
+        )
+        artifact = self.artifact_catalog.artifacts.get(role.role_artifact_id)
+        if artifact is None or artifact.sha256 != role.role_sha256:
+            raise EnrollmentDenied("selected native process-role artifact is not pinned in the protected catalog")
+        return role
+
     def _remote_observation_join(self, remote_enrollment_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
         if not isinstance(remote_enrollment_id, str) or not remote_enrollment_id:
             raise EnrollmentDenied("remote observation enrollment ID is invalid")
@@ -991,6 +1003,8 @@ class RootRuntimeBindings:
                     for registration in package.registration_records.values())
         pins.extend((workflow.workflow_artifact_id, workflow.workflow_sha256)
                     for workflow in package.workflow_records.values())
+        pins.extend((role.role_artifact_id, role.role_sha256)
+                    for role in package.process_role_records.values())
         for artifact_id, digest in pins:
             spec = self.artifact_catalog.artifacts.get(artifact_id)
             if spec is None or spec.sha256 != digest:
