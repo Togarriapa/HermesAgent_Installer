@@ -939,7 +939,7 @@ def _download_pinned(url: str, expected_sha: str, expected_size: int, maximum: i
             raise InstallerReleaseBuildError("pinned bootstrap payload response is not successful")
         if response.geturl() != (target if runtime_pin else url):
             raise InstallerReleaseBuildError("pinned bootstrap payload response URL changed unexpectedly")
-        if response.headers.get_content_length() not in (None, expected_size):
+        if _declared_content_length(response.headers, expected_size) is False:
             raise InstallerReleaseBuildError("pinned bootstrap payload length differs from the fixed size")
         body = response.read(maximum + 1)
         if len(body) > maximum or response.read(1):
@@ -971,6 +971,25 @@ def _validate_runtime_asset_redirect(location: str | None) -> str:
             or parsed.username is not None or parsed.password is not None or parsed.fragment):
         raise InstallerReleaseBuildError("pinned runtime redirect authority is outside fixed policy")
     return location
+
+
+def _declared_content_length(headers: Any, expected_size: int) -> bool | None:
+    """Validate the optional HTTP Content-Length without trusting it as byte count."""
+    try:
+        values = headers.get_all("Content-Length", [])
+    except (AttributeError, TypeError):
+        raise InstallerReleaseBuildError("pinned bootstrap response headers are malformed") from None
+    if not values:
+        return None
+    if len(values) != 1 or not isinstance(values[0], str):
+        return False
+    value = values[0].strip(" \t")
+    if not value or not value.isascii() or not value.isdecimal():
+        return False
+    try:
+        return int(value, 10) == expected_size
+    except ValueError:
+        return False
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
