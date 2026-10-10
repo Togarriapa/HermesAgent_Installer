@@ -478,7 +478,7 @@ def _fixed_probe(pin: ApplicationToolchainPin, executable_fd: int, root: Path,
             or stat.S_IMODE(held.st_mode) != 0o555):
         raise ApplicationToolchainDenied("held toolchain executable descriptor changed")
     argv = [f"/proc/self/fd/{executable_fd}", "--version"]
-    env = {"HOME": "/nonexistent", "LANG": "C", "LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+    env = {"HOME": "/nonexistent", "LANG": "C", "LC_ALL": "C", "PATH": "/nonexistent"}
     process: subprocess.Popen[bytes] | None = None
     try:
         process = subprocess.Popen(
@@ -654,6 +654,8 @@ class RootApplicationToolchainRegistry:
                 raise ValueError
             if getattr(selection, "application_id", None) != "hyperframes":
                 raise ValueError
+            if getattr(selection, "runtime_kind", None) != "node":
+                raise ValueError
             choice_handle = getattr(selection, "qualification_choice_handle", None)
             if choice_handle is None:
                 choice_handle = getattr(selection, "choice_selection_handle", None)
@@ -745,6 +747,26 @@ class RootApplicationToolchainRegistry:
         self._verify_entry(entry, selection, choice, consent)
         return entry.observation
 
+    def resolve_current_toolchain_for_selection(
+        self, runtime_preparation_selection_handle: str,
+    ) -> tuple[RootApplicationToolchainObservation, RootApplicationToolchainObservation]:
+        """Return the exact retained Node and Bun receipts for a current early selector.
+
+        This is a read-only join used by the later v132 final selector. It never
+        fetches a missing artifact or derives membership from a path/version.
+        """
+        selection, choice, consent = self._selection(runtime_preparation_selection_handle)
+        rows: list[RootApplicationToolchainObservation] = []
+        for tool_id in TOOLCHAINS:
+            entry = self._entries.get((runtime_preparation_selection_handle, tool_id))
+            if entry is None:
+                raise ApplicationToolchainDenied("selected Hyperframes Node and Bun source receipts are incomplete")
+            self._verify_entry(entry, selection, choice, consent)
+            rows.append(entry.observation)
+        if len(rows) != 2 or {item.tool_id for item in rows} != set(TOOLCHAINS):
+            raise ApplicationToolchainDenied("selected Hyperframes toolchain receipt set is incomplete")
+        return rows[0], rows[1]
+
     def _acquire(self, pin: ApplicationToolchainPin, prep_handle: str,
                  selection: Any, choice: Any, consent: Any) -> RootApplicationToolchainObservation:
         key = (prep_handle, pin.tool_id)
@@ -779,6 +801,7 @@ class RootApplicationToolchainRegistry:
         archive_path = target / ("source.tar.xz" if pin.archive_kind == "tar.xz" else "source.zip")
         tree_path = target / "tree"
         staging_archive = target / (".source.part")
+        executable_fd: int | None = None
         try:
             # Re-resolve signed phase intent immediately before the first byte.
             current_selection, current_choice, current_consent = self._selection(prep_handle)
@@ -842,16 +865,17 @@ class RootApplicationToolchainRegistry:
                     raise ApplicationToolchainDenied("Node archive does not contain one exact root license member")
                 license_member = license_matches[0]
             executable_path = tree_path.joinpath(*PurePosixPath(pin.executable_member).parts)
-            fd = os.open(executable_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
-            executable = os.fstat(fd)
-            executable_sha, executable_size = _sha_fd(fd, _MAX_EXPANDED_BYTES)
+            executable_fd = os.open(executable_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+            executable = os.fstat(executable_fd)
+            executable_sha, executable_size = _sha_fd(executable_fd, _MAX_EXPANDED_BYTES)
             if (not stat.S_ISREG(executable.st_mode) or executable.st_uid != self.expected_uid
                     or stat.S_IMODE(executable.st_mode) != 0o555 or executable_size < 1):
-                os.close(fd)
+                os.close(executable_fd)
+                executable_fd = None
                 raise ApplicationToolchainDenied("selected toolchain executable member is not held and executable")
             tree_digest = _verify_private_tree(tree_path, expected_uid=self.expected_uid,
                                                expected_members=members)
-            recipe_sha = _fixed_probe(pin, fd, tree_path, expected_uid=self.expected_uid)
+            recipe_sha = _fixed_probe(pin, executable_fd, tree_path, expected_uid=self.expected_uid)
             receipt_handle = secrets.token_urlsafe(36)
             license_handle = secrets.token_urlsafe(36)
             root_handle = secrets.token_urlsafe(36)
@@ -859,7 +883,8 @@ class RootApplicationToolchainRegistry:
             expiry = min(float(getattr(selection, "expires_monotonic", now + 900)),
                          float(getattr(choice, "expires_monotonic", now + 900)))
             if expiry <= now:
-                os.close(fd)
+                os.close(executable_fd)
+                executable_fd = None
                 raise ApplicationToolchainDenied("toolchain source receipt expired during its probe")
             notice_rows = [
                 {"path": path, **dict(record)} for path, record in sorted(members.items())
@@ -900,7 +925,7 @@ class RootApplicationToolchainRegistry:
             }
             self._write_receipt(target / "license-observation.json", license_record)
             observation = RootApplicationToolchainObservation(
-                **claims, _executable_fd=fd, _root=tree_path,
+                **claims, _executable_fd=executable_fd, _root=tree_path,
                 _members=dict(members), _registry_id=self.registry_id, _seal=_RECORD_SEAL)
             entry = _ToolchainEntry(observation, target, archive_path, tree_path,
                                     target / "manifest.json", choice, prep_handle)
@@ -919,6 +944,8 @@ class RootApplicationToolchainRegistry:
             return observation
         except BaseException:
             try:
+                if executable_fd is not None and key not in self._entries:
+                    os.close(executable_fd)
                 if staging_archive.exists():
                     staging_archive.unlink()
                 # This target was created exclusively by this invocation. Remove
@@ -1005,14 +1032,27 @@ class RootApplicationToolchainRegistry:
                 )
             }
             license_handle = observation.license_observation_handles
+            expected_license_manifest = (
+                {"url": pin.license_url, "sha256": pin.license_sha256,
+                 "size_bytes": pin.license_size_bytes}
+                if pin.license_url else {"source_member": durable_license.get("member_path")}
+            )
             if (not isinstance(manifest, dict) or manifest.get("source_sha256") != pin.sha256
+                    or manifest.get("tool_id") != pin.tool_id
                     or manifest.get("source_size_bytes") != pin.size_bytes
                     or manifest.get("members") != dict(sorted(entry.observation._members.items()))
                     or manifest.get("tree_sha256") != observation.runtime_manifest_sha256
+                    or manifest.get("license") != expected_license_manifest
+                    or manifest.get("notices_sha256") != observation.package_notice_observation_sha256
                     or _canonical(durable_observation) != _canonical(observation_claims)
                     or durable_license.get("receipt_handle") not in license_handle
                     or durable_license.get("tool_id") != pin.tool_id
                     or durable_license.get("source_sha256") != pin.sha256
+                    or durable_license.get("source") != (pin.license_url or "archive-member")
+                    or durable_license.get("publisher_digest") != pin.license_sha256
+                    or durable_license.get("size_bytes") != entry.observation._members.get(
+                        durable_license.get("member_path"), {}).get("size_bytes")
+                    or durable_license.get("choice_signature") != choice.signature
                     or durable_license.get("sha256") != entry.observation._members.get(
                         durable_license.get("member_path"), {}).get("sha256")):
                 raise ValueError
