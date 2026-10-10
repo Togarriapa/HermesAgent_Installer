@@ -641,3 +641,33 @@ Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenti
 Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
 
 Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Selected application workload binding v89: `plans/amendments/2026-10-10-selected-application-workload-binding-v89.md`; existing SK-F03/R0067/R0138/AC12 implementation and acceptance obligations remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Source reviewed application request mapping
+The system SHALL preserve original request bytes and use only a reviewed explicit native action projection or the separate v107 finite root installer qualification request to admit an application workload. It SHALL NOT infer a native mapping from application IDs or fixture recipe names.
+
+#### Scenario: Fixture recipe has no native registration
+- **WHEN** a fixture workload has no actual reviewed native registration
+- **THEN** native dispatch denies and the separate qualification flow does not constitute production application acceptance.
+
+### Requirement: Actual distinct private memory capability selection
+The system SHALL use v108 selected owned endpoint/model deployment and private text-generation/embedding capability receipts for the exact memory profile/namespace/provider/owner. It SHALL preserve GLM5.2 extraction, separately enroll an actual embedding model/dimension and enforce bounded source-owned serializers/parsers and fresh private authorization at every retry.
+
+#### Scenario: Only public chat dispatcher exists
+- **WHEN** private endpoint/model or embedding capability proof is absent
+- **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
