@@ -7,17 +7,18 @@
   "source_checkpoint": {
     "implementation_commit": "f7fc4b6f0d07465b9898b3098c2998a619ff2b0b",
     "test_commit": "7e9abcf43faeb0e73a1eebbca6bd6e670af8479f",
+    "contract_api_followup_commit": "c05f0e4073be5c6623ae21df6cb0df20b09ab154",
     "contract": "planning/typed-initial-pending-diagnostics-v232.json",
     "changed_source_members": [
       {
         "path": "src/hermes_installer/authority/bootstrap_enrollment.py",
-        "sha256": "9ba0cc159eb1a426f8f985f1ecb798fe15d1a5730fc2994437f284981c27c757",
-        "size_bytes": 147175
+        "sha256": "d491638ae8a27a3d1a6d3392a50e5e2d41935a181f85a6ff0eac66756429296c",
+        "size_bytes": 147164
       },
       {
         "path": "src/hermes_installer/authority/bootstrap_runtime_factory.py",
-        "sha256": "26cda0c091189114d1eb84a0f712ff607540244c1950e858cf27f9bb286b986d",
-        "size_bytes": 691542
+        "sha256": "949e4bce79bfff32c9a8bb15152540968aca84b575d253725c80e3ecf23f64b7",
+        "size_bytes": 691421
       },
       {
         "path": "src/hermes_installer/root_setup.py",
