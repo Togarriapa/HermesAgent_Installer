@@ -2202,6 +2202,10 @@ class RootInstallerUpdateTransitionRegistry:
             raise BootstrapEnrollmentPending("update requires a verified present installed predecessor")
         predecessor.verify_current()
         held = _resolve_verified_deployment_release(predecessor.verified_release_receipt_handle, consume=False)
+        from .installer_release import VerifiedInstallerPredecessorReleaseReceipt
+        if type(held) is not VerifiedInstallerPredecessorReleaseReceipt:
+            held.close()
+            raise BootstrapEnrollmentPending("update requires predecessor-only release custody")
         held.verify_current()
         from .installed_stage_publisher import _read_record
         raw, info = _read_record(Path("/var/lib/hermes-installer/deployments/current.json"), 0)
@@ -4007,7 +4011,7 @@ def observe_deployment_predecessor() -> VerifiedDeploymentPredecessor:
             verified_release_receipt_handle=None, issued_monotonic=now)
     try:
         from .installer_release import InstalledRootReleaseVerifier
-        release = InstalledRootReleaseVerifier.verify_installed_release()
+        release = InstalledRootReleaseVerifier.verify_installed_predecessor_release()
     except Exception as exc:
         raise InstallerReleaseBuildError(
             "present deployment predecessor is not a verified installed release"
@@ -4264,7 +4268,7 @@ def _verify_update_predecessor_snapshot(snapshot: Mapping[str, Any]) -> None:
             or (info.st_dev, info.st_ino) != (pointer["device"], pointer["inode"])):
         raise BootstrapEnrollmentPending("installed update predecessor pointer identity changed")
     from .installer_release import InstalledRootReleaseVerifier
-    held = InstalledRootReleaseVerifier.verify_installed_release()
+    held = InstalledRootReleaseVerifier.verify_installed_predecessor_release()
     try:
         if (held.release_commit != pointer["candidate_git_sha"]
                 or held.deployment_receipt_sha256 != pointer["sha256"]
@@ -4330,6 +4334,9 @@ def _resolve_verified_deployment_release(handle: str | None, *, consume: bool) -
             _DEPLOYMENT_PREDECESSOR_RECEIPTS.pop(handle, None)
             release.close()
             raise BootstrapEnrollmentPending("verified predecessor release is expired")
+        from .installer_release import VerifiedInstallerPredecessorReleaseReceipt
+        if type(release) is not VerifiedInstallerPredecessorReleaseReceipt:
+            raise InstallerReleaseBuildError("deployment predecessor registry contains a non-predecessor receipt")
         release.verify_current()
         if consume:
             _DEPLOYMENT_PREDECESSOR_RECEIPTS.pop(handle, None)

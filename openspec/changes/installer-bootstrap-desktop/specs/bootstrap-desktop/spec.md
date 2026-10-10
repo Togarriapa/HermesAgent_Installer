@@ -1095,3 +1095,16 @@ The installer SHALL apply only the reviewed root_setup tuple bytes in `planning/
 #### Scenario: Source entry contract fixtures pass
 - **WHEN** mocked admission or branch tests pass
 - **THEN** genuine full publication and actual Pi acceptance remain unproven
+
+## ADDED Requirements
+
+### Requirement: Installed predecessor verification is version-aware and actor-separated
+The system SHALL verify an old installed predecessor with an internally selected independently reviewed whole historical source cohort and a dedicated predecessor-only receipt while retaining full pointer/closed-tree/owner/hash/baseline custody and newest pins for ordinary installed actors.
+
+#### Scenario: Historical release is update custody only
+- **WHEN** the exact reviewed cc81 cohort and complete immutable original release pass current pointer and file verification
+- **THEN** update may retain predecessor byte custody without importing old code or admitting it as current actor
+
+#### Scenario: Unknown or mixed historical cohort is denied
+- **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
+- **THEN** predecessor verification denies before candidate effects and preserves the original pointer

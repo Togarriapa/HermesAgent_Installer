@@ -293,7 +293,59 @@ MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_FILES = 50_000
 MAX_FILE_BYTES = 512 * 1024 * 1024
 ROLES = RELEASE_MEMBER_ROLES
+
+
+def _cohort_value(cohort: Mapping[str, Any] | None, name: str) -> Any:
+    return globals()[name] if cohort is None else cohort[name]
+
+
+def _freeze_review_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_review_data(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_review_data(item) for item in value)
+    return value
+
+# v249: exact, source-reviewed cc81 constants.  This is data only; historical
+# code is never imported or executed.  The adjacent planning artifact records
+# the same canonical bytes and their reviewed digest.
+_CC81_COHORT_JSON = '{\n  "schema": 1,\n  "cohort_id": "installed-predecessor-cc81-review-v249",\n  "candidate_git_sha": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",\n  "source_origin": "https://github.com/Togarriapa/HermesAgent_Installer.git",\n  "source_git_tree": "74dca3566f212e185cbdada7a2d401cf0d63f6e9",\n  "source_blobs": [\n    {\n      "relative_path": "src/hermes_installer/authority/installer_release_roles.py",\n      "sha256": "77414427c957315b5039e4d90f75c997739d7fd3caa18014f874aa7fed7806f0",\n      "size_bytes": 1162\n    },\n    {\n      "relative_path": "src/hermes_installer/authority/application_effect_source_catalog.py",\n      "sha256": "cc77027546df592d439da36cd162f36841176cdb8a37ca12d213da2ff3666c78",\n      "size_bytes": 3150\n    },\n    {\n      "relative_path": "src/hermes_installer/authority/installer_release.py",\n      "sha256": "aceb07d75a0723ae7abc80aba68aa544056ff9eec49885b73ca0af7190a3780e",\n      "size_bytes": 80261\n    },\n    {\n      "relative_path": "src/hermes_installer/root_setup.py",\n      "sha256": "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",\n      "size_bytes": 62517\n    },\n    {\n      "relative_path": "src/hermes_installer/authority/installer_release_build.py",\n      "sha256": "6355198dd122046469b7aba2d9c02ffae43fc17dd3b7263c1e782b560f06b12f",\n      "size_bytes": 258915\n    }\n  ],\n  "constants": {\n    "RELEASE_ID": "hermes-installer-root-release-v1",\n    "BASELINE_TAG_OBJECT": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",\n    "BASELINE_COMMIT": "653ac5fbc7a02613c9951859a7d794599603459b",\n    "FIXED_TEMPLATES": [\n      [\n        "installer-bootstrap-compiler-template-v1",\n        "templates/bootstrap-compiler-template-v1.json",\n        "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5",\n        4281\n      ],\n      [\n        "installer-root-setup-plan-template-v1",\n        "templates/root-setup-plan-template-v1.json",\n        "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",\n        920\n      ],\n      [\n        "installer-authentik-policy-template-v1",\n        "templates/authentik-policy-template-v1.json",\n        "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8",\n        261\n      ],\n      [\n        "installer-prepared-authority-base-template-v1",\n        "templates/prepared-authority-base-template-v1.json",\n        "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953",\n        369\n      ],\n      [\n        "installer-bootstrap-receipt-bindings-template-v1",\n        "templates/bootstrap-receipt-bindings-template-v1.json",\n        "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609",\n        10195\n      ],\n      [\n        "installer-composio-whatsapp-catalog-read-policy-v1",\n        "templates/composio-whatsapp-catalog-read-policy-v1.json",\n        "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5",\n        528\n      ],\n      [\n        "installer-existing-model-store-root-template-v1",\n        "templates/existing-model-store-root-template-v1.json",\n        "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",\n        712\n      ],\n      [\n        "installer-private-loopback-nft-v1",\n        "templates/private-loopback-policy-v1.json",\n        "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc",\n        1482\n      ],\n      [\n        "installer-reviewed-native-capability-map-v1",\n        "templates/reviewed-native-capability-map-v1.json",\n        "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",\n        2026\n      ]\n    ],\n    "REVIEWED_SOURCE_MODULES": [\n      [\n        "installer-module:hermes_installer.authority.active_native_worker_runtime",\n        "lib/python/hermes_installer/authority/active_native_worker_runtime.py",\n        "5196a3206cb5a09daef5eb51cb4ef70d812f4d02a85073e2fc67bf8d1ba783e4",\n        38660,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.active_network_generation",\n        "lib/python/hermes_installer/authority/active_network_generation.py",\n        "143ba59f13316f6a66315aed7193a66e4c2e4d6a7b8d03963a3244735fd44f70",\n        23570,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.active_policy_compiler",\n        "lib/python/hermes_installer/authority/active_policy_compiler.py",\n        "61ae3576ac53e5ad5c6f1b0c74967110021fd961677353aae889b9f8bf04940b",\n        136868,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.application_runtime_archive",\n        "lib/python/hermes_installer/authority/application_runtime_archive.py",\n        "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197",\n        31457,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.application_runtime_relocation",\n        "lib/python/hermes_installer/authority/application_runtime_relocation.py",\n        "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc",\n        12120,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.bootstrap_enrollment",\n        "lib/python/hermes_installer/authority/bootstrap_enrollment.py",\n        "ae307ff841b29322ebd2ad06818e9f56a931f811fe789c1c3369a634188ed404",\n        144306,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.bootstrap_runtime_factory",\n        "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",\n        "89fae27c0b8b4eeabc0c43ba0d56baa2780bc62e390a63cc6db8b1f88b028ead",\n        655738,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.client",\n        "lib/python/hermes_installer/authority/client.py",\n        "f8be053e3a00b49087c6104ed77a314a071c8b0a47cf9701c4050b7aae13b46f",\n        73488,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.committed_pm_executable",\n        "lib/python/hermes_installer/authority/committed_pm_executable.py",\n        "9e8a3a28aa10e8f3e68431b5dcc8a0d51f2afa54c3d57c5e4dd7fda2826cfcf0",\n        43170,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.daemon",\n        "lib/python/hermes_installer/authority/daemon.py",\n        "6e506c868e164b429d50b2567a119a9dced2de69cc9bc042c7062813839e37c9",\n        37930,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.enrollment",\n        "lib/python/hermes_installer/authority/enrollment.py",\n        "7ba9abef79744328ed3d5deefdf8b1815e532df295963fd72d8f9f476aa7f16e",\n        204399,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.functional_health_receipt_consumer",\n        "lib/python/hermes_installer/authority/functional_health_receipt_consumer.py",\n        "c889505f5b1408c77f234975cc81eb84299177b0153f180d768667bac33a6c4d",\n        43402,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.initial_policy_compiler",\n        "lib/python/hermes_installer/authority/initial_policy_compiler.py",\n        "34aa92870f6e5fabd327f9518f3fcd4e1a6afa90b43c0be4bcc02ae88996a708",\n        41486,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.listener_activation",\n        "lib/python/hermes_installer/authority/listener_activation.py",\n        "64274d1dc9027b9c0c80fc31f95f292cf97b34d60f87769c1d0b472306a42869",\n        182234,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.local_resource_effects",\n        "lib/python/hermes_installer/authority/local_resource_effects.py",\n        "1d1f72655ed335ae486c76df80f97ffd997b07440a2b9417563c2918d874be9d",\n        142474,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_assembler",\n        "lib/python/hermes_installer/authority/native_assembler.py",\n        "564093a9bd255b10f83de08811b9280c30104750c949432ab87644eae03bcfb1",\n        28815,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_custody_proof",\n        "lib/python/hermes_installer/authority/native_custody_proof.py",\n        "4b48a790a768b92204d84229e38910cd6d2da37ce5844ca72579ba36c5eb986e",\n        99355,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_definition_composition",\n        "lib/python/hermes_installer/authority/native_definition_composition.py",\n        "f99e072dfb60cfbcce4a760d38355301f9e653d231586d2f538dffd88acfff3a",\n        9534,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_health_daemon",\n        "lib/python/hermes_installer/authority/native_health_daemon.py",\n        "d21d018e6fb6676b61b1f0b6968feb54d4c2d1a0f2fa5ddca6878807ae8d928c",\n        112468,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_health_observer",\n        "lib/python/hermes_installer/authority/native_health_observer.py",\n        "af2b48783347b0a684259233b36312c849ee6896f25bb03b49b6b23c5a51480c",\n        145475,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_health_source",\n        "lib/python/hermes_installer/authority/native_health_source.py",\n        "e98f0a7d5ee5807a06fb1b9e51b27120e0b9c5051aa0af9663ceb67c46ea449e",\n        16121,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_input_observer",\n        "lib/python/hermes_installer/authority/native_input_observer.py",\n        "1777ff56664ee298db2eb4b32af0ed3929f0e509c7a8c5b82bf219d6554c349d",\n        41560,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_output_receipts",\n        "lib/python/hermes_installer/authority/native_output_receipts.py",\n        "25f8903c4e9cfd9b6d05bccc98f00d6b0c8becf09c1e624235fa8f10164563ba",\n        115704,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_policy_preparation",\n        "lib/python/hermes_installer/authority/native_policy_preparation.py",\n        "23557ae9d39b017716936408a4e64d8c197749b42f7b507ef9212cfe41934387",\n        65082,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_registration_projection",\n        "lib/python/hermes_installer/authority/native_registration_projection.py",\n        "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b",\n        82047,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_request_observation",\n        "lib/python/hermes_installer/authority/native_request_observation.py",\n        "a30da168eb0a94ef490e88aed23a4f60b50b9a89f65bf71fd0c642a92ec8117d",\n        33600,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_runtime_observer",\n        "lib/python/hermes_installer/authority/native_runtime_observer.py",\n        "9cab5a39a2ba647514ae11bb7442d418a293941841f9eee382233f0669371bdb",\n        198388,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_source_definitions",\n        "lib/python/hermes_installer/authority/native_source_definitions.py",\n        "4d66c49e798eb957fa77601c4dad021182b734b1eb8fe322d52ecca060223341",\n        32858,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_endpoint_custody",\n        "lib/python/hermes_installer/authority/native_worker_endpoint_custody.py",\n        "66e3ddf7ebc82185bb3cf9df5f60185be5d78f3d2098df0dd513731012589ee5",\n        40194,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_generation_schema",\n        "lib/python/hermes_installer/authority/native_worker_generation_schema.py",\n        "f03c0fc953bb54ace37d86d8e8315999eacb96055c1f61bebc6769eb2061fc83",\n        13871,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_launch",\n        "lib/python/hermes_installer/authority/native_worker_launch.py",\n        "abe1eb856ac6a31c9c4bb828969432ae3afab1a128b23b4ad6ea2ccac0f32054",\n        38435,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_recipes",\n        "lib/python/hermes_installer/authority/native_worker_recipes.py",\n        "add2189878535c7b35d3cc04a426241a5ba24f7d2bed0ab5461fe152e404c0bc",\n        46109,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_runtime_materialization",\n        "lib/python/hermes_installer/authority/native_worker_runtime_materialization.py",\n        "529b0d707bd530df206d6a512dc061a12d894a2b92546235e9480ccea4cff923",\n        71935,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_service_generation",\n        "lib/python/hermes_installer/authority/native_worker_service_generation.py",\n        "0487ea123cad9300bdbab464b012a5b4314f48bf400289aec199cdafad585ace",\n        42104,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.native_worker_start_recipe",\n        "lib/python/hermes_installer/authority/native_worker_start_recipe.py",\n        "e58acef2d612c10863654c05c0ade47a6e00f18d57f9e477c49ce35a957b560d",\n        20416,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",\n        "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py",\n        "37b28db4c9709147dee50f14ea99ba5bd6e74a796ace897c3e9a51ba660d063d",\n        5409,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.owner_overlay_publication",\n        "lib/python/hermes_installer/authority/owner_overlay_publication.py",\n        "c35ac8726ba6b75fa48aed1ef94d6e52e445633c1f8b63a8e49c82aefd64b446",\n        57259,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.pm_runtime",\n        "lib/python/hermes_installer/authority/pm_runtime.py",\n        "1bf7e149095651c6dfcc33d88d9e2ca375879c5d7dea990c0ec2e6a37c2e4a0e",\n        70358,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.private_loopback_network",\n        "lib/python/hermes_installer/authority/private_loopback_network.py",\n        "a56123f11f9069fc06b41921e4b2af704781ca321ddd6e314239236f3a6d2384",\n        70665,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.private_loopback_worker_gate",\n        "lib/python/hermes_installer/authority/private_loopback_worker_gate.py",\n        "4732b84abc05087f2248ecd374c7a55c765676ab9a489c4cdfe0509a324ee508",\n        22240,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.remote_observations",\n        "lib/python/hermes_installer/authority/remote_observations.py",\n        "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31",\n        93746,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.runtime_bindings",\n        "lib/python/hermes_installer/authority/runtime_bindings.py",\n        "d0a0e8d2dd3465e6b5964286193d101173b394c498cbc11eb6ebc723df8660b5",\n        133410,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.runtime_composition",\n        "lib/python/hermes_installer/authority/runtime_composition.py",\n        "f710ede7fe6a728a0e128f7f852ba15d604e423c19f860ee3adccdb2895f8f60",\n        116776,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.runtime_root_custody",\n        "lib/python/hermes_installer/authority/runtime_root_custody.py",\n        "85fa514c128b962848dbe267fdcbaeb03f90f16ba2a2a6cf3fb288d3d2be09dd",\n        38316,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.service",\n        "lib/python/hermes_installer/authority/service.py",\n        "64693b0be4ac7a8c80547db51517723a09054d56015d520dfc717386d35be3e3",\n        367542,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.setup_policy_publication",\n        "lib/python/hermes_installer/authority/setup_policy_publication.py",\n        "bf6556d1402e03c924f913c39976d82403d1733673983f947edfabc7b3d7f34f",\n        110973,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.setup_principal",\n        "lib/python/hermes_installer/authority/setup_principal.py",\n        "8c10a9be6fcb0da4e41d56c8f29d14d09d603946ff060b13966a5fefa8d1aa96",\n        167860,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.authority.source_observers",\n        "lib/python/hermes_installer/authority/source_observers.py",\n        "8cf9ca2e4171c1a5a2402fa2874b2115592143aaff2ab127bc4238d2912e9ba9",\n        261264,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.components.native_plugins",\n        "lib/python/hermes_installer/components/native_plugins.py",\n        "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7",\n        28259,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.components.public_registries",\n        "lib/python/hermes_installer/components/public_registries.py",\n        "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f",\n        29374,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.managed_process_custodian",\n        "lib/python/hermes_installer/managed_process_custodian.py",\n        "1bb1267e5e95307da0bf78775a3450ce48a5762f8cff6e5600db2ba8af907657",\n        631187,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.native_boundary_patch",\n        "lib/python/hermes_installer/native_boundary_patch.py",\n        "fe1bfca7de02408c27891f0d6830da938ee7f18c84ee6b34bdd766f8e1645159",\n        22888,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.native_plugin_bindings",\n        "lib/python/hermes_installer/native_plugin_bindings.py",\n        "f5e9fcb74b555dcd5d98bc37eec29c42cbe85f3793cf43f2dc97536b030d1b26",\n        22679,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.native_plugin_loader",\n        "lib/python/hermes_installer/native_plugin_loader.py",\n        "eebe58ea486ecebeceacc8d8f46f8b26e061b46b4f25a11e41a5059f0233bdbd",\n        124775,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.protected_enrollment",\n        "lib/python/hermes_installer/protected_enrollment.py",\n        "5b6848226891a08b0a3f4e25f311cb230ad8b4005fe3c485f0e86c56fddcb0a1",\n        212817,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.registry.resource_backends",\n        "lib/python/hermes_installer/registry/resource_backends.py",\n        "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414",\n        27026,\n        "module"\n      ],\n      [\n        "installer-module:hermes_installer.root_setup",\n        "lib/python/hermes_installer/root_setup.py",\n        "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",\n        62517,\n        "module"\n      ],\n      [\n        "installer-native-invocations-module-v137",\n        "src/hermes_installer/native_invocations.py",\n        "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226",\n        40107,\n        "source-module"\n      ],\n      [\n        "installer-native-boundary-module-v137",\n        "src/hermes_installer/native_boundary.py",\n        "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb",\n        14356,\n        "source-module"\n      ]\n    ],\n    "REVIEWED_SOURCE_ARTIFACTS": [\n      [\n        "installer-native-mcp-discovery-capture-profile-v171",\n        "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",\n        "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a",\n        4601,\n        "amendment"\n      ],\n      [\n        "installer-native-input-capture-profile-v1",\n        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",\n        "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0",\n        837,\n        "amendment"\n      ],\n      [\n        "installer-native-tool-result-capture-profile-v1",\n        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",\n        "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a",\n        984,\n        "amendment"\n      ],\n      [\n        "installer-native-provider-result-capture-profile-v1",\n        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",\n        "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb",\n        993,\n        "amendment"\n      ],\n      [\n        "installer-application-toolchain-source-policy-v144",\n        "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",\n        "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6",\n        7060,\n        "amendment"\n      ],\n      [\n        "installer-application-pep517-backend-sources-v1",\n        "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",\n        "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623",\n        15907,\n        "amendment"\n      ],\n      [\n        "glm52-artifact-metadata-v1",\n        "planning/glm52-artifact-metadata.json",\n        "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",\n        56232,\n        "baseline"\n      ],\n      [\n        "glm52-upstream-mit-license-cf457fa",\n        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",\n        "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",\n        1065,\n        "amendment"\n      ],\n      [\n        "glm52-quantized-readme-6bbb01e",\n        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",\n        "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",\n        17468,\n        "amendment"\n      ],\n      [\n        "hermes-agent-health-request-v1",\n        "fixtures/native-health/request.txt",\n        "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c",\n        182,\n        "native-health-fixture"\n      ],\n      [\n        "hermes-agent-health-seed-v1",\n        "fixtures/native-health/seed-value.txt",\n        "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a",\n        67,\n        "native-health-fixture"\n      ],\n      [\n        "hermes-agent-health-expected-result-v1",\n        "fixtures/native-health/expected-tool-result.json",\n        "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a",\n        240,\n        "native-health-fixture"\n      ],\n      [\n        "hermes-agent-health-overlay-read-result-v1",\n        "fixtures/native-health/tool-result.schema.json",\n        "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5",\n        526,\n        "native-health-fixture"\n      ],\n      [\n        "hermes-agent-health-fixture-v1",\n        "fixtures/native-health/recipe.json",\n        "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7",\n        845,\n        "native-health-fixture"\n      ]\n    ],\n    "APPLICATION_BUILD_DRIVER": [\n      "installer-application-environment-builder-v1",\n      "lib/python/hermes_installer/authority/application_environment_builder.py",\n      "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",\n      45807,\n      "application-build-driver"\n    ],\n    "REQUIRED_NATIVE_SUPPORT_MODULE_IDS": [\n      "installer-module:hermes_installer.authority.native_assembler",\n      "installer-module:hermes_installer.authority.native_registration_projection",\n      "installer-module:hermes_installer.components.native_plugins",\n      "installer-module:hermes_installer.components.public_registries",\n      "installer-module:hermes_installer.authority.native_definition_composition",\n      "installer-module:hermes_installer.authority.native_policy_preparation",\n      "installer-module:hermes_installer.authority.native_source_definitions",\n      "installer-module:hermes_installer.authority.local_resource_effects"\n    ],\n    "REQUIRED_LAUNCHER_MODULES": [\n      [\n        "installer-module:hermes_installer",\n        "lib/python/hermes_installer/__init__.py"\n      ],\n      [\n        "installer-module:hermes_installer.authority",\n        "lib/python/hermes_installer/authority/__init__.py"\n      ],\n      [\n        "installer-module:hermes_installer.root_setup",\n        "lib/python/hermes_installer/root_setup.py"\n      ],\n      [\n        "installer-module:hermes_installer.authority.installer_release",\n        "lib/python/hermes_installer/authority/installer_release.py"\n      ],\n      [\n        "installer-module:hermes_installer.authority.bootstrap_runtime_factory",\n        "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py"\n      ]\n    ],\n    "LAUNCHER_PATH": "bin/hermes-installer-root-setup",\n    "INTERPRETER_PATH": "runtime/bin/python",\n    "PLAN_PATH": "plans/root-setup-plan-v1.json",\n    "ARTIFACT_CATALOG_PATH": "catalog/artifacts.json",\n    "RELEASE_MEMBER_ROLES": [\n      "amendment",\n      "application-build-driver",\n      "application-effect-fixture",\n      "artifact-catalog",\n      "baseline",\n      "bootstrap-policy",\n      "interpreter",\n      "launcher",\n      "module",\n      "native-health-fixture",\n      "network-startup-helper",\n      "plan",\n      "runtime-member",\n      "source-module",\n      "template"\n    ],\n    "NETWORK_STARTUP_HELPER": [\n      "installer-private-loopback-worker-gate-v180",\n      "helpers/private-loopback-worker-gate.py",\n      "helpers/private-loopback-worker-gate.py",\n      "4bf258da343991920fc80c512975277623d06a96740b073f38b740583d8cb720",\n      20350,\n      "network-startup-helper"\n    ],\n    "APPLICATION_EFFECT_SOURCE_CATALOG_PATH": "plans/amendments/2026-10-10-application-effect-sources-v175/application-effect-sources-v1.json",\n    "APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID": "release-file:eda54c5b908c9d5176afef9ee2bf434b",\n    "APPLICATION_EFFECT_SOURCE_CATALOG_SHA256": "de6df1701fa51727127cdbdb30c6e12a6f4e07297ffce686b758fd3ead1076b4",\n    "APPLICATION_EFFECT_SOURCE_CATALOG_SIZE": 11830,\n    "APPLICATION_EFFECT_SOURCE_MEMBERS": [\n      [\n        "installer-application-effect-graphify-entrypoint-v1",\n        "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",\n        "source-module",\n        "db0e49e0878f0406d9dba29c9f9860bee2bc7260e59c9ac7e20ecf88b5a03378",\n        153\n      ],\n      [\n        "installer-application-effect-graphify-helper-v1",\n        "src/hermes_installer/components/probes/graphify_fixture/helper.py",\n        "source-module",\n        "acc16fab89297ad11006519103d1033d611b1315529b5614098a3d60c80c2f74",\n        155\n      ],\n      [\n        "installer-application-effect-graphify-result-validator-v1",\n        "src/hermes_installer/components/probes/graphify_result.py",\n        "source-module",\n        "f3f0b44d9d9d707daceee4d563be1d028080ec661c11a29e85e1f38cda0901e9",\n        6481\n      ],\n      [\n        "installer-application-effect-graphify-result-schema-v1",\n        "src/hermes_installer/components/probes/graphify_probe_result.schema.json",\n        "application-effect-fixture",\n        "0649acf5c5e96c629b73e884683df7fe2f98e1fead448c1548f52c22cdd18136",\n        1157\n      ],\n      [\n        "installer-application-effect-browser-use-probe-v1",\n        "src/hermes_installer/components/browser_use_qualification_probe.py",\n        "source-module",\n        "2f939a6cd82f73f4e7474ed7f0c412e9a22fb65df01e7765c1a87cf675a52e58",\n        4404\n      ],\n      [\n        "installer-application-effect-browser-use-result-validator-v1",\n        "src/hermes_installer/components/browser_use.py",\n        "source-module",\n        "2e27c93d701de22792fae24ddb097d3d0dd7424dd5a25ce510ee75fecc90740f",\n        6531\n      ],\n      [\n        "installer-application-effect-scrapegraph-probe-v1",\n        "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",\n        "source-module",\n        "30974c44d2bd9e60847bcad6ba3849cf8b2a262f8c08f79b832a9bba723ed6ab",\n        5446\n      ],\n      [\n        "installer-application-effect-scrapegraph-result-validator-v1",\n        "src/hermes_installer/components/scrapegraph_ai.py",\n        "source-module",\n        "e2ac08afa32b9940705403eb9e2af35b08e21cc6f61ed6731438a6c1c1c98dcb",\n        11891\n      ],\n      [\n        "installer-application-effect-hyperframes-probe-v1",\n        "src/hermes_installer/components/probes/hyperframes_probe.py",\n        "source-module",\n        "f4a63a90b4467ae2db4fcdf7d874bc8f6b75e6b1f02910e326e75fcb49d498aa",\n        12692\n      ],\n      [\n        "installer-application-effect-hyperframes-composition-v1",\n        "src/hermes_installer/components/probes/hyperframes_fixture/composition.html",\n        "application-effect-fixture",\n        "fc20eaf85de0fe9bbc63bf4b315892a4fb0934d19819eb8b9450fa5bb7ed6052",\n        707\n      ]\n    ]\n  },\n  "semantics": "Static data extracted without importing or executing old code. Predecessor-only complete cohort, never current installed actor or candidate pins. Whole historical tuple set, no per-row fallback."\n}\n'
+_CC81_COHORT_SHA256 = "32aab0f5eaf5d184dfad3aa6482ee7b17b666bd32d54d180d4aad334db741f5f"
+_CC81_COHORT_ID = "installed-predecessor-cc81-review-v249"
+_CC81_CANDIDATE = "cc81abffe3cbb1df447889bca269d1e6c0be77ea"
+
+
+def _historical_cohort(candidate: str) -> Mapping[str, Any] | None:
+    value = _historical_cohort_record(candidate)
+    if value is None:
+        return None
+    constants = dict(value["constants"])
+    constants["ROLES"] = frozenset(constants["RELEASE_MEMBER_ROLES"])
+    return _freeze_review_data(constants)
+
+
+def _historical_cohort_record(candidate: str) -> Mapping[str, Any] | None:
+    if candidate != _CC81_CANDIDATE:
+        return None
+    raw = _CC81_COHORT_JSON.encode("utf-8")
+    if hashlib.sha256(raw).hexdigest() != _CC81_COHORT_SHA256:
+        raise InstallerReleaseError("historical predecessor source review data failed its fixed digest")
+    value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+    if (not isinstance(value, dict) or value.get("schema") != 1
+            or value.get("cohort_id") != _CC81_COHORT_ID
+            or value.get("candidate_git_sha") != candidate
+            or set(value.get("constants", {})) != {
+                "RELEASE_ID", "BASELINE_TAG_OBJECT", "BASELINE_COMMIT", "FIXED_TEMPLATES",
+                "REVIEWED_SOURCE_MODULES", "REVIEWED_SOURCE_ARTIFACTS", "APPLICATION_BUILD_DRIVER",
+                "REQUIRED_NATIVE_SUPPORT_MODULE_IDS", "REQUIRED_LAUNCHER_MODULES", "LAUNCHER_PATH",
+                "INTERPRETER_PATH", "PLAN_PATH", "ARTIFACT_CATALOG_PATH", "RELEASE_MEMBER_ROLES",
+                "NETWORK_STARTUP_HELPER", "APPLICATION_EFFECT_SOURCE_CATALOG_PATH",
+                "APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID", "APPLICATION_EFFECT_SOURCE_CATALOG_SHA256",
+                "APPLICATION_EFFECT_SOURCE_CATALOG_SIZE", "APPLICATION_EFFECT_SOURCE_MEMBERS"}):
+        raise InstallerReleaseError("historical predecessor source review data is malformed")
+    return _freeze_review_data(value)
 _SEAL = object()
+_PREDECESSOR_SEAL = object()
 _SHA = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _RECEIPT_ID = re.compile(r"[A-Za-z0-9_.:-]{1,160}")
@@ -328,8 +380,8 @@ class VerifiedInstallerReleaseReceipt:
                  "root_device", "root_inode", "closure_manifest_relative_path",
                  "closure_manifest_sha256", "baseline_tag_object", "baseline_commit",
                  "baseline_tree_sha256", "amendment_manifest_sha256", "files",
-                 "selected_plan_artifact_id", "selected_plan_sha256", "_root_fd", "_seal",
-                 "_uid", "_closed")
+                 "selected_plan_artifact_id", "selected_plan_sha256", "historical_cohort_id",
+                 "historical_cohort_sha256", "_root_fd", "_seal", "_uid", "_closed")
 
     def __init__(self, seal: object, *, release_root: Path, release_commit: str,
                  deployment_receipt_sha256: str, root_device: int, root_inode: int,
@@ -337,8 +389,9 @@ class VerifiedInstallerReleaseReceipt:
                  baseline_tag_object: str, baseline_commit: str, baseline_tree_sha256: str,
                  amendment_manifest_sha256: str, files: tuple[VerifiedReleaseFile, ...],
                  selected_plan_artifact_id: str, selected_plan_sha256: str,
-                 root_fd: int, expected_uid: int):
-        if seal is not _SEAL:
+                 root_fd: int, expected_uid: int, historical_cohort_id: str | None = None,
+                 historical_cohort_sha256: str | None = None):
+        if seal not in {_SEAL, _PREDECESSOR_SEAL}:
             raise TypeError("release receipts can only be minted by InstalledRootReleaseVerifier")
         self.release_root = release_root
         self.release_commit = release_commit
@@ -350,10 +403,14 @@ class VerifiedInstallerReleaseReceipt:
         self.baseline_tree_sha256, self.amendment_manifest_sha256 = baseline_tree_sha256, amendment_manifest_sha256
         self.files = files
         self.selected_plan_artifact_id, self.selected_plan_sha256 = selected_plan_artifact_id, selected_plan_sha256
+        self.historical_cohort_id = historical_cohort_id
+        self.historical_cohort_sha256 = historical_cohort_sha256
         self._root_fd, self._seal, self._uid, self._closed = root_fd, seal, expected_uid, False
 
     def verify_current(self) -> None:
-        if self._seal is not _SEAL or self._closed or self._root_fd < 0:
+        expected_seal = _PREDECESSOR_SEAL if type(self) is VerifiedInstallerPredecessorReleaseReceipt else _SEAL
+        if (type(self) not in {VerifiedInstallerReleaseReceipt, VerifiedInstallerPredecessorReleaseReceipt}
+                or self._seal is not expected_seal or self._closed or self._root_fd < 0):
             raise InstallerReleaseError("installer release receipt is not live")
         root = os.fstat(self._root_fd)
         if (root.st_uid != self._uid or not stat.S_ISDIR(root.st_mode)
@@ -375,6 +432,8 @@ class VerifiedInstallerReleaseReceipt:
 
     def open_file(self, artifact_id: str) -> int:
         """Return a no-follow FD for a verified artifact ID in this release."""
+        if type(self) is not VerifiedInstallerReleaseReceipt:
+            raise InstallerReleaseError("predecessor custody cannot open installed release artifacts")
         self.verify_current()
         matches = [item for item in self.files if item.artifact_id == artifact_id]
         if len(matches) != 1:
@@ -385,6 +444,8 @@ class VerifiedInstallerReleaseReceipt:
 
     def resolve_reviewed_source_module(self, artifact_id: str) -> VerifiedReleaseFile:
         """Return the exact held row for a finite target-adapter source module."""
+        if type(self) is not VerifiedInstallerReleaseReceipt:
+            raise InstallerReleaseError("predecessor custody cannot resolve actor source modules")
         self.verify_current()
         expected = {row[0]: row[1:] for row in REVIEWED_SOURCE_MODULES}
         identity = expected.get(artifact_id)
@@ -408,6 +469,8 @@ class VerifiedInstallerReleaseReceipt:
 
     def resolve_reviewed_source_artifact(self, artifact_id: str) -> VerifiedReleaseFile:
         """Resolve one reviewed source blob to its held baseline/amendment member."""
+        if type(self) is not VerifiedInstallerReleaseReceipt:
+            raise InstallerReleaseError("predecessor custody cannot resolve actor source artifacts")
         self.verify_current()
         expected = {row[0]: row[1:] for row in REVIEWED_SOURCE_ARTIFACTS}
         identity = expected.get(artifact_id)
@@ -441,6 +504,11 @@ class VerifiedInstallerReleaseReceipt:
         self.close()
 
 
+class VerifiedInstallerPredecessorReleaseReceipt(VerifiedInstallerReleaseReceipt):
+    """Distinct sealed custody proof; never an installed root actor receipt."""
+    __slots__ = ()
+
+
 class RootActorObservation:
     """PIDFD-bound observation of the exact installed root setup actor."""
     __slots__ = ("pid", "uid", "gid", "start_time", "launcher", "interpreter",
@@ -463,6 +531,8 @@ class RootActorObservation:
     def verify_current(self, release: VerifiedInstallerReleaseReceipt) -> None:
         if self._seal is not _SEAL or self._closed:
             raise InstallerReleaseError("root actor observation is not live")
+        if isinstance(release, VerifiedInstallerPredecessorReleaseReceipt):
+            raise InstallerReleaseError("predecessor custody cannot authorize the current root setup actor")
         release.verify_current()
         poller = select.poll()
         poller.register(self._pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
@@ -536,6 +606,128 @@ class InstalledRootReleaseVerifier:
         return cls._mint_release(receipt, expected_uid=0)
 
     @classmethod
+    def verify_installed_predecessor_release(cls) -> VerifiedInstallerPredecessorReleaseReceipt:
+        """Verify the current fixed release as a predecessor under one exact cohort."""
+        receipt = cls._load_deployment_receipt(DEPLOYMENT_RECEIPT_PATH, expected_uid=0)
+        cohort = _historical_cohort(receipt["candidate_git_sha"])
+        if cohort is not None:
+            cls._verify_historical_source_cohort(receipt["candidate_git_sha"])
+        return cls._mint_release(receipt, expected_uid=0, cohort=cohort, predecessor=True)
+
+    @classmethod
+    def _verify_retained_predecessor_bytes(cls, raw: bytes, *, candidate: str,
+                                           expected_sha256: str,
+                                           expected_uid: int = 0) -> VerifiedInstallerPredecessorReleaseReceipt:
+        """Verify exact prior pointer bytes retained by an owned update transaction."""
+        if (not isinstance(raw, bytes) or not raw or len(raw) > MAX_RECEIPT_BYTES
+                or hashlib.sha256(raw).hexdigest() != expected_sha256
+                or not isinstance(candidate, str) or not _COMMIT.fullmatch(candidate)):
+            raise InstallerReleaseError("retained predecessor pointer bytes failed their transaction binding")
+        try:
+            value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            raise InstallerReleaseError("retained predecessor pointer bytes are malformed") from None
+        fields = {"schema", "receipt_id", "candidate_git_sha", "release_root", "release_device",
+                  "release_inode", "closure_manifest_relative_path", "closure_manifest_sha256",
+                  "baseline_tree_sha256", "published_monotonic"}
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False).encode("utf-8") if isinstance(value, dict) else b""
+        if (not isinstance(value, dict) or set(value) != fields or value.get("schema") != 1
+                or value.get("candidate_git_sha") != candidate or raw != canonical
+                or not isinstance(value.get("receipt_id"), str) or not _RECEIPT_ID.fullmatch(value["receipt_id"])
+                or value.get("release_root") != str(RELEASE_STORE_ROOT / candidate)
+                or type(value.get("release_device")) is not int
+                or value["release_device"] < 0
+                or type(value.get("release_inode")) is not int
+                or value["release_inode"] <= 0
+                or not isinstance(value.get("closure_manifest_sha256"), str)
+                or not _SHA.fullmatch(value["closure_manifest_sha256"])
+                or not isinstance(value.get("baseline_tree_sha256"), str)
+                or not _SHA.fullmatch(value["baseline_tree_sha256"])
+                or type(value.get("published_monotonic")) not in (int, float)
+                or not math.isfinite(value["published_monotonic"])
+                or value["published_monotonic"] <= 0):
+            raise InstallerReleaseError("retained predecessor pointer identity is invalid")
+        _validate_relative(value["closure_manifest_relative_path"])
+        cohort = _historical_cohort(candidate)
+        if cohort is not None:
+            cls._verify_historical_source_cohort(candidate)
+        receipt = MappingProxyType({**value, "_receipt_sha256": expected_sha256})
+        return cls._mint_release(receipt, expected_uid=expected_uid, cohort=cohort, predecessor=True)
+
+    @staticmethod
+    def _verify_historical_source_cohort(candidate: str) -> None:
+        record = _historical_cohort_record(candidate)
+        if record is None:
+            raise InstallerReleaseError("historical predecessor cohort is not reviewed")
+        from .installer_release_build import (
+            BASELINE_TREE_SHA256, RootInstallerDistributionRegistry, SOURCE_ORIGIN,
+        )
+        # The root-owned CAS stores a source export, not a Git worktree. This
+        # compares fixed acquisition policy to reviewed provenance; the held
+        # complete tree below is the runtime source identity check.
+        if SOURCE_ORIGIN != record["source_origin"]:
+            raise InstallerReleaseError("historical predecessor fixed-origin policy differs from its review")
+        registry = RootInstallerDistributionRegistry()
+        try:
+            _handle, source = registry.resolve_selected(candidate)
+            source.verify_current()
+            if (source.candidate_git_sha != candidate
+                    or source.git_tree_sha1 != record["source_git_tree"]
+                    or source.baseline_tree_sha256 != BASELINE_TREE_SHA256):
+                raise InstallerReleaseError("historical predecessor source CAS identity differs from its review")
+            tree_entries: dict[str, tuple[int, bytes]] = {}
+            for row in source.files:
+                fd = source.open_file(row.relative_path)
+                try:
+                    content_hash = hashlib.sha256()
+                    git_hash = hashlib.sha1()
+                    git_hash.update(b"blob " + str(row.size_bytes).encode("ascii") + b"\0")
+                    size = 0
+                    while True:
+                        chunk = os.read(fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        content_hash.update(chunk)
+                        git_hash.update(chunk)
+                        size += len(chunk)
+                    after = os.fstat(fd)
+                    if (size != row.size_bytes or content_hash.hexdigest() != row.sha256
+                            or not stat.S_ISREG(after.st_mode) or after.st_nlink != 1
+                            or after.st_uid != 0 or after.st_dev != row.device
+                            or after.st_ino != row.inode
+                            or stat.S_IMODE(after.st_mode) != row.mode
+                            or after.st_ctime_ns != row.ctime_ns
+                            or after.st_size != row.size_bytes):
+                        raise InstallerReleaseError("historical predecessor source bytes differ from their sealed manifest")
+                    if row.mode not in (0o444, 0o555):
+                        raise InstallerReleaseError("historical predecessor source mode is not canonical")
+                    tree_entries[row.relative_path] = (row.mode, git_hash.digest())
+                finally:
+                    os.close(fd)
+            tree = _git_tree_sha1_from_entries(tree_entries)
+            if tree != record["source_git_tree"]:
+                raise InstallerReleaseError("historical predecessor complete source tree differs from its review")
+            for item in record["source_blobs"]:
+                fd = source.open_file(item["relative_path"])
+                try:
+                    digest = hashlib.sha256()
+                    size = 0
+                    while True:
+                        chunk = os.read(fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                        size += len(chunk)
+                    if digest.hexdigest() != item["sha256"] or size != item["size_bytes"]:
+                        raise InstallerReleaseError("historical predecessor source blob differs from its review")
+                finally:
+                    os.close(fd)
+        finally:
+            for held in tuple(getattr(registry, "_receipts", {}).values()):
+                held.close()
+
+    @classmethod
     def _load_deployment_receipt(cls, path: Path, *, expected_uid: int) -> Mapping[str, Any]:
         if path != DEPLOYMENT_RECEIPT_PATH:
             raise InstallerReleaseError("deployment receipt path override is forbidden")
@@ -569,7 +761,9 @@ class InstalledRootReleaseVerifier:
         return MappingProxyType({**value, "_receipt_sha256": hashlib.sha256(raw).hexdigest()})
 
     @classmethod
-    def _mint_release(cls, receipt: Mapping[str, Any], *, expected_uid: int) -> VerifiedInstallerReleaseReceipt:
+    def _mint_release(cls, receipt: Mapping[str, Any], *, expected_uid: int,
+                      cohort: Mapping[str, Any] | None = None,
+                      predecessor: bool = False) -> VerifiedInstallerReleaseReceipt:
         root = Path(receipt["release_root"])
         try:
             _verify_parents(root.parent, expected_uid)
@@ -595,7 +789,7 @@ class InstalledRootReleaseVerifier:
                     or stat.S_IMODE(manifest_info.st_mode) != 0o444 or manifest_info.st_nlink != 1):
                 raise InstallerReleaseError("release closure manifest must be immutable root-owned mode 0444")
             manifest = _parse_manifest(manifest_bytes, receipt["candidate_git_sha"])
-            rows = _verify_file_rows(root_fd, manifest, expected_uid)
+            rows = _verify_file_rows(root_fd, manifest, expected_uid, cohort=cohort)
             _verify_complete_tree(root_fd, {row.relative_path for row in rows},
                                   receipt["closure_manifest_relative_path"], expected_uid)
             if not secrets.compare_digest(hashlib.sha256(manifest_bytes).hexdigest(), receipt["closure_manifest_sha256"]):
@@ -604,24 +798,30 @@ class InstalledRootReleaseVerifier:
             if not secrets.compare_digest(baseline_tree, receipt["baseline_tree_sha256"]):
                 raise InstallerReleaseError("frozen baseline tree digest differs from deployment receipt")
             amendment_digest = _amendment_digest(rows)
-            plan_id, plan_sha = _fixed_roles(rows, receipt["closure_manifest_relative_path"])
-            return VerifiedInstallerReleaseReceipt(
-                _SEAL, release_root=root, release_commit=receipt["candidate_git_sha"],
+            plan_id, plan_sha = _fixed_roles(rows, receipt["closure_manifest_relative_path"], cohort=cohort)
+            receipt_type = VerifiedInstallerPredecessorReleaseReceipt if predecessor else VerifiedInstallerReleaseReceipt
+            seal = _PREDECESSOR_SEAL if predecessor else _SEAL
+            return receipt_type(
+                seal, release_root=root, release_commit=receipt["candidate_git_sha"],
                 deployment_receipt_sha256=receipt["_receipt_sha256"], root_device=root_info.st_dev,
                 root_inode=root_info.st_ino,
                 closure_manifest_relative_path=receipt["closure_manifest_relative_path"],
                 closure_manifest_sha256=receipt["closure_manifest_sha256"],
-                baseline_tag_object=BASELINE_TAG_OBJECT,
-                baseline_commit=BASELINE_COMMIT, baseline_tree_sha256=baseline_tree,
+                baseline_tag_object=_cohort_value(cohort, "BASELINE_TAG_OBJECT"),
+                baseline_commit=_cohort_value(cohort, "BASELINE_COMMIT"), baseline_tree_sha256=baseline_tree,
                 amendment_manifest_sha256=amendment_digest, files=tuple(rows),
                 selected_plan_artifact_id=plan_id, selected_plan_sha256=plan_sha,
-                root_fd=root_fd, expected_uid=expected_uid)
+                root_fd=root_fd, expected_uid=expected_uid,
+                historical_cohort_id=_CC81_COHORT_ID if cohort is not None else None,
+                historical_cohort_sha256=_CC81_COHORT_SHA256 if cohort is not None else None)
         except Exception:
             os.close(root_fd)
             raise
 
     @classmethod
     def _observe_actor(cls, release: VerifiedInstallerReleaseReceipt) -> RootActorObservation:
+        if type(release) is not VerifiedInstallerReleaseReceipt:
+            raise InstallerReleaseError("predecessor custody cannot authorize the current root setup actor")
         if not hasattr(os, "pidfd_open"):
             raise BootstrapEnrollmentPending("Linux PIDFD support is required for stage-zero setup")
         by_role: dict[str, list[VerifiedReleaseFile]] = {}
@@ -707,7 +907,7 @@ def _parse_manifest(raw: bytes, candidate: str) -> Mapping[str, Any]:
     return MappingProxyType(value)
 
 
-def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: int) -> list[VerifiedReleaseFile]:
+def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: int, *, cohort: Mapping[str, Any] | None = None) -> list[VerifiedReleaseFile]:
     result: list[VerifiedReleaseFile] = []
     for row in manifest["files"]:
         if not isinstance(row, dict) or set(row) != {"relative_path", "sha256", "size_bytes", "mode", "roles"}:
@@ -718,7 +918,7 @@ def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: i
                 or type(size) is not int or size < 0 or size > MAX_FILE_BYTES
                 or type(mode) is not int or mode < 0 or mode > 0o7777
                 or not isinstance(roles, list) or not roles
-                or any(not isinstance(role, str) or role not in ROLES for role in roles)
+                or any(not isinstance(role, str) or role not in _cohort_value(cohort, "ROLES") for role in roles)
                 or len(set(roles)) != len(roles) or roles != sorted(roles)):
             raise InstallerReleaseError("installed release closure file metadata is malformed")
         info = _hash_release_file(root_fd, path, digest, expected_uid=expected_uid, expected_size=size)
@@ -730,14 +930,14 @@ def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: i
             raise InstallerReleaseError("append-only amendment lacks amendment role")
         if "amendment" in roles and not path.startswith("plans/amendments/"):
             raise InstallerReleaseError("amendment role is outside append-only amendments")
-        _validate_fixed_layout_role(path, digest, size, roles, mode=mode)
-        artifact_id = _artifact_id_for(path, roles)
+        _validate_fixed_layout_role(path, digest, size, roles, mode=mode, cohort=cohort)
+        artifact_id = _artifact_id_for(path, roles, cohort=cohort)
         result.append(VerifiedReleaseFile(artifact_id, tuple(roles), path, digest, size,
                                           info.st_dev, info.st_ino, mode))
     return result
 
 
-def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[str, str]:
+def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str, *, cohort: Mapping[str, Any] | None = None) -> tuple[str, str]:
     by_role: dict[str, list[VerifiedReleaseFile]] = {}
     for row in rows:
         for role in row.roles:
@@ -745,7 +945,7 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture", "application-effect-fixture", "application-build-driver"):
         if role not in by_role:
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
-    helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = NETWORK_STARTUP_HELPER
+    helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = _cohort_value(cohort, "NETWORK_STARTUP_HELPER")
     helper_rows = by_role.get(helper_role, [])
     if (helper_digest is None) != (helper_size is None):
         raise InstallerReleaseError("network startup helper review pin is incomplete")
@@ -763,23 +963,23 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
         raise InstallerReleaseError("installed release launcher/interpreter role is ambiguous")
     expected_fixed = {
-        "launcher": ("installer-root-setup-launcher-v1", LAUNCHER_PATH),
-        "interpreter": ("installer-root-setup-interpreter-v1", INTERPRETER_PATH),
-        "plan": ("installer-root-setup-plan-v1", PLAN_PATH),
-        "artifact-catalog": ("installer-protected-artifact-catalog-v1", ARTIFACT_CATALOG_PATH),
+        "launcher": ("installer-root-setup-launcher-v1", _cohort_value(cohort, "LAUNCHER_PATH")),
+        "interpreter": ("installer-root-setup-interpreter-v1", _cohort_value(cohort, "INTERPRETER_PATH")),
+        "plan": ("installer-root-setup-plan-v1", _cohort_value(cohort, "PLAN_PATH")),
+        "artifact-catalog": ("installer-protected-artifact-catalog-v1", _cohort_value(cohort, "ARTIFACT_CATALOG_PATH")),
     }
     for role, (artifact_id, relative_path) in expected_fixed.items():
         role_rows = by_role[role]
         if len(role_rows) != 1 or (role_rows[0].artifact_id, role_rows[0].relative_path) != (artifact_id, relative_path):
             raise InstallerReleaseError(f"installed {role} role differs from the current fixed release layout")
     expected_templates = {artifact_id: (relative_path, digest, size)
-                          for artifact_id, relative_path, digest, size in FIXED_TEMPLATES}
+                          for artifact_id, relative_path, digest, size in _cohort_value(cohort, "FIXED_TEMPLATES")}
     actual_templates = {row.artifact_id: (row.relative_path, row.sha256, row.size_bytes)
                         for row in by_role["template"]}
-    if actual_templates != expected_templates or len(by_role["template"]) != len(FIXED_TEMPLATES):
+    if actual_templates != expected_templates or len(by_role["template"]) != len(_cohort_value(cohort, "FIXED_TEMPLATES")):
         raise InstallerReleaseError("installed templates differ from the current fixed artifact layout")
     expected_health_fixtures = {artifact_id: (relative_path, digest, size)
-                                for artifact_id, relative_path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS
+                                for artifact_id, relative_path, digest, size, role in _cohort_value(cohort, "REVIEWED_SOURCE_ARTIFACTS")
                                 if role == "native-health-fixture"}
     actual_health_fixtures = {row.artifact_id: (row.relative_path, row.sha256, row.size_bytes)
                               for row in by_role["native-health-fixture"]}
@@ -787,45 +987,41 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
             or len(by_role["native-health-fixture"]) != len(expected_health_fixtures)):
         raise InstallerReleaseError("installed native health fixtures differ from their exact reviewed closure")
     effect_catalog_rows = [row for row in by_role["amendment"]
-                           if row.artifact_id == APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID]
+                           if row.artifact_id == _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID")]
     if (len(effect_catalog_rows) != 1
             or (effect_catalog_rows[0].relative_path, effect_catalog_rows[0].sha256,
-                effect_catalog_rows[0].size_bytes) != (APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
-                    APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE)):
+                effect_catalog_rows[0].size_bytes) != (_cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_CATALOG_PATH"),
+                    _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_CATALOG_SHA256"), _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_CATALOG_SIZE"))):
         raise InstallerReleaseError("application effect source descriptor differs from its fixed amendment pin")
     if any("bootstrap-policy" in row.roles for row in rows):
         raise InstallerReleaseError("generated bootstrap policy cannot be a base release role")
     modules = [row for row in by_role["module"]]
-    if not modules or any(row.artifact_id != _artifact_id_for(row.relative_path, ["module"])
+    if not modules or any(row.artifact_id != _artifact_id_for(row.relative_path, ["module"], cohort=cohort)
                           for row in modules):
         raise InstallerReleaseError("installed module IDs differ from the finite source/import mapping")
     module_by_id = {row.artifact_id: row for row in modules}
     source_module_by_id = {row.artifact_id: row for row in by_role["source-module"]}
-    for artifact_id, relative_path, digest, size, role in REVIEWED_SOURCE_MODULES:
-        row = (source_module_by_id if role == "source-module" else module_by_id).get(artifact_id)
-        if (row is None or row.roles != (role,)
-                or (row.relative_path, row.sha256, row.size_bytes) != (relative_path, digest, size)):
-            raise InstallerReleaseError("finite native target source module differs from its reviewed pin")
-    driver_id, driver_path, driver_digest, driver_size, driver_role = APPLICATION_BUILD_DRIVER
+    _verify_reviewed_module_rows(module_by_id, source_module_by_id, cohort=cohort)
+    driver_id, driver_path, driver_digest, driver_size, driver_role = _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")
     driver_rows = by_role[driver_role]
     if (len(driver_rows) != 1 or (driver_rows[0].artifact_id, driver_rows[0].relative_path,
                                   driver_rows[0].sha256, driver_rows[0].size_bytes,
                                   driver_rows[0].roles) !=
             (driver_id, driver_path, driver_digest, driver_size, (driver_role,))):
         raise InstallerReleaseError("application build driver differs from its exact execution-only closure")
-    for artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+    for artifact_id, relative_path, role, digest, size in _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_MEMBERS"):
         rows_for_member = [row for row in rows if row.artifact_id == artifact_id]
         if (len(rows_for_member) != 1 or rows_for_member[0].roles != (role,)
                 or (rows_for_member[0].relative_path, rows_for_member[0].sha256,
                     rows_for_member[0].size_bytes) != (relative_path, digest, size)):
             raise InstallerReleaseError("application effect source member differs from its finite pinned role catalog")
-    for artifact_id, relative_path in REQUIRED_LAUNCHER_MODULES:
+    for artifact_id, relative_path in _cohort_value(cohort, "REQUIRED_LAUNCHER_MODULES"):
         row = module_by_id.get(artifact_id)
         if row is None or row.relative_path != relative_path:
             raise InstallerReleaseError("installed launcher module closure is incomplete or misbound")
     runtime_members = by_role["runtime-member"]
     if not runtime_members or any(
-            row.relative_path == INTERPRETER_PATH or not row.relative_path.startswith("runtime/")
+            row.relative_path == _cohort_value(cohort, "INTERPRETER_PATH") or not row.relative_path.startswith("runtime/")
             or row.mode not in {0o444, 0o555} for row in runtime_members):
         raise InstallerReleaseError("installed runtime-member closure is missing or has unsafe roles/modes")
     plan = by_role["plan"]
@@ -837,6 +1033,16 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
         if not row.mode & 0o111:
             raise InstallerReleaseError("installed launcher/interpreter is not executable")
     return plan[0].artifact_id, plan[0].sha256
+
+
+def _verify_reviewed_module_rows(module_by_id: Mapping[str, VerifiedReleaseFile],
+                                 source_module_by_id: Mapping[str, VerifiedReleaseFile], *,
+                                 cohort: Mapping[str, Any] | None = None) -> None:
+    for artifact_id, relative_path, digest, size, role in _cohort_value(cohort, "REVIEWED_SOURCE_MODULES"):
+        row = (source_module_by_id if role == "source-module" else module_by_id).get(artifact_id)
+        if (row is None or row.roles != (role,)
+                or (row.relative_path, row.sha256, row.size_bytes) != (relative_path, digest, size)):
+            raise InstallerReleaseError("finite native target source module differs from its reviewed pin")
 
 
 def _verify_complete_tree(root_fd: int, listed: set[str], manifest_path: str, expected_uid: int) -> None:
@@ -923,10 +1129,10 @@ def _amendment_digest(rows: list[VerifiedReleaseFile]) -> str:
                                       ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def _artifact_id_for(path: str, roles: list[str]) -> str:
-    if "application-build-driver" in roles and path == APPLICATION_BUILD_DRIVER[1]:
-        return APPLICATION_BUILD_DRIVER[0]
-    helper_id, _helper_source, helper_path, _helper_digest, _helper_size, helper_role = NETWORK_STARTUP_HELPER
+def _artifact_id_for(path: str, roles: list[str], *, cohort: Mapping[str, Any] | None = None) -> str:
+    if "application-build-driver" in roles and path == _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[1]:
+        return _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[0]
+    helper_id, _helper_source, helper_path, _helper_digest, _helper_size, helper_role = _cohort_value(cohort, "NETWORK_STARTUP_HELPER")
     if helper_role in roles:
         if roles != [helper_role] or path != helper_path:
             raise InstallerReleaseError("network startup helper ID requires its one exact fixed member")
@@ -936,48 +1142,49 @@ def _artifact_id_for(path: str, roles: list[str]) -> str:
     if "interpreter" in roles:
         return "installer-root-setup-interpreter-v1"
     if "template" in roles:
-        for artifact_id, relative_path, _digest, _size in FIXED_TEMPLATES:
+        for artifact_id, relative_path, _digest, _size in _cohort_value(cohort, "FIXED_TEMPLATES"):
             if path == relative_path:
                 return artifact_id
     if "plan" in roles:
         return "installer-root-setup-plan-v1"
-    if "artifact-catalog" in roles and path == ARTIFACT_CATALOG_PATH:
+    if "artifact-catalog" in roles and path == _cohort_value(cohort, "ARTIFACT_CATALOG_PATH"):
         return "installer-protected-artifact-catalog-v1"
     if "native-health-fixture" in roles:
-        for artifact_id, relative_path, _digest, _size, role in REVIEWED_SOURCE_ARTIFACTS:
+        for artifact_id, relative_path, _digest, _size, role in _cohort_value(cohort, "REVIEWED_SOURCE_ARTIFACTS"):
             if role == "native-health-fixture" and path == relative_path:
                 return artifact_id
     if "module" in roles:
-        for artifact_id, relative_path, _digest, _size, role in REVIEWED_SOURCE_MODULES:
+        for artifact_id, relative_path, _digest, _size, role in _cohort_value(cohort, "REVIEWED_SOURCE_MODULES"):
             if role == "module" and path == relative_path:
                 return artifact_id
         return "installer-module:" + _module_name(path)
     if "source-module" in roles:
-        for artifact_id, relative_path, _digest, _size, role in REVIEWED_SOURCE_MODULES:
+        for artifact_id, relative_path, _digest, _size, role in _cohort_value(cohort, "REVIEWED_SOURCE_MODULES"):
             if role == "source-module" and path == relative_path:
                 return artifact_id
-        for artifact_id, relative_path, role, _digest, _size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+        for artifact_id, relative_path, role, _digest, _size in _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_MEMBERS"):
             if role == "source-module" and path == relative_path:
                 return artifact_id
     if "application-effect-fixture" in roles:
-        for artifact_id, relative_path, role, _digest, _size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+        for artifact_id, relative_path, role, _digest, _size in _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_MEMBERS"):
             if role == "application-effect-fixture" and path == relative_path:
                 return artifact_id
     return "release-file:" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:32]
 
 
 def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[str],
-                                *, mode: int | None = None) -> None:
+                                *, mode: int | None = None,
+                                cohort: Mapping[str, Any] | None = None) -> None:
     fixed_paths = {
-        LAUNCHER_PATH: ("launcher", "installer-root-setup-launcher-v1"),
-        INTERPRETER_PATH: ("interpreter", "installer-root-setup-interpreter-v1"),
-        PLAN_PATH: ("plan", "installer-root-setup-plan-v1"),
-        ARTIFACT_CATALOG_PATH: ("artifact-catalog", "installer-protected-artifact-catalog-v1"),
+        _cohort_value(cohort, "LAUNCHER_PATH"): ("launcher", "installer-root-setup-launcher-v1"),
+        _cohort_value(cohort, "INTERPRETER_PATH"): ("interpreter", "installer-root-setup-interpreter-v1"),
+        _cohort_value(cohort, "PLAN_PATH"): ("plan", "installer-root-setup-plan-v1"),
+        _cohort_value(cohort, "ARTIFACT_CATALOG_PATH"): ("artifact-catalog", "installer-protected-artifact-catalog-v1"),
     }
     fixed_templates = {relative_path: (artifact_id, expected_digest, expected_size)
-                       for artifact_id, relative_path, expected_digest, expected_size in FIXED_TEMPLATES}
+                       for artifact_id, relative_path, expected_digest, expected_size in _cohort_value(cohort, "FIXED_TEMPLATES")}
     expected_fixed_role = fixed_paths.get(path)
-    helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = NETWORK_STARTUP_HELPER
+    helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = _cohort_value(cohort, "NETWORK_STARTUP_HELPER")
     if path == helper_path or helper_role in roles:
         if (roles != [helper_role] or path != helper_path
                 or helper_digest is None or helper_size is None
@@ -1000,27 +1207,27 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
     if path.startswith("templates/") and path not in fixed_templates:
         raise InstallerReleaseError("release contains an unrecognized installed template path")
     if path.startswith("lib/python/") and roles != ["module"] and not (
-            path == APPLICATION_BUILD_DRIVER[1] and roles == ["application-build-driver"]):
+            path == _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[1] and roles == ["application-build-driver"]):
         raise InstallerReleaseError("lib/python release files must have the exact module role")
-    if path == APPLICATION_BUILD_DRIVER[1] and "module" in roles:
+    if path == _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[1] and "module" in roles:
         raise InstallerReleaseError("execution-only application build driver cannot be an actor module")
     if "application-build-driver" in roles:
-        if (roles != [APPLICATION_BUILD_DRIVER[4]] or path != APPLICATION_BUILD_DRIVER[1]
-                or (digest, size) != (APPLICATION_BUILD_DRIVER[2], APPLICATION_BUILD_DRIVER[3])
+        if (roles != [_cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[4]] or path != _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[1]
+                or (digest, size) != (_cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[2], _cohort_value(cohort, "APPLICATION_BUILD_DRIVER")[3])
                 or (mode is not None and mode != 0o444)):
             raise InstallerReleaseError("application build driver differs from its exact execution-only pin")
     if "module" in roles and not (path.startswith("lib/python/")
-                                  or path in {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "module"}):
+                                  or path in {item[1] for item in _cohort_value(cohort, "REVIEWED_SOURCE_MODULES") if item[4] == "module"}):
         raise InstallerReleaseError("module role is outside the finite source/import closure")
     if "source-module" in roles:
         expected_source_modules = {
             relative_path: (digest, size)
-            for _artifact_id, relative_path, digest, size, role in REVIEWED_SOURCE_MODULES
+            for _artifact_id, relative_path, digest, size, role in _cohort_value(cohort, "REVIEWED_SOURCE_MODULES")
             if role == "source-module"
         }
         expected_source_modules.update({
             relative_path: (digest, size)
-            for _artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS
+            for _artifact_id, relative_path, role, digest, size in _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_MEMBERS")
             if role == "source-module"
         })
         if (roles != ["source-module"] or path not in expected_source_modules
@@ -1030,7 +1237,7 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
     if "application-effect-fixture" in roles:
         expected_effect_fixtures = {
             relative_path: (digest, size)
-            for _artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS
+            for _artifact_id, relative_path, role, digest, size in _cohort_value(cohort, "APPLICATION_EFFECT_SOURCE_MEMBERS")
             if role == "application-effect-fixture"
         }
         if (roles != ["application-effect-fixture"]
@@ -1039,16 +1246,16 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
                 or (mode is not None and mode != 0o444)):
             raise InstallerReleaseError(
                 "application effect fixture differs from its exact reviewed data member")
-    if path.startswith("runtime/") and path != INTERPRETER_PATH and roles != ["runtime-member"]:
+    if path.startswith("runtime/") and path != _cohort_value(cohort, "INTERPRETER_PATH") and roles != ["runtime-member"]:
         raise InstallerReleaseError("installed runtime closure member lacks its exact runtime-member role")
     if "runtime-member" in roles and (
-            roles != ["runtime-member"] or not path.startswith("runtime/") or path == INTERPRETER_PATH):
+            roles != ["runtime-member"] or not path.startswith("runtime/") or path == _cohort_value(cohort, "INTERPRETER_PATH")):
         raise InstallerReleaseError("runtime-member role is outside the selected runtime closure")
     if "runtime-member" in roles and mode is not None and mode not in {0o444, 0o555}:
         raise InstallerReleaseError("runtime-member mode is outside the sealed runtime mode set")
     if "native-health-fixture" in roles:
         expected = {path: (artifact_id, digest, size)
-                    for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS
+                    for artifact_id, path, digest, size, role in _cohort_value(cohort, "REVIEWED_SOURCE_ARTIFACTS")
                     if role == "native-health-fixture"}
         if (roles != ["native-health-fixture"] or path not in expected
                 or (digest, size) != (expected[path][1], expected[path][2])):
@@ -1059,11 +1266,11 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
         raise InstallerReleaseError("baseline role is outside the frozen baseline tree")
     if path.startswith("plans/amendments/") and roles != ["amendment"]:
         raise InstallerReleaseError("append-only amendment source files must carry only their amendment role")
-    if expected_fixed_role is not None and _artifact_id_for(path, roles) != expected_fixed_role[1]:
+    if expected_fixed_role is not None and _artifact_id_for(path, roles, cohort=cohort) != expected_fixed_role[1]:
         raise InstallerReleaseError("fixed release artifact ID differs from its exact path role")
     if roles == ["template"]:
         if not any(path == item[1] and digest == item[2] and size == item[3]
-                   for item in FIXED_TEMPLATES):
+                   for item in _cohort_value(cohort, "FIXED_TEMPLATES")):
             raise InstallerReleaseError("installed template bytes differ from their exact protected role pin")
     if "module" in roles:
         _module_name(path)
@@ -1256,6 +1463,58 @@ def _validate_relative(value: Any) -> None:
     if (not isinstance(value, str) or not 0 < len(value) <= 1024 or value.startswith("/")
             or "\\" in value or any(part in {"", ".", ".."} for part in value.split("/"))):
         raise InstallerReleaseError("deployed release path is not a portable normalized relative path")
+
+
+def _git_tree_sha1_from_entries(entries: Mapping[str, tuple[int, bytes]]) -> str:
+    """Reconstruct a complete Git tree from rehashed source-CAS blobs and modes."""
+    root: dict[str, Any] = {}
+    folded: set[str] = set()
+    components: dict[str, str] = {}
+    for path, (mode, blob_oid) in entries.items():
+        _validate_relative(path)
+        if mode not in (0o444, 0o555) or not isinstance(blob_oid, bytes) or len(blob_oid) != 20:
+            raise InstallerReleaseError("historical source tree entry is malformed")
+        if path.casefold() in folded:
+            raise InstallerReleaseError("historical source tree has portable path collisions")
+        folded.add(path.casefold())
+        node = root
+        parts = path.split("/")
+        prefix: list[str] = []
+        for part in parts:
+            prefix.append(part)
+            key = "/".join(prefix).casefold()
+            previous = components.setdefault(key, "/".join(prefix))
+            if previous != "/".join(prefix):
+                raise InstallerReleaseError("historical source tree has portable directory collisions")
+        for part in parts[:-1]:
+            existing = node.get(part)
+            if existing is None:
+                existing = {}
+                node[part] = existing
+            if not isinstance(existing, dict):
+                raise InstallerReleaseError("historical source tree has a file-directory collision")
+            node = existing
+        leaf = parts[-1]
+        if leaf in node:
+            raise InstallerReleaseError("historical source tree has duplicate paths")
+        node[leaf] = (mode, blob_oid)
+
+    def hash_directory(directory: dict[str, Any]) -> bytes:
+        serialized: list[tuple[bytes, bytes]] = []
+        for name, item in directory.items():
+            encoded = name.encode("utf-8", "strict")
+            if isinstance(item, dict):
+                mode, oid, sort_name = b"40000", hash_directory(item), encoded + b"/"
+            else:
+                source_mode, oid = item
+                mode, sort_name = (b"100755" if source_mode == 0o555 else b"100644"), encoded
+            serialized.append((sort_name, mode + b" " + encoded + b"\0" + oid))
+        body = b"".join(raw for _, raw in sorted(serialized, key=lambda entry: entry[0]))
+        return hashlib.sha1(b"tree " + str(len(body)).encode("ascii") + b"\0" + body).digest()
+
+    if not root:
+        raise InstallerReleaseError("historical source tree is empty")
+    return hash_directory(root).hex()
 
 
 def _safe_relative(value: Any) -> bool:
