@@ -148,3 +148,6 @@ Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 s
 - [ ] `HI-T197.2` Compose genuine daemon intent registry/tagged display admission/controller PIDFD and attach before dispatch; no copied setup session.
 - [ ] `HI-T197.3` Implement fixed owned qualification controller/source/PM/materializer/publication/session/runtime composer and both installed dispatch suites; preserve HI-T160/173/178 dependencies.
 - [ ] `VD-T197.4` Replace synthetic positive display/task fixtures with genuine composed authority/custody/effects, replay/currentness/BPF/cleanup failures; all AC01..AC18 OPEN.
+
+
+Existing `HI-T197.1`/`HI-T197.2`/`VD-T197.4` remain OPEN and include exact durable overlay adoption and completed-start lifecycle failures in `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; no duplicate task or acceptance claim.

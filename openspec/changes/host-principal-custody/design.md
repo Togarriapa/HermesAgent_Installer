@@ -355,3 +355,6 @@ Exact closed source/member/catalog/preload application under existing VD-T180.6/
 ## Installed startup and qualification custody v197
 
 Actual daemon/setup process separation requires a closed source-issued startup intent and concrete tagged admission; installed qualification must construct its own real fixture source/publication/session/runtime graph. Exact finite contract/order/failures: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md` / `planning/installed-startup-qualification-custody-v197.json`. No private store copy, production relabel or BPF relaxation; all original AC and future source pins OPEN.
+
+
+Durable Xpra startup adoption v198: `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`. Existing HI-T197.1/.2 and VD-T197.4 require schema2 actual build/CAS/catalog reopening under a separate overlay signing domain, and admission-to-active lifecycle ownership. All acceptance remains OPEN.

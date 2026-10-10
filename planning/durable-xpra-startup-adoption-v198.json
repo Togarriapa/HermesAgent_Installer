@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md",
+  "extends": "v197",
+  "tasks": [
+    "HI-T197.1",
+    "HI-T197.2",
+    "VD-T197.4"
+  ],
+  "adoption_schema": 2,
+  "adoption_fields": [
+    "schema",
+    "state",
+    "receipt",
+    "build_target_id",
+    "build_generation",
+    "build_attestation_id",
+    "build_attestation_sha256",
+    "selected_startup_sha256",
+    "adoption_signature_b64"
+  ],
+  "signing_domain": "root-xpra-overlay-receipt-v1\\u0000",
+  "source_hashes": "pending actual committed source review",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}

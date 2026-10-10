@@ -110,3 +110,6 @@ Safe bootstrap diagnostics v196: `plans/amendments/2026-10-10-safe-bootstrap-dia
 
 
 Installed startup/qualification custody v197: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md`; HI-T197.1..3/VD-T197.4 OPEN. Closed actual two-actor startup intent, separate concrete fixture session/runtime composition and real task admission chain; no production relabel or BPF weakening. All AC01..AC18 and actual future source pins OPEN.
+
+
+Existing HI-T197.1/.2 and VD-T197.4: exact durable Xpra adoption and admission/active lifecycle clarification `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; all OPEN.
