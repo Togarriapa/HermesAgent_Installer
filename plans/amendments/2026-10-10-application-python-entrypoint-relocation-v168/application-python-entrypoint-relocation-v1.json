@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T132",
+    "SK-T147",
+    "SK-T161"
+  ],
+  "why": "Archive manifest demands regular executable but venv interpreter aliases are excluded; generated console scripts reference temporary build paths. ScrapeGraphAI has no console script. No invented application command or ambient PATH can solve this.",
+  "entrypoint": {
+    "path": "environment/bin/python3.14",
+    "kind": "regular executable",
+    "source": "Copy exact executable bytes only from current held official PM Python3.14 receipt, preserving reviewed executable mode and recording actual SHA/size/source receipt. No system Python, arbitrary binary or downloaded substitute. Base PM stdlib/runtime/dependency closure remains separately retained current prerequisite.",
+    "manifest": "Entry point is environment interpreter, not invented app CLI or success proof. Archive member SHA/mode/size must equal observed PM executable. Root materializer verifies extracted bytes and held final inode/mode/owner/tree; fixed probe recipe executes exact final interpreter with -I and reviewed probe source. pyvenv.cfg base runtime references must match held PM runtime selection, never ambient/system path. No symlink flattening or external alias treated as regular archive file."
+  },
+  "console_scripts": {
+    "source_review": {
+      "graphify": [
+        "graphify",
+        "graphify-mcp"
+      ],
+      "browser-use": [
+        "browser-use",
+        "browseruse",
+        "bu",
+        "browser",
+        "browser-use-tui"
+      ],
+      "scrapegraph-ai": []
+    },
+    "rule": "Exact wheel entry_points.txt and pinned source metadata jointly define script name/module/function; no names or callable inferred. Only these source-reviewed names may use the finite relocation path. Absent scripts are not an error for interpreter-based qualification. Additional scripts require source review before execution.",
+    "materializer": "RootApplicationRuntimeEnvironmentMaterializer.normalize_selected_python_entrypoints(runtime_preparation_selection_handle,archive_receipt_handle)->RootApplicationRuntimeRelocationReceipt. It obtains final root-owned immutable generation directory from retained setup/runtime root selection, never caller path. Before final tree publication, verify actual generated console script format/callable against exact wheel/source entrypoint, original shebang interpreter is exact selected temporary build interpreter, and rewrite ONLY that shebang to exact held final environment/bin/python3.14 path. Preserve remaining bytes and mode; reject unexpected shell wrappers/format/callable, path chars incompatible shebang or >platform shebang limit. No /usr/bin/env, shell or PATH dependency. Do not run script during rewrite.",
+    "receipt_fields": [
+      "schema",
+      "relocation_receipt_handle",
+      "runtime_preparation_selection_handle",
+      "archive_receipt_handle",
+      "profile_id",
+      "prepared_generation_id",
+      "environment_root_id",
+      "pm_runtime_receipt_handle",
+      "interpreter_member_path",
+      "interpreter_sha256",
+      "member_rows",
+      "final_environment_manifest_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "member_row_fields": [
+      "path",
+      "source_entrypoint_sha256",
+      "original_sha256",
+      "normalized_sha256",
+      "size_bytes",
+      "mode"
+    ],
+    "digest": "Final installed manifest/digest computed AFTER actual copy/extraction/normalization, never required before build. Receipt joins original archive and complete original member manifest plus exact final installed tree; runtime/probe receipts consume final tree, not archive hash alone. Root-owned final generation path is fixed from current retained root selection before publication; digest not used to fabricate preknown path/tree. Failed normalization preserves pending/unusable environment and owned cleanup."
+  },
+  "tasks": [
+    {
+      "id": "SK-T168.1",
+      "owner": "application builder/materializer/selection/execution",
+      "work": "Use held PM executable as regular environment entrypoint and exact source-console-script shebang normalization to held final generation; record original/final members and run fixed ABI/import probe with final interpreter. No CLI assumed for ScrapeGraphAI."
+    }
+  ],
+  "acceptance": "Source-selected recipe correction only; no installed environment, full closure/native ARM64 or app qualification acceptance. All AC open; baseline unchanged."
+}

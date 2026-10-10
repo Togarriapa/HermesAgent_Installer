@@ -2185,5 +2185,137 @@
       }
     ],
     "acceptance": "Source schema/producer refinement only; runtime native health and all AC remain open. Frozen baseline untouched."
+  },
+  "native_precompile_reservation_v169": {
+    "schema": 1,
+    "requirements": [
+      "HI-T84",
+      "HI-T113",
+      "HI-T137",
+      "HI-T165"
+    ],
+    "why": "Actual authorize_native_output reads intentionally empty prepared native_packages; compiler creates its claim after compiling documents although generated role rows are inputs. Output authorization must use genuine sealed preactive source assembly, not its future active policy.",
+    "authorization": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "method": "RootSelectedInstallationBinding.authorize_prepared_native_output(assembly_selection_handle,artifact_role,output_kind,member_tree_sha256,output_sha256,output_size_bytes)->RootAuthorizedNativeOutputSelection",
+      "source": "Resolve genuine RootNativeBootstrapAssemblySelection and its current native policy preparation/explicit root TTY choice/principal/namespace/session/transaction/prepared generation. Reverify held compiler native_materialization module and import closure/current release, actual action/registration/workflow/schema/effect/source observer/process role definitions and source receipts, PM/materialization/input roots, root-held owned output FD/store and exact finite source-selected package/profile/package generation. No active native_packages lookup, arbitrary caller definitions/package/profile or prepared-empty capability inference.",
+      "roles": [
+        "native-compiled-closure",
+        "native-entrypoint-manifest",
+        "native-action-resolver",
+        "native-candidate-index",
+        "native-overlay-archive"
+      ],
+      "semantics": "Only these selected five generated roles/output kinds and current actual observed CAS members may be authorized. Existing materialization producer validations/size/mode/path/member/digest/source/role/action/registration relationships stay unchanged. Output bytes never become authority merely because they hash. Missing source choice/schema/effect/observer/compiler/identity proof stays pending. Current selected role source truth comes from sealed setup selection, not future active rows."
+    },
+    "precompile": {
+      "owner_module": "hermes_installer.authority.native_output_receipts",
+      "method": "RootMaterializationReceiptRegistry.reserve_for_precompile(assembly_selection_handle,receipt_ids,publication_handle)->RootNativePrecompileOutputReservation",
+      "fields": [
+        "schema",
+        "reservation_handle",
+        "publication_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_digest",
+        "prepared_generation_id",
+        "assembly_selection_handle",
+        "assembly_selection_sha256",
+        "receipt_ids",
+        "output_closure_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "semantics": "Exactly five distinct current genuine output receipt IDs from same assembly/source/transaction/store; reopen and verify actual CAS/member relations through authorize_prepared_native_output. Atomic reserve state before strict document compilation; no compiled policy digest yet. Do not consume each activation receipt again or treat an issued root lease as durable after expiry. Owned durable reservation descriptor is historical source binding for later fresh revalidation, not restored FD/seal."
+    },
+    "role_projection": {
+      "method": "RootRunnableRoleProjectionRegistry.resolve_selected_runnable_roles(pm_runtime_receipt_handle,precompile_reservation_handle)->RootSelectedRunnableRoleClosure",
+      "correction": "Supersedes v165 native_output_claim_handle input with genuine RootNativePrecompileOutputReservation handle. PM current source/runtime proof and five typed reserved native role records become compiler inputs before documents. Exact v165 role row field/digest schema unchanged; internally retain reservation/source identity. No active package needed at this phase."
+    },
+    "claim": {
+      "method": "RootMaterializationReceiptRegistry.bind_compiled_policy_claim(precompile_reservation_handle,compiled_active_policy_handle)->RootNativeOutputClaim",
+      "semantics": "After strict compiler verifies all same source/role/runtime rows and emits immutable compiled policy descriptor, registry re-resolves genuine compiled descriptor, current reservation/CAS/source/identity and binds canonical compiled policy/closure digest plus output_closure_sha256/publication/transaction/prepared generation. Compiler handle is retained registry membership, not caller hash/JSON. Exact existing RootNativeOutputClaim/reserve_for_active_compilation fields/current validators then apply; this is a finite staged transition, not a duplicate reservation/consumption.",
+      "order": [
+        "current source-authorized actual output issuance",
+        "precompile reservation",
+        "typed PM/native runnable role projection",
+        "strict active document compilation",
+        "same-reservation compiled policy claim binding",
+        "atomic active pointer/enrollment publication",
+        "idempotent same-claim output finalization",
+        "actual committed enrollment health with ordinary enablement withheld"
+      ],
+      "recovery": "Before CAS, failure keeps outputs pending/reserved and no active claim. After CAS, truthful active-committed reservation remains retained for idempotent finalization. Restart only fresh root reopens durable actual descriptors/CAS/current source/actor; expired process snapshots not recreated. No future active row authorizes an earlier output or replacement claim from caller metadata."
+    },
+    "tasks": [
+      {
+        "id": "HI-T169.1",
+        "owner": "factory/native output registry/active compiler/publisher",
+        "work": "Implement current sealed preactive source output authorization, precompile reservation and same-reservation compiled claim transition; verify five outputs/projected rows and deny wrong source/transaction/member/currentness without active-before-assembly cycle."
+      }
+    ],
+    "acceptance": "No operational/native/health acceptance implied. All AC open; baseline unchanged."
+  },
+  "native_output_role_correction_v170": {
+    "schema": 1,
+    "requirements": [
+      "HI-T72",
+      "HI-T165",
+      "HI-T169"
+    ],
+    "why": "Direct source inspection confirms v72 receipt template and native_output_receipts use native-boundary-overlay. v165/v169 accidentally named native-overlay-archive; that is not an alias or new output role.",
+    "role_output_kinds": {
+      "native-compiled-closure": "compiled-closure",
+      "native-entrypoint-manifest": "entrypoint-json",
+      "native-action-resolver": "resolver-json",
+      "native-boundary-overlay": "boundary-overlay",
+      "native-candidate-index": "candidate-index-json"
+    },
+    "correction": "Replace native-overlay-archive everywhere in v165/v169 role mapping/finite authorization with native-boundary-overlay and exact output_kind boundary-overlay. RootSelectedRunnableRoleClosure.role_rows.role, producer artifact_role and v72 receipt_role match these exact existing literals. No aliases, new CAS enum, unrelated static artifact conversion or duplicate boundary output. Receipt/member/source/root ownership/currentness checks unchanged.",
+    "source": "Actual authority/native_output_receipts.py _ROLE_KINDS and v72 bootstrap-receipt-bindings-template-v1.json receipt_binding_rules independently agree on these five role/kind pairs.",
+    "tasks": [
+      {
+        "id": "HI-T170.1",
+        "owner": "factory/native outputs/compiler",
+        "work": "Use exact existing five roles/kinds throughout precompile reservation/projection/compile/publish; unknown/mistaken role deny."
+      }
+    ],
+    "acceptance": "All AC open; baseline unchanged."
+  },
+  "mcp_discovery_capture_v171": {
+    "schema": 1,
+    "requirements": [
+      "HI-T54",
+      "HI-T91",
+      "HI-T158"
+    ],
+    "why": "Actual NativeMCPDispatcher tools/list discovery requires retained raw response source receipt before MCPDiscoveryObservationRegistry derives schemas; selected tools/call result schema cannot validate a discovery envelope.",
+    "profile": {
+      "capture_schema_id": "native-root-mcp-discovery-response-v1",
+      "source_action_id": "root-mcp-tools-list-discovery-v1",
+      "source_kind": "tool-result",
+      "semantic_kind": "mcp-discovery-metadata",
+      "max_payload_bytes": 1048576,
+      "policy": "Source kind remains existing tool-result for retained SourceReceipt protocol compatibility, but event/profile is explicitly discovery metadata, never proof that a selected tool ran. All sensitivity/parent/recipient ceilings inherit actual current request/source context, no metadata-to-authority promotion."
+    },
+    "request": "Root retained actual canonical method tools/list, JSON-RPC ID and selected MCP endpoint/enrollment/schema-discovery request receipt/context/grant identify discovery. Purpose mcp-selected-schema-discovery is corroborating signed context only; worker label/flag cannot classify. Root NativeMCPDispatcher issued request must be retained before dispatch. Exact current peer/package/loaded role/source observer/action joins remain required, but result validator is this fixed discovery profile rather than a selected tool result FK. Unknown method cannot use this exception.",
+    "validation": {
+      "response": "Exact raw bytes <=1MiB, strict UTF8 JSON duplicate keys/nonfinite rejected. JSON-RPC 2.0, id equals actual retained request ID, exactly one success result and no error. Result tools array <=256, each actual tool name/description/inputSchema/outputSchema validated using existing bounded MCP discovery/schema derivation validators; bounded optional nextCursor/_meta/annotations stay untrusted metadata. Unknown envelope fields or unsupported schema fail current explicit validator. No selected tool-call result schema applied.",
+      "schema_source": "Profile policy is this source-owned held amendment; actual bytes validator uses existing MCPDiscoveryObservationRegistry/RootSchemaDerivationReceiptRegistry finite validators, not generic JSON object acceptance. Canonical derived child schema bytes/digest remain existing v92 rules. Raw transport bytes unchanged; canonical requirements only where existing derivation protocol specifies."
+    },
+    "callpoint": {
+      "method": "NativeRuntimeObserver.observe_mcp_discovery_result(actual_discovery_request_handle,response_bytes,context,grant,peer)->retained discovery source handle",
+      "order": "AuthorityService._perform_effect validates actual handler/target/grant and raw response, independently resolves genuine retained tools/list request then calls dedicated discovery observer BEFORE generic selected tools/call result observer. Dedicated observer validates request/response/current enrollment/source role/schema/profile, records root event and actual SourceReceipt with full original parents. _perform_effect returns this actual registered source_receipt_handle. MCPDiscoveryObservationRegistry.capture_tools_list consumes SAME retained witness and root bytes/context/grant, then derives schemas. No synthetic handle or selected tool invocation needed to pretend a call occurred.",
+      "ownership": "native observer/MCP dispatcher/source observer/broker owns actual retained request+witness joins; native policy producer adds this one finite source action/profile to the genuine source role selection. Source role is current loaded actual dispatch producer from existing selected package/proof, never inferred adapter/family label.",
+      "tool_call": "tools/call continues exact selected NativeInvocationRegistry action/result_schema FK validator and v158 native-registered-tool-result profile; no discovery exception for caller-labelled tools/call. Discovery event excluded from health selected-tool semantic success and turn tool-execution count unless transcript explicitly includes separate discovery metadata event."
+    },
+    "tasks": [
+      {
+        "id": "HI-T171.1",
+        "owner": "native observer/MCP dispatcher/source observer/schema broker/native policy",
+        "work": "Implement dedicated genuine tools/list request/result witness capture before schema derivation, exact fixed profile, parent/source/current role joins and wrong method/ID/endpoint/schema negatives; preserve selected-call result gating."
+      }
+    ],
+    "acceptance": "No live MCP or runtime acceptance implied; all AC open; baseline unchanged."
   }
 }
