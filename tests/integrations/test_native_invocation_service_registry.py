@@ -246,6 +246,20 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 peer_pid=producer_pid,
             )
             grant = EffectAuthorization.from_wire(grant_wire)
+            # Staged web effects may revalidate an invocation repeatedly,
+            # but the opaque root selector cannot invent or resurrect a row.
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, target, request_digest, "h" * 43,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, "unselected-target", request_digest, "h" * 43,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, target, "0" * 64, "h" * 43,
+                )
             with self.assertRaises(AuthorityDenied):
                 registry.resolve_invocation_for_effect(
                     context, grant, "plugin.unselected.execute", request_digest,
