@@ -17,7 +17,7 @@ import stat
 import sys
 import time
 from urllib.parse import urlsplit
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -1158,6 +1158,8 @@ class ProtectedEnrollment:
     resource_validator_records: tuple[Mapping[str, Any], ...] = ()
     root_journal_root_records: tuple[Mapping[str, Any], ...] = ()
     native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
+    publication_receipt_handle: str | None = None
+    publication_authority_core_sha256: str | None = None
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     remote_observation_records: tuple[Mapping[str, Any], ...] = ()
     native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
@@ -2273,11 +2275,14 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                 "process_enrollment_id", "process_generation", "operation_id",
                 "native_package_id", "native_package_generation", "child_operation",
                 "child_target_id", "child_capability", "task_body_recipe_id",
-                "task_request_schema_id",
+                "task_request_schema_id", "source_profile_id", "home_binding_id",
             }
             selected = _exact(execution, execution_fields, "resource profile execution binding")
             for field in execution_fields:
                 _read_id(selected[field], f"resource execution {field}")
+            if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", selected["source_profile_id"])
+                    or not re.fullmatch(r"[0-9a-f]{64}", selected["home_binding_id"])):
+                raise AuthorityDenied("enrollment.generation", "resource execution source-home identity is invalid")
     body_rows = item["resource_body_recipes"]
     if (not isinstance(body_rows, list) or len(body_rows) > 4096
             or any(not isinstance(row, dict) for row in body_rows)):
@@ -2643,6 +2648,45 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         value, vault=vault, artifact_catalog_path=ARTIFACT_CATALOG_PATH,
         artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
     )
+
+
+def load_published_protected_enrollment(core: Any, *,
+                                        vault: RootCredentialVault | None = None
+                                        ) -> ProtectedEnrollment:
+    """Load enrollment only from the exact current publication-owned core proof.
+
+    The legacy loader above remains fixed to ``/etc/hermes-installer``. This
+    separate path accepts no caller path, mapping, byte string, or duck-typed
+    verifier and reads through the publisher's retained member descriptor.
+    """
+    from .setup_policy_publication import RootPublishedAuthorityCore
+    if type(core) is not RootPublishedAuthorityCore:
+        raise AuthorityDenied("enrollment.source", "current published authority core proof is required")
+    try:
+        core.verify_current()
+        raw = core._read_verified_bytes()
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                           parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+        if (not isinstance(value, dict) or value.get("schema") != core.authority_schema
+                or hashlib.sha256(raw).hexdigest() != core.sha256
+                or len(raw) != core.size_bytes):
+            raise ValueError("published core metadata differs")
+        enrollment = _parse_protected_enrollment_document(
+            value, vault=vault or RootCredentialVault(expected_uid=0),
+            artifact_catalog_path=ARTIFACT_CATALOG_PATH,
+            artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
+        )
+        core.verify_current()
+        return dataclass_replace(
+            enrollment,
+            publication_receipt_handle=core.publication_receipt_handle,
+            publication_authority_core_sha256=core.sha256,
+        )
+    except AuthorityDenied:
+        raise
+    except Exception:
+        raise AuthorityDenied(
+            "enrollment.source", "published authority core is stale or malformed") from None
 
 
 def _parse_protected_enrollment_document(

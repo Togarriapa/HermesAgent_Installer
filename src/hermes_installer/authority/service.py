@@ -522,6 +522,7 @@ class AuthorityService:
         self.resource_task_runner = None
         self.resource_job_authority = None
         self.resource_task_authority = None
+        self.native_profile_task_home_registry = None
         self.resource_event_context_issuer = None
         self.root_selected_startup_authority = None
         self.root_selected_memory_authority = None
@@ -2608,15 +2609,24 @@ class AuthorityService:
             raise AuthorityDenied("resource.task_authority", "root resource task authority is invalid")
         self.resource_task_authority = authority
 
+    def attach_native_profile_task_home_registry(self, registry: Any) -> None:
+        from .native_profile_task_homes import RootNativeProfileTaskHomeRegistry
+        if (self.native_profile_task_home_registry is not None
+                or type(registry) is not RootNativeProfileTaskHomeRegistry):
+            raise AuthorityDenied("resource.home_registry", "one current root task-home registry is required")
+        self.native_profile_task_home_registry = registry
+
     def issue_root_resource_task_start(self, child_admission: Any, task_source: Any,
                                        task_admission: Any, selected_execution: Any, *,
-                                       task_handle: Any, controller: Any) -> Any:
+                                       task_handle: Any, controller: Any,
+                                       selected_home_binding: Any) -> Any:
         authority = self.resource_task_authority
         if authority is None:
             raise AuthorityDenied("resource.task_start", "root resource task authority is unavailable")
         return authority.issue_root_resource_task_start(
             child_admission, task_source, task_admission, selected_execution,
             task_handle=task_handle, controller=controller,
+            selected_home_binding=selected_home_binding,
         )
 
     def consume_root_resource_task_start(self, grant: Any, child_admission: Any,
@@ -2707,6 +2717,7 @@ class AuthorityService:
     def perform_admitted_resource_process_start(
         self, admission: Any, task: Any, source: Any, controller: Any, selection: Any,
         *, exact_stdin: bytes, timeout: float, cancelled: Callable[[], bool],
+        selected_home_binding: Any,
     ) -> Any:
         """Mint and consume one reduced process.start grant for a root task.
 
@@ -2726,7 +2737,9 @@ class AuthorityService:
 
         jobs = self.resource_job_authority
         manager = self.process_effect_handler
+        home_registry = self.native_profile_task_home_registry
         if (jobs is None or self.resource_task_runner is None
+                or home_registry is None
                 or not isinstance(admission, RootResourceJobAdmissionHandle)
                 or not isinstance(task, RootAdmittedTask)
                 or not isinstance(source, RootAdmittedTaskSource)
@@ -2852,7 +2865,16 @@ class AuthorityService:
             "task_payload_sha256": task.task_payload_sha256,
             "stdin_sha256": task.stdin_sha256,
             "stdin_size_bytes": task.stdin_size_bytes,
+            "source_profile_id": selection.source_profile_id,
+            "home_binding_id": selection.home_binding_id,
         })
+        if (not selected_home_binding.verify_current(selection)
+                or selected_home_binding.source_profile_id != selection.source_profile_id
+                or selected_home_binding.home_binding_id != selection.home_binding_id):
+            raise AuthorityDenied("resource.home_binding", "selected task home binding is stale or mismatched")
+        selection_payload = canonical_bytes({**json.loads(selection_payload.decode("ascii")),
+            "home_binding_handle": selected_home_binding.binding_handle,
+            "home_binding_sha256": selected_home_binding.binding_sha256})
         request_digest = canonical_digest(selection_payload)
         verify_admission = getattr(jobs, "is_admitted_task_current", None)
         if (selection.operation_id != admission.operation_id
@@ -2930,6 +2952,8 @@ class AuthorityService:
             exact_stdin=exact_stdin,
             expected_stdin_sha256=task.stdin_sha256,
             peer_pid=controller.pid, peer_pidfd=controller.pidfd,
+            selected_home_binding=selected_home_binding,
+            selected_task_execution=selection,
             timeout=min(float(timeout), max(0.001, expiry - now)), cancelled=cancelled,
         )
         if not isinstance(result, ManagedTaskHandle) or cancelled():
@@ -2939,6 +2963,7 @@ class AuthorityService:
     def perform_root_admitted_resource_process_start(
         self, admission: Any, task: Any, source: Any, controller: Any, selection: Any,
         *, exact_stdin: bytes, timeout: float, cancelled: Callable[[], bool],
+        selected_home_binding: Any,
     ) -> Any:
         """Start a root-controlled admitted task with a distinct sealed proof.
 
@@ -2956,9 +2981,10 @@ class AuthorityService:
         jobs, authority, manager = (self.resource_job_authority,
                                     self.resource_task_authority,
                                     self.process_effect_handler)
+        home_registry = self.native_profile_task_home_registry
         if (jobs is None or type(authority) is not RootResourceTaskAuthority
                 or authority.service is not self or authority.jobs is not jobs
-                or manager is None
+                or manager is None or home_registry is None
                 or not isinstance(admission, RootResourceJobAdmissionHandle)
                 or not isinstance(task, RootAdmittedTask)
                 or not isinstance(source, RootAdmittedTaskSource)
@@ -2981,9 +3007,15 @@ class AuthorityService:
         profile = getattr(manager, "profiles", {}).get(selection.profile_id)
         if profile is None:
             raise AuthorityDenied("resource.task_start", "selected task process profile is unavailable")
-        payload = authority.selection_payload(admission, task, selection, profile)
+        if (not selected_home_binding.verify_current(selection)
+                or selected_home_binding.source_profile_id != selection.source_profile_id
+                or selected_home_binding.home_binding_id != selection.home_binding_id):
+            raise AuthorityDenied("resource.home_binding", "selected task home binding is stale or mismatched")
+        payload = authority.selection_payload(admission, task, selection, profile,
+                                              selected_home_binding)
         grant = self.issue_root_resource_task_start(
             child, source, task, selection, task_handle=admission, controller=controller,
+            selected_home_binding=selected_home_binding,
         )
         proof = self.consume_root_resource_task_start(
             grant, child, source, task, payload, task_handle=admission,
@@ -3003,6 +3035,8 @@ class AuthorityService:
             expected_stdin_sha256=task.stdin_sha256,
             timeout=min(float(timeout), max(0.001, proof.authorization.expires_monotonic - self.monotonic())),
             cancelled=cancelled, initial_input_coordinator=coordinator,
+            selected_home_binding=selected_home_binding,
+            selected_task_execution=selection,
         )
         if not isinstance(result, ManagedTaskHandle) or cancelled():
             raise AuthorityDenied("resource.task_start", "root selected task did not start cleanly")

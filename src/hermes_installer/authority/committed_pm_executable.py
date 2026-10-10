@@ -46,6 +46,8 @@ class RootVerifiedCommittedPMExecutableIdentity:
     network_id: str
     profile_id: str
     service_generation: str
+    principal_id: str
+    namespace_id: str
     runtime_record_id: str
     runtime_record_sha256: str
     source_choice_selection_handle: str
@@ -65,8 +67,10 @@ class RootVerifiedCommittedPMExecutableIdentity:
     executable_uid: int
     executable_gid: int
     executable_mode: int
+    runtime_identity_sha256: str
     expires_monotonic: float
     member_fds: tuple[int, ...] = field(repr=False)
+    runtime_member_fds: tuple[tuple[str, int], ...] = field(repr=False)
     _custody: "_IdentityCustody" = field(repr=False, compare=False)
     _issuer: object = field(repr=False, compare=False)
 
@@ -188,6 +192,7 @@ class RootActiveCommittedPMExecutableResolver:
                     active_generation_id=active["generation_id"],
                     network_id=network["id"], profile_id=service.profile_id,
                     service_generation=service.generation,
+                    principal_id=active["principal_id"], namespace_id=active["namespace_id"],
                     runtime_record_id=runtime["id"], runtime_record_sha256=row_digest,
                     source_choice_selection_handle=choice["selection_handle"],
                     source_choice_signed_record_sha256=choice["signed_record_sha256"],
@@ -205,12 +210,14 @@ class RootActiveCommittedPMExecutableResolver:
                     executable_uid=observed["executable_uid"],
                     executable_gid=observed["executable_gid"],
                     executable_mode=observed["executable_mode"],
+                    runtime_identity_sha256=observed["runtime_identity_sha256"],
                     # Adoption was required to occur before the original
                     # setup deadline. Once adopted and currently published,
                     # the active proof gets its own short lease.
                     expires_monotonic=min(_fresh_active_lease(time.monotonic()),
                                           choice["active_lease_expires_monotonic"]),
                     member_fds=tuple(member_fds),
+                    runtime_member_fds=tuple(observed["runtime_member_fds"]),
                     _custody=_IdentityCustody(identity_handle, tuple(member_fds), self._issued,
                                                self._identity_lock),
                     _issuer=self._issuer,
@@ -566,7 +573,11 @@ class RootActiveCommittedPMExecutableResolver:
                      "executable_inode": identity["inode"],
                      "executable_uid": identity["uid"],
                      "executable_gid": identity["gid"],
-                     "executable_mode": identity["mode"]}, fds)
+                     "executable_mode": identity["mode"],
+                     "runtime_identity_sha256": _runtime_identity_sha256(handle, identity, receipt),
+                     "runtime_member_fds": tuple(
+                         (member.relative_path, member.fd) for member in tree.members
+                         if member.fd is not None and member.kind == "file")}, fds)
         except BaseException:
             _close_fds(fds)
             raise
@@ -768,6 +779,31 @@ def _canonical(value: Any) -> bytes:
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
+def _runtime_identity_sha256(handle: str, observed: Mapping[str, Any],
+                             receipt: Mapping[str, Any]) -> str:
+    """Recompute the exact published setup projection from fresh root evidence."""
+    expected = {
+        "runtime_executable_sha256": observed["sha256"],
+        "runtime_device": observed["device"], "runtime_inode": observed["inode"],
+        "runtime_uid": observed["uid"], "runtime_gid": observed["gid"],
+        "runtime_mode": observed["mode"], "version_info": list(observed["version_info"]),
+        "implementation": observed["implementation"], "cache_tag": observed["cache_tag"],
+        "soabi": observed["soabi"], "machine": observed["machine"],
+    }
+    if any(type(receipt.get(key)) is not type(value)
+           or receipt.get(key) != value for key, value in expected.items()):
+        raise ValueError("current PM receipt metadata differs from fresh executable observation")
+    projection = {
+        "runtime_receipt_handle": handle, "runtime_sha256": observed["sha256"],
+        "device": observed["device"], "inode": observed["inode"],
+        "uid": observed["uid"], "gid": observed["gid"],
+        "version_info": list(observed["version_info"]),
+        "implementation": observed["implementation"], "cache_tag": observed["cache_tag"],
+        "soabi": observed["soabi"], "machine": observed["machine"],
+    }
+    return hashlib.sha256(_canonical(projection)).hexdigest()
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
@@ -792,10 +828,11 @@ def _identity_values(value: RootVerifiedCommittedPMExecutableIdentity) -> tuple[
     return tuple(getattr(value, name) for name in (
         "service_generation_digest", "publication_receipt_handle", "publication_sha256",
         "active_generation_id", "network_id", "profile_id", "service_generation",
+        "principal_id", "namespace_id",
         "runtime_record_id", "runtime_record_sha256", "source_choice_selection_handle",
         "source_choice_signed_record_sha256", "source_original_setup_deadline_unix",
         "pm_runtime_receipt_handle", "pm_receipt_sha256", "pm_generation", "source_commit",
         "runtime_relative", "runtime_venv_relative", "runtime_closure_sha256",
         "executable_path", "executable_sha256", "executable_device", "executable_inode",
-        "executable_uid", "executable_gid", "executable_mode",
+        "executable_uid", "executable_gid", "executable_mode", "runtime_identity_sha256",
     ))

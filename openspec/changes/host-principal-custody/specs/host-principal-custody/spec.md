@@ -1201,3 +1201,9 @@ The installer SHALL carry only its previously authorized sealedFD3 through exist
 #### Scenario: Sealed handoff memfd is already descriptor 3
 - **WHEN** the fixed same-process re-exec installs its sealed transition memfd and that source descriptor is already 3 with close-on-exec set
 - **THEN** it explicitly clears and verifies close-on-exec on descriptor 3 before exec, and the child validates the same sealed bytes and journal binding
+### Requirement: Fresh current published PM runtime for delegate homes
+The installer SHALL use planning/current-published-pm-home-runtime-v221.json to verify current published PM/home identity through genuine fresh held bytes without extending setup receipts.
+
+#### Scenario: Setup receipt expires before delegate task
+- **WHEN** the installed current publication remains valid after setup expiry or daemon restart
+- **THEN** the existing committed PM resolver reopens current receipt, executable and full closure and issues a fresh typed proof matching the exact home projection; an old setup seal is not restored

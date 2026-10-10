@@ -374,3 +374,4 @@ OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/so
 SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.
 
 FD3 handoff verification: the fixed re-exec must explicitly clear and read back close-on-exec after descriptor placement, including the source-already-3 case, before passing the sealed transition to the same process image.
+CurrentpublishedPMhome runtime221: reuseexistingfreshcommittedPMresolver, exact11keyprojection/currentcore/receipt/venvFDproof; noexpiredsetupseal/newdurablehandle. planning/current-published-pm-home-runtime-v221.json HI-T221.1/.2 VD-T221.3 OPEN.

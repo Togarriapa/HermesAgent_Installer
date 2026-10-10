@@ -18,8 +18,10 @@ import secrets
 import stat
 import sys
 import time
+import weakref
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
@@ -43,6 +45,51 @@ _CHOICE_PURPOSES = frozenset({
 })
 _MAX_FILE = 16 * 1024 * 1024
 _SEAL = object()
+_AUTHORITY_CORE_SEAL = object()
+_AUTHORITY_CORE_RELATIVE_PATH = "authority/enrollment.json"
+_NATIVE_PROFILE_HOME_CROSSWALK_PATH = "authority/native-profile-home-crosswalk-v213.json"
+_NATIVE_PROFILE_HOME_ROW_FIELDS = frozenset({
+    "home_binding_id", "source_profile_id", "source_revision", "source_manifest_sha256",
+    "role", "native_profile_key", "display_name", "home_selection_handle",
+    "materialization_receipt_handle", "mapping_sha256", "home_generation", "principal_id",
+    "namespace_id", "runtime_receipt_handle", "runtime_identity_sha256",
+    "behavioral_manifest_sha256",
+})
+_NATIVE_PROFILE_HOME_SEAL = object()
+_NATIVE_PROFILE_HOME_MEMBERSHIP: dict[int, weakref.ReferenceType["RootPublishedNativeProfileHomeCrosswalk"]] = {}
+_AUTHORITY_CORE_MEMBERSHIP: dict[int, weakref.ReferenceType["RootPublishedAuthorityCore"]] = {}
+
+
+def _register_authority_core(core: "RootPublishedAuthorityCore") -> None:
+    identity = id(core)
+
+    def discard(reference: weakref.ReferenceType["RootPublishedAuthorityCore"]) -> None:
+        if _AUTHORITY_CORE_MEMBERSHIP.get(identity) is reference:
+            _AUTHORITY_CORE_MEMBERSHIP.pop(identity, None)
+
+    _AUTHORITY_CORE_MEMBERSHIP[identity] = weakref.ref(core, discard)
+
+
+def _is_registered_authority_core(core: "RootPublishedAuthorityCore") -> bool:
+    reference = _AUTHORITY_CORE_MEMBERSHIP.get(id(core))
+    return reference is not None and reference() is core
+
+
+def _register_native_profile_home_crosswalk(
+        value: "RootPublishedNativeProfileHomeCrosswalk") -> None:
+    identity = id(value)
+
+    def discard(reference: weakref.ReferenceType["RootPublishedNativeProfileHomeCrosswalk"]) -> None:
+        if _NATIVE_PROFILE_HOME_MEMBERSHIP.get(identity) is reference:
+            _NATIVE_PROFILE_HOME_MEMBERSHIP.pop(identity, None)
+
+    _NATIVE_PROFILE_HOME_MEMBERSHIP[identity] = weakref.ref(value, discard)
+
+
+def _is_registered_native_profile_home_crosswalk(
+        value: "RootPublishedNativeProfileHomeCrosswalk") -> bool:
+    reference = _NATIVE_PROFILE_HOME_MEMBERSHIP.get(id(value))
+    return reference is not None and reference() is value
 _CHOICE_ADOPTION_FIELDS = (
     "selection_handle", "purpose", "key_id", "signed_record_sha256",
     "choice_payload_sha256", "choice_epoch", "revocation_epoch", "issued_at_unix",
@@ -189,6 +236,10 @@ class RootSetupPublicationReceipt:
     choice_adoptions: tuple[PublishedSetupChoiceAdoption, ...] = ()
     owner_overlay_adoption_records: tuple[Mapping[str, Any], ...] = ()
     owner_overlay_observer_records: tuple[Mapping[str, Any], ...] = ()
+    authority_core_sha256: str | None = None
+    authority_core_size_bytes: int | None = None
+    authority_core_schema: int | None = None
+    native_profile_home_crosswalk: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self._seal is not _SEAL:
@@ -198,6 +249,184 @@ class RootSetupPublicationReceipt:
                            tuple(dict(row) for row in self.owner_overlay_adoption_records))
         object.__setattr__(self, "owner_overlay_observer_records",
                            tuple(dict(row) for row in self.owner_overlay_observer_records))
+        if self.native_profile_home_crosswalk is not None:
+            object.__setattr__(self, "native_profile_home_crosswalk",
+                               MappingProxyType(dict(self.native_profile_home_crosswalk)))
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
+class RootPublishedAuthorityCore:
+    """A current publisher-issued proof for the immutable active authority member.
+
+    The public surface is digest and identity metadata only. The root and member
+    descriptors, issuer, and membership seal stay private and are revalidated
+    for every read.
+    """
+
+    publication_receipt_handle: str
+    transaction_handle: str
+    generation_id: str
+    service_generation_digest: str
+    claim_digest: str
+    publication_sha256: str
+    descriptor_sha256: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    authority_schema: int
+    generation_device: int
+    generation_inode: int
+    member_device: int
+    member_inode: int
+    _root_fd: int = field(repr=False, compare=False)
+    _member_fd: int = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _AUTHORITY_CORE_SEAL:
+            raise TypeError("published authority cores are issued by the current root publisher")
+        if self.relative_path != _AUTHORITY_CORE_RELATIVE_PATH or self.authority_schema != 1:
+            raise ValueError("published authority core identity is invalid")
+
+    def verify_current(self) -> "RootPublishedAuthorityCore":
+        verifier = getattr(self._issuer, "verify_current_authority_core", None)
+        if not callable(verifier):
+            raise BootstrapEnrollmentPending("authority core publisher verifier is unavailable")
+        return verifier(self)
+
+    def _read_verified_bytes(self) -> bytes:
+        self.verify_current()
+        info = os.fstat(self._member_fd)
+        if ((info.st_dev, info.st_ino) != (self.member_device, self.member_inode)
+                or not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o444 or info.st_nlink != 1
+                or info.st_size != self.size_bytes):
+            raise BootstrapEnrollmentPending("published authority core descriptor custody changed")
+        os.lseek(self._member_fd, 0, os.SEEK_SET)
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            block = os.read(self._member_fd, min(65536, self.size_bytes + 1 - total))
+            if not block:
+                break
+            total += len(block)
+            if total > self.size_bytes:
+                raise BootstrapEnrollmentPending("published authority core changed while reading")
+            chunks.append(block)
+        raw = b"".join(chunks)
+        if len(raw) != self.size_bytes or _sha(raw) != self.sha256:
+            raise BootstrapEnrollmentPending("published authority core digest changed while reading")
+        self.verify_current()
+        return raw
+
+    def close(self) -> None:
+        reference = _AUTHORITY_CORE_MEMBERSHIP.get(id(self))
+        if reference is not None and reference() is self:
+            _AUTHORITY_CORE_MEMBERSHIP.pop(id(self), None)
+        for fd in (self._member_fd, self._root_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def __repr__(self) -> str:
+        return "RootPublishedAuthorityCore(<root-private>)"
+
+    def resolve_current_native_profile_home_crosswalk(
+            self) -> "RootPublishedNativeProfileHomeCrosswalk":
+        resolver = getattr(self._issuer, "resolve_current_native_profile_home_crosswalk", None)
+        if not callable(resolver):
+            raise BootstrapEnrollmentPending("native profile-home crosswalk resolver is unavailable")
+        return resolver(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootPublishedNativeProfileHomeRow:
+    home_binding_id: str
+    source_profile_id: str
+    source_revision: str
+    source_manifest_sha256: str
+    role: str
+    native_profile_key: str
+    display_name: str
+    home_selection_handle: str
+    materialization_receipt_handle: str
+    mapping_sha256: str
+    home_generation: str
+    principal_id: str
+    namespace_id: str
+    runtime_receipt_handle: str
+    runtime_identity_sha256: str
+    behavioral_manifest_sha256: str
+
+    def to_record(self) -> dict[str, str]:
+        return {name: getattr(self, name) for name in _NATIVE_PROFILE_HOME_ROW_FIELDS}
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True, repr=False)
+class RootPublishedNativeProfileHomeCrosswalk:
+    schema: int
+    rows: tuple[RootPublishedNativeProfileHomeRow, ...]
+    publication_handle: str
+    service_generation_digest: str
+    crosswalk_member_sha256: str
+    source_output_claim_sha256: str
+    _core: RootPublishedAuthorityCore = field(repr=False, compare=False)
+    _member_fd: int = field(repr=False, compare=False)
+    _member_device: int = field(repr=False, compare=False)
+    _member_inode: int = field(repr=False, compare=False)
+    _member_size: int = field(repr=False, compare=False)
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _NATIVE_PROFILE_HOME_SEAL or self.schema != 1
+                or type(self._core) is not RootPublishedAuthorityCore):
+            raise TypeError("published native profile-home crosswalks are publisher-minted")
+        object.__setattr__(self, "rows", tuple(self.rows))
+
+    def verify_current(self) -> "RootPublishedNativeProfileHomeCrosswalk":
+        verifier = getattr(self._core._issuer, "verify_current_native_profile_home_crosswalk", None)
+        if not callable(verifier):
+            raise BootstrapEnrollmentPending("native profile-home crosswalk currentness verifier is unavailable")
+        return verifier(self)
+
+    def _read_verified_bytes(self) -> bytes:
+        self.verify_current()
+        info = os.fstat(self._member_fd)
+        if (info.st_dev != self._member_device or info.st_ino != self._member_inode
+                or not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o444 or info.st_nlink != 1
+                or info.st_size > _MAX_FILE):
+            raise BootstrapEnrollmentPending("published native profile-home crosswalk custody changed")
+        os.lseek(self._member_fd, 0, os.SEEK_SET)
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            block = os.read(self._member_fd, min(65536, _MAX_FILE + 1 - total))
+            if not block:
+                break
+            chunks.append(block)
+            total += len(block)
+            if total > _MAX_FILE:
+                raise BootstrapEnrollmentPending("published native profile-home crosswalk exceeds its bound")
+        raw = b"".join(chunks)
+        if _sha(raw) != self.crosswalk_member_sha256:
+            raise BootstrapEnrollmentPending("published native profile-home crosswalk digest changed")
+        self.verify_current()
+        return raw
+
+    def close(self) -> None:
+        reference = _NATIVE_PROFILE_HOME_MEMBERSHIP.get(id(self))
+        if reference is not None and reference() is self:
+            _NATIVE_PROFILE_HOME_MEMBERSHIP.pop(id(self), None)
+        try:
+            os.close(self._member_fd)
+        except OSError:
+            pass
+
+    def __repr__(self) -> str:
+        return "RootPublishedNativeProfileHomeCrosswalk(<root-private>)"
 
 
 class RootSetupPolicyGenerationPublisher:
@@ -341,6 +570,16 @@ class RootSetupPolicyGenerationPublisher:
             self.registry.complete_active_publication(receipt)
         return receipt
 
+    def resolve_current_authority_core(self, receipt: RootSetupPublicationReceipt
+                                       ) -> RootPublishedAuthorityCore:
+        if not self._active:
+            raise BootstrapEnrollmentPending("published authority core requires an active publisher")
+        return PolicyPublicationReceiptResolver.resolve_current_authority_core(receipt)
+
+    def verify_current_authority_core(self, core: RootPublishedAuthorityCore
+                                      ) -> RootPublishedAuthorityCore:
+        return PolicyPublicationReceiptResolver.verify_current_authority_core(core)
+
     def _publish_compiled(self, compiled: CompiledRootSetupPublication,
                           expected_selection_catalog_sha256: str | None,
                           *, state: str) -> RootSetupPublicationReceipt:
@@ -479,6 +718,8 @@ class PolicyPublicationReceiptResolver:
         if (files["plans/bootstrap-policy-v1.json"] != receipt.policy_sha256
                 or files["catalog/artifacts.json"] != receipt.artifact_catalog_sha256):
             raise BootstrapEnrollmentError("current generation file hashes differ from the receipt")
+        if files.get(_AUTHORITY_CORE_RELATIVE_PATH) != receipt.authority_core_sha256:
+            raise BootstrapEnrollmentError("current generation authority core differs from its receipt")
         current_release = _verify_live_release_and_selection(descriptor, selection, file_bytes)
         try:
             current_release.verify_current()
@@ -502,6 +743,180 @@ class PolicyPublicationReceiptResolver:
         finally:
             current_release.close()
         return receipt
+
+    @classmethod
+    def resolve_selected_current_authority_core(cls) -> RootPublishedAuthorityCore:
+        """Reopen the protected core only through the actual selected publication.
+
+        Runtime consumers use this composition after process restart; they never
+        supply a generation path, descriptor, journal row, or receipt mapping.
+        """
+        receipt = cls.resolve_current()
+        return cls.resolve_current_authority_core(receipt)
+
+    @classmethod
+    def resolve_current_authority_core(cls, receipt: RootSetupPublicationReceipt
+                                       ) -> RootPublishedAuthorityCore:
+        if type(receipt) is not RootSetupPublicationReceipt or receipt._seal is not _SEAL:
+            raise BootstrapEnrollmentPending("a publisher-issued active receipt is required")
+        current = cls.resolve_current()
+        if (current.receipt_handle != receipt.receipt_handle
+                or current.publication_sha256 != receipt.publication_sha256
+                or current.descriptor_sha256 != receipt.descriptor_sha256
+                or current.authority_core_sha256 != receipt.authority_core_sha256
+                or current.state != "active-committed"
+                or not current.authority_core_sha256):
+            raise BootstrapEnrollmentPending("authority core receipt is not the current active publication")
+        descriptor, _files, contents = _read_generation_descriptor(current, 0)
+        raw = contents.get(_AUTHORITY_CORE_RELATIVE_PATH)
+        core_row = descriptor.get("authority_core")
+        if (not isinstance(raw, bytes) or not isinstance(core_row, Mapping)
+                or core_row.get("relative_path") != _AUTHORITY_CORE_RELATIVE_PATH
+                or core_row.get("sha256") != current.authority_core_sha256
+                or core_row.get("size_bytes") != current.authority_core_size_bytes
+                or core_row.get("authority_schema") != current.authority_core_schema):
+            raise BootstrapEnrollmentPending("current active publication has no valid protected core member")
+        root_fd = os.open(current.generation_root,
+                          os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            root_info = os.fstat(root_fd)
+            if ((root_info.st_dev, root_info.st_ino)
+                    != (current.generation_device, current.generation_inode)):
+                raise BootstrapEnrollmentPending("published authority generation inode changed")
+            member_fd = _open_authority_core_member(root_fd, len(raw))
+        except Exception:
+            os.close(root_fd)
+            raise
+        member_info = os.fstat(member_fd)
+        core = RootPublishedAuthorityCore(
+            current.receipt_handle, current.transaction_handle, current.generation_id,
+            current.service_generation_digest or "", current.claim_digest or "",
+            current.publication_sha256, current.descriptor_sha256,
+            _AUTHORITY_CORE_RELATIVE_PATH, current.authority_core_sha256,
+            current.authority_core_size_bytes or 0, current.authority_core_schema or 0,
+            current.generation_device, current.generation_inode,
+            member_info.st_dev, member_info.st_ino, root_fd, member_fd, cls,
+            _AUTHORITY_CORE_SEAL)
+        _register_authority_core(core)
+        try:
+            cls.verify_current_authority_core(core)
+        except Exception:
+            core.close()
+            raise
+        return core
+
+    @classmethod
+    def verify_current_authority_core(cls, core: RootPublishedAuthorityCore
+                                     ) -> RootPublishedAuthorityCore:
+        if (type(core) is not RootPublishedAuthorityCore or core._seal is not _AUTHORITY_CORE_SEAL
+                or core._issuer is not cls or not _is_registered_authority_core(core)):
+            raise BootstrapEnrollmentPending("published authority core is foreign, closed, or unsealed")
+        current = cls.resolve_current()
+        root_info, member_info = os.fstat(core._root_fd), os.fstat(core._member_fd)
+        path_root_fd = os.open(current.generation_root,
+                               os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            path_root_info = os.fstat(path_root_fd)
+            path_member_fd = _open_authority_core_member(path_root_fd, core.size_bytes)
+            try:
+                path_member_info = os.fstat(path_member_fd)
+            finally:
+                os.close(path_member_fd)
+        finally:
+            os.close(path_root_fd)
+        if (current.state != "active-committed"
+                or current.receipt_handle != core.publication_receipt_handle
+                or current.transaction_handle != core.transaction_handle
+                or current.generation_id != core.generation_id
+                or current.service_generation_digest != core.service_generation_digest
+                or current.claim_digest != core.claim_digest
+                or current.publication_sha256 != core.publication_sha256
+                or current.descriptor_sha256 != core.descriptor_sha256
+                or current.authority_core_sha256 != core.sha256
+                or current.authority_core_size_bytes != core.size_bytes
+                or current.authority_core_schema != core.authority_schema
+                or (root_info.st_dev, root_info.st_ino) != (core.generation_device, core.generation_inode)
+                or (path_root_info.st_dev, path_root_info.st_ino)
+                    != (core.generation_device, core.generation_inode)
+                or (member_info.st_dev, member_info.st_ino) != (core.member_device, core.member_inode)
+                or (path_member_info.st_dev, path_member_info.st_ino)
+                    != (core.member_device, core.member_inode)
+                or member_info.st_size != core.size_bytes or member_info.st_nlink != 1
+                or member_info.st_uid != 0 or member_info.st_gid != 0
+                or stat.S_IMODE(member_info.st_mode) != 0o444):
+            raise BootstrapEnrollmentPending("published authority core is no longer current")
+        return core
+
+    @classmethod
+    def resolve_current_native_profile_home_crosswalk(
+            cls, core: RootPublishedAuthorityCore) -> RootPublishedNativeProfileHomeCrosswalk:
+        cls.verify_current_authority_core(core)
+        receipt = cls.resolve_current()
+        descriptor, _files, contents = _read_generation_descriptor(receipt, 0)
+        binding = descriptor.get("native_profile_home_crosswalk")
+        if (not isinstance(binding, Mapping)
+                or set(binding) != {"schema", "relative_path", "sha256", "size_bytes"}
+                or binding.get("schema") != 1
+                or binding.get("relative_path") != _NATIVE_PROFILE_HOME_CROSSWALK_PATH
+                or type(binding.get("size_bytes")) is not int
+                or not isinstance(binding.get("sha256"), str)):
+            raise BootstrapEnrollmentPending("current publication lacks its exact native profile-home member")
+        raw = contents.get(_NATIVE_PROFILE_HOME_CROSSWALK_PATH)
+        if (not isinstance(raw, bytes) or len(raw) != binding["size_bytes"]
+                or _sha(raw) != binding["sha256"]
+                or receipt.native_profile_home_crosswalk != dict(binding)
+                or not _SHA.fullmatch(binding["sha256"])):
+            raise BootstrapEnrollmentPending("current native profile-home member differs from its receipt")
+        parsed = _parse_native_profile_home_crosswalk(raw)
+        member_fd = _open_native_profile_home_member(core._root_fd, len(raw))
+        try:
+            info = os.fstat(member_fd)
+            proof = RootPublishedNativeProfileHomeCrosswalk(
+                1, parsed, receipt.publication_handle or "",
+                receipt.service_generation_digest or "", binding["sha256"],
+                receipt.claim_digest or "", core, member_fd, info.st_dev, info.st_ino,
+                len(raw),
+                _NATIVE_PROFILE_HOME_SEAL)
+            _register_native_profile_home_crosswalk(proof)
+            cls.verify_current_native_profile_home_crosswalk(proof)
+            return proof
+        except Exception:
+            os.close(member_fd)
+            raise
+
+    @classmethod
+    def verify_current_native_profile_home_crosswalk(
+            cls, proof: RootPublishedNativeProfileHomeCrosswalk
+            ) -> RootPublishedNativeProfileHomeCrosswalk:
+        if (type(proof) is not RootPublishedNativeProfileHomeCrosswalk
+                or proof._seal is not _NATIVE_PROFILE_HOME_SEAL
+                or not _is_registered_native_profile_home_crosswalk(proof)):
+            raise BootstrapEnrollmentPending("native profile-home proof is foreign, closed, or unsealed")
+        cls.verify_current_authority_core(proof._core)
+        receipt = cls.resolve_current()
+        descriptor, _files, contents = _read_generation_descriptor(receipt, 0)
+        binding = descriptor.get("native_profile_home_crosswalk")
+        raw = contents.get(_NATIVE_PROFILE_HOME_CROSSWALK_PATH)
+        info = os.fstat(proof._member_fd)
+        path_fd = _open_native_profile_home_member(proof._core._root_fd, proof._member_size)
+        try:
+            path_info = os.fstat(path_fd)
+        finally:
+            os.close(path_fd)
+        if (not isinstance(binding, Mapping)
+                or receipt.native_profile_home_crosswalk != dict(binding)
+                or binding.get("sha256") != proof.crosswalk_member_sha256
+                or receipt.claim_digest != proof.source_output_claim_sha256
+                or receipt.publication_handle != proof.publication_handle
+                or receipt.service_generation_digest != proof.service_generation_digest
+                or not isinstance(raw, bytes) or _sha(raw) != proof.crosswalk_member_sha256
+                or _parse_native_profile_home_crosswalk(raw) != proof.rows
+                or (info.st_dev, info.st_ino) != (proof._member_device, proof._member_inode)
+                or (path_info.st_dev, path_info.st_ino) != (proof._member_device, proof._member_inode)
+                or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o444
+                or info.st_nlink != 1 or info.st_size != proof._member_size):
+            raise BootstrapEnrollmentPending("published native profile-home crosswalk is no longer current")
+        return proof
 
     @classmethod
     def verify_current_active_claim(cls, *, publication_handle: str, claim_digest: str,
@@ -538,7 +953,9 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
                 "input_receipt_handles", "state", "updated_monotonic"}
     active_fields = {"publication_handle", "claim_digest", "prepared_generation_id",
                      "service_generation_digest", "runtime_receipt_handles",
-                     "materialization_receipt_handles"}
+                     "materialization_receipt_handles", "authority_core_sha256",
+                     "authority_core_size_bytes", "authority_core_schema",
+                     "native_profile_home_crosswalk"}
     has_choice_adoptions = isinstance(record, Mapping) and "choice_adoptions" in record
     expected = (required | active_fields | ({"choice_adoptions"} if has_choice_adoptions else set())
                 if isinstance(record, Mapping) and record.get("state") == "active-committed" else required)
@@ -580,6 +997,15 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
                     or any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in values)
                     or len(set(values)) != len(values)):
                 raise BootstrapEnrollmentError("active policy input receipt handles are malformed")
+        if (not isinstance(record.get("authority_core_sha256"), str)
+                or not _SHA.fullmatch(record["authority_core_sha256"])
+                or type(record.get("authority_core_size_bytes")) is not int
+                or not 0 < record["authority_core_size_bytes"] <= _MAX_FILE
+                or type(record.get("authority_core_schema")) is not int
+                or record["authority_core_schema"] != 1):
+            raise BootstrapEnrollmentError("active authority core publication metadata is malformed")
+        crosswalk_binding = _validate_native_profile_home_crosswalk_binding(
+            record.get("native_profile_home_crosswalk"))
     choice_adoptions: tuple[PublishedSetupChoiceAdoption, ...] = ()
     if has_choice_adoptions:
         raw_adoptions = record["choice_adoptions"]
@@ -610,7 +1036,11 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
         record.get("publication_handle"), record.get("claim_digest"),
         record.get("prepared_generation_id"), record.get("service_generation_digest"),
         tuple(record.get("runtime_receipt_handles", ())),
-        tuple(record.get("materialization_receipt_handles", ())), choice_adoptions)
+        tuple(record.get("materialization_receipt_handles", ())), choice_adoptions,
+        authority_core_sha256=record.get("authority_core_sha256"),
+        authority_core_size_bytes=record.get("authority_core_size_bytes"),
+        authority_core_schema=record.get("authority_core_schema"),
+        native_profile_home_crosswalk=(crosswalk_binding if record["state"] == "active-committed" else None))
 
 
 def _choice_adoption_from_record(record: Mapping[str, Any]) -> PublishedSetupChoiceAdoption:
@@ -724,6 +1154,14 @@ def _verify_active_receipt_descriptor(receipt: RootSetupPublicationReceipt,
             or descriptor.get("policy_sha256") != receipt.policy_sha256
             or descriptor.get("artifact_catalog_sha256") != receipt.artifact_catalog_sha256
             or descriptor.get("selection_sha256") != receipt.selection_sha256
+            or descriptor.get("authority_core") != {
+                "relative_path": _AUTHORITY_CORE_RELATIVE_PATH,
+                "sha256": receipt.authority_core_sha256,
+                "size_bytes": receipt.authority_core_size_bytes,
+                "authority_schema": receipt.authority_core_schema,
+            }
+            or descriptor.get("native_profile_home_crosswalk")
+               != dict(receipt.native_profile_home_crosswalk or {})
             or descriptor.get("inputs", {}).get("claim_digest") != receipt.claim_digest):
         raise BootstrapEnrollmentError("committed active publication descriptor differs from its sealed receipt")
 
@@ -758,6 +1196,38 @@ def _read_generation_descriptor(receipt: RootSetupPublicationReceipt, uid: int
             result[relative] = digest
             contents[relative] = raw
             verified_files.append(_FileSpec(relative, raw))
+        if receipt.state == "active-committed":
+            core = descriptor.get("authority_core")
+            if (not isinstance(core, Mapping)
+                    or set(core) != {"relative_path", "sha256", "size_bytes", "authority_schema"}
+                    or core.get("relative_path") != _AUTHORITY_CORE_RELATIVE_PATH
+                    or core.get("sha256") != receipt.authority_core_sha256
+                    or core.get("size_bytes") != receipt.authority_core_size_bytes
+                    or core.get("authority_schema") != receipt.authority_core_schema):
+                raise BootstrapEnrollmentError("active descriptor authority core differs from its receipt")
+            raw, core_info = _readat(root_fd, _AUTHORITY_CORE_RELATIVE_PATH, uid, 0o444)
+            if (core_info.st_nlink != 1 or len(raw) != receipt.authority_core_size_bytes
+                    or _sha(raw) != receipt.authority_core_sha256):
+                raise BootstrapEnrollmentError("active authority core bytes differ from their receipt")
+            core_doc = _json_bytes(raw, "published authority core")
+            if (not isinstance(core_doc, dict) or core_doc.get("schema") != receipt.authority_core_schema):
+                raise BootstrapEnrollmentError("published authority core schema differs from its receipt")
+            result[_AUTHORITY_CORE_RELATIVE_PATH] = receipt.authority_core_sha256
+            contents[_AUTHORITY_CORE_RELATIVE_PATH] = raw
+            verified_files.append(_FileSpec(_AUTHORITY_CORE_RELATIVE_PATH, raw))
+            crosswalk_binding = _validate_native_profile_home_crosswalk_binding(
+                receipt.native_profile_home_crosswalk)
+            raw, crosswalk_info = _readat(
+                root_fd, _NATIVE_PROFILE_HOME_CROSSWALK_PATH, uid, 0o444)
+            if (crosswalk_info.st_nlink != 1
+                    or len(raw) != crosswalk_binding["size_bytes"]
+                    or _sha(raw) != crosswalk_binding["sha256"]):
+                raise BootstrapEnrollmentError(
+                    "published native profile-home bytes differ from their signed receipt")
+            _parse_native_profile_home_crosswalk(raw)
+            result[_NATIVE_PROFILE_HOME_CROSSWALK_PATH] = crosswalk_binding["sha256"]
+            contents[_NATIVE_PROFILE_HOME_CROSSWALK_PATH] = raw
+            verified_files.append(_FileSpec(_NATIVE_PROFILE_HOME_CROSSWALK_PATH, raw))
         _verify_generation(receipt.generation_root, receipt.publication_sha256,
                            _canonical(descriptor), tuple(verified_files), uid)
         return descriptor, result, contents
@@ -1039,7 +1509,11 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
             not isinstance(getattr(compiled, "publication_handle", None), str)
             or not isinstance(getattr(compiled, "claim_digest", None), str)
             or not isinstance(getattr(compiled, "prepared_generation_id", None), str)
-            or not isinstance(getattr(compiled, "expected_service_generation_digest", None), str)):
+            or not isinstance(getattr(compiled, "expected_service_generation_digest", None), str)
+            or not isinstance(getattr(compiled, "authority_core_bytes", None), bytes)
+            or not isinstance(getattr(compiled, "authority_core_sha256", None), str)
+            or type(getattr(compiled, "authority_core_size_bytes", None)) is not int
+            or type(getattr(compiled, "authority_core_schema", None)) is not int):
         raise BootstrapEnrollmentError("active compiler claim is missing committed identity fields")
     _verify_deployment_parent(policy_root.parent, expected_uid)
     _verify_root_directory(policy_root, expected_uid, create=True, mode=0o700)
@@ -1123,7 +1597,11 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
                                    POLICY_GENERATION_ID, publication_state,
                                    adopted_at_unix=adopted_at_unix),
             tuple(descriptor.get("owner_overlay_adoption_records", ())),
-            tuple(descriptor.get("owner_overlay_observer_records", ())))
+            tuple(descriptor.get("owner_overlay_observer_records", ())),
+            getattr(compiled, "authority_core_sha256", None),
+            getattr(compiled, "authority_core_size_bytes", None),
+            getattr(compiled, "authority_core_schema", None),
+            descriptor.get("native_profile_home_crosswalk"))
         _write_publication_record(journal_root, compiled.transaction_handle, receipt,
                                   descriptor_bytes, expected_uid)
         # Recheck CAS under the stable transaction lock immediately before replace.
@@ -1332,14 +1810,76 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
         "inputs": input_doc,
         "owner_overlay_adoption_records": owner_rows,
     }
+    core_bytes: bytes | None = None
+    crosswalk_bytes: bytes | None = None
     if hasattr(compiled, "prepared_generation_id"):
+        core_bytes = getattr(compiled, "authority_core_bytes", None)
+        core_sha256 = getattr(compiled, "authority_core_sha256", None)
+        core_size = getattr(compiled, "authority_core_size_bytes", None)
+        core_schema = getattr(compiled, "authority_core_schema", None)
+        if (not isinstance(core_bytes, bytes) or not core_bytes or len(core_bytes) > _MAX_FILE
+                or not isinstance(core_sha256, str) or not _SHA.fullmatch(core_sha256)
+                or _sha(core_bytes) != core_sha256 or type(core_size) is not int
+                or core_size != len(core_bytes) or type(core_schema) is not int or core_schema != 1):
+            raise BootstrapEnrollmentError("active compiler authority core is missing or malformed")
+        core_doc = _json_bytes(core_bytes, "compiled authority core")
+        if not isinstance(core_doc, dict) or core_doc.get("schema") != core_schema:
+            raise BootstrapEnrollmentError("active compiler authority core schema is invalid")
+        _validate_authority_core_document(core_doc)
+        descriptor["authority_core"] = {
+            "relative_path": _AUTHORITY_CORE_RELATIVE_PATH,
+            "sha256": core_sha256,
+            "size_bytes": core_size,
+            "authority_schema": core_schema,
+        }
+        crosswalk_bytes = getattr(compiled, "native_profile_home_crosswalk_bytes", None)
+        crosswalk_sha256 = getattr(compiled, "native_profile_home_crosswalk_sha256", None)
+        crosswalk_size = getattr(compiled, "native_profile_home_crosswalk_size_bytes", None)
+        crosswalk_schema = getattr(compiled, "native_profile_home_crosswalk_schema", None)
+        if (not isinstance(crosswalk_bytes, bytes) or not crosswalk_bytes
+                or len(crosswalk_bytes) > _MAX_FILE
+                or not isinstance(crosswalk_sha256, str) or not _SHA.fullmatch(crosswalk_sha256)
+                or _sha(crosswalk_bytes) != crosswalk_sha256
+                or type(crosswalk_size) is not int or crosswalk_size != len(crosswalk_bytes)
+                or type(crosswalk_schema) is not int or crosswalk_schema != 1):
+            raise BootstrapEnrollmentError("active compiler native profile-home crosswalk is missing or malformed")
+        _parse_native_profile_home_crosswalk(crosswalk_bytes)
+        descriptor["native_profile_home_crosswalk"] = {
+            "schema": crosswalk_schema,
+            "relative_path": _NATIVE_PROFILE_HOME_CROSSWALK_PATH,
+            "sha256": crosswalk_sha256,
+            "size_bytes": crosswalk_size,
+        }
         descriptor["owner_overlay_observer_records"] = observer_rows
-    files = (
+    files = [
         _FileSpec("plans/bootstrap-policy-v1.json", compiled.policy_bytes),
         _FileSpec("catalog/artifacts.json", compiled.artifact_catalog_bytes),
         _FileSpec("publication.json", _canonical(descriptor)),
-    )
-    return descriptor, files
+    ]
+    if core_bytes is not None:
+        files.append(_FileSpec(_AUTHORITY_CORE_RELATIVE_PATH, core_bytes))
+    if crosswalk_bytes is not None:
+        files.append(_FileSpec(_NATIVE_PROFILE_HOME_CROSSWALK_PATH, crosswalk_bytes))
+    return descriptor, tuple(files)
+
+
+def _validate_authority_core_document(document: Mapping[str, Any]) -> None:
+    """Run the published core through the same strict parser as the fixed loader."""
+    try:
+        from .enrollment import (
+            ARTIFACT_CATALOG_PATH, ARTIFACT_STAGING_DIRECTORY,
+            RootCredentialVault, _parse_protected_enrollment_document,
+        )
+        _parse_protected_enrollment_document(
+            document, vault=RootCredentialVault(expected_uid=0),
+            artifact_catalog_path=ARTIFACT_CATALOG_PATH,
+            artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
+        )
+    except BootstrapEnrollmentError:
+        raise
+    except Exception:
+        raise BootstrapEnrollmentError(
+            "compiled authority core failed strict enrollment validation") from None
 
 
 def _journal_receipt_handle(journal_root: Path, transaction: str, publication_sha: str,
@@ -1406,6 +1946,10 @@ def _write_publication_record(journal_root: Path, transaction: str,
             "service_generation_digest": receipt.service_generation_digest,
             "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
             "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+            "authority_core_sha256": receipt.authority_core_sha256,
+            "authority_core_size_bytes": receipt.authority_core_size_bytes,
+            "authority_core_schema": receipt.authority_core_schema,
+            "native_profile_home_crosswalk": dict(receipt.native_profile_home_crosswalk or {}),
             "choice_adoptions": [_choice_adoption_record(row)
                                  for row in receipt.choice_adoptions],
         })
@@ -1464,6 +2008,15 @@ def _receipt_matches_active_claim(receipt: RootSetupPublicationReceipt,
             and receipt.materialization_receipt_handles == tuple(compiled.materialization_receipt_handles)
             and receipt.policy_sha256 == compiled.compiled_policy_sha256
             and receipt.artifact_catalog_sha256 == compiled.compiled_artifact_catalog_sha256
+            and receipt.authority_core_sha256 == compiled.authority_core_sha256
+            and receipt.authority_core_size_bytes == compiled.authority_core_size_bytes
+            and receipt.authority_core_schema == compiled.authority_core_schema
+            and receipt.native_profile_home_crosswalk == {
+                "schema": compiled.native_profile_home_crosswalk_schema,
+                "relative_path": _NATIVE_PROFILE_HOME_CROSSWALK_PATH,
+                "sha256": compiled.native_profile_home_crosswalk_sha256,
+                "size_bytes": compiled.native_profile_home_crosswalk_size_bytes,
+            }
         )
     except (AttributeError, TypeError, ValueError, BootstrapEnrollmentError):
         return False
@@ -1501,11 +2054,13 @@ def _ensure_generation(parent: Path, generation: Path, publication_sha: str,
     try:
         stage_fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
-            for directory in ("plans", "catalog"):
+            directories = ("plans", "catalog", "authority") if any(
+                spec.path.startswith("authority/") for spec in files) else ("plans", "catalog")
+            for directory in directories:
                 _mkdirat(stage_fd, directory, 0o700, uid)
             for spec in files:
                 _write_relative(stage_fd, spec.path, spec.data, uid, spec.mode)
-            _fsync_tree_dirs(stage_fd, ("plans", "catalog"))
+            _fsync_tree_dirs(stage_fd, directories)
             os.fchmod(stage_fd, 0o555)
             os.fsync(stage_fd)
             stage_info = os.fstat(stage_fd)
@@ -1717,6 +2272,129 @@ def _readat(root_fd: int, relative: str, uid: int, mode: int) -> tuple[bytes, os
             os.close(fd)
     finally:
         os.close(parent_fd)
+
+
+def _open_authority_core_member(root_fd: int, expected_size: int) -> int:
+    """Open only the fixed root-owned member without following either component."""
+    directory_fd = os.open("authority", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                           | os.O_CLOEXEC, dir_fd=root_fd)
+    try:
+        directory_info = os.fstat(directory_fd)
+        if (not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid != 0
+                or directory_info.st_gid != 0 or stat.S_IMODE(directory_info.st_mode) != 0o555):
+            raise BootstrapEnrollmentPending("published authority directory custody is invalid")
+        fd = os.open("enrollment.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    info = os.fstat(fd)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+            or stat.S_IMODE(info.st_mode) != 0o444 or info.st_nlink != 1
+            or info.st_size != expected_size):
+        os.close(fd)
+        raise BootstrapEnrollmentPending("published authority core member custody is invalid")
+    return fd
+
+
+def _open_native_profile_home_member(root_fd: int, expected_size: int) -> int:
+    """Open only the immutable, fixed v214 crosswalk member under its core root."""
+    if type(expected_size) is not int or not 0 < expected_size <= _MAX_FILE:
+        raise BootstrapEnrollmentPending("published native profile-home member size is invalid")
+    directory_fd = os.open("authority", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                           | os.O_CLOEXEC, dir_fd=root_fd)
+    try:
+        directory_info = os.fstat(directory_fd)
+        if (not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid != 0
+                or directory_info.st_gid != 0 or stat.S_IMODE(directory_info.st_mode) != 0o555):
+            raise BootstrapEnrollmentPending("published authority directory custody is invalid")
+        fd = os.open("native-profile-home-crosswalk-v213.json",
+                     os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    info = os.fstat(fd)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+            or stat.S_IMODE(info.st_mode) != 0o444 or info.st_nlink != 1
+            or info.st_size != expected_size):
+        os.close(fd)
+        raise BootstrapEnrollmentPending("published native profile-home member custody is invalid")
+    return fd
+
+
+def _parse_native_profile_home_crosswalk(raw: bytes) -> tuple[RootPublishedNativeProfileHomeRow, ...]:
+    try:
+        payload = _json_bytes(raw, "native profile-home crosswalk")
+    except (BootstrapEnrollmentError, BootstrapEnrollmentPending):
+        raise
+    if (not isinstance(payload, dict) or set(payload) != {"schema", "rows"}
+            or type(payload.get("schema")) is not int or payload["schema"] != 1
+            or not isinstance(payload.get("rows"), list) or len(payload["rows"]) != 208
+            or _canonical(payload) != raw):
+        raise BootstrapEnrollmentPending("native profile-home crosswalk envelope is malformed")
+    rows: list[RootPublishedNativeProfileHomeRow] = []
+    for row in payload["rows"]:
+        if not isinstance(row, Mapping) or set(row) != _NATIVE_PROFILE_HOME_ROW_FIELDS:
+            raise BootstrapEnrollmentPending("native profile-home row schema is malformed")
+        for name in ("home_binding_id", "source_manifest_sha256", "mapping_sha256",
+                     "runtime_identity_sha256", "behavioral_manifest_sha256"):
+            if not isinstance(row[name], str) or not _SHA.fullmatch(row[name]):
+                raise BootstrapEnrollmentPending("native profile-home row digest is malformed")
+        for name in ("home_selection_handle", "materialization_receipt_handle", "runtime_receipt_handle"):
+            if not isinstance(row[name], str) or not _HANDLE.fullmatch(row[name]):
+                raise BootstrapEnrollmentPending("native profile-home row receipt handle is malformed")
+        for name in ("source_profile_id", "source_revision", "role", "native_profile_key",
+                     "display_name", "home_generation", "principal_id", "namespace_id"):
+            value = row[name]
+            if (not isinstance(value, str) or not value or len(value) > 256
+                    or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value)):
+                raise BootstrapEnrollmentPending("native profile-home row identity is malformed")
+        if (not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", row["source_profile_id"])
+                or not re.fullmatch(r"[0-9a-f]{40}", row["source_revision"])
+                or row["native_profile_key"] != "default"):
+            raise BootstrapEnrollmentPending("native profile-home row source identity is malformed")
+        if row["source_profile_id"] == "hermes":
+            if row["role"] != "jarvis-primary-home" or row["display_name"] != "Jarvis":
+                raise BootstrapEnrollmentPending("primary Hermes home row has an invalid role or display name")
+        elif row["role"] != "resource-delegate-home":
+            raise BootstrapEnrollmentPending("delegate home row has an invalid role")
+        mapping_fields = (
+            "source_profile_id", "source_revision", "source_manifest_sha256", "role",
+            "native_profile_key", "display_name", "home_selection_handle",
+            "materialization_receipt_handle", "home_generation", "principal_id",
+            "namespace_id", "runtime_receipt_handle", "runtime_identity_sha256",
+            "behavioral_manifest_sha256",
+        )
+        mapping = _sha(_canonical({name: row[name] for name in mapping_fields}))
+        expected_binding = _sha(b"jarvis-published-native-home-v214\0" + bytes.fromhex(mapping))
+        if row["mapping_sha256"] != mapping or row["home_binding_id"] != expected_binding:
+            raise BootstrapEnrollmentPending("native profile-home row binding digest is inconsistent")
+        rows.append(RootPublishedNativeProfileHomeRow(**dict(row)))
+    identities = [row.source_profile_id for row in rows]
+    handles = [row.home_binding_id for row in rows]
+    if (identities != sorted(set(identities)) or len(set(handles)) != len(handles)
+            or len({row.home_selection_handle for row in rows}) != len(rows)
+            or len({row.materialization_receipt_handle for row in rows}) != len(rows)
+            or identities.count("hermes") != 1
+            or sum(row.role == "resource-delegate-home" for row in rows) != 207
+            or len({row.home_generation for row in rows}) != 1
+            or len({row.principal_id for row in rows}) != 1
+            or len({row.namespace_id for row in rows}) != 1
+            or len({row.runtime_receipt_handle for row in rows}) != 1
+            or len({row.runtime_identity_sha256 for row in rows}) != 1):
+        raise BootstrapEnrollmentPending("native profile-home rows are incomplete, duplicated, or unjoined")
+    return tuple(rows)
+
+
+def _validate_native_profile_home_crosswalk_binding(value: Any) -> dict[str, Any]:
+    if (not isinstance(value, Mapping)
+            or set(value) != {"schema", "relative_path", "sha256", "size_bytes"}
+            or type(value.get("schema")) is not int or value["schema"] != 1
+            or value.get("relative_path") != _NATIVE_PROFILE_HOME_CROSSWALK_PATH
+            or not isinstance(value.get("sha256"), str) or not _SHA.fullmatch(value["sha256"])
+            or type(value.get("size_bytes")) is not int
+            or not 0 < value["size_bytes"] <= _MAX_FILE):
+        raise BootstrapEnrollmentError("native profile-home publication binding is malformed")
+    return {name: value[name] for name in
+            ("schema", "relative_path", "sha256", "size_bytes")}
 
 
 def _read_fixed(path: Path, uid: int, mode: int, maximum: int) -> tuple[bytes, os.stat_result]:

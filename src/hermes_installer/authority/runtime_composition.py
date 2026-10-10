@@ -527,6 +527,7 @@ class RootAuthorityRuntime:
     native_channel_context_store: Any | None = None
     resource_task_authority: Any | None = None
     resource_event_unavailable_reason: str | None = None
+    native_profile_task_home_registry: Any | None = None
     controller_release_receipt: Any | None = None
     controller_actor_observation: Any | None = None
     provider_runtime_selection: Any | None = None
@@ -669,6 +670,7 @@ class RootAuthorityRuntime:
             self.resource_dag_dispatcher,
             self.native_channel_context_store,
             self.channel_peer_delivery_registry,
+            self.native_profile_task_home_registry,
             self.native_runtime_observer,
             self.native_invocation_registry,
             self.native_bridge_broker,
@@ -1956,6 +1958,57 @@ def compose_root_authority_runtime(
         if resource_event_unavailable_reason is not None and job_authority is not None:
             resource_task_unavailable_reason = resource_event_unavailable_reason
 
+    native_profile_task_home_registry = None
+    if (profile_task_adapters and job_authority is not None
+            and resource_controller_registry is not None
+            and resource_event_unavailable_reason is None):
+        core = None
+        try:
+            from .setup_policy_publication import PolicyPublicationReceiptResolver
+            from .native_materialization import RootOwnedNativeProfileHomeRegistry
+            from .native_profile_task_homes import RootNativeProfileTaskHomeRegistry
+            from .durable_pm_runtime import RootPublishedProfileHomePMRuntimeResolver
+
+            core = PolicyPublicationReceiptResolver.resolve_selected_current_authority_core()
+            if (core.service_generation_digest != enrollment.protected_enrollment_digest
+                    or core.verify_current() is not core):
+                raise AuthorityDenied("resource.home_core", "current home publication belongs to another runtime")
+            owned_homes = RootOwnedNativeProfileHomeRegistry.from_runtime_bindings(bindings, core)
+            active_pm_resolver = getattr(process_manager, "_committed_pm_executable_resolver", None)
+            if active_pm_resolver is None:
+                raise AuthorityDenied("resource.home_runtime", "current committed PM resolver is unavailable")
+            pm_runtime = RootPublishedProfileHomePMRuntimeResolver.from_root_runtime(
+                core, active_pm_resolver, bindings.root_journal_catalog,
+            )
+            root_journal = bindings.resolve_root_journal(
+                _AUTHORITY_JOURNAL_ROOT_ID,
+                expected_active_generation_digest=core.service_generation_digest,
+            )
+            native_profile_task_home_registry = RootNativeProfileTaskHomeRegistry.from_published_authority_core(
+                core, owned_homes, pm_runtime, bindings, root_journal,
+                job_authority, resource_controller_registry, service,
+                monotonic=service.monotonic,
+            )
+            service.attach_native_profile_task_home_registry(native_profile_task_home_registry)
+        except Exception as exc:
+            if native_profile_task_home_registry is not None:
+                try:
+                    native_profile_task_home_registry.close()
+                except Exception:
+                    pass
+                native_profile_task_home_registry = None
+            else:
+                for component in (locals().get("pm_runtime"), locals().get("owned_homes"), core):
+                    close = getattr(component, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except Exception:
+                            pass
+            resource_task_unavailable_reason = (
+                f"current published task-home custody rejected composition ({type(exc).__name__})"
+            )
+
     root_tty_consent_choices = None
     private_input_consent_registry = None
     memory_capture_consent_registry = None
@@ -2045,6 +2098,7 @@ def compose_root_authority_runtime(
         channel_peer_delivery_registry=channel_peer_delivery_registry,
         native_channel_context_store=native_channel_context_store,
         resource_task_authority=resource_task_authority,
+        native_profile_task_home_registry=native_profile_task_home_registry,
         resource_event_unavailable_reason=resource_event_unavailable_reason,
         controller_release_receipt=(controller_receipts[0] if controller_receipts else None),
         controller_actor_observation=(controller_receipts[1] if controller_receipts else None),

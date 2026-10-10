@@ -471,3 +471,6 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [x] BD-T208.1 FD3 defect: explicitly clear and verify close-on-exec for the same-fd placement case; preserve seals and handoff identity checks.
 - [x] VD-T208.2 FD3 regression: real ARM64 Linux Python 3.14 fork/exec positive and CLOEXEC negative controls; repository Linux integration test added.
 - [ ] VD-T208.2 target: repeat exact handoff on enrolled Pi and retain genuine target result; development container evidence is not Pi acceptance.
+- [ ] HI-T221.1: Implement exact fresh published-home PM adapter, projection metadata and FD verification.
+- [ ] HI-T221.2: Wire current PM proof into active home/task binding after setup and restart.
+- [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actual effects separately.

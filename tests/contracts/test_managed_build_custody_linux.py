@@ -138,6 +138,48 @@ class BuildCustodyLinuxTests(unittest.TestCase):
         subprocess.run(["/usr/sbin/userdel", self.service_user], stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
 
+    def test_fixed_hermes_mount_uses_held_directory_fd_for_unprivileged_task(self) -> None:
+        """Exercise the same proc-FD BindPaths form used by selected task homes."""
+        sibling = self.stage / "sibling-home"
+        sibling.mkdir(mode=0o700)
+        self._root_file(sibling / "secret", b"sibling data\n", 0o600)
+        (self.home / "task-home-check").write_text("selected home\n", encoding="utf-8")
+        home_fd = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            bind_source = f"/proc/{os.getpid()}/fd/{home_fd}:/hermes"
+            code = (
+                "import json,os,pathlib\n"
+                "p=pathlib.Path('/hermes/task-home-check')\n"
+                "p.write_text('task wrote selected home\\n',encoding='utf-8')\n"
+                "denied=False\n"
+                "try: pathlib.Path(" + repr(str(sibling / "secret")) + ").read_text()\n"
+                "except OSError: denied=True\n"
+                "print(json.dumps({'uid':os.geteuid(),'cwd':os.getcwd(),'home':os.environ.get('HOME'),"
+                "'hermes_home':os.environ.get('HERMES_HOME'),'sibling_denied':denied}))\n"
+            )
+            result = subprocess.run([
+                str(self.systemd_run), "--system", "--wait", "--pipe", "--collect",
+                "--unit=hermes-task-home-" + self.token + ".service",
+                f"--property=User={self.service_user}", "--property=SupplementaryGroups=",
+                "--property=NoNewPrivileges=yes", "--property=ProtectSystem=strict",
+                "--property=ProtectHome=tmpfs", "--property=PrivateTmp=yes",
+                "--property=PrivateNetwork=yes", "--property=RuntimeMaxSec=5s",
+                f"--property=BindPaths={bind_source}",
+                "--property=WorkingDirectory=/hermes", "--setenv=HOME=/hermes",
+                "--setenv=HERMES_HOME=/hermes", "--", str(self.builder), "-c", code,
+            ], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=12, check=False)
+        finally:
+            os.close(home_fd)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        observed = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(observed, {
+            "uid": self.uid, "cwd": "/hermes", "home": "/hermes",
+            "hermes_home": "/hermes", "sibling_denied": True,
+        })
+        self.assertEqual((self.home / "task-home-check").read_text(encoding="utf-8"),
+                         "task wrote selected home\n")
+
     @staticmethod
     def _root_file(path: Path, value: bytes, mode: int) -> None:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)

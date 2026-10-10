@@ -233,6 +233,7 @@ class RootResourceTaskRunner:
         source: RootAdmittedTaskSource | None = None
         controller: RootTaskController | None = None
         managed_handle: ManagedTaskHandle | None = None
+        selected_home_binding = None
         try:
             source = self.jobs.resolve_admitted_task_source(admission, node_id)
             # The controller resolver consumes its one-use duplicate only after
@@ -283,6 +284,13 @@ class RootResourceTaskRunner:
 
             if cancelled():
                 raise AuthorityDenied("resource.task_cancelled", "selected resource task was cancelled")
+            home_registry = self.service.native_profile_task_home_registry
+            if home_registry is None:
+                raise AuthorityDenied("resource.home_binding", "current selected task home registry is unavailable")
+            selected_home_binding = home_registry.resolve_selected_resource_task_home(
+                selection, admission_handle=admission, node_id=node_id,
+                task_admission=task, admitted_source=source,
+            )
             start_method = ("perform_root_admitted_resource_process_start" if root_controller
                             else "perform_admitted_resource_process_start")
             start = getattr(self.service, start_method, None)
@@ -296,6 +304,7 @@ class RootResourceTaskRunner:
             managed_handle = start(
                 admission, task, source, controller, selection,
                 exact_stdin=stdin, timeout=timeout, cancelled=cancelled,
+                selected_home_binding=selected_home_binding,
             )
             if not isinstance(managed_handle, ManagedTaskHandle):
                 raise AuthorityDenied("resource.task_start", "root process custodian returned no owned task handle")
@@ -356,6 +365,11 @@ class RootResourceTaskRunner:
                     __import__("os").close(controller.pidfd)
                 except OSError:
                     pass
+            if selected_home_binding is not None:
+                registry = self.service.native_profile_task_home_registry
+                revoke = getattr(registry, "revoke", None)
+                if callable(revoke):
+                    revoke(selected_home_binding)
             self.jobs.release_task_handle(admission, node_id)
 
     def consume_resource_task_completion(
