@@ -865,3 +865,10 @@ The installer SHALL admit only the source-reviewed fixed qualification effect st
 #### Scenario: Hyperframes qualification runs
 - **WHEN** the selected fixed Hyperframes effect recipe is admitted
 - **THEN** exactly render, ffprobe and framehash stages are allowed with one-use linked grants and actual cleanup evidence
+
+### Requirement: Python runtime configuration relocation v176
+The installer SHALL bind relocated Python environments to a genuinely held PM base runtime closure.
+
+#### Scenario: Only interpreter executable bytes exist
+- **WHEN** the base standard-library/runtime closure is not currently verified
+- **THEN** the environment remains pending and cannot obtain runnable or ABI acceptance

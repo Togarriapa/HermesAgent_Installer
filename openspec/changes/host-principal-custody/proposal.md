@@ -255,3 +255,5 @@ Fixture resource materialization v173: `plans/amendments/2026-10-10-fixture-reso
 Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
 
 Application effect sources v175: `plans/amendments/2026-10-10-application-effect-sources-v175.md`; measured finite source members and exact stage counts remain distinct from ABI and provider acceptance.
+
+Python config relocation v176: `plans/amendments/2026-10-10-python-runtime-config-relocation-v176.md`; actual uv-generated config and held PM base closure constrain normalization.

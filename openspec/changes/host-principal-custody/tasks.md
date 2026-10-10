@@ -325,3 +325,5 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.
 
 - [ ] SK-T175.1 Broker/factory/execution/wiring/custody: enroll exact effect sources, derive finite stage admissions, observe actual terminal/semantic/cleanup receipts.
+
+- [ ] SK-T176.1 PM/builder/materializer/selector: held base runtime closure and exact measured config/wrapper relocation with current source and original/final digests.
