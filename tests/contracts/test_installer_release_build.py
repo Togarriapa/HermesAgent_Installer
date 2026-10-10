@@ -322,6 +322,12 @@ _import_v187_listener_activation_closure()
 from hermes_installer.registry import resources_runtime
 origin = pathlib.Path(resources_runtime.__spec__.origin).resolve(strict=True)
 assert origin.is_relative_to(installed_root)
+for name, module in tuple(sys.modules.items()):
+    if name != 'hermes_installer' and not name.startswith('hermes_installer.'):
+        continue
+    module_origin = getattr(getattr(module, '__spec__', None), 'origin', None)
+    if isinstance(module_origin, str):
+        assert pathlib.Path(module_origin).resolve(strict=True).is_relative_to(installed_root), name
 """
     subprocess.run(
         [sys.executable, "-I", "-c", verify_installed, str(installed_python)],
