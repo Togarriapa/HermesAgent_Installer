@@ -739,3 +739,10 @@ The installer SHALL admit v130 finite prepared qualification from actual source/
 
 - **WHEN** Hyperframes lacks actual selected Node/Bun environment and Node ABI/import-origin probe evidence
 - **THEN** qualification remains unavailable with the missing prerequisite and cannot pass through a Python probe or RuntimeReview
+
+### Requirement: Source-selected offline application environment builds
+The system SHALL use only the four v132 setup build targets with current genuine source, lock, package closure, runtime, controller, namespace and qualification consent selections before producing an application environment receipt. Python and Bun/Node preparation and probes SHALL remain distinct, and no active app row SHALL be fabricated to prepare its environment.
+
+#### Scenario: Missing immutable package or native toolchain
+- **WHEN** a selected lock dependency, build hook, Bun/Node artifact or native dependency has no verified held source/integrity/license/toolchain proof
+- **THEN** the build denies that phase without network fallback, runtime receipt or functional acceptance.

@@ -504,5 +504,157 @@
       "SK-T130.2: runtime preparation owner implement actual isolated source-backed environment producer and fixed installed Python/Node discriminated probe source/receipt; report unavailable toolchain or recipe exactly rather than RuntimeReview substitution.",
       "SK-T130.3: factory/source/probe/custody owner wire genuine held runtime/toolchain/root/controller/namespace receipts before request mint; test missing runtime/probe, active-row fabrication, Python-for-Node, stale consent/controller/environment/fixture and arbitrary dispatch denial. All four real workflows/ARM/AC12 open."
     ]
+  },
+  "application_offline_runtime_build_v132": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "v115 setup build service permits only Xpra; v130 environment producer needs four finite source-derived runtime build targets and actual offline package closure, without active-before-build cycle. Source/lock review is not installed environment or platform proof.",
+    "profiles": [
+      {
+        "application_id": "graphify",
+        "source_identity": "Graphify-Labs/graphify",
+        "source_revision": "5b74d7d74911cf435c8f1636b6f96ea202cc6246",
+        "runtime_kind": "python",
+        "source_runtime_constraint": ">=3.10",
+        "build_profile_id": "application-graphify-runtime-prepare-v1",
+        "operation_id": "application-graphify-runtime-prepare-v1",
+        "target_id": "application-graphify-runtime-prepare:start"
+      },
+      {
+        "application_id": "browser-use",
+        "source_identity": "browser-use/browser-use",
+        "source_revision": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+        "runtime_kind": "python",
+        "source_runtime_constraint": ">=3.11,<4",
+        "build_profile_id": "application-browser-use-runtime-prepare-v1",
+        "operation_id": "application-browser-use-runtime-prepare-v1",
+        "target_id": "application-browser-use-runtime-prepare:start"
+      },
+      {
+        "application_id": "hyperframes",
+        "source_identity": "heygen-com/hyperframes",
+        "source_revision": "46f6cb356785bed79e1ce7b79d7e7accc697786a",
+        "runtime_kind": "node",
+        "source_runtime_constraint": "Node>=22; actual Bun workspace builder separately pinned",
+        "build_profile_id": "application-hyperframes-runtime-prepare-v1",
+        "operation_id": "application-hyperframes-runtime-prepare-v1",
+        "target_id": "application-hyperframes-runtime-prepare:start"
+      },
+      {
+        "application_id": "scrapegraph-ai",
+        "source_identity": "ScrapeGraphAI/Scrapegraph-ai",
+        "source_revision": "194055e203afce41ed4e70365dbc416bad756115",
+        "runtime_kind": "python",
+        "source_runtime_constraint": ">=3.12,<4",
+        "build_profile_id": "application-scrapegraph-ai-runtime-prepare-v1",
+        "operation_id": "application-scrapegraph-ai-runtime-prepare-v1",
+        "target_id": "application-scrapegraph-ai-runtime-prepare:start"
+      }
+    ],
+    "template": {
+      "artifact_id": "installer-prepared-application-build-service-template-v1",
+      "relative_path": "plans/amendments/2026-10-10-application-offline-runtime-build-v132/prepared-application-build-service-template-v1.json",
+      "sha256": "8cc3bbce52901c5f05bab99622d77d9d4d44f4a5fe27eb636e3fe8e23beab0d9",
+      "size_bytes": 1498,
+      "release_role": "prepared-build-service-template"
+    },
+    "service_selection": "Reuse v115 RootPreparedBuildServiceSelection and same actual dedicated NSS/root/controller mechanism. RootSelectedInstallationBinding.resolve_prepared_build_service(build_profile_id) additionally accepts only the four exact v132 profile IDs, resolves this separate held installed template, and binds exact target/operation/source/lock/package/runtime selection. Prepared worker/service arrays remain empty; no fake active HostServiceProfile or worker peer identity. Issuer signs selected build subject separately actual root controller PIDFD and consumes one-use selected setup build grant. Xpra v115 template/limits unchanged.",
+    "selection_type": "hermes_installer.authority.bootstrap_runtime_factory.RootApplicationRuntimePreparationSelection",
+    "selection_API": "RootSelectedInstallationBinding.resolve_application_runtime_preparation(qualification_choice_handle,application_id)->RootApplicationRuntimePreparationSelection; registry retains selection_handle. No caller recipe/paths/hash rows.",
+    "selection_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "qualification_choice_handle",
+      "qualification_consent_receipt_handle",
+      "application_id",
+      "workflow_id",
+      "runtime_kind",
+      "source_preparation_selection_handle",
+      "prepared_source_receipt_handle",
+      "selected_lock_receipt_handle",
+      "source_generation_manifest_sha256",
+      "lock_sha256",
+      "source_runtime_constraint",
+      "build_profile_id",
+      "operation_id",
+      "target_id",
+      "prepared_build_service_selection_handle",
+      "runtime_toolchain_receipt_handles",
+      "package_closure_receipt_handle",
+      "build_recipe_sha256",
+      "output_root_receipt_handle",
+      "probe_artifact_receipt_handle",
+      "namespace_selection_receipt_handle",
+      "principal_selection_receipt_handle",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selection_rule": "Factory produces only from current actual v117 source/lock choice+receipts, selected runtime/package closure, this exact source table/template, actual root output selection and installed reviewed probe source. Root build recipe digest covers tagged literals/build mount paths, sandbox/bounds, source/lock/package/toolchain pins and output spec. Missing input has explicit preparation unavailable state; do not fabricate receipt or use active app row. Root retains current opaque selection for package preparation before final build selection can resolve; package receipt issued first, complete runtime selection after actual membership.",
+    "package_closure": {
+      "owner_module": "hermes_installer.authority.application_runtime_preparation",
+      "type": "RootApplicationOfflinePackageClosureReceipt",
+      "API": "RootApplicationOfflinePackageClosureRegistry.from_root_setup(selected_installation_binding,source_preparation_registry,artifact_observer,root_journal,authority_service).prepare_selected_packages(source_preparation_selection_handle)->RootApplicationOfflinePackageClosureReceipt; resolve_selected_packages(receipt_handle,source_preparation_selection_handle)->same current held closure. Builder owner implements alongside runtime preparation; no unowned Coral package_sets dependency.",
+      "fields": [
+        "receipt_handle",
+        "source_preparation_selection_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "prepared_generation_digest",
+        "application_id",
+        "source_receipt_handle",
+        "lock_receipt_handle",
+        "lock_sha256",
+        "platform",
+        "runtime_toolchain_receipt_handles",
+        "package_records",
+        "package_closure_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "package_record_fields": [
+        "package_name",
+        "package_version",
+        "lock_member_id",
+        "lock_integrity_algorithm",
+        "lock_integrity_digest",
+        "artifact_receipt_handle",
+        "artifact_sha256",
+        "size_bytes",
+        "artifact_kind",
+        "platform_tags",
+        "license_receipt_handle"
+      ],
+      "rule": "Exact platform-selected immutable source lock entries and complete transitive/build dependency closure. Every selected file has genuine root held artifact bytes with lock SHA256 or SHA512 integrity, independent actual SHA256/size, current source/lock/toolchain/platform/license membership. Public immutable acquisition only from reviewed lock-bound official package artifact origin policy and existing bounded TLS/integrity broker; no caller URL, credentials, range/latest resolver, unverified shared cache, extra package or native auto-download. Wheel/PEP517 build inputs or Bun package/native lifecycle script closure must be explicitly source reviewed and fully present before network-denied unit starts; unsupported/missing integrity/origin/license/script artifact leaves exact package unavailable. Cache layout is only deterministic transport for this receipt, never proof itself. No model/browser/FFmpeg fetch implied. Fixed aggregate artifact/expanded bounds no greater v132 template."
+    },
+    "recipes": {
+      "python": "Held official PM Python3.14 and PM uv executable receipts, separately isolated selected output environment; tagged fixed uv sync --locked --offline --no-dev, fixed source mount/project and root-owned UV_PROJECT_ENVIRONMENT/output/cache/work selection. Preserve full pinned workspace manifests and lock bytes unchanged. No inherited user config/environment, keyring or network. Runtime probes recheck actual executable ABI/import-origin/dependency tree and source compatibility. Build hooks only from exact reviewed project/backend/build-dependency closure in private network-denied unit. No automatic extras/all or lock rewrite.",
+      "browser_use_uv": "Source owner measured Browser Use provenance uv0.12.23 versus official PM uv0.12.3. Do not alias versions or claim match; exact selected toolchain compatibility must be separately reviewed and exercised or affected build unavailable. No latest/global replacement.",
+      "hyperframes": "Distinct held exact Bun builder and Node runtime receipts, fixed bun install --frozen-lockfile --offline against complete verified package cache/workspace; no prefer-offline fallback. No lifecycle scripts unless exact pinned source/native script+dependency closure reviewed. Probe actual Bun build provenance separately Node/V8/modules ABI/module origins. sharp/onnxruntime/Puppeteer/ffmpeg native support and Chromium/FFmpeg require separate actual selected artifacts and functional proofs; Node version alone insufficient. Unknown Bun/Node artifact hashes stay missing, never invented."
+    },
+    "outputs": "One selected non-executable environment archive plus bounded manifest/probe records avoids legacy generic BuildOutput 512-file tree scanner. Use deterministic archive over verified environment member manifest; bounded<=2GiB archived AND expanded, <=131072 members, canonical paths/modes, no special files/hardlink/escape. Actual environment interpreter alias resolves only separately held selected runtime artifact; no arbitrary external symlink. Root safe extraction reopens owned tree, observes member hashes/modes/executable+dependency origins and issues v130 preparation receipt after actual completed build terminal+cleanup. Archive digest measured, never preknown/fabricated. Preserve original source/lock/recipe digest and actual toolchain receipt joins.",
+    "limits": "v132 ceilings are reviewed resource/security policy, NOT measured sufficiency/performance or ARM64 proof: 2GiB memory/output/expanded environment,128 tasks,600s,1MiB bounded stdout/result. Exceeding cap fails closed with exact phase; no silent global ceiling loosening. Each app actual CI measurements/ABI/native fixture remain required. Xpra bounds unchanged.",
+    "primary_sources": [
+      "https://docs.astral.sh/uv/reference/cli/",
+      "https://docs.astral.sh/uv/concepts/projects/sync/",
+      "https://docs.astral.sh/uv/configuration/environment/",
+      "https://bun.com/docs/pm/cli/install"
+    ],
+    "evidence": "Build owner inspected exact four source revisions/manifest+lock requirements; source/lock receipts dynamic actual immutable file hashes. No dependency artifact bundle, Bun/Node pins, environment size/duration measurement or ARM64 environment/probe yet established.",
+    "tasks": [
+      "SK-T132.1 factory: sealed finite runtime preparation/build subject selection and exact template release pin",
+      "SK-T132.2 build owner: lock-selected genuine offline package closure and finite managed Python/Bun environment build/archive/preparation receipt; preserve missing integrity/toolchain blockers",
+      "SK-T132.3 build/execution owners: installed independent Python/Node ABI/origin probes, genuine preparation/probe qualification joins, bound/failure/source mismatch tests and actual isolated platform CI; no active row prerequisite"
+    ],
+    "status": "All original scope/AC remain open; no baseline change, privileged Mac install, huge model download, spending or unowned service replacement."
   }
 }
