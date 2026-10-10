@@ -73,8 +73,8 @@
     ]
   },
   "related_observations": {
-    "sudo_noninteractive_check": "command was issued but Connect disconnected before its exit status was visible",
-    "last_direct_sudo_status": {"exit_code": 1, "reported_at": "2026-10-10T07:17:38Z", "meaning": "password required"},
+    "sudo_noninteractive_check_during_plan": "command was issued but Connect disconnected before its exit status was visible; the separate post-enable diagnostic is recorded at pi-sudo-diagnostic-post-enable-20261010.json",
+    "last_direct_sudo_status_before_enablement": {"exit_code": 1, "reported_at": "2026-10-10T07:17:38Z", "meaning": "password required at that time"},
     "tls_diagnostic": "a previous candidate's TLS false warning was traced to a HEAD-method rejection before connection; later direct HEAD checks succeeded in PM and system Python. This does not change this report's candidate-bound plan output."
   },
   "acceptance_assertions": {
@@ -102,7 +102,7 @@
     "native profile/plugin invocation or effect",
     "Cloudflare or other account mutation",
     "Coral delegate-used inference",
-    "successful sudo authorization in this command sequence",
+    "successful sudo authorization during this plan command sequence (checked separately afterward)",
     "authenticated enrolled-target Result"
   ],
   "claim_limit": "A non-root plan command completed and returned candidate-bound preflight findings. It is not an install result or acceptance test; all AC01-AC18 remain open."
