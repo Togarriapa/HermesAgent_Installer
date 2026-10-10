@@ -6207,7 +6207,7 @@ class RootBootstrapSession:
         return tuple(output)
 
     def _resolve_prepared_native_target_module_receipts(self) -> tuple[RootReleaseModuleReceipt, ...]:
-        """Issue current member receipts for the two fixed native target source modules."""
+        """Issue current member receipts for fixed native target source modules."""
         self._check_live()
         self._refresh_authorization()
         prepared = self._last_receipt
@@ -6219,6 +6219,8 @@ class RootBootstrapSession:
              "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7"),
             ("src/hermes_installer/components/public_registries.py",
              "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f"),
+            ("src/hermes_installer/components/plugin_public_https.py",
+             "63e4a128f0a48f0bfcbd3c0f6c7313d94f4a3e79f83c2655dde32a339b91ff0d"),
         )
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
