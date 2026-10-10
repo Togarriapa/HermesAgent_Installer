@@ -295,6 +295,35 @@ class NativeTurnObservationContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             other.attach_native_request_broker(wrong_service)
 
+    def test_close_zeroizes_completed_transcript_and_denies_new_turns(self):
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry._lock = threading.RLock()
+        registry._closed = False
+        registry._turns = {_handle("t"): object()}
+        registry._by_source = {_handle("i"): {_handle("t")}}
+        registry._begun_inputs = {_handle("i"): 50.0}
+        registry._used_final_responses = {_handle("f"): 50.0}
+        registry._persisting_completed = set()
+        payload = bytearray(b"private captured transcript")
+        registry._completed = {_handle("p"): (object(), payload)}
+        registry.close()
+        self.assertTrue(registry._closed)
+        self.assertEqual(bytes(payload), b"\0" * len(payload))
+        self.assertFalse(registry._completed)
+        self.assertFalse(registry._turns)
+        self.assertFalse(registry._by_source)
+        with self.assertRaises(AuthorityDenied):
+            registry.begin_selected_turn(_handle("s"), _handle("i"))
+
+    def test_close_refuses_while_durable_capture_is_in_progress(self):
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry._lock = threading.RLock()
+        registry._closed = False
+        registry._persisting_completed = {_handle("p")}
+        with self.assertRaises(AuthorityDenied):
+            registry.close()
+        self.assertFalse(registry._closed)
+
 
 if __name__ == "__main__":
     unittest.main()

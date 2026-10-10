@@ -311,6 +311,9 @@ class RootNativeTurnObservationRegistry:
     def begin_selected_turn(self, selected_execution_handle: str,
                             actual_native_input_receipt_handle: str) -> str:
         """Begin only from a retained selected execution and captured input."""
+        with self._lock:
+            if self._closed:
+                raise AuthorityDenied("native.turn.closed", "selected native turn registry is retired")
         if not self._valid_handle(selected_execution_handle) or not self._valid_handle(
                 actual_native_input_receipt_handle):
             raise AuthorityDenied("native.turn.begin", "selected input handle is malformed")
@@ -828,6 +831,22 @@ class RootNativeTurnObservationRegistry:
                 if not handles:
                     self._by_source.pop(source, None)
             return True
+
+    def close(self) -> None:
+        """Retire the registry and zeroize retained transcript material."""
+        with self._lock:
+            if self._persisting_completed:
+                raise AuthorityDenied(
+                    "native.turn.close", "turn persistence must finish before observer shutdown",
+                )
+            self._closed = True
+            self._turns.clear()
+            self._by_source.clear()
+            self._begun_inputs.clear()
+            self._used_final_responses.clear()
+            for _record, payload in self._completed.values():
+                payload[:] = b"\0" * len(payload)
+            self._completed.clear()
 
     def _retained_source(self, handle: str) -> Any:
         source = self.source_observers
