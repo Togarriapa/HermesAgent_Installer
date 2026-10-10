@@ -10,6 +10,7 @@ from hermes_installer.artifacts import ArtifactCatalog
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
+from hermes_installer.authority.runtime_composition import _compose_selected_resource_events
 from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
 from hermes_installer.authority.runtime_composition import _native_json_schema_matches
 from hermes_installer.authority.runtime_composition import _ProtectedNativeActionResolver
@@ -145,6 +146,22 @@ def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
     })()
     with pytest.raises(AuthorityDenied, match="selection is malformed"):
         _root_resource_job_ledger_path(stale_bindings, enrollment)
+
+
+def test_resource_event_assembly_requires_the_attached_root_task_runtime():
+    service, enrollment, bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    result = _compose_selected_resource_events(
+        service=service, enrollment=enrollment, bindings=bindings,
+        jobs={}, selected_resources=object(), source_observers=object(),
+        job_authority=object(),
+    )
+
+    assert result[:6] == (None, None, None, None, None, None)
+    assert result[6] == (
+        "selected materialized Resources, source observers, or concrete task runtime are unavailable"
+    )
+    assert service.resource_event_context_issuer is None
+    assert service.resource_task_authority is None
 
 
 def test_native_action_schema_validator_enforces_pinned_finite_schema_subset():
