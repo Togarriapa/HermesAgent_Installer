@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T144",
+    "SK-T150"
+  ],
+  "why": "The large selected toolchain source observer requires an exact genuine installed source-policy member, not a nonexistent source_artifact_ids plan field or disconnected static catalog policy.",
+  "policy_member": {
+    "artifact_id": "installer-application-toolchain-source-policy-v144",
+    "relative_path": "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",
+    "sha256": "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6",
+    "size_bytes": 7060,
+    "roles": [
+      "amendment"
+    ],
+    "schema": 1,
+    "selected_rows_member": "toolchain_sources",
+    "selected_tool_ids": [
+      "application-node-26.7.0-linux-arm64",
+      "application-bun-1.4.3-linux-arm64"
+    ]
+  },
+  "selection_join": "Existing selected verified installer release/plan includes this exact amendment through its reviewed closure. RootInstalledReleaseBuilder finite REVIEWED_SOURCE_ARTIFACTS descriptor binds the exact member identity/path/hash/size/role. Verified release resolve_reviewed_source_artifact(id) returns a genuine held source member observation after full descriptor/source dependency/currentness checks; no caller ID/path/hash or invented plan.source_artifact_ids authority. Missing reviewed descriptor/member dependency denies.",
+  "consumer": "RootSelectedApplicationToolchainSourceObserver.from_root_setup consumes that actual held policy member, validates canonical schema=1 and exact finite toolchain_sources rows, joins genuine early preparation input selection/source-lock/current choice and actual selected catalog Node/Bun source rows. open_blob download observation is separate actual archive/hash/license proof; policy bytes do not attest acquired or installed runtime. Generic 256KiB source observer remains unchanged.",
+  "tasks": [
+    {
+      "id": "SK-T155.1",
+      "owner": "broker/release/toolchain producer",
+      "work": "Exact finite policy release source descriptor and held resolver; source observer consumes actual selected member and early selection before acquiring only finite Node/Bun archives."
+    }
+  ],
+  "acceptance": "All AC open; no acquisition/runtime/Hyperframes readiness inferred; baseline unchanged."
+}

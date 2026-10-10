@@ -213,3 +213,35 @@ Financial alias source bound v121: `plans/amendments/2026-10-10-financial-alias-
 Native process role association v123: `plans/amendments/2026-10-10-native-process-role-association-v123.md`; actual role/source/loaded observer joins and acceptance remain open.
 
 Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-receipt-v126.md`; actual bounded captured source/CAS/handler proof required; HI-T08/HI-T11 acceptance open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.
+
+Native process-role delivery v134: `plans/amendments/2026-10-10-native-process-role-delivery-v134.md`; exact manifest role rows/digest and actual loader import observations with independently verified root custody, not adapter inference or catalog-only loaded proof. All AC open.
+
+Initial native policy source v137: `plans/amendments/2026-10-10-native-policy-preparation-source-v137.md`; root TTY setup-owned actual target/effect/role/observer selection feeds first assembly, no active-before-selection, static-source authority or live proof inference. All eighteen obligations/AC remain open.
+
+Public input/web permission v138: `plans/amendments/2026-10-10-public-input-web-permission-v138.md`; actual PUBLIC input plus purpose-specific finite scope permission, zero budget and per-retry currentness; no private consent widening or profile-based classification. All AC remain open.
+
+Web registration source cohort v140: `plans/amendments/2026-10-10-web-registration-source-pin-v140.md`; actual current module pins/receipts and renewed register-call capture, historical source inventory unchanged, all AC open.
+
+Finance registration source cohort v141: `plans/amendments/2026-10-10-finance-registration-source-pin-v141.md`; actual held current module and refreshed finite registration/schema source joins, bounded data distinct account/execution authority; all AC open.
+
+Protected public web scope source v142: `plans/amendments/2026-10-10-protected-public-web-scopes-v142.md`; actual root configuration/source selection projects into nonrecursive active scopes independently of per-input PUBLIC egress permission. All AC open.
+
+Durable setup choice signing v143: `plans/amendments/2026-10-10-durable-setup-choice-signing-v143.md`; actual same-key custody normal-session bridge and held release member source replace nonexistent pre-active AuthorityService. Publisher adoption distinct fresh runtime permissions. All AC open.
+
+Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
+
+Concrete bootstrap/source/public disclosure v149: `plans/amendments/2026-10-10-runtime-member-role-public-disclosure-v149.md`; exact runtime member layout, prepared held source distinct live import, genuine per-input public disclosure. All AC open.
+
+Runtime public choice currentness v153: `plans/amendments/2026-10-10-runtime-public-choice-currentness-v153.md`; durable adopted preference/current signed source epoch distinct fresh runtime effect/input proof, no setupTTL extension. All AC open.
+
+Prepared source module layout v154: `plans/amendments/2026-10-10-prepared-source-module-layout-v154.md`; exact source-module members distinct root-imported module and later worker evidence. All AC open.
+
+Runtime choice revocation source v156: `plans/amendments/2026-10-10-runtime-choice-revocation-source-v156.md`; genuine current installed actor/one-use displayed-choice TTY action, no expired setup authority.
+
+Native capture profiles v158: `plans/amendments/2026-10-10-native-capture-profiles-v158.md`; genuine raw root input/result source and exact selected validator/action/role joins, separate presentation evidence.
+
+Root native health start v159: `plans/amendments/2026-10-10-root-native-health-start-v159.md`; actual committed runnable authority then root health admission/control before fixture input, normal enablement withheld.
+
+Installed local qualification v160: `plans/amendments/2026-10-10-installed-local-qualification-v160.md`; finite installed source-owned fixture dispatcher with genuine production actor/receipts and cleanup, distinct Pi acceptance.

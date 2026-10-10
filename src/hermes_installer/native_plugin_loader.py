@@ -630,11 +630,6 @@ class _NativePluginContextResultAdapter:
         package = object.__getattribute__(self, "_NativePluginContextResultAdapter__package")
         adapter_id = object.__getattribute__(self, "_NativePluginContextResultAdapter__adapter_id")
         candidate = package.candidate(name)
-        expected_schema = None if candidate is None else {
-            "name": candidate.native_tool_name,
-            "description": candidate.description,
-            "parameters": _thaw_frozen_json(candidate.argument_schema),
-        }
         if (candidate is None or candidate.is_native_mcp or candidate.adapter_id != adapter_id
                 or candidate.native_server_name != "hermes-installer"
                 or toolset != (candidate.toolset or "hermes-installer")
@@ -1628,7 +1623,11 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 registered = set()
                 setattr(plugin_manager, "_hermes_installer_native_registered_adapters", registered)
             registered.add(_adapter_id)
-
+            if progress_writer is not None and registered == set(package.adapter_ids):
+                progress_writer.emit(
+                    sequence=1, phase="actions-registered",
+                    registered_action_ids=package.registered_action_ids,
+                )
         module.register = register
         prepared[adapter_id] = module
     # Publish atomically after every adapter and key has been validated.

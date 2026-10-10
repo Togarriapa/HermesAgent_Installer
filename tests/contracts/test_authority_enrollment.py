@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import stat
 import tempfile
+import time
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
+from unittest import mock
 
 from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
@@ -14,6 +18,7 @@ from hermes_installer.authority.enrollment import (
     _parse_source_issuers, _parse_native_schema_artifact_records,
     _parse_composio_channel_enrollment_records, _parse_channel_delivery_binding_records,
     _validate_root_key_selection,
+    RootSetupChoiceSigner,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -78,7 +83,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_native_schema_artifact_records([row, dict(row)])
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**row, "schema_kind": "discovery"}])
-
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**row, "size_bytes": 262145}])
         dynamic = {**row, "artifact_id": "native-mcp-schema:" + "a" * 64,
@@ -87,6 +91,23 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**dynamic, "derivation_receipt_handle": None}])
 
+
+    def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
+        row = {
+            "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
+            "producer_role_artifact_id": "role-artifact", "producer_role_sha256": "a" * 64,
+            "capture_schema_id": "capture-schema", "allowed_parent_channels": [],
+            "generation": "process-g1", "observer_enrollment_id": "observer-a",
+            "source_action_ids": ["authenticated-input"],
+        }
+        legacy = _parse_source_issuers([row])[0]
+        self.assertEqual(legacy.private_provider_route_ids, ())
+        selected = _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"]}])[0]
+        self.assertEqual(selected.private_provider_route_ids, ("provider-route-a",))
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,
@@ -107,22 +128,212 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
                 _validate_root_key_selection(invalid)
 
-    def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
-        row = {
-            "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
-            "producer_role_artifact_id": "role-artifact", "producer_role_sha256": "a" * 64,
-            "capture_schema_id": "capture-schema", "allowed_parent_channels": [],
-            "generation": "process-g1", "observer_enrollment_id": "observer-a",
-            "source_action_ids": ["authenticated-input"],
-        }
-        legacy = _parse_source_issuers([row])[0]
-        self.assertEqual(legacy.private_provider_route_ids, ())
-        selected = _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"]}])[0]
-        self.assertEqual(selected.private_provider_route_ids, ("provider-route-a",))
-        with self.assertRaises(AuthorityDenied):
-            _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
-        with self.assertRaises(AuthorityDenied):
-            _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
+    @unittest.skipUnless(os.geteuid() == 0, "root-key signer fixture requires uid 0")
+    def test_setup_choice_signer_binds_finite_purpose_and_live_key_bytes(self):
+        class Issuer:
+            checks = 0
+            def _verify_normal_choice_signer(self, signer):
+                self.checks += 1
+
+        with tempfile.TemporaryDirectory(prefix="setup-choice-key-") as temp:
+            key_path = Path(temp) / "key"
+            key_path.write_bytes(b"k" * 32)
+            key_path.chmod(0o600)
+            fd = os.open(key_path, os.O_RDONLY)
+            try:
+                info = os.fstat(fd)
+                issuer = Issuer()
+                from hermes_installer.authority.enrollment import RootSetupChoiceSigner
+                signer = RootSetupChoiceSigner(
+                    issuer, key_fd=fd, session_handle=object(), key_id="authority-key-fixture",
+                    key_device=info.st_dev, key_inode=info.st_ino,
+                    key_digest=hashlib.sha256(b"k" * 32).hexdigest(), adoption_record={},
+                )
+                payload = b'{"schema":1,"choice":"private"}'
+                signature = signer.sign_choice("existing-model-selection", payload)
+                self.assertTrue(signer.verify_choice("existing-model-selection", payload, signature))
+                self.assertFalse(signer.verify_choice("memory-service-enablement", payload, signature))
+                self.assertFalse(signer.verify_choice("existing-model-selection", payload + b" ", signature))
+                with self.assertRaises(AuthorityDenied):
+                    signer.sign_choice("unbounded-purpose", payload)
+                self.assertGreaterEqual(issuer.checks, 4)
+            finally:
+                os.close(fd)
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-key adoption fixture requires uid 0")
+    def test_normal_setup_adopts_and_reopens_same_durable_key_signer(self):
+        from hermes_installer.authority import enrollment
+        from hermes_installer.authority.bootstrap_enrollment import RootSetupSessionHandle, RootSetupSessionStore
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            RootInitialCompilationSession, RootInitialPublicationHandoff, RootSetupChoices,
+        )
+        from hermes_installer.authority.installer_release import VerifiedInstallerReleaseReceipt, _SEAL
+
+        class LiveStore(RootSetupSessionStore):
+            def _live(self, handle):
+                if handle != session_handle or self.revoked:
+                    raise AuthorityDenied("setup.choice", "fixture session is revoked")
+                return object()
+
+            @staticmethod
+            def _proof(_live):
+                return proof
+
+        class CurrentVerifier:
+            def verify_current(self, _plan):
+                if self.revoked:
+                    raise AuthorityDenied("setup.choice", "fixture actor is revoked")
+
+            revoked = False
+
+        with tempfile.TemporaryDirectory(prefix="normal-setup-key-adoption-") as temp:
+            root = Path(temp)
+            root.chmod(0o700)
+            key_path = root / "authority.key"
+            key_path.write_bytes(b"z" * 32)
+            key_path.chmod(0o600)
+            release_root = root / "release"
+            release_root.mkdir(mode=0o700)
+            release_fd = os.open(release_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            release_info = os.fstat(release_fd)
+            release_root.chmod(0o500)
+            release = VerifiedInstallerReleaseReceipt(
+                _SEAL, release_root=release_root, release_commit="a" * 40,
+                deployment_receipt_sha256="f" * 64, root_device=release_info.st_dev,
+                root_inode=release_info.st_ino, closure_manifest_relative_path="closure.json",
+                closure_manifest_sha256="1" * 64, baseline_tag_object="2" * 40,
+                baseline_commit="3" * 40, baseline_tree_sha256="4" * 64,
+                amendment_manifest_sha256="5" * 64, files=(),
+                selected_plan_artifact_id="setup-plan", selected_plan_sha256="1" * 64,
+                root_fd=release_fd, expected_uid=0,
+            )
+            self.assertFalse(hasattr(release, "receipt_handle"))
+            key_info = key_path.stat()
+            key_digest = hashlib.sha256(b"z" * 32).hexdigest()
+            session_handle = RootSetupSessionHandle("setup-" + "a" * 32, "session-seal")
+            proof = SimpleNamespace(
+                setup_session_id=session_handle.session_id, transaction_handle="transaction-current",
+                plan_digest="1" * 64, plan_artifact_id="setup-plan", expires_monotonic=time.monotonic() + 300,
+            )
+            handoff = SimpleNamespace(
+                handoff_handle="handoff-current", compilation_session_handle="b" * 64,
+                compilation_transaction_handle="c" * 64, plan_sha256=proof.plan_digest,
+                publication_receipt_handle="publication-receipt", publication_sha256="2" * 64,
+                normal_transaction_handle=proof.transaction_handle,
+            )
+            actor = CurrentVerifier()
+            plan = object()
+            store = object.__new__(LiveStore)
+            store.revoked = False
+            store.plan_resolver = SimpleNamespace(resolve=lambda _artifact: plan)
+            store.actor_verifier = actor
+            stage0 = RootInitialCompilationSession(
+                schema=1, phase="initial-compilation", compilation_session_handle="b" * 64,
+                compilation_transaction_handle="c" * 64, verified_release_receipt_handle="6" * 64,
+                actor_observation_receipt_handle="7" * 64, plan_artifact_id="setup-plan",
+                plan_sha256=proof.plan_digest, closed_template_artifact_id="closed-template",
+                closed_template_sha256="8" * 64, choices_sha256="9" * 64,
+                source_catalog_sha256="a" * 64, expected_predecessor_catalog_sha256=None,
+                issued_monotonic=time.monotonic(), expires_monotonic=time.monotonic() + 30,
+                _choices=RootSetupChoices("install", "hermes", None, (), ()), _release=release,
+                _actor=actor, _root_journal_root={}, _seal="stage0-seal",
+            )
+            initial = SimpleNamespace(actor=actor, _seal="initial-registry-seal", _session_store=store,
+            )
+            handoff = RootInitialPublicationHandoff(
+                1, "handoff-current", stage0.compilation_session_handle,
+                stage0.compilation_transaction_handle, "publication-receipt", "2" * 64,
+                stage0.plan_sha256, stage0.choices_sha256, None, (), time.monotonic(),
+                time.monotonic() + 300, session_handle.session_id, proof.transaction_handle,
+                _initial_session=stage0, _registry_seal=initial._seal,
+            )
+            initial.resolve_adopted_handoff = lambda _handle: handoff
+            receipt = enrollment.RootAuthorityKeyReceipt(
+                1, "d" * 64, "authority-key-" + "e" * 32, "HMAC-SHA256",
+                key_info.st_dev, key_info.st_ino, 0, 0o600, stage0.verified_release_receipt_handle,
+                stage0.compilation_session_handle, time.monotonic(), time.monotonic() + 30, "issuer-seal",
+            )
+            registry = object.__new__(enrollment.RootAuthorityKeySelectionRegistry)
+            registry.release = release
+            registry.actor_verifier = actor
+            registry.root_journal = root
+            registry.initial_compilation_registry = initial
+            registry._seal = initial._seal
+            registry.private_root_name = "authority-key-receipts"
+            registry._normal_signers = {}
+            registry._key_fds = {receipt.receipt_handle: os.open(key_path, os.O_RDONLY)}
+            registry._key_digests = {receipt.receipt_handle: key_digest}
+            registry._resolve_stage0 = lambda _handle: stage0
+            registry.resolve_selected_key = lambda *_args: receipt
+            registry._normal_signer_path = lambda _session_id: root / "normal-signer.json"
+            registry._open_key = lambda: (os.open(key_path, os.O_RDONLY), key_path.stat(), key_path.read_bytes())
+            registry._read_selection = lambda: {
+                "key_id": receipt.key_id, "key_device": receipt.key_device,
+                "key_inode": receipt.key_inode, "release_receipt_handle": receipt.release_receipt_handle,
+                "receipt_handle": receipt.receipt_handle,
+                "initial_compilation_session_handle": stage0.compilation_session_handle,
+            }
+            registry._verify_private_binding = lambda *_args: None
+            (root / "authority-key-receipts").mkdir(mode=0o700)
+            private_binding = {"schema": 1, "receipt_handle": receipt.receipt_handle,
+                               "key_device": key_info.st_dev, "key_inode": key_info.st_ino,
+                               "key_sha256": key_digest}
+            (root / "authority-key-receipts" / f"{receipt.receipt_handle}.json").write_text(
+                json.dumps(private_binding, sort_keys=True, separators=(",", ":")), encoding="ascii")
+            (root / "authority-key-receipts" / f"{receipt.receipt_handle}.json").chmod(0o600)
+
+            def write_fixture(path, document, *, exclusive=False):
+                payload = json.dumps(dict(document), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+                flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+                fd = os.open(path, flags, 0o600)
+                try:
+                    os.write(fd, payload.encode("ascii"))
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+
+            def read_fixture(path, _maximum):
+                info = path.lstat()
+                if info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
+                    raise AuthorityDenied("setup.choice", "fixture custody changed")
+                return path.read_bytes()
+
+            try:
+                with mock.patch.object(enrollment, "_write_root_selection", write_fixture), \
+                     mock.patch.object(enrollment, "_read_root_selection_bytes", read_fixture):
+                    signer = registry.adopt_for_normal_setup(
+                        receipt.receipt_handle, stage0.compilation_session_handle,
+                        session_handle, handoff.handoff_handle,
+                    )
+                    payload = b'{"choice":"keep-existing-store","schema":1}'
+                    signature = signer.sign_choice("existing-model-selection", payload)
+                    self.assertTrue(signer.verify_choice("existing-model-selection", payload, signature))
+                    retried = registry.adopt_for_normal_setup(
+                        receipt.receipt_handle, stage0.compilation_session_handle,
+                        session_handle, handoff.handoff_handle,
+                    )
+                    self.assertIs(retried, signer)
+
+                    # Simulate a caller losing its in-memory signer and resolving the
+                    # durable setup binding again without minting or rotating the key.
+                    registry._normal_signers.clear()
+                    reopened = registry.resolve_normal_setup_choice_signer(session_handle)
+                    self.assertEqual(reopened.key_id, receipt.key_id)
+                    self.assertTrue(reopened.verify_choice("existing-model-selection", payload, signature))
+
+                    with self.assertRaises(AuthorityDenied):
+                        registry.adopt_for_normal_setup(
+                            receipt.receipt_handle, stage0.compilation_session_handle,
+                            session_handle, "forged-handoff",
+                        )
+
+                    actor.revoked = True
+                    with self.assertRaises(AuthorityDenied):
+                        reopened.sign_choice("existing-model-selection", payload)
+            finally:
+                os.close(registry._key_fds[receipt.receipt_handle])
+                release_root.chmod(0o700)
+                os.close(release_fd)
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
@@ -185,7 +396,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [], "root_journal_roots": [],
                 "resource_controller_roles": [], "native_mcp_tool_bindings": bindings,
-                "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+                "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -254,7 +465,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -288,6 +499,13 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         self.assertEqual(parsed[0].source_action_ids, ("registered-tool-result",))
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**source, "source_action_ids": ["root-timer-event"]}])
+        public = _parse_source_issuers([{**source, "public_web_scope_ids": ["scope-a", "scope-b"]}])[0]
+        self.assertEqual(public.public_web_scope_ids, ("scope-a", "scope-b"))
+        for bad_scopes in (["scope-b", "scope-a"], ["scope-a", "scope-a"], ["bad\nidentifier"]):
+            with self.subTest(bad_scopes=bad_scopes), self.assertRaises(AuthorityDenied):
+                _parse_source_issuers([{**source, "public_web_scope_ids": bad_scopes}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**source, "public_web_scope_ids": [f"scope-{i:02d}" for i in range(33)]}])
         same_channel_other_adapter = {**source, "observer_enrollment_id": "observer-b",
                                       "producer_role_artifact_id": "role-b",
                                       "producer_role_sha256": "b" * 64}
@@ -306,7 +524,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -316,6 +534,16 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         changed["source_issuers"] = []
         with self.assertRaises(AuthorityDenied):
             _validate_service_generations(changed)
+        public_snapshot = dict(snapshot)
+        public_snapshot["source_issuers"] = [{**source, "public_web_scope_ids": ["scope-a"]}]
+        public_snapshot["generation_digest"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in public_snapshot.items() if key != "generation_digest"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        _validate_service_generations(public_snapshot)
+        public_snapshot["source_issuers"][0]["public_web_scope_ids"] = ["scope-b"]
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(public_snapshot)
 
     def test_active_remote_session_catalog_rejects_unknown_or_duplicate_records(self):
         fields = {
@@ -376,7 +604,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_scope_bindings": [], "resource_validators": [],
                 "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -492,7 +720,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -566,7 +794,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "remote_observation_enrollments": [], "native_schema_artifacts": [],
             "composio_channel_enrollments": [], "channel_delivery_bindings": [],
             "remote_startup_enrollments": [], "private_loopback_networks": [],
-            "selected_resource_executions": [selected], "selected_application_runtimes": [],
+            "selected_resource_executions": [selected], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -619,6 +847,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "composio_channel_enrollments": [], "channel_delivery_bindings": [],
             "remote_startup_enrollments": [], "private_loopback_networks": [],
             "selected_resource_executions": [], "selected_application_runtimes": [row],
+            "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
 
         def sign(value):
@@ -638,6 +867,63 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         recursive["selected_application_runtimes"] = [{**row, "service_generation_digest": "8" * 64}]
         with self.assertRaises(AuthorityDenied):
             _validate_service_generations(sign(recursive))
+
+    def test_private_memory_selection_rows_are_digest_bound_exact_and_fk_checked(self):
+        endpoint = {
+            "binding_id": "endpoint-a", "profile_id": "profile-a",
+            "namespace_id": "namespace-a", "principal_id": "principal-a",
+            "service_enrollment_id": "service-a", "service_generation": "service-gen-a",
+            "process_profile_id": "process-profile-a", "process_profile_generation": "process-gen-a",
+            "endpoint_target_id": "memory-openviking:profile-a",
+            "connector_route_ids": ["memory-search-v1"], "recipient_id": "recipient-a",
+            "credential_reference_id": "credential-a", "server_config_artifact_id": "config-a",
+            "server_config_sha256": "a" * 64, "runtime_artifact_ids": ["runtime-a"],
+            "network_binding_handle": "network-receipt-a",
+        }
+        model = {
+            "binding_id": "model-a", "endpoint_binding_id": "endpoint-a",
+            "served_model_id": "served-a", "source_model_id": "source-a",
+            "source_revision": "revision-a", "license_artifact_id": "license-a",
+            "license_sha256": "b" * 64, "model_artifact_id": "model-artifact-a",
+            "model_artifact_sha256": "c" * 64, "model_tree_manifest_sha256": "d" * 64,
+            "runtime_artifact_id": "model-runtime-a", "runtime_artifact_sha256": "e" * 64,
+            "load_config_artifact_id": "load-config-a", "load_config_sha256": "f" * 64,
+            "capability": "extraction-text", "dimensions": None,
+        }
+
+        def snapshot(endpoint_rows, model_rows):
+            value = {
+                "schema": 1, "generation_id": "snapshot-a", "service_records": [],
+                "protected_devices": [], "protected_build_records": [], "native_packages": [],
+                "memory_enrollments": [], "operation_parameter_schemas": [], "source_issuers": [],
+                "resource_jobs": [], "remote_session_enrollments": [], "resource_backend_enrollments": [],
+                "resource_body_recipes": [], "resource_scope_bindings": [], "resource_validators": [],
+                "root_journal_roots": [], "resource_controller_roles": [], "native_mcp_tool_bindings": [],
+                "remote_observation_enrollments": [], "native_schema_artifacts": [],
+                "composio_channel_enrollments": [], "channel_delivery_bindings": [],
+                "remote_startup_enrollments": [], "private_loopback_networks": [],
+                "selected_resource_executions": [], "selected_application_runtimes": [],
+                "private_memory_endpoint_selections": endpoint_rows,
+                "private_memory_model_selections": model_rows,
+                "public_web_scopes": [],
+            }
+            value["generation_digest"] = hashlib.sha256(json.dumps(
+                value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            return value
+
+        parsed = _validate_service_generations(snapshot([endpoint], [model]))
+        self.assertEqual(parsed["private_memory_endpoint_selections"], [endpoint])
+        self.assertEqual(parsed["private_memory_model_selections"], [model])
+        for bad_endpoint in ({**endpoint, "extra": True},
+                             {**endpoint, "service_generation_digest": "1" * 64},
+                             {**endpoint, "connector_route_ids": ["memory-search-v1"] * 2}):
+            with self.assertRaises(AuthorityDenied):
+                _validate_service_generations(snapshot([bad_endpoint], [model]))
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(snapshot([endpoint], [{**model, "endpoint_binding_id": "missing"}]))
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(snapshot([endpoint], [{**model, "capability": "embedding", "dimensions": None}]))
 
     def test_active_resource_scope_and_validator_catalogs_are_strict_and_digest_bound(self):
         scope = {
@@ -661,7 +947,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [scope], "resource_validators": [validator],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
 
         def sign(value):
@@ -715,7 +1001,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
 
         def sign(value):
@@ -748,7 +1034,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [root],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         unsigned = dict(snapshot)
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(

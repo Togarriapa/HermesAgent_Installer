@@ -18,6 +18,7 @@ class Selection:
     native_package_generation = "a" * 64
     compiler_artifact_id = "installer-module:hermes_installer.authority.native_materialization"
     compiler_sha256 = "b" * 64
+    service_generation = "process-generation-1"
 
 
 class Member:
@@ -55,6 +56,7 @@ class Definitions:
         "family": "demo-family",
         "handler_kind": "effect-action",
     },)
+    process_role_records = ()
     boundary_overlay_source_commit = "c" * 40
     boundary_overlay_bytes = b""
 
@@ -93,6 +95,24 @@ def test_assembler_compiles_five_consistent_finite_output_documents():
         "observer_enrollment_ids": ["observer-demo"],
     }
     Definitions.registration_records = (registration,)
+    Definitions.process_role_records = ({
+        "role_id": "hermes-native-loader",
+        "package_id": Selection.package_id,
+        "native_package_generation": Selection.native_package_generation,
+        "profile_id": Selection.service_profile_id,
+        "profile_generation": Selection.service_generation,
+        "role_artifact_id": "role:hermes-native-loader",
+        "role_sha256": Member.sha256,
+        "role_source_receipt_handle": "role-source-receipt-demo",
+        "module_name": "hermes_installer.native_plugin_loader",
+        "closure_member_path": Member.relative_path,
+        "role_source_revision": "d" * 40,
+        "role_source_tree_sha256": "e" * 64,
+        "observer_enrollment_ids": ["observer-demo"],
+        "registration_ids": ["demo:tool:demo_lookup"],
+        "action_binding_ids": ["demo:action:lookup"],
+        "workflow_ids": [],
+    },)
     output = assemble_native_package(Selection(), Definitions(),
                                      {Member.artifact_receipt_handle: member})
     assert output.entrypoint_manifest
@@ -100,6 +120,7 @@ def test_assembler_compiles_five_consistent_finite_output_documents():
     assert output.boundary_overlay == Definitions.boundary_overlay_bytes
     assert output.candidate_index
     assert output.compiled_closure
+    assert json.loads(output.entrypoint_manifest)["process_role_records"] == list(Definitions.process_role_records)
     _verify_payload("native-compiled-closure", "compiled-closure",
                     output.compiled_closure, output.closure_members)
     _verify_payload("native-entrypoint-manifest", "entrypoint-json",

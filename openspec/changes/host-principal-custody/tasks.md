@@ -221,3 +221,73 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T126.2: web/native/turn owners consume exact typed root receipt projection and retained ancestry; no synthesized opaque handles.
 
 - [ ] HI-T126.3: test forged effect/native/transport, false CAS hash/inode, profile/owner/expiry mismatch, duplicate bytes across profiles, output limits and untrusted content/source semantics; real account/runtime acceptance open.
+
+- [ ] HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests
+
+- [ ] SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease
+
+- [ ] SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies
+
+- [ ] HI-T134.1 native assembler: exact manifest role projection/hash and resolver digest join from sealed preactive definitions; CAS/role/FK/source mismatch tests
+
+- [ ] HI-T134.2 boundary/loader/custody: validated selected role delivery and actual import event proof, root held member/PIDFD/mount currentness, no catalog-only loaded claim
+
+- [ ] HI-T134.3 source/factory/runtime: root validated loaded-role proof to current selected observer registration/action joins; missing/changed role/import denies
+
+- [ ] HI-T137.1 factory/native policy preparation: Implement actual root TTY selected native component/action/target configuration and sealed preactive policy registry feeding existing assembly; finite choice/target/current identity/source proof failures and phase renewal.
+
+- [ ] HI-T137.2 component target/source owners: Implement finite reviewed per-component target/account/vault/permission observation adapters and protected source-role/observer definition producer; preserve configurable pending for absent auth/rights/runtime, no installation-test writes/messages.
+
+- [ ] HI-T137.3 registration projection/source observer/native assembler/active compiler: Produce exact 61 action/42 registration/workflow/process-role/schema/observer joins from actual staged records, real root source receipts; compile then atomically publish real outputs without active-before-assembly cycle, verify all-family coverage and missing proof denial.
+
+- [ ] PR-T138.1 factory/consent: Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias.
+
+- [ ] HI-T138.2 source input/host authority: Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests.
+
+- [ ] RB-T138.3 web/native integration: Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance.
+
+- [ ] HI-T140.1 native source/projection/factory: Consume current held module pin, re-observe exact registration/action/schema source joins and current registration capture; stale source receipts/hash deny.
+
+- [ ] RB-T140.2 web/native integration: Preserve genuine raw receipt/result/media/operation joins and PUBLIC-only egress positive with private ancestry/revocation negatives; actual runtime/account/ARM acceptance remains open.
+
+- [ ] HI-T141.1 finance/native source/projection/factory: Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny.
+
+- [ ] HI-T141.2 finance/native integration: Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim.
+
+- [ ] HI-T142.1 native target/factory/publisher: Actual source-owned TTY public scope configuration, retained target/config source observation, first active projection and exact effect/source FK validation.
+
+- [ ] HI-T142.2 host enrollment/authority: Strict active table/getter and PUBLIC per-input permission join; missing/conflicting source, PRIVATE ancestry, stale selection and out-of-scope URLs deny.
+
+- [ ] HI-T143.1 bootstrap enrollment/factory/consent: Existing key custody normal-session adoption/resume and finite durable choice signer/registry, genuine TTY source methods and release member receipts; no parallel key/service.
+
+- [ ] HI-T143.2 factory/active publisher/runtime composer: Actual signed choice adoption into selected generation and fresh runtime purpose projections; changed source/key/subject/epoch, expired snapshots and unadopted intent deny.
+
+- [ ] SK-T146.1 factory/model selection/consent: Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately.
+
+- [ ] HI-T146.2 native target/factory/enrollment: Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation.
+
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance.
+
+- [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
+
+- [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.
+
+- [ ] HI-T153.1 consent/publisher/enrollment/runtime composer: Genuine durable adoption/current original source row+signature+epoch/revoke resolver beyond setupTTL, truthful postcommit recovery; no pointer-only verification.
+
+- [ ] HI-T153.2 publicTTY/consent/factory/source input: Runtime disclosure constructor with actual installed actor/oneuse rootTTY source adapter, distinctconsentID signedproducer/public-web source literal; no live setup dependency/private relabel.
+
+- [ ] HI-T154.1 Broker/release/factory/source observer: exact final source/installed descriptors and separate current source-membership/root-import/worker-origin proofs.
+
+- [ ] HI-T156.1 Consent/publicTTY/host authority: actual runtime rootTTY revocation observation, finite signer transition and durable current epoch verification.
+
+- [ ] HI-T158.1 source observer/native observer/registration/factory: Publish held capture profile members; actual selected schema/result validator FKs and finite source/action rows; root effect/provider issuer then exact peer presentation delivery. Negative raw worker capture/malformed/stale/private ancestry tests.
+
+- [ ] HI-T158.2 host authority/consent: Exact finite revocation signature domain and closed canonical typed envelope, current row verification; no arbitrary signer.
+
+- [ ] HI-T159.1 factory/entrypoint/startup/custody/health observer: Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement.
+
+- [ ] HI-T159.2 native fixture/observer/registration source owners: Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests.
+
+- [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
+
+- [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.

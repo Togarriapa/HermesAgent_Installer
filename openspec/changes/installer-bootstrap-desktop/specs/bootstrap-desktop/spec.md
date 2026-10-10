@@ -573,3 +573,38 @@ The system SHALL apply only the v116 exact publicCPython artifact redirect polic
 #### Scenario: Unexpected redirect destination
 - **WHEN** the response redirects to an unlisted authority, protocol, port or a second hop
 - **THEN** acquisition denies without publishing any runtime artifactreceipt.
+
+### Requirement: Exact pinned PyYAML compatibility package
+The system SHALL permit the v131 exact `_yaml/` and `_yaml/__init__.py` members only for the unchanged pinned installer PyYAML wheel, preserving complete RECORD, archive bounds, isolated site directory and actual import/extension checks.
+
+#### Scenario: Additional unreviewed compatibility member
+- **WHEN** a wheel adds another `_yaml` descendant or fails the exact artifact or RECORD checks
+- **THEN** materialization denies without publishing a runtime receipt.
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created

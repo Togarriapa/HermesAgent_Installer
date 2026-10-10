@@ -24,7 +24,7 @@ from hermes_installer.native_boundary_patch import (
 
 UPSTREAM = Path("/tmp/hermes-agent-hi08")
 EXPECTED = {
-    "hermes_cli/main.py": "02efa9801f3290d92f653395d5ad51181a3f5cd3bb1025445bf435e1497f8ba1",
+    "hermes_cli/main.py": "8d44aa371740f38434aef0ea05dc415d4943ee8ed2a103aabf18dbe72f0ce4a7",
     "hermes_cli/__init__.py": "84d0d7f5b6d8340897c4c53947890f88f93de146fcc228d4f4fdd096f2a8d81b",
     "hermes_cli/plugins.py": "11d8e9606b2b274a30f11384233bee36cd44a683abdaca674201c30a9319ca86",
     "agent/__init__.py": "067ee01cbc088b572cbdabbbe4116d9bec0939acc0bd30ac67b287cb5d6743e6",
@@ -63,6 +63,8 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
             "hermes_cli/main.py", (UPSTREAM / "hermes_cli/main.py").read_bytes()).decode("utf-8")
         self.assertIn("args.query = read_selected_native_input(sys.stdin.buffer)", patched)
         self.assertNotIn("args.query = sys.stdin.read()", patched)
+        self.assertLess(patched.index("ensure_selected_native_plugins_ready()"),
+                        patched.index("from hermes_installer.native_invocations import read_selected_native_input"))
         self.assertLess(patched.index("from hermes_installer.native_invocations import read_selected_native_input"),
                         patched.index("args.query = read_selected_native_input(sys.stdin.buffer)"))
 

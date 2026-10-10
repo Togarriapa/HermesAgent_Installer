@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T11",
+    "HI-T123",
+    "HI-T137"
+  ],
+  "why": "Source definitions have no actual capture/action schema mapping; generic worker capture_source denies correctly. Real root effect/provider registries already retain exact bytes but need selected result validators and fixed capture profile source rows.",
+  "capture_profile_artifacts": [
+    {
+      "artifact_id": "installer-native-input-capture-profile-v1",
+      "relative_path": "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
+      "sha256": "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0",
+      "size_bytes": 837,
+      "roles": [
+        "amendment"
+      ],
+      "capture_schema_id": "native-authenticated-input-v1"
+    },
+    {
+      "artifact_id": "installer-native-tool-result-capture-profile-v1",
+      "relative_path": "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
+      "sha256": "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a",
+      "size_bytes": 984,
+      "roles": [
+        "amendment"
+      ],
+      "capture_schema_id": "native-registered-tool-result-v1"
+    },
+    {
+      "artifact_id": "installer-native-provider-result-capture-profile-v1",
+      "relative_path": "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
+      "sha256": "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb",
+      "size_bytes": 993,
+      "roles": [
+        "amendment"
+      ],
+      "capture_schema_id": "native-root-provider-response-v1"
+    }
+  ],
+  "representation": "Capture profiles are strict finite installer-owned validator contract artifacts, not invented JSON payload wrappers. Held release amendment/source member proof authenticates policy bytes; actual source event body remains raw exact bytes from the concrete root issuer. Profile hash + selected exact payload/result schema FK is part of source issuer/current observation binding. A profile artifact alone grants no input/result authority.",
+  "role_mapping": {
+    "hermes-native-invocations-v1": {
+      "native-input": {
+        "capture_schema_id": "native-authenticated-input-v1",
+        "source_action_ids": [
+          "authenticated-input"
+        ],
+        "callsite": "read_selected_native_input"
+      },
+      "tool-result": {
+        "capture_schema_id": "native-registered-tool-result-v1",
+        "source_action_ids": "Only actual selected registration/workflow/MCP source action IDs with proven result schema and root observed completed invocation; record_native_tool_result presentation match, no caller source capture."
+      }
+    },
+    "hermes-native-boundary-v1": {
+      "tool-result": {
+        "capture_schema_id": "native-root-provider-response-v1",
+        "source_action_ids": [
+          "root-provider-response-v1"
+        ],
+        "callsite": "root NativeInvocationRegistry.register_provider_response / authenticated response delivery; worker capture_provider_response cannot mint"
+      }
+    }
+  },
+  "producer_join": "RootNativeSourceDefinitionRegistry emits separate source rows per role/channel/capture profile only after held profile member receipt and exact staged registration/action/schema/observer/source selection. No empty lists promoted or family expansion. source_action_binding_id joins exact external registration/action or fixed standalone provider response binding; SourceObserverEnrollment role/source/loaded process/PIDFD independently current. prepare_provider_request root native request observation is not SourceReceipt or result source. turn.finish joins existing retained turn/result closure, not a new caller transcript source.",
+  "result_validator_extension": "NativeActionSelection adds result_schema_id,result_schema_sha256,validate_result(bytes). Root resolver derives these from exact selected action/result schema FK; worker cannot supply. NativeRuntimeObserver.observe_effect_result invoked by AuthorityService._perform_effect after handler validation calls that validator before record_observed_event/capture_observed_source. Result source receiver independently checks selected profile/capture policy and validator binding. Handler 2xx/exit0 alone does not pass. MCP validates selected external bounded result formatter plus actual root raw result/delivery membership separately.",
+  "ancestry": "Parent closure contains every actual request/context source receipt and provider response/call ancestry; no omission or replacement. Result sensitivity is source-derived intersection/join preserving PRIVATE/UNKNOWN/untrusted origin; result source neither grants recipient widening nor reclassifies input. Existing public/private permission and retry revocation checks remain. Source issuer signs current result and creates genuine peer-bound one-use delivery handle, not fabricated source strings. Worker presentation mismatch/cancel/stale schema/package/role/peer fails conversation closed.",
+  "revocation_signature": {
+    "domain": "hermes-installer.setup-choice-revocation.v1",
+    "canonical_envelope": "Exact v156 revocation receipt field set excluding signature, canonical UTF-8 JSON sort_keys=True,separators=(comma,colon),ensure_ascii=False, finite numbers only. Signer accepts only genuine consumed typed root-observed transition/current owner/epoch; no arbitrary payload/domain access. Verify exact field set and signature/current signed row."
+  },
+  "tasks": [
+    {
+      "id": "HI-T158.1",
+      "owner": "source observer/native observer/registration/factory",
+      "work": "Publish held capture profile members; actual selected schema/result validator FKs and finite source/action rows; root effect/provider issuer then exact peer presentation delivery. Negative raw worker capture/malformed/stale/private ancestry tests."
+    },
+    {
+      "id": "HI-T158.2",
+      "owner": "host authority/consent",
+      "work": "Exact finite revocation signature domain and closed canonical typed envelope, current row verification; no arbitrary signer."
+    }
+  ],
+  "acceptance": "Source schema/producer refinement only; runtime native health and all AC remain open. Frozen baseline untouched."
+}

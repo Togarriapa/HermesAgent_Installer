@@ -45,7 +45,7 @@ class NativePluginToolResultTests(unittest.TestCase):
 
         handler = lambda _args: {"answer": 42}
         parameters = {"type": "object", "properties": {}, "additionalProperties": False}
-        schema = {"name": "fixture", "description": "fixture", "parameters": parameters}
+        schema = parameters
         digest = hashlib.sha256(json.dumps(
             parameters, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")).hexdigest()
@@ -208,7 +208,7 @@ class NativePluginToolResultTests(unittest.TestCase):
                 pass
 
         adapter = _NativePluginContextResultAdapter(Context(), Package(), adapter_id)
-        registered = adapter.register_tool(name, adapter_id, schema,
+        registered = adapter.register_tool(name, adapter_id, parameters,
             lambda _args: {"result": "raw-backend", "schema": 1}, description="sandbox")
         response = json.loads(registered["handler"]({}))
         self.assertEqual(response, {"schema": 1, "result_trust": "untrusted-backend-data",

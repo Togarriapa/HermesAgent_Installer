@@ -11,6 +11,8 @@ import hashlib
 import inspect
 import json
 import os
+import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -111,6 +113,124 @@ class RootNativeRegistrationProjectionBundle:
 
 class NativeRegistrationProjectionDenied(PermissionError):
     """Selected registration, result schema, action or observer joins are incomplete."""
+
+
+_SOURCE_COVERAGE_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeRegistrationSourceCoverage:
+    """Actual registration calls joined to current held source-module receipts."""
+
+    captured_registrations: tuple[CapturedHermesRegistration, ...]
+    source_observations: tuple["RootNativeRegistrationSourceObservation", ...]
+    reviewed_definitions: tuple["ReviewedNativeRegistrationDefinition", ...]
+    component_ids: tuple[str, ...]
+    source_receipt_handles: tuple[str, ...]
+    prepared_generation_id: str
+    issued_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _SOURCE_COVERAGE_SEAL:
+            raise TypeError("native registration source coverage is root registry issued")
+
+
+class RootNativeRegistrationProjectionRegistry:
+    """Session-bound producer and currentness registry for actual registrations.
+
+    `resolve_source_coverage` joins the real 42 `register_tool` calls to held
+    release member receipts and produces source-only coverage. `build_selected`
+    invokes the strict executable projection only after the factory supplies a
+    sealed current selection and the complete typed definitions DTO.
+    """
+
+    def __init__(self, selected_installation_binding: Any, root_journal: Path):
+        from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
+
+        if (type(selected_installation_binding) is not RootSelectedInstallationBinding
+                or not isinstance(root_journal, Path) or not root_journal.is_absolute()):
+            raise ValueError("native registration projection requires the exact root installation binding")
+        self._binding = selected_installation_binding
+        self._journal = root_journal
+        self._seal = object()
+        self._coverage: dict[str, RootNativeRegistrationSourceCoverage] = {}
+        self._bundles: dict[str, RootNativeRegistrationProjectionBundle] = {}
+
+    @classmethod
+    def from_root_setup(cls, selected_installation_binding: Any,
+                        root_journal: Path) -> "RootNativeRegistrationProjectionRegistry":
+        return cls(selected_installation_binding, root_journal)
+
+    def resolve_source_coverage(self) -> RootNativeRegistrationSourceCoverage:
+        """Observe all actual registration modules; never elevate source maps to authority."""
+        try:
+            from hermes_installer.authority.bootstrap_runtime_factory import RootReleaseModuleReceipt
+            receipts = self._binding.resolve_prepared_release_module_receipts()
+            if not isinstance(receipts, tuple) or not receipts or any(
+                    type(item) is not RootReleaseModuleReceipt for item in receipts):
+                raise ValueError
+            prepared_generations = {item._prepared_generation_id for item in receipts}
+            if len(prepared_generations) != 1 or None in prepared_generations:
+                raise ValueError
+            captured = capture_actual_hermes_registrations()
+            source = observe_root_native_registrations(receipts, captured)
+            definitions = reviewed_native_registration_definitions(captured)
+            component_ids = reviewed_native_component_ids(captured)
+            if (len(source) != 42 or len(definitions) != 42 or len(component_ids) != 18
+                    or {row.native_tool_name for row in source}
+                       != {row.native_tool_name for row in captured}):
+                raise ValueError
+            for receipt in receipts:
+                receipt.read_current()
+            prepared_generation_id = next(iter(prepared_generations))
+            coverage = RootNativeRegistrationSourceCoverage(
+                captured, source, definitions, component_ids,
+                tuple(row.source_receipt_handle for row in receipts),
+                prepared_generation_id, time.monotonic(), _SOURCE_COVERAGE_SEAL,
+            )
+            self._coverage[prepared_generation_id] = coverage
+            return coverage
+        except Exception:
+            raise NativeRegistrationSourceObservationDenied(
+                "actual registration source coverage lacks a current prepared release receipt") from None
+
+    def build_selected(self, selection: Any, definitions: Any
+                       ) -> RootNativeRegistrationProjectionBundle:
+        try:
+            current = self._binding.resolve_current_native_bootstrap_assembly(selection.selection_handle)
+            if current is not selection:
+                raise ValueError
+            coverage = self.resolve_source_coverage()
+            if (coverage.prepared_generation_id != selection.prepared_generation_id
+                    or selection._registry_seal is not
+                       self._binding._session._factory._native_assembly_seal):
+                raise ValueError
+            bundle = build_root_native_registration_projection(selection, definitions)
+            self._bundles[selection.selection_handle] = bundle
+            return bundle
+        except NativeRegistrationProjectionDenied:
+            raise
+        except Exception:
+            raise NativeRegistrationProjectionDenied(
+                "root-selected native registration definitions are stale or incomplete") from None
+
+    def resolve_current(self, selection_handle: str) -> RootNativeRegistrationProjectionBundle:
+        try:
+            selection = self._binding.resolve_current_native_bootstrap_assembly(selection_handle)
+            bundle = self._bundles.get(selection_handle)
+            if bundle is None:
+                raise ValueError
+            # Rebuild from the current factory DTO so schema/source receipt
+            # changes cannot leave a cached executable candidate live.
+            definitions = self._binding.resolve_native_assembly_definitions(selection_handle)
+            current = build_root_native_registration_projection(selection, definitions)
+            if current != bundle:
+                raise ValueError
+            return current
+        except Exception:
+            raise NativeRegistrationProjectionDenied(
+                "current native registration projection is absent or stale") from None
 
 
 def build_root_native_registration_projection(
@@ -592,6 +712,23 @@ def observe_root_native_registrations(
     return tuple(sorted(output, key=lambda row: row.native_tool_name))
 
 
+def reviewed_native_component_ids(
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[str, ...]:
+    """Return source-derived component coverage for the actual 42 registrations.
+
+    This inventory is suitable for configurable-pending coverage only. It is
+    not target, account, permission, effect, observer, or candidate authority.
+    """
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    definitions = reviewed_native_registration_definitions(captured)
+    components = {row.family for row in definitions}
+    if len(definitions) != 42 or components != set(_PLUGIN_IDS) or len(components) != 18:
+        raise NativeRegistrationDefinitionDenied(
+            "actual registration source does not cover the exact 18 reviewed components")
+    return tuple(sorted(components))
+
+
 class NativeRegistrationResultSchemaDenied(ValueError):
     """The reviewed bounded local result-schema artifacts drifted."""
 
@@ -937,8 +1074,9 @@ def reviewed_packaged_registration_result_schemas(
         contract = json.loads((root / "planning/native-package-binding-contract.json").read_text(encoding="utf-8"))
         v121 = contract["financial_alias_source_bound_v121"]
         v120 = contract["financial_web_results_v120"]
+        v140 = contract["registration_source_pin_refinement_v140"]["source_record"]
+        v141 = contract["registration_source_pin_refinement_v141"]["source_record"]
         by_tool = {row["tool_name"]: row for row in v120["schema_artifacts"]}
-        source_pins = v120["source_pins"]
         rows = [
             {"tool_name": "financial_data_read", "schema_id": v121["schema_id"],
              "artifact_id": v121["artifact_id"], "path": v121["path"],
@@ -951,10 +1089,8 @@ def reviewed_packaged_registration_result_schemas(
     source_by_name = {row.native_tool_name: row for row in captured}
     expected_adapters = {"financial_data_read": "financial-data-hub", "web_retrieve": "web"}
     expected_source_paths = {
-        "financial_data_read": ("src/hermes_installer/components/plugin_finance.py",
-                                source_pins["plugin_finance.py"]),
-        "web_retrieve": ("src/hermes_installer/components/plugin_local_voice_web.py",
-                         source_pins["plugin_local_voice_web.py"]),
+        "financial_data_read": (v141["relative_path"], v141["sha256"]),
+        "web_retrieve": (v140["relative_path"], v140["sha256"]),
     }
     output = list(local)
     for row in rows:

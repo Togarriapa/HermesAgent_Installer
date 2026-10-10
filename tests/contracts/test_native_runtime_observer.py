@@ -50,8 +50,7 @@ class _SelectedAdapter:
     def register(self, context, runtime_context):
         context.register_tool(
             "selected_tool", "hermes-installer",
-            {"name": "selected_tool", "description": "Selected tool",
-             "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+            {"type": "object", "properties": {}, "additionalProperties": False},
             lambda: runtime_context.plugin_effects.invoke(),
             description="Selected tool",
         )
@@ -87,7 +86,6 @@ def _authorization(context):
         uid=context.uid, generation=context.generation,
         native_process_identity=context.native_process_identity,
         source_receipts=context.source_receipts,
-        request_digest=None,
     )
 
 
@@ -422,12 +420,12 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             producer_pid=123, producer_pidfd=456, gateway_identity=gateway,
             gateway_pid=124, gateway_pidfd=457, observer_id="observer",
             package_id="package", profile_id="profile-a", generation="generation-a",
-            native_package_generation="package-generation-a",
-            loaded_package_proof="proof", expires_monotonic=20.0, calls={},
-            request_context=SimpleNamespace(), authorization=SimpleNamespace(),
-            target="target", recipient="recipient", request_digest="e" * 64,
-            retry_index=0, response_status=200, response_headers={},
-            response_bytes=body, response_receipt_handle="x" * 43,
+            native_package_generation="package-generation-a", loaded_package_proof="proof",
+            expires_monotonic=20.0, calls={}, request_context=SimpleNamespace(),
+            authorization=SimpleNamespace(retry_index=0), target="provider://fixed",
+            recipient="provider:fixed", request_digest="a" * 64, retry_index=0,
+            response_status=200, response_headers={}, response_bytes=body,
+            response_receipt_handle="s" * 43,
         )
         registry._responses = {response.handle: response}
         registry._deliveries = {response.delivery_handle: response}
@@ -679,8 +677,7 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             registration_id="registration.native.mcp",
             tool_name="weather.lookup", arguments_sha256=digest,
             parent_closure_digest="d" * 64, receipt_handles=("receipt-handle",),
-            canonical_arguments=args,
-            observer_id="observer-id", loaded_package_proof=proof,
+            canonical_arguments=args, observer_id="observer-id", loaded_package_proof=proof,
             expires_monotonic=25.0, service_generation_digest="c" * 64,
             operation="mcp.request",
             result_schema_id="schema.mcp.result", result_schema_sha256="a" * 64,

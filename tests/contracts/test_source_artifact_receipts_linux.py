@@ -72,6 +72,72 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
 
     @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
                          "requires isolated Linux root-owned fixture")
+    def test_glm_source_blobs_are_observed_only_from_exact_root_catalog_cas(self):
+        repo = Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory(prefix="hermes-glm-source-", dir="/var/lib") as temporary:
+            base = Path(temporary)
+            os.chmod(base, 0o700)
+            catalog_path = base / "artifact-catalog.json"
+            catalog_path.write_bytes((repo / "src/hermes_installer/authority/artifact-catalog.json").read_bytes())
+            os.chmod(catalog_path, 0o600)
+            catalog = load_protected_catalog(catalog_path, expected_uid=0)
+            staging = base / "staging"
+            staging.mkdir(mode=0o700)
+            expected = {
+                "glm52-artifact-metadata-v1": (
+                    "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+                    "planning/glm52-artifact-metadata.json"),
+                "glm52-upstream-mit-license-cf457fa": (
+                    "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+                    "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt"),
+                "glm52-quantized-readme-6bbb01e": (
+                    "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+                    "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md"),
+            }
+            for artifact_id, (digest, relative_path) in expected.items():
+                body = (repo / relative_path).read_bytes()
+                spec = catalog._artifact(artifact_id, digest)
+                self.assertEqual((spec.size_bytes, spec.max_bytes, spec.archive_format, spec.tree_files),
+                                 (len(body), len(body), None, ()))
+                target = staging / "objects" / artifact_id / digest / spec.filename
+                target.parent.mkdir(mode=0o700, parents=True)
+                target.write_bytes(body)
+                os.chmod(target, 0o444)
+            bindings = RootRuntimeBindings(
+                enrollment_catalog=SimpleNamespace(digest="a" * 64), build_catalog=None,
+                device_catalog=None, process_manager=None, effect_handlers={}, native_bridges={},
+                artifact_catalog=catalog, build_store=None, service_connector=None,
+            )
+            enrollment = SimpleNamespace(protected_enrollment_digest="a" * 64,
+                                         artifact_staging_directory=staging)
+            observer = RootCatalogArtifactObserver.from_root_runtime(bindings, enrollment)
+            observations = []
+            try:
+                for artifact_id, (digest, relative_path) in expected.items():
+                    observation = observer.observe(artifact_id, digest)
+                    observations.append(observation)
+                    self.assertTrue(observer.verify_current(observation))
+                    source = (repo / relative_path).read_bytes()
+                    fd = observation.open_blob()
+                    try:
+                        actual = os.read(fd, len(source) + 1)
+                    finally:
+                        os.close(fd)
+                    self.assertEqual(actual, source)
+                    self.assertEqual((observation.artifact_id, observation.sha256,
+                                      observation.size_bytes), (artifact_id, digest, len(source)))
+                first = observations[0]
+                staged = staging / "objects" / first.artifact_id / first.sha256 / catalog.artifacts[first.artifact_id].filename
+                with staged.open("r+b") as output:
+                    output.write(b"X")
+                with self.assertRaises(SourceArtifactReceiptDenied):
+                    observer.verify_current(first)
+            finally:
+                for observation in observations:
+                    observation.close()
+
+    @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
+                         "requires isolated Linux root-owned fixture")
     def test_package_member_derivation_requires_current_active_receipt_closure(self):
         # /tmp is intentionally rejected by the root journal reader because
         # its writable sticky parent is not part of the trusted journal chain.
