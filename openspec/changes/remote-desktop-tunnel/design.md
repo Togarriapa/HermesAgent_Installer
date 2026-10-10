@@ -134,3 +134,10 @@ Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v23
 Use ManagedProcessEffectHandler.from_current_root_setup(binding,registry) and ManagedBuildJobRunner.from_current_root_setup(handler,binding,registry). The existing remote executor derives its own current _RootPreparedBuildRuntime; generic active profiles/effects deny. Preserve original actor/source/PM/NSS/controller custody and drain verified-owned job lifecycle before registry FD closure.
 
 Exact contract: `planning/preactive-native-build-manager-composition-v237.json`; all AC OPEN.
+
+
+## v238 Concrete Xpra source policy
+
+Use v238 exact closed schema, immutable observed source tuples and current signed acquisition/grant/CAS checks. Explicit dependency groups preserve signed versions/Provides/Multi-Arch; finite doc-link license references are checked against complete held graph. Candidate recipe/CP314 build/HTML5/session remain independently pending.
+
+Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.
