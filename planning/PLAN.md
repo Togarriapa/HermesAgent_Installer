@@ -57,3 +57,6 @@ HI-T179.1 selected local source composition implemented/fixture verified: `docs/
 
 
 Reviewed source members and boundary joins v180: `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md` and `planning/reviewed-source-pin-batch-v180.json`. Native3a349c72 and corrected builderc757aec source bytes reviewed only; descriptor application,21-field local-operation lane, actual held build driver and own-worker kernel gate remain OPEN. HI-T178.2/HI-T179.2 fixture custody cycle unchanged; all AC01..18 OPEN. Root owns final publication.
+
+
+Conditional Authentik/local-owner setup v181: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md` and `planning/local-owner-setup-contract-v181.json`. HI-T181.1/2 → BD-T181.3 → LC-T181.4 → VD-T181.5 remain OPEN; genuine owner identity never grants Authentik homelab/recipient authority. Independent readiness/configure later restores R0058/R0060/R0143; all AC01..18 OPEN. v180 source pin checkpoint unchanged.

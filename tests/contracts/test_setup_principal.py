@@ -30,6 +30,7 @@ from hermes_installer.authority.bootstrap_enrollment import (
 from hermes_installer.authority.enrollment import RootCredentialVault
 from hermes_installer.authority.setup_principal import (
     AuthentikIdentityReceipt,
+    RootSetupLocalOwnerIdentityRegistry,
     RootSetupAuthentikIdentityObserver,
     RootSetupIdentityIntake,
     RootSetupIdentityIntake,
@@ -681,6 +682,230 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                 fixture.close()
                 if identity is not None:
                     adapter.remove_if_created(identity)
+
+    def test_local_owner_domain_uses_current_nss_and_exact_finite_capability_choice(self):
+        import time
+        import hermes_installer.authority.bootstrap_enrollment as enrollment_module
+        import hermes_installer.authority.bootstrap_runtime_factory as factory_module
+        import hermes_installer.authority.setup_principal as principal_module
+
+        account = next(entry for entry in pwd.getpwall()
+                       if entry.pw_uid > 0 and entry.pw_gid > 0)
+        primary_group = SimpleNamespace(gr_name="fixture-primary", gr_gid=account.pw_gid)
+        clock = {"now": time.monotonic()}
+
+        class Release:
+            def verify_current(self):
+                return True
+
+        class Actor:
+            def verify_current(self, _release):
+                return True
+
+        class FakeInitialRegistry:
+            root_journal = Path("/root/local-owner-fixture-journal")
+
+            def __init__(self):
+                self.session = SimpleNamespace(
+                    compilation_session_handle="a" * 64,
+                    compilation_transaction_handle="b" * 64,
+                    plan_sha256="c" * 64, expires_monotonic=clock["now"] + 240,
+                    verified_release_receipt_handle="d" * 64,
+                    actor_observation_receipt_handle="e" * 64,
+                    _choices=SimpleNamespace(target_account_name=account.pw_name),
+                    _release=Release(), _actor=Actor())
+
+            def resolve_initial_session(self, handle):
+                if handle != self.session.compilation_session_handle:
+                    raise BootstrapEnrollmentPending("foreign session")
+                return self.session
+
+            def verify_initial_session(self, session):
+                if session is not self.session:
+                    raise BootstrapEnrollmentPending("replaced session")
+
+        with tempfile.TemporaryDirectory(prefix="local-owner-principal-") as temp:
+            root_journal = Path(temp) / "journal"
+            root_journal.mkdir(mode=0o700)
+            os.chmod(root_journal, 0o700)
+            initial = FakeInitialRegistry()
+            initial.root_journal = root_journal
+            with (patch.object(factory_module, "RootInitialCompilationRegistry", FakeInitialRegistry),
+                  patch.object(principal_module.os, "getuid", return_value=0),
+                  patch.object(principal_module.os, "geteuid", return_value=0),
+                  patch.object(principal_module.sys, "platform", "linux"),
+                  patch.object(principal_module.grp, "getgrgid", return_value=primary_group),
+                  patch.object(principal_module.grp, "getgrnam", return_value=primary_group),
+                  patch.object(enrollment_module, "_read_machine_id", return_value="f" * 32)):
+                issuer = RootSetupLocalOwnerIdentityRegistry.from_initial_compilation(
+                    initial, root_journal, monotonic=lambda: clock["now"])
+                issuer._write_record = lambda *_args: None
+                capability = issuer.select_capabilities(
+                    "a" * 64, ("resource-overlay-store:tool:resource_overlay_read",))
+                principal_handle = issuer.select_principal("a" * 64, capability.selection_handle)
+                current = issuer.resolve_current_selection("a" * 64, principal_handle)
+                self.assertEqual(current.principal.identity_kind, "linux-local-owner-v1")
+                self.assertTrue(current.principal.principal_id.startswith("linux-local-owner:"))
+                self.assertEqual(current.principal.selected_capability_ceiling,
+                                 ("resource-overlay-store:tool:resource_overlay_read",))
+                self.assertLessEqual(current.expires_monotonic - current.issued_monotonic, 30.0)
+                from hermes_installer.authority.setup_capabilities import ReviewedNativeCapabilitySelection
+                authentik_selector = object.__new__(ReviewedNativeCapabilitySelection)
+                with self.assertRaises(BootstrapEnrollmentPending):
+                    authentik_selector.select_for_identity(current.principal, object())
+                with self.assertRaises(BootstrapEnrollmentError):
+                    issuer.select_capabilities("a" * 64, ("host.write",))
+                with self.assertRaises(BootstrapEnrollmentPending):
+                    issuer.resolve_current_selection("0" * 64, principal_handle)
+                clock["now"] += 31.0
+                with self.assertRaises(BootstrapEnrollmentPending):
+                    issuer.resolve_current_selection("a" * 64, principal_handle)
+
+                clock["now"] = time.monotonic()
+                capability = issuer.select_capabilities("a" * 64, ())
+                principal_handle = issuer.select_principal("a" * 64, capability.selection_handle)
+                rebound = SimpleNamespace(pw_name=account.pw_name, pw_uid=account.pw_uid + 10000,
+                                          pw_gid=account.pw_gid)
+                with patch.object(principal_module.pwd, "getpwnam", return_value=rebound):
+                    with self.assertRaises(BootstrapEnrollmentPending):
+                        issuer.resolve_current_selection("a" * 64, principal_handle)
+                rebound_group = SimpleNamespace(pw_name=account.pw_name, pw_uid=account.pw_uid,
+                                                pw_gid=account.pw_gid + 10000)
+                with patch.object(principal_module.pwd, "getpwnam", return_value=rebound_group):
+                    with self.assertRaises((BootstrapEnrollmentPending, BootstrapEnrollmentError)):
+                        issuer.resolve_current_selection("a" * 64, principal_handle)
+                root_account = SimpleNamespace(pw_name=account.pw_name, pw_uid=0,
+                                               pw_gid=account.pw_gid)
+                with patch.object(principal_module.pwd, "getpwnam", return_value=root_account):
+                    with self.assertRaises(BootstrapEnrollmentError):
+                        issuer.select_principal("a" * 64, capability.selection_handle)
+
+    def test_local_owner_publication_adopts_only_after_fresh_normal_nss_join(self):
+        import time
+        import hermes_installer.authority.bootstrap_enrollment as enrollment_module
+        import hermes_installer.authority.bootstrap_runtime_factory as factory_module
+        import hermes_installer.authority.setup_principal as principal_module
+
+        account = next(entry for entry in pwd.getpwall()
+                       if entry.pw_uid > 0 and entry.pw_gid > 0)
+        group = SimpleNamespace(gr_name="fixture-primary", gr_gid=account.pw_gid)
+        now = time.monotonic()
+
+        class Release:
+            def verify_current(self):
+                return True
+
+        class Actor:
+            def verify_current(self, _release):
+                return True
+
+        class InitialRegistry:
+            root_journal = Path("/root/local-owner-normal-fixture")
+
+            def __init__(self):
+                self.session = SimpleNamespace(
+                    compilation_session_handle="a" * 64,
+                    compilation_transaction_handle="b" * 64,
+                    plan_sha256="c" * 64, expires_monotonic=now + 240,
+                    verified_release_receipt_handle="d" * 64,
+                    actor_observation_receipt_handle="e" * 64,
+                    _choices=SimpleNamespace(target_account_name=account.pw_name),
+                    _release=Release(), _actor=Actor())
+                self.handoff = None
+
+            def resolve_initial_session(self, handle):
+                if handle != self.session.compilation_session_handle:
+                    raise BootstrapEnrollmentPending("foreign initial session")
+                return self.session
+
+            def verify_initial_session(self, session):
+                if session is not self.session:
+                    raise BootstrapEnrollmentPending("initial session replaced")
+
+            def resolve_adopted_handoff(self, handle):
+                if handle != normal.handle or self.handoff is None:
+                    raise BootstrapEnrollmentPending("unjoined handoff")
+                return self.handoff
+
+        with tempfile.TemporaryDirectory(prefix="local-owner-adoption-") as temp:
+            journal = Path(temp) / "journal"
+            journal.mkdir(mode=0o700)
+            initial = InitialRegistry()
+            initial.root_journal = journal
+            normal = _LiveStore(journal)
+            normal.initial_compilation_registry = initial
+            normal.record["target_account_name"] = account.pw_name
+            normal.record["target_uid"] = account.pw_uid
+            normal.record["target_gid"] = account.pw_gid
+            selected_generation = __import__(
+                "hermes_installer.authority.bootstrap_enrollment", fromlist=["_generation"]
+            )._generation(__import__(
+                "hermes_installer.authority.bootstrap_enrollment", fromlist=["EnrollmentPolicy"]
+            ).EnrollmentPolicy(
+                "hermes-agent-native-v1", "fixture-principal", "prepared-fixture",
+                "hermes-source-fixture", (), (), (), ()))
+            normal.record["expected_previous_generation_digest"] = selected_generation["generation_digest"]
+            normal.authority_loader_for_session = lambda: {"service_generations": selected_generation}
+            proof = SimpleNamespace(
+                setup_session_id=normal.record["setup_session_id"],
+                transaction_handle=normal.record["transaction_handle"],
+                plan_digest=normal.record["plan_digest"],
+                expected_previous_generation_digest=selected_generation["generation_digest"])
+            with (patch.object(factory_module, "RootInitialCompilationRegistry", InitialRegistry),
+                  patch.object(principal_module, "RootSetupSessionStore", _LiveStore),
+                  patch.object(principal_module, "_current_setup_proof", return_value=proof),
+                  patch.object(principal_module.os, "getuid", return_value=0),
+                  patch.object(principal_module.os, "geteuid", return_value=0),
+                  patch.object(principal_module.sys, "platform", "linux"),
+                  patch.object(principal_module.pwd, "getpwnam", return_value=account),
+                  patch.object(principal_module.grp, "getgrgid", return_value=group),
+                  patch.object(principal_module.grp, "getgrnam", return_value=group),
+                  patch.object(enrollment_module, "_read_machine_id", return_value="f" * 32),
+                  patch.object(RootSetupLocalOwnerIdentityRegistry, "_write_record", lambda *_args: None)):
+                issuer = RootSetupLocalOwnerIdentityRegistry.from_initial_compilation(
+                    initial, journal, monotonic=lambda: now)
+                issuer._write_record = lambda *_args: None
+                caps = issuer.select_capabilities(
+                    "a" * 64, ("resource-overlay-store:tool:resource_overlay_read",))
+                principal_handle = issuer.select_principal("a" * 64, caps.selection_handle)
+                from hermes_installer.authority.bootstrap_runtime_factory import RootInitialPublicationHandoff
+                initial.handoff = RootInitialPublicationHandoff(
+                    1, "f" * 64, "a" * 64, "b" * 64, "1" * 64, "2" * 64,
+                    "c" * 64, "3" * 64, principal_handle, (), now, now + 120,
+                    _initial_session=initial.session, principal_identity_kind="linux-local-owner-v1")
+                adopted, new_handle = issuer.adopt_initial_publication(
+                    normal_session_store=normal, normal_session_handle=normal.handle)
+                selector = adopted.resolve_adopted_principal_selector(normal, normal.handle)
+                current = adopted.resolve_current_setup_identity(
+                    selector.selection_handle,
+                    adopted.resolve_adopted_namespace_selector(normal, normal.handle).selection_handle,
+                    normal.handle)
+                self.assertEqual(selector.identity_kind, "linux-local-owner-v1")
+                self.assertTrue(selector.principal_id.startswith("linux-local-owner:"))
+                self.assertEqual(current.principal.receipt_handle, new_handle)
+                self.assertEqual(current.namespace.principal_selection_receipt_id, new_handle)
+                self.assertEqual(current.namespace.binding_sha256,
+                                 current.namespace_binding_sha256)
+                self.assertEqual(current.principal.selected_capability_ceiling,
+                                 ("resource-overlay-store:tool:resource_overlay_read",))
+                self.assertLessEqual(current.expires_monotonic - current.issued_monotonic, 30.0)
+                changed_uid = SimpleNamespace(pw_name=account.pw_name,
+                                              pw_uid=account.pw_uid + 12345,
+                                              pw_gid=account.pw_gid)
+                with patch.object(principal_module.pwd, "getpwnam", return_value=changed_uid):
+                    with self.assertRaises(BootstrapEnrollmentPending):
+                        adopted.resolve_current_setup_identity(
+                            selector.selection_handle,
+                            adopted.resolve_adopted_namespace_selector(
+                                normal, normal.handle).selection_handle, normal.handle)
+                changed_group = SimpleNamespace(gr_name=group.gr_name,
+                                                gr_gid=account.pw_gid + 23456)
+                with patch.object(principal_module.grp, "getgrgid", return_value=changed_group):
+                    with self.assertRaises(BootstrapEnrollmentPending):
+                        adopted.resolve_current_setup_identity(
+                            selector.selection_handle,
+                            adopted.resolve_adopted_namespace_selector(
+                                normal, normal.handle).selection_handle, normal.handle)
 
     def test_foreign_existing_root_account_is_preserved(self):
         with tempfile.TemporaryDirectory(prefix="setup-principal-conflict-") as temp:
