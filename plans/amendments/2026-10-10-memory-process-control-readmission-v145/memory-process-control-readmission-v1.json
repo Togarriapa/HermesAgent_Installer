@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T64",
+    "HI-T80",
+    "SK-T119"
+  ],
+  "why": "A real memory service may outlive the initial <=30s start admission. Reusing expired admission denies valid status/stop and must not extend old proof.",
+  "api": {
+    "owner": "existing RootMemoryLifecycleRegistry and selected lifecycle authority/custody",
+    "call": "readmit_selected_control(memory_enrollment_id,owned_process_handle,operation)->fresh RootMemoryLifecycleAdmission",
+    "operations": [
+      "process.status",
+      "process.stop"
+    ],
+    "inputs": "Genuine retained owned process handle/terminal lineage only; no PID/profile/UID/source selector supplied by worker. Root registry independently resolves exact active memory enrollment, original start receipt and selected service/profile/generation/source closure.",
+    "checks": "Fresh actual current installed controller PIDFD, selected enablement choice/adoption and policy/epoch, current selected artifact/prestart/source proof, held process identity/PIDFD/cgroup/mount/network namespace. Current proof expires<=30s and <=original process deadline; old admission immutable/expired. No new start effect or service deadline extension.",
+    "status": "Fresh current same-process status permission; may not imply semantic readiness or model/capture permission.",
+    "stop": "Fresh narrowly scoped same retained process stop authorization using existing fixed shutdown/grace policy. Actual memory enablement revocation prohibits future work and schedules root-owned cleanup using retained original process/PIDFD custody; revocation must not prevent necessary stop cleanup. Root cleanup is separate finite custody obligation, no new caller grant.",
+    "cleanup": "Missing controller/consent/source currentness denies productive operations; retained root cleanup still terminates only exact originally owned live process or proves terminal state with no PID reuse/kill-by-number. Original deadline hard bound remains.",
+    "serialization": "Reuse existing finite selected lifecycle status/stop payload and signer/verify/consume route; no new generic signer/session/worker RPC."
+  },
+  "tasks": [
+    {
+      "id": "SK-T145.1",
+      "owner": "memory lifecycle/selected startup authority/custody",
+      "work": "Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD."
+    },
+    {
+      "id": "SK-T145.2",
+      "owner": "memory lifecycle integration",
+      "work": "Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership."
+    }
+  ],
+  "acceptance": "Meaningful process fixtures and actual target evidence separate. All AC and baseline unchanged."
+}
