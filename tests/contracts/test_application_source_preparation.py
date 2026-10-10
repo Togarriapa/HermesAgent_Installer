@@ -226,3 +226,47 @@ def test_pre_active_receipts_reject_source_tamper_stale_choice_and_expiry(tmp_pa
         now[0] = 1000.0
         with pytest.raises(ApplicationSourcePreparationDenied):
             registry.resolve_selection(selection.selection_handle)
+
+
+def test_pre_active_lock_receipt_and_namespace_currentness_are_sealed(tmp_path: Path) -> None:
+    now = [100.0]
+    registry, binding, selection, _root, _journal = _registry(tmp_path, now)
+    with process_lock(registry.store.owned.path("installer.lock")):
+        registry.resolve_application_source_preparation(selection.qualification_choice_handle, "graphify")
+        source = registry.prepare_selected_source(selection.selection_handle)
+        lock = registry.resolve_application_lock_for_prepared_source(
+            selection.selection_handle, source.receipt_handle)
+        lock_entry = registry._locks[lock.receipt_handle]
+        lock_path = registry.store.root / lock_entry.generation_id / lock.lock_member_path
+        lock_path.chmod(0o600)
+        lock_path.write_bytes(b"tampered lock\n")
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.resolve_application_lock_receipt(
+                lock.receipt_handle,
+                preparation_selection_handle=selection.selection_handle,
+                prepared_source_receipt_handle=source.receipt_handle,
+            )
+
+    now = [100.0]
+    registry, binding, selection, _root, _journal = _registry(tmp_path / "namespace", now)
+    with process_lock(registry.store.owned.path("installer.lock")):
+        registry.resolve_application_source_preparation(selection.qualification_choice_handle, "graphify")
+        binding.namespace.receipt_handle = "replaced-namespace-handle-00000000000000000"
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.resolve_selection(selection.selection_handle)
+
+
+def test_source_selection_dto_rejects_caller_construction() -> None:
+    with pytest.raises(TypeError, match="minted by the root setup binding"):
+        RootApplicationSourcePreparationSelection(
+            schema=1, selection_handle="x", setup_session_id="x",
+            transaction_handle="x", plan_sha256="x", prepared_generation_id="x",
+            prepared_generation_digest="x", qualification_choice_handle="x",
+            qualification_consent_receipt_handle="x", application_id="graphify",
+            workflow_id="qualify-graphify-v1", source_identity="Graphify-Labs/graphify",
+            source_revision="0" * 40, source_catalog_artifact_id="x",
+            source_catalog_sha256="0" * 64, manifest_paths=("pyproject.toml",),
+            lock_paths=("uv.lock",), target_profile_id="hermes-agent-native-v1",
+            namespace_selection_receipt_handle="x", principal_selection_receipt_handle=None,
+            controller_binding_handle="x", expires_monotonic=100.0,
+        )
