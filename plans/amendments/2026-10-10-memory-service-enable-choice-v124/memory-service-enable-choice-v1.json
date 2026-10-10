@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "memory-service-enable-choice-v1",
+  "requirements": [
+    "SK-T01",
+    "SK-F02",
+    "SK01"
+  ],
+  "correction": "v119 phrase existing explicit service enablement choice is a required product configuration producer, not implemented source evidence. Current RootSetupChoices lacks it. Define actual producer now; do not infer consent from user-mode select-memory, installed bytes, capture preference or account login.",
+  "owner": "hermes_installer.authority.bootstrap_runtime_factory.RootBootstrapSession",
+  "producer_api": "observe_memory_service_enablement(provider,backend_variant)->RootSelectedMemoryServiceEnablementChoice; root local normal install configuration only, through the existing actual foreground authenticated TTY observer and current setup session/prepared selected installation binding.",
+  "source": "Protected root TTY displays selected provider/backend variant/private profile/namespace, service startup/local data roots and zero budget; asks whether to enable this selected memory service. Explicit yes/no configuration choice recorded once. Default/no/skipped means disabled. No repeated approval after the same choice; this is a new actual configuration field, not a second confirmation of install. Capture and extraction/embed prompts remain purpose-specific distinct optional choices.",
+  "choice_fields": [
+    "choice_handle",
+    "choice_observation_id",
+    "setup_session_id",
+    "transaction_handle",
+    "plan_sha256",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "principal_selection_receipt_handle",
+    "private_profile_selection_receipt_handle",
+    "namespace_selection_receipt_handle",
+    "provider",
+    "backend_variant",
+    "enabled",
+    "controller_binding_handle",
+    "policy_revision",
+    "selection_digest",
+    "issued_monotonic",
+    "expires_monotonic",
+    "signature"
+  ],
+  "selection": "Provider/backend variant must resolve actual reviewed memory connector/source recipe selection from sealed selected installation definitions; no caller-created profile/service/principal/operation IDs. Actual principal/private profile/namespace receipts must match current owner. Choice may precede installed runtime; it is intent, not process-start or memory functionality authority. Unconfigured source/runtime still pending.",
+  "persistence": "Root setup choice journal retains signed immutable choice plus revocation/current owner index, no secrets/transcript. Stage0 handoff follows current verified principal/private profile choice linkage; normal setup TTY records this memory configuration. Root service enablement registry never trusts user-private Journal choices.",
+  "registry": "RootMemoryServiceEnablementRegistry.from_root_runtime(active_bindings,root_setup_choice_registry,root_journal).resolve_selected_enablement(memory_enrollment_id)->RootMemoryServiceEnablementSelection; revoke_selected_enablement(choice_handle,current_authorized_owner_request) invalidates active index and future starts. Factory/consent owner retains actual choice producer and registry; lifecycle owner consumes only exact current projection.",
+  "active_publication": "Active compiler consumes actual choice and verified selected memory enrollment/process/source/runtime closure; records memory_enrollments[*].lifecycle_binding.enablement_selection_handle as exact retained root choice handle. Separate root active projection maps that same signed choice to actual profile/namespace/principal/provider/backend/service enrollment/process generation/owner epoch/start recipe/policy revision under enclosing active digest. No service generation in the earlier choice fabricated before active assembly.",
+  "projection_fields": [
+    "selection_handle",
+    "choice_observation_id",
+    "principal_id",
+    "profile_id",
+    "namespace_id",
+    "provider",
+    "backend_variant",
+    "service_enrollment_id",
+    "service_generation",
+    "memory_owner_generation",
+    "start_operation_id",
+    "policy_revision",
+    "selection_digest",
+    "state",
+    "revocation_epoch"
+  ],
+  "currentness": "Persistent enabled preference is not a long-lived effect grant. Re-resolve current choice signature/registry/revocation/owner/active projection before each start/restart; snapshot <=30s. Replacement service/profile/owner requires legitimate current publication/owner linkage. Old preference does not authorize arbitrary new provider or namespace. Stop owned cleanup remains allowed after revoke; new start denied.",
+  "separation": "Service lifecycle only; no transcript/history capture, private provider route recipient permission, embedding model selection, metered spending, lazy download or account operations. Existing v119 source and semantic readiness receipts remain mandatory independently.",
+  "tasks": [
+    "SK-T124.1: factory/choice owner implement actual root TTY configuration producer/retained choice and service-enablement registry; no fictitious existing source.",
+    "SK-T124.2: enrollment/active compiler add exact lifecycle enablement handle and current post-activation projection from actual selected service/source/runtime receipt closure.",
+    "SK-T124.3: lifecycle owner consume resolver; test default disabled, false user journal, wrong owner/profile/backend, revoke/service replacement and independence from capture/private consent; actual engine/target acceptance open."
+  ]
+}

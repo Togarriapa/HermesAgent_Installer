@@ -694,3 +694,21 @@ The installer SHALL resolve selected memory service lifecycle enablement and act
 
 - **WHEN** a selected memory process passes only its liveness/status route
 - **THEN** the installer records that exact status and leaves semantic memory functionality pending until actual selected capability operations and private route gates are verified
+
+### Requirement: Actual installer memory service enable configuration
+
+The installer SHALL record v124 actual protected root TTY service-enable configuration and publish its exact verified active service projection separately from capture/provider consent.
+
+#### Scenario: User-mode selection or capture consent alone
+
+- **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
+- **THEN** memory service startup is unavailable and no service authorization is inferred
+
+### Requirement: Actual observed private endpoint and separate model deployments
+
+The installer SHALL require v125 actual root-held endpoint/model/runtime/source-load/current process evidence for private memory route selection, separately for GLM5.2 extraction and embedding.
+
+#### Scenario: Model-list alias without verified source loading
+
+- **WHEN** an endpoint lists a model alias but no exact verified installed model/runtime/config/current load proof exists
+- **THEN** no deployment receipt is minted and private memory remains unavailable with the missing prerequisite stated
