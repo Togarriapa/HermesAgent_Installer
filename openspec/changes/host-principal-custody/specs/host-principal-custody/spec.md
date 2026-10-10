@@ -591,3 +591,17 @@ The installer SHALL bind the updated financial source module and all its actual 
 #### Scenario: Root financial read omits selected account alias
 - **WHEN** the read result lacks the actual root-selected alias or violates the closed scalar/UTF8/byte bounds
 - **THEN** the native result is denied without fabricating an alias or promoting backend claims to account/transaction proof
+
+### Requirement: Protected public web scope source v142
+The installer SHALL publish only source-selected public web scopes with exact target, effect and configuration receipt joins and SHALL require separate current PUBLIC input permission.
+
+#### Scenario: Private input names a configured public URL
+- **WHEN** a request carries PRIVATE or UNKNOWN ancestry despite a configured public scope
+- **THEN** egress is denied without widening the private consent or interpreting scope configuration as input permission
+
+### Requirement: Durable setup source choice signing v143
+The installer SHALL retain purpose-specific setup choices through genuine existing key custody and protected journal records and SHALL adopt them only through actual active publication before issuing fresh runtime permissions.
+
+#### Scenario: Setup process-local choice seal survives no durable adoption
+- **WHEN** runtime permission is requested from a choice without verified durable signature and publication adoption
+- **THEN** permission is denied rather than constructing a parallel authority service or treating old setup evidence as current authority
