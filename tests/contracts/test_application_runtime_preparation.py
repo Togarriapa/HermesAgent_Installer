@@ -38,6 +38,15 @@ def _wheel_row(name: str, filename: str) -> str:
 
 
 class ApplicationRuntimePreparationTests(unittest.TestCase):
+    def test_current_package_closure_lookup_fails_without_a_retained_closure(self):
+        registry = object.__new__(RootApplicationOfflinePackageClosureRegistry)
+        registry.source_registry = type(
+            "SourceRegistry", (), {"resolve_selection": lambda self, _handle: object()})()
+        registry._closure_entries = {}
+        with self.assertRaisesRegex(ApplicationRuntimePreparationDenied,
+                                    "no unique retained package closure"):
+            registry.resolve_current_package_closure_for_selection("s" * 48)
+
     def test_authority_signer_retains_exact_pending_package_observations(self):
         uid = os.getuid() or 1
         service = AuthorityService(

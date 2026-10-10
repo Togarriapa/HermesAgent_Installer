@@ -285,12 +285,41 @@ class RootApplicationOfflinePackageClosureRegistry:
                        source_preparation_registry=source_preparation_registry,
                        artifact_observer=artifact_observer, root_journal=root_journal,
                        authority_service=authority_service, **kwargs)
+        binding_attach = getattr(selected_installation_binding,
+                                 "attach_application_package_closure_registry", None)
+        if not callable(binding_attach):
+            registry.close()
+            raise ValueError("root setup binding has no typed application-package closure attachment")
+        binding_attach(registry)
         attach = getattr(authority_service, "attach_application_package_closure_registry", None)
         if not callable(attach):
             registry.close()
             raise ValueError("authority service has no typed application-package receipt attachment")
         attach(registry)
         return registry
+
+    def resolve_current_package_closure_for_selection(
+        self, source_preparation_selection_handle: str,
+    ) -> RootApplicationOfflinePackageClosureReceipt:
+        """Return the sole retained, current package closure for an early app selector.
+
+        This is the factory join point between package acquisition and the final
+        v132 runtime selection. It never creates or refreshes a closure.
+        """
+        if not _valid_opaque(source_preparation_selection_handle):
+            raise ApplicationRuntimePreparationDenied("source preparation handle is malformed")
+        current_selection = self.source_registry.resolve_selection(
+            source_preparation_selection_handle)
+        candidates = [entry for entry in self._closure_entries.values()
+                      if entry.selection == current_selection
+                      and entry.receipt.source_preparation_selection_handle
+                      == source_preparation_selection_handle]
+        if len(candidates) != 1:
+            raise ApplicationRuntimePreparationDenied(
+                "current source selection has no unique retained package closure")
+        return self.resolve_selected_packages(
+            candidates[0].receipt.receipt_handle,
+            source_preparation_selection_handle)
 
     def close(self) -> None:
         for entry in self._artifact_entries.values():
