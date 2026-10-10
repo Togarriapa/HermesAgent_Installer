@@ -113,6 +113,27 @@ _PREPARED_BUILD_TEMPLATE = (
     "0d98bdabf27185d769f55de12e9242d5286e07d11e5d62369c2eeedf1fa4b967",
     1235,
 )
+_PREPARED_APPLICATION_BUILD_TEMPLATE = (
+    "installer-prepared-application-build-service-template-v1",
+    "plans/amendments/2026-10-10-application-offline-runtime-build-v132/prepared-application-build-service-template-v1.json",
+    "8cc3bbce52901c5f05bab99622d77d9d4d44f4a5fe27eb636e3fe8e23beab0d9",
+    1498,
+    "prepared-build-service-template",
+)
+_PREPARED_APPLICATION_BUILD_PROFILES = {
+    "application-graphify-runtime-prepare-v1": (
+        "graphify", "application-graphify-runtime-prepare-v1",
+        "application-graphify-runtime-prepare:start"),
+    "application-browser-use-runtime-prepare-v1": (
+        "browser-use", "application-browser-use-runtime-prepare-v1",
+        "application-browser-use-runtime-prepare:start"),
+    "application-hyperframes-runtime-prepare-v1": (
+        "hyperframes", "application-hyperframes-runtime-prepare-v1",
+        "application-hyperframes-runtime-prepare:start"),
+    "application-scrapegraph-ai-runtime-prepare-v1": (
+        "scrapegraph-ai", "application-scrapegraph-ai-runtime-prepare-v1",
+        "application-scrapegraph-ai-runtime-prepare:start"),
+}
 _NATIVE_ASSEMBLY_COMPILER_ARTIFACT = "installer-module:hermes_installer.authority.native_assembler"
 _NATIVE_ASSEMBLY_SUPPORT_MODULES = (
     "installer-module:hermes_installer.authority.native_assembler",
@@ -604,6 +625,17 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("prepared build service is not owned by this setup session")
         return self._session._resolve_prepared_build_service(build_profile_id)
+
+    def resolve_prepared_application_build_service(
+            self, build_profile_id: str) -> RootPreparedBuildServiceSelection:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application build service is not owned by this setup session")
+        return self._session._resolve_prepared_application_build_service(build_profile_id)
+
+    def resolve_application_runtime_probe_artifact(self, application_id: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application probe artifact is not owned by this setup session")
+        return self._session._resolve_application_runtime_probe_artifact(application_id)
 
     def verify_current_setup_controller(self) -> VerifiedRootSetupAuthorization:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -3921,6 +3953,7 @@ class RootBootstrapSession:
         self._native_policy_records_by_selection: dict[str, Any] = {}
         self._prepared_build_identity: SystemIdentityAdapter | None = None
         self._prepared_build_selections: dict[str, RootPreparedBuildServiceSelection] = {}
+        self._prepared_application_build_selections: dict[str, RootPreparedBuildServiceSelection] = {}
         self._prepared_build_output_roots: dict[str, RootPreparedBuildOutputRoot] = {}
         self._source_provisioner = self._make_source_provisioner()
         self._selected_installation = RootSelectedInstallationBinding(self, seal)
@@ -6515,6 +6548,8 @@ class RootBootstrapSession:
         return selected
 
     def _resolve_current_prepared_build_service(self, selection_handle: str) -> RootPreparedBuildServiceSelection:
+        if selection_handle in self._prepared_application_build_selections:
+            return self._resolve_current_prepared_application_build_service(selection_handle)
         self._check_live()
         self._refresh_authorization()
         selected = self._prepared_build_selections.get(selection_handle)
@@ -6535,8 +6570,18 @@ class RootBootstrapSession:
         if (identity.uid != selected.service_uid or identity.gid != selected.service_gid
                 or identity.name != "hermes-installer-build"):
             raise BootstrapEnrollmentPending("prepared build NSS identity changed after selection")
-        root = (self._factory.resolver.journal_root / "prepared-build-services"
-                / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest())
+        if selected.template_artifact_id == _PREPARED_APPLICATION_BUILD_TEMPLATE[0]:
+            app_profile = next((row for row in _PREPARED_APPLICATION_BUILD_PROFILES.values()
+                                if selected.allowed_operation_ids == (row[1],)
+                                and selected.allowed_targets == (row[2],)), None)
+            if app_profile is None:
+                raise BootstrapEnrollmentPending("application output root has no fixed operation profile")
+            root = (self._factory.resolver.journal_root / "prepared-application-build-services"
+                    / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest()
+                    / app_profile[0])
+        else:
+            root = (self._factory.resolver.journal_root / "prepared-build-services"
+                    / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest())
         path = root / f"{selection_handle}.json"
         record = _read_json_if_owned(path)
         if (not isinstance(record, dict) or record.get("selection_handle") != selection_handle
@@ -6559,6 +6604,209 @@ class RootBootstrapSession:
         self._factory._actor.verify_current(self._factory._release)
         return selected
 
+    def _resolve_prepared_application_build_service(
+            self, build_profile_id: str) -> RootPreparedBuildServiceSelection:
+        """Select one v132 offline application-build operation under the distinct template."""
+        self._check_live()
+        self._refresh_authorization()
+        profile = _PREPARED_APPLICATION_BUILD_PROFILES.get(build_profile_id)
+        if profile is None:
+            raise BootstrapEnrollmentPending("application build profile is outside the fixed v132 set")
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle
+                or prepared.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("application build service requires current empty prepared custody")
+        prior = self._prepared_build_selections.get(build_profile_id)
+        if prior is not None:
+            return self._resolve_current_prepared_application_build_service(prior.service_selection_handle)
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        artifact_id, relative_path, digest, size, role = _PREPARED_APPLICATION_BUILD_TEMPLATE
+        plan = self._factory.resolver.resolve(_PLAN_ID)
+        rows = [row for row in release.files if row.artifact_id == artifact_id]
+        if (artifact_id not in plan.allowed_artifact_ids or len(rows) != 1
+                or rows[0].relative_path != relative_path or rows[0].sha256 != digest
+                or rows[0].size_bytes != size or role not in rows[0].roles):
+            raise BootstrapEnrollmentPending("installed release lacks the exact reviewed v132 application template")
+        fd = release.open_file(artifact_id)
+        try:
+            raw = bytearray()
+            while len(raw) <= size:
+                block = os.read(fd, min(64 * 1024, size + 1 - len(raw)))
+                if not block:
+                    break
+                raw.extend(block)
+        finally:
+            os.close(fd)
+        if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest:
+            raise BootstrapEnrollmentPending("v132 application template bytes changed after release verification")
+        try:
+            template = json.loads(raw)
+        except Exception:
+            raise BootstrapEnrollmentPending("v132 application template is malformed") from None
+        app_id, operation_id, target_id = profile
+        expected_operations = [row[1] for row in _PREPARED_APPLICATION_BUILD_PROFILES.values()]
+        expected_targets = [row[2] for row in _PREPARED_APPLICATION_BUILD_PROFILES.values()]
+        if (not isinstance(template, dict) or template.get("schema") != 1
+                or template.get("id") != artifact_id
+                or template.get("profile_id") != "hermes-installer-build-v1"
+                or template.get("service_account_name") != "hermes-installer-build"
+                or template.get("exclusive_group_name") != "hermes-installer-build"
+                or template.get("allowed_operation_ids") != expected_operations
+                or template.get("allowed_targets") != expected_targets
+                or operation_id not in template["allowed_operation_ids"]
+                or target_id not in template["allowed_targets"]):
+            raise BootstrapEnrollmentPending("v132 application template does not match its fixed four-operation scope")
+        if self._prepared_build_identity is None:
+            self._prepared_build_identity = SystemIdentityAdapter(
+                Path("/var/lib/hermes-installer/identities/hermes-installer-build.json"),
+                name="hermes-installer-build")
+        identity = self._prepared_build_identity.ensure()
+        if identity.uid == 0 or identity.gid == 0:
+            raise BootstrapEnrollmentPending("application build identity must be a dedicated non-root account")
+        transaction_digest = hashlib.sha256(self._authorization.transaction_handle.encode("ascii")).hexdigest()
+        root = (self._factory.resolver.journal_root / "prepared-application-build-services"
+                / transaction_digest / app_id)
+        _ensure_root_directory(root.parent)
+        _ensure_root_directory(root)
+        work = root / "work"
+        if not work.exists():
+            _create_service_root(work, identity)
+        work_info = work.lstat()
+        if (work_info.st_uid != identity.uid or work_info.st_gid != identity.gid
+                or not stat.S_ISDIR(work_info.st_mode) or stat.S_IMODE(work_info.st_mode) != 0o700):
+            raise BootstrapEnrollmentPending("application build work root conflicts with the selected NSS identity")
+        now = time.monotonic()
+        expires = min(now + min(600.0, float(template.get("limits", {}).get("max_lifetime_seconds", 600))),
+                      prepared.expires_monotonic,
+                      self._factory.session_store.current_deadline(self._handle))
+        if expires <= now:
+            raise BootstrapEnrollmentPending("application build service selection lease expired")
+        selection_handle = secrets.token_urlsafe(36)
+        nss_handle, root_handle = secrets.token_urlsafe(36), secrets.token_urlsafe(36)
+        immutable = {
+            "schema": 1,
+            "id": f"setup-app-build:{self._authorization.transaction_handle}:{operation_id}",
+            "profile_id": "hermes-installer-build-v1",
+            "application_id": app_id,
+            "setup_session_id": self._handle.session_id,
+            "transaction_handle": self._authorization.transaction_handle,
+            "prepared_generation_id": prepared.generation_id,
+            "prepared_generation_digest": prepared.generation_digest,
+            "template_artifact_id": artifact_id, "template_sha256": digest,
+            "service_uid": identity.uid, "service_gid": identity.gid,
+            "nss_identity_receipt_handle": nss_handle,
+            "root_selection_receipt_handle": root_handle,
+            "allowed_operation_ids": [operation_id],
+            "allowed_targets": [target_id],
+            "root_device": root.stat().st_dev, "root_inode": root.stat().st_ino,
+            "work_device": work_info.st_dev, "work_inode": work_info.st_ino,
+        }
+        generation = hashlib.sha256(_canonical(immutable)).hexdigest()
+        signature = hmac.new(self._seal.encode("ascii"), _canonical({**immutable,
+                    "generation": generation, "expires_monotonic": expires}), hashlib.sha256).hexdigest()
+        record = {**immutable, "generation": generation, "expires_monotonic": expires,
+                  "selection_handle": selection_handle, "signature": signature}
+        _atomic_root_file(root / f"{selection_handle}.json", _canonical(record), 0o600)
+        selected = RootPreparedBuildServiceSelection(
+            selection_handle, immutable["id"], immutable["profile_id"], generation,
+            self._handle.session_id, self._authorization.transaction_handle,
+            prepared.generation_id, prepared.generation_digest, artifact_id, digest,
+            identity.uid, identity.gid, nss_handle, root_handle,
+            (operation_id,), (target_id,), expires, signature, self._seal, self)
+        self._prepared_application_build_selections[selection_handle] = selected
+        self._prepared_build_selections[selection_handle] = selected
+        self._prepared_build_selections[build_profile_id] = selected
+        actor.verify_current(release)
+        return selected
+
+    def _resolve_current_prepared_application_build_service(
+            self, selection_handle: str) -> RootPreparedBuildServiceSelection:
+        self._check_live()
+        self._refresh_authorization()
+        selected = self._prepared_application_build_selections.get(selection_handle)
+        prepared = self._last_receipt
+        if (not isinstance(selected, RootPreparedBuildServiceSelection)
+                or selected.service_selection_handle != selection_handle
+                or selected._session is not self
+                or not secrets.compare_digest(selected._session_seal, self._seal)
+                or prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or selected.setup_session_id != self._handle.session_id
+                or selected.transaction_handle != self._authorization.transaction_handle
+                or selected.prepared_generation_id != prepared.generation_id
+                or selected.prepared_generation_digest != prepared.generation_digest
+                or selected.expires_monotonic <= time.monotonic()
+                or self._prepared_build_identity is None):
+            raise BootstrapEnrollmentPending("application build selection is stale or not retained")
+        app_id = selected.id.rsplit(":", 1)[-1].removesuffix("-runtime-prepare-v1")
+        # The operation suffix alone is not an app identity for hyphenated IDs;
+        # derive it only from the exact operation/target pair retained in the row.
+        profile = next((value for value in _PREPARED_APPLICATION_BUILD_PROFILES.values()
+                        if selected.allowed_operation_ids == (value[1],)
+                        and selected.allowed_targets == (value[2],)), None)
+        if profile is None:
+            raise BootstrapEnrollmentPending("application build selection has an unknown operation")
+        app_id = profile[0]
+        artifact_id, relative_path, digest, size, role = _PREPARED_APPLICATION_BUILD_TEMPLATE
+        if selected.template_artifact_id != artifact_id or selected.template_sha256 != digest:
+            raise BootstrapEnrollmentPending("application build selection template pin changed")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        template_rows = [row for row in release.files if row.artifact_id == artifact_id]
+        if (len(template_rows) != 1 or template_rows[0].relative_path != relative_path
+                or template_rows[0].sha256 != digest or template_rows[0].size_bytes != size
+                or role not in template_rows[0].roles):
+            raise BootstrapEnrollmentPending("installed v132 template membership changed")
+        template_fd = release.open_file(artifact_id)
+        try:
+            template_bytes = bytearray()
+            while len(template_bytes) <= size:
+                block = os.read(template_fd, min(64 * 1024, size + 1 - len(template_bytes)))
+                if not block:
+                    break
+                template_bytes.extend(block)
+        finally:
+            os.close(template_fd)
+        if len(template_bytes) != size or hashlib.sha256(template_bytes).hexdigest() != digest:
+            raise BootstrapEnrollmentPending("installed v132 template bytes changed")
+        identity = self._prepared_build_identity.ensure()
+        if (identity.uid != selected.service_uid or identity.gid != selected.service_gid
+                or identity.name != "hermes-installer-build"):
+            raise BootstrapEnrollmentPending("application build NSS identity changed after selection")
+        root = (self._factory.resolver.journal_root / "prepared-application-build-services"
+                / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest() / app_id)
+        record = _read_json_if_owned(root / f"{selection_handle}.json")
+        if (not isinstance(record, dict) or record.get("selection_handle") != selection_handle
+                or record.get("signature") != selected._signature
+                or record.get("prepared_generation_digest") != prepared.generation_digest
+                or record.get("service_uid") != identity.uid or record.get("service_gid") != identity.gid
+                or record.get("allowed_operation_ids") != list(selected.allowed_operation_ids)
+                or record.get("allowed_targets") != list(selected.allowed_targets)
+                or record.get("template_artifact_id") != artifact_id
+                or record.get("template_sha256") != digest):
+            raise BootstrapEnrollmentPending("application build selection journal changed")
+        unsigned = dict(record)
+        unsigned.pop("signature", None)
+        unsigned.pop("selection_handle", None)
+        check = hmac.new(self._seal.encode("ascii"), _canonical(unsigned), hashlib.sha256).hexdigest()
+        if not secrets.compare_digest(check, selected._signature):
+            raise BootstrapEnrollmentPending("application build selection journal signature is invalid")
+        work_info = (root / "work").lstat()
+        if (not stat.S_ISDIR(work_info.st_mode) or work_info.st_uid != identity.uid
+                or work_info.st_gid != identity.gid or stat.S_IMODE(work_info.st_mode) != 0o700
+                or root.stat().st_ino != record.get("root_inode")
+                or work_info.st_ino != record.get("work_inode")):
+            raise BootstrapEnrollmentPending("application build roots changed after selection")
+        actor.verify_current(release)
+        return selected
+
+    def _resolve_application_runtime_probe_artifact(self, application_id: str) -> Any:
+        if application_id not in {row[0] for row in _PREPARED_APPLICATION_BUILD_PROFILES.values()}:
+            raise BootstrapEnrollmentPending("application probe request is outside the fixed application set")
+        raise BootstrapEnrollmentPending(
+            "installed application ABI/origin probe artifact receipt is unavailable in this release")
+
     def _verify_current_setup_controller(self) -> VerifiedRootSetupAuthorization:
         self._check_live()
         self._refresh_authorization()
@@ -6580,8 +6828,18 @@ class RootBootstrapSession:
             check_fd = prior.open_current()
             os.close(check_fd)
             return prior
-        root = (self._factory.resolver.journal_root / "prepared-build-services"
-                / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest())
+        if selected.template_artifact_id == _PREPARED_APPLICATION_BUILD_TEMPLATE[0]:
+            app_profile = next((row for row in _PREPARED_APPLICATION_BUILD_PROFILES.values()
+                                if selected.allowed_operation_ids == (row[1],)
+                                and selected.allowed_targets == (row[2],)), None)
+            if app_profile is None:
+                raise BootstrapEnrollmentPending("application output root has no fixed operation profile")
+            root = (self._factory.resolver.journal_root / "prepared-application-build-services"
+                    / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest()
+                    / app_profile[0])
+        else:
+            root = (self._factory.resolver.journal_root / "prepared-build-services"
+                    / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest())
         output_parent = root / "outputs"
         if not output_parent.exists():
             _ensure_root_directory(output_parent)
