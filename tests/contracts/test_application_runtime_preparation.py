@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import csv
 import io
 import json
 import dataclasses
@@ -18,6 +20,7 @@ from hermes_installer.authority.application_runtime_preparation import (
     RootApplicationOfflinePackageClosureRegistry,
     RootApplicationPackageLicenseObservation,
     inspect_application_build_backend,
+    inspect_reviewed_backend_wheel,
     _PackageArtifactEntry,
     _PackageLicenseEntry,
     _FrozenClaimMap,
@@ -39,6 +42,64 @@ def _wheel_row(name: str, filename: str) -> str:
 
 
 class ApplicationRuntimePreparationTests(unittest.TestCase):
+    def test_backend_wheel_metadata_and_license_facts_must_match_fixed_row(self):
+        output = io.BytesIO()
+        members = {
+            "backend-1.0.dist-info/METADATA": (
+                "Metadata-Version: 2.4\nName: backend\nVersion: 1.0\n"
+                "Requires-Python: >=3.11\nRequires-Dist: packaging>=24.2\n"
+                "License-Expression: MIT\nLicense-File: LICENSE\n\n").encode(),
+            "backend-1.0.dist-info/licenses/LICENSE": b"MIT\n",
+        }
+        record = io.StringIO(newline="")
+        writer = csv.writer(record, lineterminator="\n")
+        for name, body in sorted(members.items()):
+            digest_row = base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("=")
+            writer.writerow((name, f"sha256={digest_row}", str(len(body))))
+        record_path = "backend-1.0.dist-info/RECORD"
+        writer.writerow((record_path, "", ""))
+        members[record_path] = record.getvalue().encode()
+        with zipfile.ZipFile(output, "w") as archive:
+            for name, body in members.items():
+                archive.writestr(name, body)
+        payload = output.getvalue()
+        digest = hashlib.sha256(payload).hexdigest()
+        row = {
+            "name": "backend", "version": "1.0", "filename": "backend-1.0.whl",
+            "url": "https://files.pythonhosted.org/packages/backend-1.0.whl",
+            "sha256": digest, "size_bytes": len(payload),
+            "requires_python": ">=3.11", "requires_dist": ["packaging>=24.2"],
+            "license_expression": "MIT", "license_declaration": None,
+            "license_members": [{
+                "path": "backend-1.0.dist-info/licenses/LICENSE",
+                "sha256": hashlib.sha256(b"MIT\n").hexdigest(), "size_bytes": 4,
+            }],
+        }
+        evidence = inspect_reviewed_backend_wheel(payload, row)
+        self.assertEqual(evidence.package_name, "backend")
+        self.assertEqual(evidence.requires_dist, ("packaging>=24.2",))
+        changed = dict(row, requires_dist=["packaging>=99"])
+        with self.assertRaises(ApplicationRuntimePreparationDenied):
+            inspect_reviewed_backend_wheel(payload, changed)
+
+    def test_backend_wheel_requires_complete_record_hashes(self):
+        output = io.BytesIO()
+        metadata_path = "pkg-1.0.dist-info/METADATA"
+        body = b"Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\n\n"
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr(metadata_path, body)
+        payload = output.getvalue()
+        row = {
+            "name": "pkg", "version": "1.0", "filename": "pkg-1.0.whl",
+            "url": "https://files.pythonhosted.org/packages/pkg-1.0.whl",
+            "sha256": hashlib.sha256(payload).hexdigest(), "size_bytes": len(payload),
+            "requires_python": None, "requires_dist": None,
+            "license_expression": None, "license_declaration": None,
+            "license_members": [],
+        }
+        with self.assertRaises(ApplicationRuntimePreparationDenied):
+            inspect_reviewed_backend_wheel(payload, row)
+
     def test_build_backend_inspector_matches_only_pinned_source_requirements(self):
         graphify = inspect_application_build_backend(
             "graphify",
