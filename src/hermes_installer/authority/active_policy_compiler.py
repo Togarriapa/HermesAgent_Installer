@@ -63,6 +63,26 @@ def _ordered_unique_receipt_handles(handles: Sequence[str], label: str) -> tuple
     return tuple(result)
 
 
+def _owner_overlay_adoption_rows(values: tuple[Any, ...]) -> list[dict[str, Any]]:
+    if not isinstance(values, tuple) or len(values) > 4:
+        raise BootstrapEnrollmentPending("active claim owner-overlay adoption list is malformed")
+    if not values:
+        return []
+    from .owner_overlay_publication import RootPublishedLocalOwnerAdoption
+    expected = {"schema", "identity_kind", "adoption_handle", "signed_choice",
+                "adopted_at_unix", "setup_deadline_unix", "owner", "resources",
+                "native_package", "operation_records", "view_custody", "source_members"}
+    rows: list[dict[str, Any]] = []
+    for value in values:
+        if type(value) is not RootPublishedLocalOwnerAdoption:
+            raise BootstrapEnrollmentPending("active claim contains a foreign owner-overlay adoption")
+        row = value.to_claim_row()
+        if not isinstance(row, Mapping) or set(row) != expected:
+            raise BootstrapEnrollmentPending("owner-overlay adoption claim row has an invalid schema")
+        rows.append(dict(row))
+    return rows
+
+
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -221,6 +241,7 @@ def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
         "principal_binding_sha256": claim.principal_binding_sha256,
         "namespace_selection_handle": claim.namespace_selection_handle,
         "namespace_binding_sha256": claim.namespace_binding_sha256,
+        "owner_overlay_adoptions": _owner_overlay_adoption_rows(claim.owner_overlay_adoptions),
         "runtime_receipt_handles": list(claim.runtime_receipt_handles),
         "materialization_receipt_handles": list(claim.materialization_receipt_handles),
         "precompile_reservation_handle": claim._reservation_handle,
@@ -411,6 +432,7 @@ class RootActivePolicyCompilationClaim:
     _root_prepared_native_bundle: Any = field(default=None, repr=False, compare=False)
     choice_adoptions: tuple[ActiveSetupChoiceProjection, ...] = ()
     role_closure_sha256: str = ""
+    owner_overlay_adoptions: tuple[Any, ...] = ()
 
 
 class RootActivePolicyTemplateResolver:
@@ -734,6 +756,10 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("PM runtime receipt does not match the current prepared session")
 
         principal = self._resolve_current_principal(session)
+        if (principal.identity_kind == "linux-local-owner-v1"
+                and principal.selected_capability_ceiling):
+            raise BootstrapEnrollmentPending(
+                "selected local-owner overlay capabilities have no current publication adoption collector")
         identity_binding, namespace_selector, namespace_binding, identity_sources = \
             self._resolve_principal_publication_binding(session, principal)
         principal_handle = getattr(principal, "receipt_id", None)
@@ -795,6 +821,7 @@ class RootActivePolicyCompilationRegistry:
             _root_prepared_native_bundle=prepared_bundle,
             choice_adoptions=choice_adoptions,
             role_closure_sha256=closure.role_closure_sha256,
+            owner_overlay_adoptions=(),
         )
         claim_digest = _sha(_canonical(_manifest(provisional)))
         claim = RootActivePolicyCompilationClaim(
@@ -832,6 +859,7 @@ class RootActivePolicyCompilationRegistry:
             _root_prepared_native_bundle=provisional._root_prepared_native_bundle,
             choice_adoptions=provisional.choice_adoptions,
             role_closure_sha256=provisional.role_closure_sha256,
+            owner_overlay_adoptions=provisional.owner_overlay_adoptions,
         )
         # Durable claim record reserves the transaction before the publisher can
         # create any generation. Same-transaction replay remains denied until
@@ -1131,6 +1159,7 @@ class RootActivePolicyCompilationRegistry:
             "policy_template_sha256", "principal_selection_receipt_handle",
             "principal_identity_kind", "principal_binding_sha256",
             "namespace_selection_handle", "namespace_binding_sha256",
+            "owner_overlay_adoptions",
             "runtime_receipt_handles", "materialization_receipt_handles",
             "precompile_reservation_handle", "role_closure_sha256",
             "compiled_policy_sha256", "compiled_artifact_catalog_sha256",
@@ -1152,6 +1181,8 @@ class RootActivePolicyCompilationRegistry:
                 or not isinstance(output_handles, list) or len(output_handles) != 5
                 or not isinstance(manifest.get("choice_adoptions"), list)
                 or len(manifest["choice_adoptions"]) > len(_SETUP_CHOICE_PURPOSES)
+                or not isinstance(manifest.get("owner_overlay_adoptions"), list)
+                or len(manifest["owner_overlay_adoptions"]) > 4
                 or not isinstance(observed_handle, str) or not _HANDLE.fullmatch(observed_handle)
                 or manifest.get("principal_identity_kind") not in {
                     "authentik-subject-v1", "linux-local-owner-v1"}
@@ -1252,6 +1283,7 @@ class RootActivePolicyCompilationRegistry:
             "principal_binding_sha256": manifest["principal_binding_sha256"],
             "namespace_selection_handle": manifest["namespace_selection_handle"],
             "namespace_binding_sha256": manifest["namespace_binding_sha256"],
+            "owner_overlay_adoptions": manifest["owner_overlay_adoptions"],
             "runtime_receipt_handles": runtime_handles,
             "materialization_receipt_handles": output_handles,
         }
@@ -1887,12 +1919,14 @@ class RootActivePolicyCompilationRegistry:
                 "artifact_catalog_sha256": claim.compiled_artifact_catalog_sha256,
                 "selection_sha256": claim.compiled_selection_sha256,
                 "selection_catalog_sha256": claim.selection_catalog_sha256,
-            "observed_root_receipt_handle": claim.observed_root_receipt_handle,
-            "principal_selection_receipt_handle": claim.principal_selection_receipt_handle,
-            "principal_identity_kind": claim.principal_identity_kind,
-            "principal_binding_sha256": claim.principal_binding_sha256,
-            "namespace_selection_handle": claim.namespace_selection_handle,
-            "namespace_binding_sha256": claim.namespace_binding_sha256,
+                "observed_root_receipt_handle": claim.observed_root_receipt_handle,
+                "principal_selection_receipt_handle": claim.principal_selection_receipt_handle,
+                "principal_identity_kind": claim.principal_identity_kind,
+                "principal_binding_sha256": claim.principal_binding_sha256,
+                "namespace_selection_handle": claim.namespace_selection_handle,
+                "namespace_binding_sha256": claim.namespace_binding_sha256,
+                "owner_overlay_adoptions": _owner_overlay_adoption_rows(
+                    claim.owner_overlay_adoptions),
                 "runtime_receipt_handles": list(claim.runtime_receipt_handles),
                 "materialization_receipt_handles": list(claim.materialization_receipt_handles),
                 "publication_receipt_handle": publication_receipt_handle,

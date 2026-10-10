@@ -228,6 +228,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "principal_binding_sha256": original.principal_binding_sha256,
         "namespace_selection_handle": original.namespace_selection_handle,
         "namespace_binding_sha256": original.namespace_binding_sha256,
+        "owner_overlay_adoptions": [],
         "runtime_receipt_handles": list(original.runtime_receipt_handles),
         "materialization_receipt_handles": list(original.materialization_receipt_handles),
         "publication_receipt_handle": None,
