@@ -1,0 +1,726 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md",
+  "record_fields": {
+    "prepared_producer": [
+      "schema",
+      "receipt_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "source_choice_selection_handle",
+      "source_choice_signed_record_sha256",
+      "worker_recipe_receipt_handle",
+      "worker_recipe_sha256",
+      "service_record",
+      "process_profile_record",
+      "native_worker_network_record",
+      "active_network_generation_record",
+      "native_worker_runtime_record",
+      "source_member_receipt_handles",
+      "root_journal_id",
+      "root_journal_generation",
+      "output_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "service_record": [
+      "enrollment_id",
+      "generation",
+      "profile_id",
+      "principal_id",
+      "service_uid",
+      "service_gid",
+      "service_user",
+      "device_enrollment_id",
+      "expected_device_generation",
+      "executable",
+      "executable_sha256",
+      "runtime_artifact_ids",
+      "package_runtime_records",
+      "roots",
+      "authority_endpoint_id",
+      "namespace_identity",
+      "socket_policy_id",
+      "target_route_ids",
+      "operation_targets",
+      "operation_recipes",
+      "argv_recipe",
+      "environment",
+      "max_lifetime_seconds",
+      "memory_max_bytes",
+      "cpu_quota_percent",
+      "io_weight"
+    ],
+    "process_profile_record": [
+      "profile_id",
+      "owner_uid",
+      "owner_gid",
+      "service_user",
+      "executable",
+      "artifact_sha256",
+      "artifact_root",
+      "data_root",
+      "generation",
+      "memory_max_bytes",
+      "cpu_quota_percent",
+      "io_weight",
+      "max_lifetime_seconds",
+      "child_artifact_refs",
+      "argv_recipe"
+    ],
+    "native_worker_network_record": [
+      "schema",
+      "id",
+      "generation",
+      "namespace_identity",
+      "worker_enrollment_id",
+      "worker_profile_id",
+      "role",
+      "authority_endpoint_id",
+      "endpoint_root_id",
+      "endpoint_relative_socket",
+      "endpoint_receipt_handle",
+      "endpoint_receipt_sha256",
+      "policy_artifact_id",
+      "policy_sha256"
+    ],
+    "active_network_generation_record": [
+      "schema",
+      "id",
+      "generation_id",
+      "recipe_id",
+      "recipe_sha256",
+      "recipe_definition_receipt_handle",
+      "recipe_definition_sha256",
+      "source_choice_selection_handle",
+      "source_choice_purpose",
+      "source_choice_signed_record_sha256",
+      "source_choice_payload_sha256",
+      "source_choice_epoch",
+      "source_choice_revocation_epoch",
+      "source_original_setup_deadline_unix",
+      "source_member_receipt_handles",
+      "identity_kind",
+      "principal_id",
+      "namespace_id",
+      "principal_binding_sha256",
+      "namespace_binding_sha256",
+      "service_enrollment_id",
+      "service_generation",
+      "service_row_sha256",
+      "process_profile_id",
+      "process_profile_generation",
+      "process_row_sha256",
+      "network_catalog",
+      "network_id",
+      "network_generation",
+      "network_row_sha256",
+      "root_journal_id",
+      "root_journal_generation",
+      "worker_runtime_record_id",
+      "worker_runtime_record_sha256"
+    ],
+    "native_worker_runtime_record": [
+      "schema",
+      "id",
+      "generation_id",
+      "recipe_id",
+      "recipe_sha256",
+      "source_choice_selection_handle",
+      "profile_id",
+      "profile_generation",
+      "service_enrollment_id",
+      "hermes_source_receipt_handle",
+      "hermes_source_artifact_id",
+      "hermes_source_sha256",
+      "pm_runtime_receipt_handle",
+      "pm_base_closure_sha256",
+      "pm_executable_relative_path",
+      "pm_executable_member_sha256",
+      "pm_runtime_member_records",
+      "native_output_member_records",
+      "source_member_receipt_handles",
+      "source_definition_member_records",
+      "owned_runtime_root_receipt_handle",
+      "owned_runtime_root_receipt_sha256",
+      "native_package_id",
+      "native_package_generation"
+    ],
+    "runtime_member_record": [
+      "artifact_id",
+      "receipt_handle",
+      "relative_path",
+      "kind",
+      "sha256",
+      "size_bytes",
+      "mode",
+      "owner_uid",
+      "owner_gid",
+      "device",
+      "inode",
+      "link_target",
+      "output_role"
+    ]
+  },
+  "network_catalog": "native_worker_network_records",
+  "network_role": "af-unix",
+  "source_choice_purpose": "native-policy-preparation",
+  "maximum_selected_workers": 1,
+  "maximum_rows_per_new_catalog": 1,
+  "maximum_runtime_members": 8192,
+  "digest": "SHA256 UTF8 JSON sort_keys=True separators=(comma,colon) ensure_ascii=False allow_nan=False; no newline",
+  "source_pins": "pending coherent committed source review",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "json_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:hermes-installer:network-wire-v184:1",
+    "$defs": {
+      "native_worker_network_record": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "id",
+          "generation",
+          "namespace_identity",
+          "worker_enrollment_id",
+          "worker_profile_id",
+          "role",
+          "authority_endpoint_id",
+          "endpoint_root_id",
+          "endpoint_relative_socket",
+          "endpoint_receipt_handle",
+          "endpoint_receipt_sha256",
+          "policy_artifact_id",
+          "policy_sha256"
+        ],
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "namespace_identity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "worker_enrollment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "worker_profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "role": {
+            "const": "af-unix"
+          },
+          "authority_endpoint_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "endpoint_root_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "endpoint_relative_socket": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "endpoint_receipt_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "endpoint_receipt_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "policy_artifact_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "policy_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "active_network_generation_record": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "id",
+          "generation_id",
+          "recipe_id",
+          "recipe_sha256",
+          "recipe_definition_receipt_handle",
+          "recipe_definition_sha256",
+          "source_choice_selection_handle",
+          "source_choice_purpose",
+          "source_choice_signed_record_sha256",
+          "source_choice_payload_sha256",
+          "source_choice_epoch",
+          "source_choice_revocation_epoch",
+          "source_original_setup_deadline_unix",
+          "source_member_receipt_handles",
+          "identity_kind",
+          "principal_id",
+          "namespace_id",
+          "principal_binding_sha256",
+          "namespace_binding_sha256",
+          "service_enrollment_id",
+          "service_generation",
+          "service_row_sha256",
+          "process_profile_id",
+          "process_profile_generation",
+          "process_row_sha256",
+          "network_catalog",
+          "network_id",
+          "network_generation",
+          "network_row_sha256",
+          "root_journal_id",
+          "root_journal_generation",
+          "worker_runtime_record_id",
+          "worker_runtime_record_sha256"
+        ],
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "generation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "recipe_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "recipe_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "recipe_definition_receipt_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "recipe_definition_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_choice_selection_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "source_choice_purpose": {
+            "const": "native-policy-preparation"
+          },
+          "source_choice_signed_record_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_choice_payload_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_choice_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_choice_revocation_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_original_setup_deadline_unix": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "source_member_receipt_handles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "identity_kind": {
+            "enum": [
+              "linux-local-owner-v1",
+              "authentik-subject-v1"
+            ]
+          },
+          "principal_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "namespace_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "principal_binding_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "namespace_binding_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "service_enrollment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "service_generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "service_row_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "process_profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "process_profile_generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "process_row_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "network_catalog": {
+            "const": "native_worker_network_records"
+          },
+          "network_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "network_generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "network_row_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "root_journal_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "root_journal_generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "worker_runtime_record_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "worker_runtime_record_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
+      "native_worker_runtime_record": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "id",
+          "generation_id",
+          "recipe_id",
+          "recipe_sha256",
+          "source_choice_selection_handle",
+          "profile_id",
+          "profile_generation",
+          "service_enrollment_id",
+          "hermes_source_receipt_handle",
+          "hermes_source_artifact_id",
+          "hermes_source_sha256",
+          "pm_runtime_receipt_handle",
+          "pm_base_closure_sha256",
+          "pm_executable_relative_path",
+          "pm_executable_member_sha256",
+          "pm_runtime_member_records",
+          "native_output_member_records",
+          "source_member_receipt_handles",
+          "source_definition_member_records",
+          "owned_runtime_root_receipt_handle",
+          "owned_runtime_root_receipt_sha256",
+          "native_package_id",
+          "native_package_generation"
+        ],
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "generation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "recipe_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "recipe_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_choice_selection_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "profile_generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "service_enrollment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "hermes_source_receipt_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "hermes_source_artifact_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "hermes_source_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "pm_runtime_receipt_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "pm_base_closure_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "pm_executable_relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "pm_executable_member_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "pm_runtime_member_records": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8192,
+            "items": {
+              "$ref": "#/$defs/runtime_member_record"
+            }
+          },
+          "native_output_member_records": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/$defs/runtime_member_record"
+            }
+          },
+          "source_member_receipt_handles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "source_definition_member_records": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/$defs/runtime_member_record"
+            }
+          },
+          "owned_runtime_root_receipt_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "owned_runtime_root_receipt_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "native_package_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "native_package_generation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "runtime_member_record": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifact_id",
+          "receipt_handle",
+          "relative_path",
+          "kind",
+          "sha256",
+          "size_bytes",
+          "mode",
+          "owner_uid",
+          "owner_gid",
+          "device",
+          "inode",
+          "link_target",
+          "output_role"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "receipt_handle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "kind": {
+            "enum": [
+              "regular-file",
+              "symlink"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "owner_uid": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "owner_gid": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "device": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inode": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "link_target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096
+          },
+          "output_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "native-compiled-closure",
+              "native-entrypoint-manifest",
+              "native-action-resolver",
+              "native-boundary-overlay",
+              "native-candidate-index"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
