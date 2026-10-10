@@ -61,10 +61,31 @@ _CATALOG_ID = "installer-protected-artifact-catalog-v1"
 _POLICY_ID = "installer-bootstrap-policy-v1"
 _TEMPLATE_ID = "installer-bootstrap-compiler-template-v1"
 _IDENTITY_TEMPLATE_ID = "installer-authentik-policy-template-v1"
+_PREPARED_BASE_TEMPLATE_ID = "installer-prepared-authority-base-template-v1"
 _PLAN_TEMPLATE_ID = "installer-root-setup-plan-template-v1"
 _POLICY_GENERATION_ID = "installer-bootstrap-policy-generation-v1"
+_SERVICE_PARENT_ROOT = "/var/lib/hermes-installer/services/hermes-agent-native-v1"
 _STORE_ID = "installer-bootstrap-artifact-store-v1"
 _JOURNAL_ID = "installer-authority-journal-v1"
+_COMPOSIO_SCOPE = "composio-project-catalog-read"
+_COMPOSIO_OPERATION = "composio.whatsapp.catalog.read"
+_COMPOSIO_ORIGIN = "https://backend.composio.dev"
+_COMPOSIO_TOOLKIT_VERSION = "20260721_00"
+_COMPOSIO_POLICY_ARTIFACT_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
+_COMPOSIO_POLICY_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
+_COMPOSIO_POLICY_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
+_COMPOSIO_POLICY = {
+    "credential_scope": _COMPOSIO_SCOPE,
+    "detail_prefix": "/api/v3.1/triggers_types/",
+    "id": "installer-composio-whatsapp-catalog-read-policy-v1",
+    "list_path": "/api/v3.1/triggers_types",
+    "max_lease_seconds": 30, "max_page_items": 50, "max_pages": 10,
+    "max_response_bytes": 2 * 1024 * 1024, "max_total_items": 500,
+    "methods": ["GET"], "operation": _COMPOSIO_OPERATION,
+    "origin": _COMPOSIO_ORIGIN, "redirects": "deny",
+    "schema": 1, "toolkit_slug": "whatsapp",
+    "version_source": "selected-channel-pinned-version", "writes": "deny",
+}
 _GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -72,6 +93,14 @@ _SHA = re.compile(r"[0-9a-f]{64}\Z")
 
 def _fail(message: str) -> None:
     raise BootstrapEnrollmentPending(message)
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain_json(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +254,10 @@ class RootInitialCompilationSession:
     _root_journal_root: Mapping[str, Any] = field(repr=False)
     _seal: str = field(repr=False)
 
+    @property
+    def principal_selection_receipt_handle(self) -> str | None:
+        return self._choices.selected_principal_binding_receipt_handle
+
 
 @dataclass(frozen=True, slots=True)
 class PendingInitialCompilation:
@@ -290,6 +323,74 @@ class RootInitialPublicationHandoff:
     _publication_receipt: Any = field(default=None, repr=False)
     _initial_session: RootInitialCompilationSession | None = field(default=None, repr=False)
     _registry_seal: str = field(default="", repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootComposioCatalogReadAuthorization:
+    schema: int
+    authorization_handle: str
+    session_handle: str
+    transaction_handle: str
+    plan_sha256: str
+    principal_id: str
+    project_id: str
+    credential_reference_id: str
+    required_scope: str
+    operation: str
+    target: str
+    toolkit_version: str
+    request_policy_artifact_id: str
+    request_policy_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _principal_receipt_handle: str = field(repr=False)
+    _seal: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootComposioCatalogGetGrant:
+    grant_id: str
+    authorization_handle: str
+    session_handle: str
+    transaction_handle: str
+    plan_sha256: str
+    principal_id: str
+    project_id: str
+    credential_reference_id: str
+    path: str
+    query: Mapping[str, Any]
+    origin: str
+    method: str
+    toolkit_version: str
+    request_policy_artifact_id: str
+    request_policy_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _detail_slug: str | None = field(repr=False)
+    _seal: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RootComposioCatalogExchangeReceipt:
+    schema: int
+    receipt_handle: str
+    authorization_handle: str
+    session_handle: str
+    transaction_handle: str
+    principal_id: str
+    project_id: str
+    toolkit_version: str
+    operation: str
+    request_policy_artifact_id: str
+    request_policy_sha256: str
+    request_sha256: str
+    response_sha256: str
+    response_size_bytes: int
+    page_sequence: int
+    parent_response_receipt_handle: str | None
+    selected_slug: str | None
+    issued_monotonic: float
+    expires_monotonic: float
 
 
 class InstalledBootstrapPolicyResolver:
@@ -569,7 +670,7 @@ class InstalledBootstrapPolicyResolver:
                        for key in root_ids)
                 or len({roots[key] for key in root_ids}) != len(root_ids)
                 or roots["journal_root_id"] != _JOURNAL_ID
-                or roots["service_parent_root"] != "/var/lib/hermes-installer/services"):
+                or roots["service_parent_root"] != _SERVICE_PARENT_ROOT):
             _fail("bootstrap service root policy does not use the selected private root layout")
         base = doc["authority_base_template"]
         self._validate_authority_base_template(base)
@@ -621,7 +722,8 @@ class InstalledBootstrapPolicyResolver:
                             "memory_enrollments", "operation_parameter_schemas", "source_issuers",
                             "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
                             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-                            "root_journal_roots"}
+                            "root_journal_roots", "resource_controller_roles",
+                            "native_mcp_tool_bindings", "remote_observation_enrollments"}
         catalogs = doc["catalog_selections"]
         if not isinstance(catalogs, dict) or set(catalogs) != selection_fields:
             _fail("bootstrap catalog selections do not cover the exact enrollment schema")
@@ -712,14 +814,35 @@ class InstalledBootstrapPolicyResolver:
         required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
                     "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
                     "native_bridges", "normalization_policies", "delegations", "service_generations"}
+        root_bound_key = value.get("key_id") == {"root_binding": "authority_key.key_id"} if isinstance(value, dict) else False
         if (not isinstance(value, dict) or set(value) != required or type(value["schema"]) is not int
-                or value["schema"] != 1 or not isinstance(value["key_id"], str) or not value["key_id"]
+                or value["schema"] != 1
+                or not (root_bound_key or isinstance(value["key_id"], str) and value["key_id"])
                 or any(not isinstance(value[name], dict) for name in required - {"schema", "key_id"})):
             _fail("bootstrap authority-base template does not match the protected authority schema")
-        if any(value[name] for name in ("principals", "rules", "process_profiles", "provider_enrollments",
+        if any(value[name] for name in ("principals", "rules", "authentik", "process_profiles", "provider_enrollments",
                                         "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges",
-                                        "normalization_policies", "delegations", "service_generations")):
+                                        "normalization_policies", "delegations")):
             _fail("bootstrap authority base cannot pre-enable services or worker authority")
+        generation = value["service_generations"]
+        if generation == {"root_binding": "prepared_service_generation.exact_empty_snapshot"}:
+            if not root_bound_key:
+                _fail("prepared authority base template bindings must be paired")
+            return
+        from .enrollment import _validate_service_generations
+        try:
+            normalized = _validate_service_generations(generation)
+        except Exception:
+            _fail("prepared authority base requires a valid root-bound service snapshot")
+        if (normalized["service_records"] or normalized["protected_devices"]
+                or normalized["protected_build_records"] or normalized["native_packages"]
+                or normalized["memory_enrollments"] or normalized["operation_parameter_schemas"]
+                or normalized["source_issuers"] or normalized["resource_jobs"]
+                or normalized["remote_session_enrollments"]
+                or normalized["resource_backend_enrollments"]
+                or normalized["resource_body_recipes"] or normalized["resource_scope_bindings"]
+                or normalized["resource_validators"] or len(normalized["root_journal_roots"]) != 1):
+            _fail("prepared authority base must bind the exact empty root-journal service snapshot")
 
     @staticmethod
     def _selection_row(value: Any, keys: set[str]) -> dict[str, Any]:
@@ -884,7 +1007,7 @@ class RootInitialCompilationRegistry:
             raise BootstrapEnrollmentPending("installed release lacks the exact setup executable closure")
         module_closure = []
         for row in modules:
-            if not row.relative_path.startswith("src/") or not row.relative_path.endswith(".py"):
+            if not row.relative_path.startswith("lib/python/") or not row.relative_path.endswith(".py"):
                 raise BootstrapEnrollmentPending("selected release module path is not importable source")
             module_name = row.artifact_id.removeprefix("installer-module:")
             if module_name == row.artifact_id:
@@ -1054,13 +1177,20 @@ class RootInitialCompilationRegistry:
         if not isinstance(plan_rows, list) or len(plan_rows) != 1 or not isinstance(plan_rows[0], dict):
             raise BootstrapEnrollmentError("compiled selection must contain only its verified setup plan")
         plan = plan_rows[0]
+        plan_file = next((row for row in self.release.files
+                          if row.artifact_id == session.plan_artifact_id), None)
         plan_fields = {"artifact_id", "relative_path", "sha256", "baseline_tag_object", "baseline_commit",
                        "baseline_tree_sha256", "amendment_manifest_sha256", "allowed_artifact_ids",
                        "bootstrap_policy_artifact_id"}
-        if (set(plan) != plan_fields or plan["artifact_id"] != session.plan_artifact_id
+        expected_allowed = self._allowed_plan_artifact_ids(session)
+        if (plan_file is None or set(plan) != plan_fields or plan["artifact_id"] != session.plan_artifact_id
+                or plan["relative_path"] != plan_file.relative_path
                 or plan["sha256"] != session.plan_sha256 or plan["bootstrap_policy_artifact_id"] != _POLICY_ID
-                or not isinstance(plan["allowed_artifact_ids"], list)
-                or len(set(plan["allowed_artifact_ids"])) != len(plan["allowed_artifact_ids"])):
+                or plan["baseline_tag_object"] != self.release.baseline_tag_object
+                or plan["baseline_commit"] != self.release.baseline_commit
+                or plan["baseline_tree_sha256"] != self.release.baseline_tree_sha256
+                or plan["amendment_manifest_sha256"] != self.release.amendment_manifest_sha256
+                or plan["allowed_artifact_ids"] != list(expected_allowed)):
             raise BootstrapEnrollmentError("compiled root plan does not exactly join its selected release")
         policy_sha = hashlib.sha256(compiled.policy_bytes).hexdigest()
         policy_rows = document.get("bootstrap_policies")
@@ -1273,11 +1403,14 @@ class RootInitialCompilationRegistry:
             files = {row.artifact_id: row for row in self.release.files}
             required_ids = (_LAUNCHER_ID, _INTERPRETER_ID, _PLAN_ID, _CATALOG_ID,
                             _PLAN_TEMPLATE_ID,
-                            _TEMPLATE_ID, _IDENTITY_TEMPLATE_ID)
+                            _TEMPLATE_ID, _IDENTITY_TEMPLATE_ID,
+                            _PREPARED_BASE_TEMPLATE_ID, _COMPOSIO_POLICY_ARTIFACT_ID)
             if any(artifact_id not in files for artifact_id in required_ids):
                 raise BootstrapEnrollmentPending("installed release closure is missing a fixed setup input")
             template = files[_TEMPLATE_ID]
             identity_template = files[_IDENTITY_TEMPLATE_ID]
+            prepared_base_template = files[_PREPARED_BASE_TEMPLATE_ID]
+            composio_policy = files[_COMPOSIO_POLICY_ARTIFACT_ID]
             plan_template = files[_PLAN_TEMPLATE_ID]
             plan = files[self.release.selected_plan_artifact_id]
             catalog = files[_CATALOG_ID]
@@ -1289,6 +1422,14 @@ class RootInitialCompilationRegistry:
             if (identity_template.sha256 != "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8"
                     or identity_template.relative_path != "templates/authentik-policy-template-v1.json"):
                 raise BootstrapEnrollmentPending("installed release lacks the exact selected identity-policy template")
+            if (prepared_base_template.sha256 != "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953"
+                    or prepared_base_template.relative_path != "templates/prepared-authority-base-template-v1.json"
+                    or "template" not in prepared_base_template.roles):
+                raise BootstrapEnrollmentPending("installed release lacks the exact v63 prepared authority-base template")
+            if (composio_policy.sha256 != _COMPOSIO_POLICY_SHA256
+                    or composio_policy.relative_path != _COMPOSIO_POLICY_PATH
+                    or composio_policy.size_bytes != 528 or "template" not in composio_policy.roles):
+                raise BootstrapEnrollmentPending("installed release lacks the exact v63 Composio reader policy")
             if (plan_template.sha256 != "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31"
                     or plan_template.relative_path != "templates/root-setup-plan-template-v1.json"
                     or "template" not in plan_template.roles):
@@ -1349,6 +1490,465 @@ class RootInitialCompilationRegistry:
         return value
 
 
+class RootComposioSetupSelectionAuthority:
+    """Root-only, one-use grant issuer for the fixed WhatsApp trigger catalog GET."""
+
+    _SLUG = re.compile(r"[A-Z][A-Z0-9_]{0,127}\Z")
+    _PROJECT = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
+    _CURSOR = re.compile(r"[^\x00-\x20\x7f]{1,1024}\Z")
+
+    def __init__(self, verified_release: Any, current_actor_verifier: Any,
+                 initial_or_normal_session_registry: Any, root_credential_vault: Any,
+                 root_journal: Path, *, principal_selection_registry: Any):
+        from .installer_release import VerifiedInstallerReleaseReceipt
+        from .setup_principal import RootSetupPrincipalSelectionRegistry
+        if (os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux()
+                or not isinstance(verified_release, VerifiedInstallerReleaseReceipt)
+                or not callable(getattr(current_actor_verifier, "verify_current", None))
+                or not callable(getattr(root_credential_vault, "resolve_project_reference", None))
+                or not isinstance(principal_selection_registry, RootSetupPrincipalSelectionRegistry)
+                or not isinstance(root_journal, Path) or root_journal != Path("/var/lib/hermes-installer/authority-journal")):
+            raise BootstrapEnrollmentPending("Composio setup authority requires installed root actor, project-scoped vault, principal registry and fixed journal")
+        if not (hasattr(initial_or_normal_session_registry, "resolve_initial_session")
+                or isinstance(initial_or_normal_session_registry, RootSetupSessionStore)):
+            raise BootstrapEnrollmentPending("Composio setup authority requires a concrete stage-zero or normal root session store")
+        verified_release.verify_current()
+        cls._verify_reader_policy(verified_release)
+        _secure_directory_identity(root_journal)
+        self.release = verified_release
+        self.actor_verifier = current_actor_verifier
+        self.sessions = initial_or_normal_session_registry
+        self.vault = root_credential_vault
+        self.principal_registry = principal_selection_registry
+        self.root_journal = root_journal
+        self._journal_identity = _secure_directory_identity(root_journal)
+        self._root = root_journal / "composio-catalog-read"
+        _ensure_root_directory(self._root)
+        self._root_identity = _secure_directory_identity(self._root)
+        self._seal = secrets.token_hex(32)
+        self._authorizations: dict[str, RootComposioCatalogReadAuthorization] = {}
+        self._grants: dict[str, RootComposioCatalogGetGrant] = {}
+        self._used_grants: set[str] = set()
+        self._next_cursor: dict[str, str | None] = {}
+        self._seen_cursors: dict[str, set[str]] = {}
+        self._page_count: dict[str, int] = {}
+        self._pagination_finished: dict[str, bool] = {}
+        self._last_page_receipt: dict[str, str | None] = {}
+        self._catalog_records: dict[str, dict[str, tuple[Mapping[str, Any], str]]] = {}
+        self._listed_rows: dict[str, int] = {}
+
+    @staticmethod
+    def _verify_reader_policy(release: Any) -> None:
+        rows = [row for row in release.files if row.artifact_id == _COMPOSIO_POLICY_ARTIFACT_ID]
+        if (len(rows) != 1 or rows[0].relative_path != _COMPOSIO_POLICY_PATH
+                or rows[0].sha256 != _COMPOSIO_POLICY_SHA256 or rows[0].size_bytes != 528
+                or "template" not in rows[0].roles):
+            raise BootstrapEnrollmentPending("installed release lacks the exact v63 Composio reader policy template")
+        fd = release.open_file(_COMPOSIO_POLICY_ARTIFACT_ID)
+        try:
+            raw = bytearray()
+            while len(raw) <= 528:
+                block = os.read(fd, 529 - len(raw))
+                if not block:
+                    break
+                raw.extend(block)
+        finally:
+            os.close(fd)
+        expected = json.dumps(_COMPOSIO_POLICY, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=True).encode("ascii")
+        if (len(raw) != 528 or bytes(raw) != expected
+                or hashlib.sha256(raw).hexdigest() != _COMPOSIO_POLICY_SHA256):
+            raise BootstrapEnrollmentPending("installed Composio reader policy bytes differ from v63")
+
+    @classmethod
+    def from_root_setup(cls, verified_release: Any, current_actor_verifier: Any,
+                        initial_or_normal_session_registry: Any, root_credential_vault: Any,
+                        root_journal: Path, *, principal_selection_registry: Any
+                        ) -> "RootComposioSetupSelectionAuthority":
+        return cls(verified_release, current_actor_verifier,
+                   initial_or_normal_session_registry, root_credential_vault,
+                   root_journal, principal_selection_registry=principal_selection_registry)
+
+    @property
+    def request_policy_sha256(self) -> str:
+        return _COMPOSIO_POLICY_SHA256
+
+    def authorize_whatsapp_catalog_read(
+            self, session_handle: Any, *, project_id: str,
+            project_api_key_reference: str,
+            principal_selection_receipt_handle: str,
+            toolkit_version: str) -> RootComposioCatalogReadAuthorization:
+        context = self._resolve_session(session_handle)
+        if (not isinstance(project_id, str) or not self._PROJECT.fullmatch(project_id)
+                or not isinstance(project_api_key_reference, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,96}", project_api_key_reference)
+                or toolkit_version != _COMPOSIO_TOOLKIT_VERSION):
+            raise BootstrapEnrollmentError("Composio setup selection is malformed or differs from the pinned toolkit version")
+        expected_principal_handle = context["principal_receipt_handle"]
+        if (not isinstance(expected_principal_handle, str)
+                or not secrets.compare_digest(expected_principal_handle, principal_selection_receipt_handle)):
+            raise BootstrapEnrollmentPending("Composio setup authorization requires the currently selected root principal receipt")
+        principal = self._resolve_selected_principal(context, principal_selection_receipt_handle)
+        if not isinstance(principal.principal_id, str) or not self._PROJECT.fullmatch(principal.principal_id):
+            raise BootstrapEnrollmentPending("selected root principal is malformed")
+        try:
+            secret = self.vault.resolve_project_reference(
+                project_api_key_reference, peer_uid=0, required_scope=_COMPOSIO_SCOPE,
+                principal_id=principal.principal_id, project_id=project_id)
+        except Exception:
+            raise BootstrapEnrollmentPending("selected Composio project key is absent or not bound to this project, principal and scope") from None
+        if not isinstance(secret, str) or not secret or len(secret) > 16384:
+            raise BootstrapEnrollmentPending("selected Composio project key reference is invalid")
+        del secret
+        now = time.monotonic()
+        expires = min(now + 30.0, context["expires_monotonic"], principal.expires_monotonic)
+        if expires <= now:
+            raise BootstrapEnrollmentPending("Composio setup authorization lease is already expired")
+        handle = secrets.token_hex(32)
+        authorization = RootComposioCatalogReadAuthorization(
+            1, handle, context["session_id"], context["transaction_handle"],
+            context["plan_sha256"], principal.principal_id, project_id,
+            project_api_key_reference, _COMPOSIO_SCOPE, _COMPOSIO_OPERATION,
+            f"composio:whatsapp:catalog:{toolkit_version}", toolkit_version,
+            _COMPOSIO_POLICY_ARTIFACT_ID,
+            _COMPOSIO_POLICY_SHA256, now, expires,
+            principal_selection_receipt_handle, self._seal)
+        self._authorizations[handle] = authorization
+        self._next_cursor[handle] = None
+        self._seen_cursors[handle] = set()
+        self._page_count[handle] = 0
+        self._catalog_records[handle] = {}
+        self._listed_rows[handle] = 0
+        self._pagination_finished[handle] = False
+        self._last_page_receipt[handle] = None
+        self._write_authorization(authorization)
+        return authorization
+
+    def authorize_catalog_get(self, authorization_handle: str, *,
+                              trigger_slug: str | None = None) -> RootComposioCatalogGetGrant:
+        authorization = self._resolve_authorization(authorization_handle)
+        if any(grant.authorization_handle == authorization_handle
+               for grant in self._grants.values()):
+            raise BootstrapEnrollmentPending("a Composio catalog GET grant is already outstanding")
+        cursor: str | None = None
+        if trigger_slug is None:
+            if self._pagination_finished[authorization_handle]:
+                raise BootstrapEnrollmentPending("Composio catalog pagination is already complete")
+            if self._page_count[authorization_handle] >= 10:
+                raise BootstrapEnrollmentPending("Composio catalog pagination reached its reviewed page bound")
+            cursor = self._next_cursor[authorization_handle]
+            if cursor is not None and cursor in self._seen_cursors[authorization_handle]:
+                raise BootstrapEnrollmentPending("Composio catalog cursor was already consumed")
+            query: dict[str, Any] = {
+                "toolkit_slugs": ["whatsapp"],
+                "toolkit_versions": MappingProxyType({"whatsapp": authorization.toolkit_version}),
+                "limit": 50,
+            }
+            if cursor is not None:
+                query["cursor"] = cursor
+            path = "/api/v3.1/triggers_types"
+            self._page_count[authorization_handle] += 1
+            if cursor is not None:
+                self._seen_cursors[authorization_handle].add(cursor)
+        else:
+            if (not isinstance(trigger_slug, str) or not self._SLUG.fullmatch(trigger_slug)
+                    or trigger_slug not in self._catalog_records[authorization_handle]):
+                raise BootstrapEnrollmentPending("Composio trigger detail slug was not returned by this selected authenticated catalog")
+            query = {"toolkit_versions": MappingProxyType({"whatsapp": authorization.toolkit_version})}
+            path = f"/api/v3.1/triggers_types/{trigger_slug}"
+        now = time.monotonic()
+        handle = secrets.token_hex(32)
+        grant = RootComposioCatalogGetGrant(
+            handle, authorization_handle, authorization.session_handle,
+            authorization.transaction_handle, authorization.plan_sha256,
+            authorization.principal_id, authorization.project_id,
+            authorization.credential_reference_id, path, MappingProxyType(query),
+            _COMPOSIO_ORIGIN, "GET", authorization.toolkit_version,
+            _COMPOSIO_POLICY_ARTIFACT_ID, authorization.request_policy_sha256,
+            now, authorization.expires_monotonic,
+            trigger_slug, self._seal)
+        self._grants[handle] = grant
+        return grant
+
+    def resolve_project_credential(self, grant: RootComposioCatalogGetGrant) -> str:
+        authorization = self._resolve_grant(grant)
+        try:
+            return self.vault.resolve_project_reference(
+                authorization.credential_reference_id, peer_uid=0,
+                required_scope=authorization.required_scope,
+                principal_id=authorization.principal_id, project_id=authorization.project_id)
+        except Exception:
+            raise BootstrapEnrollmentPending("Composio project credential scope or binding changed") from None
+
+    def record_catalog_exchange(self, grant: RootComposioCatalogGetGrant, *,
+                                http_status: int, response_body: bytes) -> str:
+        authorization = self._resolve_grant(grant)
+        if (type(http_status) is not int or not 100 <= http_status <= 599
+                or not isinstance(response_body, bytes)
+                or len(response_body) > _COMPOSIO_POLICY["max_response_bytes"]):
+            raise BootstrapEnrollmentError("Composio catalog response exceeds the fixed response bounds")
+        now = time.monotonic()
+        request = {"schema": 1, "method": grant.method, "origin": grant.origin,
+                   "path": grant.path, "query": _plain_json(grant.query),
+                   "authorization_handle": grant.authorization_handle,
+                   "grant_id": grant.grant_id, "project_id": grant.project_id,
+                   "principal_id": grant.principal_id,
+                   "toolkit_version": grant.toolkit_version,
+                   "request_policy_sha256": grant.request_policy_sha256}
+        request_bytes = _canonical(request, ensure_ascii=True)
+        request_sha = hashlib.sha256(request_bytes).hexdigest()
+        response_sha = hashlib.sha256(response_body).hexdigest()
+        exchange_handle = secrets.token_hex(32)
+        response_dir = self._root / "responses"
+        receipt_dir = self._root / "exchanges"
+        _ensure_root_directory(response_dir)
+        _ensure_root_directory(receipt_dir)
+        body_path = response_dir / f"{response_sha}.json"
+        if body_path.exists():
+            existing = _read_secure_root_bytes(body_path, _COMPOSIO_POLICY["max_response_bytes"], 0o600)
+            if existing != response_body:
+                raise BootstrapEnrollmentPending("Composio response CAS digest collision")
+        else:
+            _atomic_root_file(body_path, response_body, 0o600)
+        receipt = RootComposioCatalogExchangeReceipt(
+            1, exchange_handle, authorization.authorization_handle,
+            authorization.session_handle, authorization.transaction_handle,
+            authorization.principal_id, authorization.project_id,
+            authorization.toolkit_version, authorization.operation,
+            _COMPOSIO_POLICY_ARTIFACT_ID, authorization.request_policy_sha256,
+            request_sha, response_sha, len(response_body),
+            self._page_count[authorization.authorization_handle],
+            (self._last_page_receipt[authorization.authorization_handle]
+             if grant._detail_slug is None else None),
+            grant._detail_slug, now, authorization.expires_monotonic)
+        journal = {
+            "schema": receipt.schema, "receipt_handle": receipt.receipt_handle,
+            "authorization_handle": authorization.authorization_handle,
+            "session_handle": receipt.session_handle,
+            "transaction_handle": receipt.transaction_handle,
+            "principal_id": receipt.principal_id,
+            "project_id": authorization.project_id,
+            "operation": receipt.operation,
+            "toolkit_version": authorization.toolkit_version,
+            "request_policy_artifact_id": _COMPOSIO_POLICY_ARTIFACT_ID,
+            "request_policy_sha256": authorization.request_policy_sha256,
+            "request_sha256": request_sha,
+            "response_sha256": response_sha, "response_size_bytes": len(response_body),
+            "page_sequence": receipt.page_sequence,
+            "parent_response_receipt_handle": receipt.parent_response_receipt_handle,
+            "selected_slug": receipt.selected_slug,
+            "issued_monotonic": now,
+            "expires_monotonic": authorization.expires_monotonic,
+        }
+        _atomic_root_file(receipt_dir / f"{exchange_handle}.json",
+                          _canonical(journal, ensure_ascii=True), 0o600)
+        self._used_grants.add(grant.grant_id)
+        self._grants.pop(grant.grant_id, None)
+        if grant._detail_slug is None and 200 <= http_status < 300:
+            self._observe_list_page(authorization, response_body)
+            self._last_page_receipt[authorization.authorization_handle] = exchange_handle
+        elif grant._detail_slug is not None and 200 <= http_status < 300:
+            self._observe_detail(authorization, grant._detail_slug, response_body)
+        return exchange_handle
+
+    def _observe_list_page(self, authorization: RootComposioCatalogReadAuthorization,
+                           raw: bytes) -> None:
+        document = InstalledBootstrapPolicyResolver._json(raw, "Composio trigger catalog response")
+        if (not isinstance(document, dict) or not isinstance(document.get("items"), list)
+                or len(document["items"]) > 50):
+            raise BootstrapEnrollmentPending("Composio trigger catalog response does not match the fixed list schema")
+        records = self._catalog_records[authorization.authorization_handle]
+        if self._listed_rows[authorization.authorization_handle] + len(document["items"]) > 500:
+            raise BootstrapEnrollmentPending("Composio trigger catalog exceeded 500 selected rows")
+        for row in document["items"]:
+            projection = self._trigger_projection(row, authorization.toolkit_version)
+            slug = projection["slug"]
+            if slug in records:
+                raise BootstrapEnrollmentPending("Composio trigger catalog returned a duplicate slug")
+            records[slug] = (MappingProxyType(projection), hashlib.sha256(
+                _canonical(projection, ensure_ascii=True)).hexdigest())
+        self._listed_rows[authorization.authorization_handle] += len(document["items"])
+        cursor = document.get("next_cursor")
+        if cursor in (None, ""):
+            cursor = None
+        if cursor is not None and (not isinstance(cursor, str) or not self._CURSOR.fullmatch(cursor)
+                                   or cursor in self._seen_cursors[authorization.authorization_handle]):
+            raise BootstrapEnrollmentPending("Composio catalog returned a malformed or replayed cursor")
+        self._next_cursor[authorization.authorization_handle] = cursor
+        self._pagination_finished[authorization.authorization_handle] = cursor is None
+
+    def _observe_detail(self, authorization: RootComposioCatalogReadAuthorization,
+                        slug: str, raw: bytes) -> None:
+        row = InstalledBootstrapPolicyResolver._json(raw, "Composio trigger detail response")
+        projection = self._trigger_projection(row, authorization.toolkit_version)
+        expected = self._catalog_records[authorization.authorization_handle].get(slug)
+        digest = hashlib.sha256(_canonical(projection, ensure_ascii=True)).hexdigest()
+        if expected is None or projection["slug"] != slug or not secrets.compare_digest(expected[1], digest):
+            raise BootstrapEnrollmentPending("Composio trigger detail does not match its authenticated selected catalog row")
+
+    def _trigger_projection(self, row: Any, toolkit_version: str) -> dict[str, Any]:
+        if (not isinstance(row, dict) or not isinstance(row.get("slug"), str)
+                or not self._SLUG.fullmatch(row["slug"])
+                or row.get("version") != toolkit_version
+                or not isinstance(row.get("toolkit"), dict)
+                or row["toolkit"].get("slug") != "whatsapp"):
+            raise BootstrapEnrollmentPending("Composio trigger response row is not the selected WhatsApp version")
+        required_fields = {"slug", "name", "description", "type", "config", "payload", "version", "toolkit"}
+        optional_fields = {"instructions", "requires_webhook_endpoint_setup"}
+        if not required_fields <= set(row) or set(row) - required_fields - optional_fields:
+            raise BootstrapEnrollmentPending("Composio trigger response row has unknown or missing fields")
+        if (not isinstance(row["name"], str) or len(row["name"]) > 1024
+                or not isinstance(row["description"], str) or len(row["description"]) > 8192
+                or "instructions" in row and (not isinstance(row["instructions"], str)
+                                                or len(row["instructions"]) > 16384)
+                or ("requires_webhook_endpoint_setup" in row
+                    and type(row["requires_webhook_endpoint_setup"]) is not bool)
+                or not isinstance(row["type"], str)
+                or not isinstance(row["config"], dict) or not isinstance(row["payload"], dict)):
+            raise BootstrapEnrollmentPending("Composio trigger response fields exceed the fixed schema bounds")
+        projected = {key: row[key] for key in (
+            "slug", "name", "description", "instructions", "type", "config", "payload",
+            "requires_webhook_endpoint_setup") if key in row}
+        projected["toolkit"] = {"slug": "whatsapp", "version": toolkit_version}
+        encoded = _canonical(projected, ensure_ascii=True)
+        if len(encoded) > 256 * 1024:
+            raise BootstrapEnrollmentPending("Composio trigger schema projection exceeds 256 KiB")
+        return projected
+
+    def _resolve_authorization(self, handle: str) -> RootComposioCatalogReadAuthorization:
+        if not isinstance(handle, str) or not re.fullmatch(r"[0-9a-f]{64}", handle):
+            raise BootstrapEnrollmentPending("Composio setup authorization handle is malformed")
+        authorization = self._authorizations.get(handle)
+        if (authorization is None or authorization.expires_monotonic <= time.monotonic()
+                or not secrets.compare_digest(authorization._seal, self._seal)):
+            raise BootstrapEnrollmentPending("Composio setup authorization is absent, expired or unsealed")
+        context = self._resolve_session(authorization.session_handle)
+        if (context["transaction_handle"] != authorization.transaction_handle
+                or context["plan_sha256"] != authorization.plan_sha256
+                or context["principal_receipt_handle"] != authorization._principal_receipt_handle):
+            raise BootstrapEnrollmentPending("Composio setup authorization no longer joins current root session state")
+        if (_secure_directory_identity(self.root_journal) != self._journal_identity
+                or _secure_directory_identity(self._root) != self._root_identity):
+            raise BootstrapEnrollmentPending("Composio receipt journal custody changed during setup")
+        principal = self._resolve_selected_principal(context, authorization._principal_receipt_handle)
+        if principal.principal_id != authorization.principal_id:
+            raise BootstrapEnrollmentPending("Composio selected principal changed during setup")
+        self.release.verify_current()
+        self._verify_reader_policy(self.release)
+        self.actor_verifier.verify_current(context["plan"])
+        return authorization
+
+    def _resolve_grant(self, grant: RootComposioCatalogGetGrant) -> RootComposioCatalogReadAuthorization:
+        if (not isinstance(grant, RootComposioCatalogGetGrant)
+                or not secrets.compare_digest(grant._seal, self._seal)
+                or grant.grant_id in self._used_grants
+                or self._grants.get(grant.grant_id) is not grant
+                or grant.expires_monotonic <= time.monotonic()
+                or grant.origin != _COMPOSIO_ORIGIN or grant.method != "GET"
+                or grant.request_policy_artifact_id != _COMPOSIO_POLICY_ARTIFACT_ID
+                or grant.request_policy_sha256 != _COMPOSIO_POLICY_SHA256):
+            raise BootstrapEnrollmentPending("Composio catalog GET grant is stale, replayed or altered")
+        authorization = self._resolve_authorization(grant.authorization_handle)
+        query = _plain_json(grant.query)
+        if grant._detail_slug is None:
+            expected_query = {"toolkit_slugs": ["whatsapp"],
+                              "toolkit_versions": {"whatsapp": authorization.toolkit_version},
+                              "limit": 50}
+            cursor = self._next_cursor[authorization.authorization_handle]
+            if cursor is not None:
+                expected_query["cursor"] = cursor
+            expected_path = "/api/v3.1/triggers_types"
+        else:
+            expected_query = {"toolkit_versions": {"whatsapp": authorization.toolkit_version}}
+            expected_path = f"/api/v3.1/triggers_types/{grant._detail_slug}"
+        if grant.path != expected_path or query != expected_query:
+            raise BootstrapEnrollmentPending("Composio GET grant does not match its fixed request policy")
+        if (grant.session_handle != authorization.session_handle
+                or grant.transaction_handle != authorization.transaction_handle
+                or grant.plan_sha256 != authorization.plan_sha256
+                or grant.principal_id != authorization.principal_id
+                or grant.project_id != authorization.project_id
+                or grant.credential_reference_id != authorization.credential_reference_id
+                or grant.toolkit_version != authorization.toolkit_version
+                or grant.request_policy_artifact_id != authorization.request_policy_artifact_id
+                or grant.request_policy_sha256 != authorization.request_policy_sha256):
+            raise BootstrapEnrollmentPending("Composio GET grant does not join its selected authorization")
+        return authorization
+
+    def _resolve_session(self, session_handle: Any) -> Mapping[str, Any]:
+        if hasattr(self.sessions, "resolve_initial_session"):
+            if not isinstance(session_handle, str):
+                raise BootstrapEnrollmentPending("stage-zero Composio authorization requires an opaque initial-session handle")
+            session = self.sessions.resolve_initial_session(session_handle)
+            plan = self.sessions.resolve_actor_plan(session_handle)
+            principal_handle = session.principal_selection_receipt_handle
+            expiry = session.expires_monotonic
+            session_id = session.compilation_session_handle
+            transaction = session.compilation_transaction_handle
+            plan_sha = session.plan_sha256
+            session.actor.verify_current(self.release)
+        else:
+            if not isinstance(session_handle, RootSetupSessionHandle):
+                raise BootstrapEnrollmentPending("normal Composio authorization requires the typed live root session")
+            live = self.sessions._live(session_handle)
+            authorization = self.sessions._proof(live)
+            plan = self.sessions.plan_resolver.resolve(authorization.plan_artifact_id)
+            principal_handle = None
+            handoff_resolver = getattr(self.sessions, "initial_compilation_registry", None)
+            if handoff_resolver is not None:
+                handoff = handoff_resolver.resolve_adopted_handoff(session_handle)
+                principal_handle = handoff.principal_selection_receipt_handle
+            expiry = live.record["expires_monotonic"]
+            session_id = session_handle.session_id
+            transaction = authorization.transaction_handle
+            plan_sha = authorization.plan_digest
+        if (not isinstance(plan, VerifiedRootSetupPlan) or plan.digest != plan_sha
+                or not isinstance(principal_handle, str)):
+            raise BootstrapEnrollmentPending("current root setup lacks a verified selected-principal lineage")
+        self.actor_verifier.verify_current(plan)
+        return MappingProxyType({
+            "session_id": session_id, "transaction_handle": transaction,
+            "plan_sha256": plan_sha, "principal_receipt_handle": principal_handle,
+            "expires_monotonic": expiry, "plan": plan,
+            "phase": "initial-compilation" if hasattr(self.sessions, "resolve_initial_session") else "normal",
+            "session_handle": session_handle,
+        })
+
+    def _resolve_selected_principal(self, context: Mapping[str, Any], receipt_handle: str) -> Any:
+        if context["phase"] == "initial-compilation":
+            return self.principal_registry.resolve_selected_principal(
+                receipt_handle, context["session_id"], context["transaction_handle"],
+                context["plan_sha256"])
+        resolver = getattr(self.principal_registry, "resolve_adopted_initial_principal", None)
+        if not callable(resolver):
+            raise BootstrapEnrollmentPending("adopted setup principal resolver is unavailable")
+        principal = resolver(self.sessions, context["session_handle"])
+        if (not isinstance(principal.principal_id, str)
+                or not self._PROJECT.fullmatch(principal.principal_id)):
+            raise BootstrapEnrollmentPending("adopted setup principal is malformed")
+        return principal
+
+    def _write_authorization(self, authorization: RootComposioCatalogReadAuthorization) -> None:
+        record = {
+            "schema": 1, "authorization_handle": authorization.authorization_handle,
+            "session_handle": authorization.session_handle,
+            "transaction_handle": authorization.transaction_handle,
+            "plan_sha256": authorization.plan_sha256,
+            "principal_id": authorization.principal_id,
+            "project_id": authorization.project_id,
+            "credential_reference_id": authorization.credential_reference_id,
+            "required_scope": authorization.required_scope,
+            "operation": authorization.operation, "target": authorization.target,
+            "toolkit_version": authorization.toolkit_version,
+            "request_policy_artifact_id": authorization.request_policy_artifact_id,
+            "request_policy_sha256": authorization.request_policy_sha256,
+            "issued_monotonic": authorization.issued_monotonic,
+            "expires_monotonic": authorization.expires_monotonic,
+        }
+        _atomic_root_file(self._root / f"{authorization.authorization_handle}.json",
+                          _canonical(record, ensure_ascii=True), 0o600)
+
+
 class RootSetupPolicyFactory:
     """Construct prepared and runnable EnrollmentPolicy values from pinned bytes."""
 
@@ -1360,12 +1960,16 @@ class RootSetupPolicyFactory:
         roots = policy.root_policy
         parent = Path(roots["service_parent_root"])
         self._root_journal_join(authorization)
+        selection = policy.catalog_selections
         return EnrollmentPolicy(
             service_profile_id=policy.identity_policy["service_profile_id"],
             principal_id=policy.identity_policy["principal_id"],
             generation_id="prepared-" + secrets.token_hex(16),
             source_artifact_id=policy.source_artifact_id,
             records=(), activation_state="prepared",
+            resource_controller_roles=selection["resource_controller_roles"],
+            native_mcp_tool_bindings=selection["native_mcp_tool_bindings"],
+            remote_observation_enrollments=selection["remote_observation_enrollments"],
             authority_base=copy.deepcopy(policy.authority_base_template),
             home_root=parent / "home", work_root=parent / "work", data_root=parent / "data",
             root_journal_roots=(dict(authorization.root_journal_root),),
@@ -1423,6 +2027,9 @@ class RootSetupPolicyFactory:
             memory_enrollments=selection["memory_enrollments"],
             operation_parameter_schemas=selection["operation_parameter_schemas"],
             source_issuers=selection["source_issuers"], resource_jobs=selection["resource_jobs"],
+            resource_controller_roles=selection["resource_controller_roles"],
+            native_mcp_tool_bindings=selection["native_mcp_tool_bindings"],
+            remote_observation_enrollments=selection["remote_observation_enrollments"],
             remote_session_enrollments=selection["remote_session_enrollments"],
             resource_backend_enrollments=selection["resource_backend_enrollments"],
             resource_body_recipes=selection["resource_body_recipes"],
@@ -1599,6 +2206,21 @@ class RootBootstrapRuntimeFactory:
             self.session_store.close_session(handle)
             raise
 
+    def resolve_live_session(self, handle: RootSetupSessionHandle) -> "RootBootstrapSession":
+        """Resolve a session only from this installed root factory's live registry."""
+        if not isinstance(handle, RootSetupSessionHandle):
+            raise BootstrapEnrollmentPending("root session resolution requires the typed live session handle")
+        session = self._sessions.get(handle.session_id)
+        if session is None or session._handle is not handle or session._factory is not self:
+            raise BootstrapEnrollmentPending("root session handle is absent or belongs to another factory")
+        session._check_live()
+        live = self.session_store._live(handle)
+        proof = self.session_store._proof(live)
+        if (proof.transaction_handle != session._authorization.transaction_handle
+                or proof.plan_digest != session._authorization.plan_digest):
+            raise BootstrapEnrollmentPending("root session authorization changed after factory issuance")
+        return session
+
     def _receipt_resolver(self, handle: str, *, setup_authorization: VerifiedRootSetupAuthorization) -> VerifiedArtifactReceipt:
         artifact_id, digest = self._receipt_registry.lookup(handle, setup_authorization)
         selected_plan = self.resolver.resolve(setup_authorization.plan_artifact_id)
@@ -1680,6 +2302,18 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentError("first setup did not publish the required empty prepared generation")
         self._last_receipt = receipt
         self._refresh_authorization()
+        return receipt
+
+    def resolve_prepared_receipt(self, provision_receipt_handle: str) -> EnrollmentReceipt:
+        """Resolve the current empty prepared commit retained by this live facade."""
+        self._check_live()
+        receipt = self._last_receipt
+        if (receipt is None or receipt.state != "prepared"
+                or not isinstance(provision_receipt_handle, str)
+                or not secrets.compare_digest(receipt.provision_receipt_handle, provision_receipt_handle)
+                or receipt.transaction_handle != self._authorization.transaction_handle
+                or receipt.enrollment_ids):
+            raise BootstrapEnrollmentPending("prepared setup receipt is absent or not the current empty-generation commit")
         return receipt
 
     def resolve_runtime_receipt(self, role: str, receipt_handle: str,
