@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -1481,6 +1482,125 @@ def test_release_build_cas_reservation_uses_selected_input_bounds_and_retains_he
             release_build.MAX_RELEASE_BUILD_CAS_BYTES - reservation + 1, reservation)
     with pytest.raises(release_build.BootstrapEnrollmentPending, match="bounded capacity"):
         release_build._require_release_build_cas_capacity(0, release_build.MAX_RELEASE_BUILD_CAS_BYTES + 1)
+
+
+@pytest.fixture
+def _root_owned_tmp_path():
+    root = Path(tempfile.mkdtemp(prefix="hermes-release-builder-receipt-", dir="/root"))
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() != 0,
+                    reason="release builder output custody requires root-owned Linux fixtures")
+def test_build_selected_mints_receipt_bound_to_resolved_source_and_interpreter(_root_owned_tmp_path, monkeypatch):
+    cas = _root_owned_tmp_path / "release-build-cas"
+    cas.mkdir(mode=0o700)
+    os.chmod(cas, 0o700)
+    runtime = _root_owned_tmp_path / "python"
+    runtime.write_bytes(b"selected isolated interpreter")
+    runtime.chmod(0o555)
+    distribution_handle = "d" * 43
+    interpreter_handle = "i" * 43
+    candidate_sha = "a" * 40
+
+    class SelectedSource:
+        files = (SimpleNamespace(size_bytes=19),)
+        receipt_handle = distribution_handle
+        candidate_git_sha = candidate_sha
+        source_tree_sha256 = "c" * 64
+        baseline_tree_sha256 = "b" * 64
+        amendment_manifest_sha256 = "e" * 64
+        source_catalog_sha256 = "f" * 64
+
+        def verify_current(self):
+            return None
+
+    source = SelectedSource()
+
+    class SelectedInterpreter:
+        files = ()
+        receipt_handle = interpreter_handle
+        candidate_git_sha = candidate_sha
+
+        def verify_current(self):
+            return None
+
+        def open_executable(self):
+            return os.open(runtime, os.O_RDONLY)
+
+    interpreter = SelectedInterpreter()
+
+    class SelectedActor:
+        def verify_current(self, actual_source, actual_interpreter):
+            assert actual_source is source
+            assert actual_interpreter is interpreter
+
+    actor = SelectedActor()
+
+    class SourceRegistry:
+        def resolve(self, handle):
+            assert handle == distribution_handle
+            return source
+
+    class InterpreterRegistry:
+        def resolve(self, handle, source_handle):
+            assert (handle, source_handle) == (interpreter_handle, distribution_handle)
+            return interpreter
+
+    class ActorVerifier:
+        def resolve_current(self, source_handle, runtime_handle):
+            assert (source_handle, runtime_handle) == (distribution_handle, interpreter_handle)
+            return actor
+
+    builder = object.__new__(release_build.RootInstalledReleaseBuilder)
+    builder.distribution_registry = SourceRegistry()
+    builder.interpreter_registry = InterpreterRegistry()
+    builder.actor_verifier = ActorVerifier()
+    builder._receipts = {}
+    builder._used = set()
+    monkeypatch.setattr(release_build, "BUILD_CAS_ROOT", cas)
+    monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_ensure_root_directory", lambda *_args: None)
+    monkeypatch.setattr(builder, "_verify_builder_is_loaded_from_source", lambda _source: None)
+    monkeypatch.setattr(builder, "_render_plan", lambda _source: b'{"selected":"plan"}\n')
+    monkeypatch.setattr(builder, "_builder_digest", lambda _source: "1" * 64)
+    monkeypatch.setattr(
+        release_build, "_read_deployment_predecessor",
+        lambda: release_build.DeploymentPredecessor("absent", 1, 2))
+
+    def stage_one_member(root_fd, _source, _interpreter, _actor):
+        body = b"selected source member\n"
+        release_build._write_relative(root_fd, "lib/python/selected.py", body, mode=0o444)
+        return [("lib/python/selected.py", hashlib.sha256(body).hexdigest(), len(body),
+                 0o444, ("module",))]
+
+    monkeypatch.setattr(builder, "_stage_fixed_layout", stage_one_member)
+    handle = builder.build_selected(distribution_handle, interpreter_handle)
+    receipt = builder.resolve_build_receipt(handle)
+    try:
+        assert receipt.distribution_receipt_handle == distribution_handle
+        assert receipt.interpreter_receipt_handle == interpreter_handle
+        assert receipt.candidate_git_sha == candidate_sha
+        assert receipt.root_setup_plan_sha256 == hashlib.sha256(b'{"selected":"plan"}\n').hexdigest()
+        manifest_fd = receipt.open_manifest()
+        try:
+            manifest_bytes = os.read(manifest_fd, release_build.MAX_RELEASE_BUILD_MANIFEST_BYTES)
+        finally:
+            os.close(manifest_fd)
+        manifest = json.loads(manifest_bytes)
+        assert manifest["candidate_git_sha"] == candidate_sha
+        assert {row["relative_path"] for row in manifest["files"]} == {
+            "lib/python/selected.py", release_build.STAGED_PLAN_PATH}
+        member_fd = receipt.open_file("lib/python/selected.py")
+        try:
+            assert os.read(member_fd, 128) == b"selected source member\n"
+        finally:
+            os.close(member_fd)
+    finally:
+        receipt.close()
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() != 0,

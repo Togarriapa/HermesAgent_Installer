@@ -186,7 +186,7 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 
 - [ ] HI-T131.1 — Materialize only the exact pinned PyYAML compatibility members; verify negative arbitrary descendants, traversal, special files, duplicates and RECORD mismatch; retain actual runtime probe and pending acceptance.
 
-- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; serialize bounded selected-output reservations under the existing retained-CAS cap without pruning; test capacity accounting/retained-output retries; genuine ARM64 bootstrap rerun remains separate acceptance.
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; serialize bounded selected-output reservations under the existing retained-CAS cap without pruning; test retained-output capacity and end-to-end receipt minting with exact selected source/runtime handles and sealed manifest; genuine ARM64 bootstrap rerun remains separate acceptance.
 
 - [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
 
