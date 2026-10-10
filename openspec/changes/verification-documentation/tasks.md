@@ -122,3 +122,5 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 - [ ] VD-T188.2 Verify exact result selection, root handler provenance, consumed grant and failure/reconciliation boundaries. See `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; all AC remain OPEN.
 
 - [ ] VD-T188.4 Verify exact native module launch proof and unchanged generic Python child failures. See v188; acceptance OPEN.
+
+- [ ] VD-T189.2 Verify committed PM identity positive/forgery/replacement/revocation and unchanged static checks. See `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; all acceptance OPEN.

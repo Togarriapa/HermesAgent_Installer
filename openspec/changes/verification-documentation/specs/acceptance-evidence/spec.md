@@ -807,3 +807,15 @@ The manager SHALL admit the fixed reviewed Hermes CLI recipe only using the priv
 #### Scenario: No genuine native launch proof
 - **WHEN** recipe, source, runtime, package or active network proof is missing or changed
 - **THEN** startup SHALL deny with no lease and verified owned cleanup
+
+
+### Requirement: Independently current committed PM executable v189
+The selected native worker SHALL resolve its exact observed committed venv executable through the private receipt/source/publication/closure owner in `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`, preserving generic catalog checks.
+
+#### Scenario: Genuine observed venv executable
+- **WHEN** the selected signed native recipe and current protected runtime join the actual complete PM receipt and held executable/venv closure
+- **THEN** the consumer MAY admit that exact executable identity without relabeling base artifacts
+
+#### Scenario: Runtime identity not proven
+- **WHEN** observed identity, receipt, current adoption/source, executable or full closure is missing or differs
+- **THEN** startup SHALL deny with no caller identity map or generic static-check waiver
