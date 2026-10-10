@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_root_attempt_and_kernel_prerequisite_failure",
+  "state": "failed_or_blocked_steps_report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery", "host-principal-custody", "verification-documentation"],
+  "task_ids": ["BD-F01", "BD-F03", "LC-F03", "HI-T149.1", "VD-F03"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "executor_uid": 0,
+    "executor_gid": 0
+  },
+  "dd00_candidate": {
+    "commit": "dd00fdcefa44e25b00911f07e76d0ffc58480400",
+    "tree": "e17ad1ef0ebef797136dd0bfd4b4214eda9158b7",
+    "frozen_tag_verified": true,
+    "source_archive_sha256": "79b3326e1ef6114d6e9affcae5b9f737c4852a3cbcb7c31c8826226526cfe00f"
+  },
+  "dd00_root_attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "command": "./scripts/hermes-installer-root-setup install",
+    "fresh_full_sha_prompt_entry": true,
+    "submitted_source_commit": "dd00fdcefa44e25b00911f07e76d0ffc58480400",
+    "observed_output": "Root setup could not verify its required authority (RuntimeError).",
+    "observed_prompt_scope": "No account or credential prompt was reached.",
+    "failure_stage": null,
+    "rollback_or_partial_effects": "not established",
+    "claim_limit": "Cannot infer the failing stage, rollback, successful installation, or target acceptance from this message alone."
+  },
+  "prior_candidate_kernel_prerequisite": {
+    "candidate_commit": "33f235df47c0ee6a9d66912fdd3ce536e799c0ad",
+    "test": "test_network_linux.py",
+    "failure_location": "line 405 as reported",
+    "failure": "HostToolObservationDenied for installed NFT dependency artifact 864 because no exact current signed-index row was available",
+    "test_outcome": {"failed": 1, "duration_seconds": 8.26},
+    "kernel_network_namespace_bpf_test_reached": false,
+    "independent_helper_test": {"outcome": "passed", "tests_passed": 1, "duration_seconds": 0.19, "scope": "helper only; not kernel policy proof"},
+    "after_test_cleanup_observation": {
+      "service_uid_accounts_absent": [17001, 17002, 17003],
+      "corresponding_processes_absent": true,
+      "created_network_namespace_absent": true
+    },
+    "signed_index_audit": {
+      "libc6": "No exact current signed-index row for installed libc6 2.41-12+rpt1+deb13u3 arm64.",
+      "other_dependency_closure": "Reported as matching Debian package provenance, including nftables 1.1.3-1.",
+      "apt_or_package_mutation": false,
+      "vendor_provenance_fix": "pending"
+    },
+    "ci": {
+      "kernel_job_id": "38076725057",
+      "kernel_job_result": "failed",
+      "other_reported_workflows": ["planning passed", "native passed", "memory passed", "remote passed"]
+    }
+  },
+  "not_observed": [
+    "completed DD00 installation or active installed generation",
+    "account enrollment or credential entry",
+    "successful installed-stage publication or launch",
+    "successful Linux kernel network namespace/BPF qualification",
+    "native effects, model inference, or full Pi acceptance"
+  ],
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "The DD00 root attempt reports an authority-verification failure. The separate candidate-33 kernel test stopped at signed dependency provenance before the namespace/BPF test. All AC01-AC18 remain open."
+}

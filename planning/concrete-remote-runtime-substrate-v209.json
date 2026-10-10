@@ -1,0 +1,221 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md",
+  "extends": [
+    "v202"
+  ],
+  "requirements": [
+    "R0028",
+    "R0034",
+    "R0035",
+    "R0036",
+    "R0037",
+    "R0038",
+    "R0202",
+    "R0203",
+    "R0204",
+    "R0205",
+    "R0206",
+    "R0211"
+  ],
+  "tasks": [
+    "RT-T209.1",
+    "RT-T209.2",
+    "RT-T209.3",
+    "RT-T209.4",
+    "VD-T209.5"
+  ],
+  "runtime_receipt_fields": [
+    "schema",
+    "runtime_receipt_handle",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "role",
+    "source_receipt_handle",
+    "source_closure_sha256",
+    "transform_proof_handle",
+    "transform_proof_sha256",
+    "toolchain_receipt_handles",
+    "toolchain_closure_sha256",
+    "dependency_receipt_handles",
+    "dependency_closure_sha256",
+    "builder_member_receipt_handle",
+    "builder_member_sha256",
+    "output_schema_id",
+    "output_schema_sha256",
+    "package_receipt_handle",
+    "package_closure_sha256",
+    "executable_artifact_id",
+    "executable_sha256",
+    "build_attestation_handle",
+    "build_attestation_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "outer_role_receipt": "unchanged v202",
+  "output_envelope_fields": [
+    "schema",
+    "role",
+    "selection_handle",
+    "input_closure_sha256",
+    "target",
+    "package_members",
+    "executable_member",
+    "dependency_members",
+    "qualification"
+  ],
+  "member_fields": [
+    "path",
+    "kind",
+    "mode",
+    "size_bytes",
+    "sha256",
+    "executable_role"
+  ],
+  "target": "linux-arm64",
+  "output_schemas": {
+    "display": {
+      "id": "root-selected-xpra-runtime-output-v1",
+      "sha256": null,
+      "state": "pending committed schema/source review"
+    },
+    "gateway": {
+      "id": "root-selected-gateway-runtime-output-v1",
+      "sha256": null,
+      "state": "pending committed schema/source review"
+    },
+    "desktop": {
+      "id": "root-selected-desktop-runtime-output-v1",
+      "sha256": null,
+      "state": "pending committed schema/source review"
+    }
+  },
+  "desktop_lock": {
+    "path": "package-lock.json",
+    "revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "sha256": "483bff2109ab28be0b90447a72596ab8f781cb9f23c031d51be173b117ce8789",
+    "size_bytes": 721704,
+    "selected_install_script_and_packaging_rows": [
+      {
+        "lock_path": "apps/desktop/node_modules/@electron/get",
+        "version": "2.0.3",
+        "resolved": "https://registry.npmjs.org/@electron/get/-/get-2.0.3.tgz",
+        "integrity": "sha512-Qkzpg2s9GnVV2I2BjRksUi43U5e6+zaQMcjoJy0C+C5oxaKl+fmckGDQFtRpZpZV0NQekuZZ+tGz7EA9TVnQtQ==",
+        "has_install_script": false,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      },
+      {
+        "lock_path": "apps/desktop/node_modules/electron",
+        "version": "40.10.2",
+        "resolved": "https://registry.npmjs.org/electron/-/electron-40.10.2.tgz",
+        "integrity": "sha512-Xj3Hy0Imbu4g0gDIW55w/jJYz94nMO2JRSGYA3LyAn5SwaERCelgZrA21vfH+Bi//SWAWQXddHsMwCqauyMT8g==",
+        "has_install_script": true,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      },
+      {
+        "lock_path": "node_modules/@electron/get",
+        "version": "5.1.0",
+        "resolved": "https://registry.npmjs.org/@electron/get/-/get-5.1.0.tgz",
+        "integrity": "sha512-3kSBtG8ObcTVfXanm5vVJ6UnBLEVmVsRk1M+vGqCuMBV+XLCbJYuWQful+yIy0GQDsSlK0kHEriEHn7SPk4EnA==",
+        "has_install_script": false,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      },
+      {
+        "lock_path": "node_modules/@electron/rebuild",
+        "version": "4.2.0",
+        "resolved": "https://registry.npmjs.org/@electron/rebuild/-/rebuild-4.2.0.tgz",
+        "integrity": "sha512-RKL/O+jGoXJMxrx/5771y1n0xTKmFuOYGO3gMmwypBM6rsH0kou0mswwdXA2JrhIkE4xyC7v9vGk0n6NPzgOxQ==",
+        "has_install_script": false,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      },
+      {
+        "lock_path": "node_modules/electron-builder",
+        "version": "27.0.0-alpha.6",
+        "resolved": "https://registry.npmjs.org/electron-builder/-/electron-builder-27.0.0-alpha.6.tgz",
+        "integrity": "sha512-vnsyKuG60X3+Dyl2VnxVoPxndjnXlczb15qE250hpAkIEtu5T/edNmSihDZw7GEZw15zU8g/4egEqaIfeatn0w==",
+        "has_install_script": false,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      },
+      {
+        "lock_path": "node_modules/esbuild",
+        "version": "0.28.1",
+        "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.1.tgz",
+        "integrity": "sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==",
+        "has_install_script": true,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      },
+      {
+        "lock_path": "node_modules/node-pty",
+        "version": "1.1.0",
+        "resolved": "https://registry.npmjs.org/node-pty/-/node-pty-1.1.0.tgz",
+        "integrity": "sha512-20JqtutY6JPXTUnL0ij1uad7Qe1baT46lyolh2sSENDd4sTzKZ4nmAFkeAARDKwmlLjPx6XKRlwRUxwjOy+lUg==",
+        "has_install_script": true,
+        "acquisition_state": "declared in audited lock; bytes/installation pending",
+        "expected_download_sha256": null
+      }
+    ],
+    "complete_closure": "all selected workspace lock packages and platform-specific rows; targeted rows are not full dependency proof"
+  },
+  "desktop_separate_payloads": [
+    "electron-v40.10.2-linux-arm64.zip and upstream checksums/signature policy",
+    "node-pty native Electron-ABI ARM64 output",
+    "esbuild linux-arm64 executable",
+    "electron-builder prepared packaging/native-deps inputs"
+  ],
+  "gateway_lock": {
+    "path": "src/hermes_installer/remote/requirements-arm64-py314.lock",
+    "sha256": "0a183e010a44751c3383ef574a77ac270283cc85671d50dfb38d6df3f168ed13",
+    "size_bytes": 1553,
+    "acquisition": "exact wheel filename/version/hash/tag and complete native ELF dependency closure pending"
+  },
+  "source_pins": "new builders/drivers/schema/payload pins pending actual committed source/acquisition review",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "gateway_build_config": {
+    "id": "access-gateway-build-input-v1",
+    "fields": [
+      "schema",
+      "role",
+      "selection_handle",
+      "source_closure_sha256",
+      "toolchain_receipt_handle",
+      "toolchain_closure_sha256",
+      "python_relative_path",
+      "python_sha256",
+      "lock_member_sha256",
+      "lock_member_size_bytes",
+      "dependency_closure_sha256",
+      "wheel_members",
+      "source_members",
+      "output_schema_id",
+      "output_schema_sha256"
+    ],
+    "wheel_member_fields": [
+      "filename",
+      "name",
+      "version",
+      "sha256",
+      "size_bytes",
+      "platform_tag"
+    ],
+    "source_member_fields": [
+      "relative_path",
+      "sha256",
+      "size_bytes",
+      "mode"
+    ],
+    "python_relative_path": "fixed approved held PM projection; never caller-selected",
+    "pip": "isolated held pip runner and complete import closure included in toolchain custody",
+    "sha256": null
+  }
+}
