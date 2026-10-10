@@ -554,6 +554,22 @@ def run_root_setup_action(
             return _result(selected_action, RootSetupState.FAILED, "prepared",
                            "Initial setup did not produce the required empty prepared generation.")
 
+        # v186 requires observing the real preactive endpoint after prepared
+        # service identity custody exists and before any native policy choice
+        # can be signed. On unsupported hosts or incomplete custody, keep the
+        # setup resumable and stop before source selection; never synthesize a
+        # future socket path or continue with an empty endpoint binding.
+        try:
+            session.ensure_current_prepared_native_worker_endpoint()
+        except BootstrapEnrollmentPending as exc:
+            return _result(
+                selected_action, RootSetupState.PENDING, "endpoint", _safe_reason(exc),
+                resume_allowed=True, session_id=session._handle.session_id,
+                transaction_ref=_report_ref(receipt.transaction_handle),
+                generation_ref=_report_ref(receipt.generation_id),
+                receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
+            )
+
         # Keep this sequence inside the installed root actor: every path,
         # resource revision, profile choice, and receipt is resolved by the
         # live factory/session. In particular, no caller-provided path or JSON
