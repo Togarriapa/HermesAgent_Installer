@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 import os
 import json
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import (
@@ -20,12 +20,47 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootPreparedReleaseMemberReceipt,
     RootInitialCompilationRegistry,
     RootBootstrapSession,
+    RootRunnableRoleReceiptProjection,
+    RootRunnableRoleRow,
+    _service_requires_package_runtime,
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_runnable_role_projection_exposes_only_literal_v72_fields_as_detached_values(self):
+        child_refs = {"native-compiled-closure:test": "a" * 64,
+                      "native-entrypoint-manifest:test": "b" * 64}
+        projection = RootRunnableRoleReceiptProjection(
+            schema=1, closure_handle="closure-fixture", closure_sha256="c" * 64,
+            role_rows=(RootRunnableRoleRow(
+                "native-compiled-closure", "native-output-cas", "receipt-fixture",
+                "native-compiled-closure:test", "a" * 64, 16, "compiled-closure", ()),),
+            _field_values=(("native-compiled-closure", "child_artifact_refs",
+                            MappingProxyType(dict(child_refs))),),
+            _issuer=object(), _registry_seal=object(),
+        )
+        resolved = projection.resolve_field("native-compiled-closure", "child_artifact_refs")
+        self.assertEqual(resolved, child_refs)
+        resolved["native-compiled-closure:test"] = "d" * 64
+        self.assertEqual(
+            projection.resolve_field("native-compiled-closure", "child_artifact_refs"), child_refs)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            projection.resolve_field("native-compiled-closure", "catalog_executable_path")
+
+    def test_package_runtime_guard_reads_operation_key_and_package_set_target_shapes(self):
+        self.assertTrue(_service_requires_package_runtime({
+            "package.install": "coral-cp39-runtime-v1",
+        }))
+        self.assertTrue(_service_requires_package_runtime({
+            "process.start": "package-set:coral-cp39-runtime-v1:" + "a" * 64,
+        }))
+        self.assertFalse(_service_requires_package_runtime({
+            "process.start": "hermes-agent-health:start",
+        }))
+        self.assertTrue(_service_requires_package_runtime(None))
+
     def test_policy_identity_tags_reject_cross_domain_principal_substitution(self):
         from hermes_installer.authority.bootstrap_runtime_factory import (
             HERMES_SOURCE_ARTIFACT_ID, _POLICY_ID,

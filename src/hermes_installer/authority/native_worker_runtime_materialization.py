@@ -48,6 +48,15 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
+def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def _hash_fd(fd: int) -> str:
     digest = hashlib.sha256()
     offset = 0
@@ -119,6 +128,7 @@ class RootPreparedNativeWorkerRuntimeMaterialization:
     profile_id: str
     profile_generation: str
     pm_runtime_receipt_handle: str
+    committed_venv_identity: Mapping[str, Any]
     pm_base_closure_sha256: str
     pm_executable_relative_path: str
     pm_executable_member_sha256: str
@@ -212,6 +222,7 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
         records: list[Mapping[str, Any]] = []
         receipt_sha: str | None = None
         try:
+            committed_venv_identity = self._committed_venv_identity(pm)
             self._validate_role_closure(closure, recipe)
             parent_fd = self._open_or_create_runtime_parent()
             receipt_handle = secrets.token_urlsafe(36)
@@ -246,6 +257,7 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
                 "profile_id": recipe.service_profile_id,
                 "profile_generation": recipe.profile_generation,
                 "pm_runtime_receipt_handle": pm.selection.receipt_handle,
+                "committed_venv_identity": dict(committed_venv_identity),
                 "pm_base_closure_sha256": pm.base_closure_sha256,
                 "pm_executable_relative_path": pm.executable_relative_path,
                 "pm_executable_member_sha256": pm.executable_member.sha256,
@@ -272,6 +284,7 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
                 profile_id=recipe.service_profile_id,
                 profile_generation=recipe.profile_generation,
                 pm_runtime_receipt_handle=pm.selection.receipt_handle,
+                committed_venv_identity=committed_venv_identity,
                 pm_base_closure_sha256=pm.base_closure_sha256,
                 pm_executable_relative_path=pm.executable_relative_path,
                 pm_executable_member_sha256=pm.executable_member.sha256,
@@ -380,6 +393,7 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
             "profile_id": receipt.profile_id,
             "profile_generation": receipt.profile_generation,
             "pm_runtime_receipt_handle": receipt.pm_runtime_receipt_handle,
+            "committed_venv_identity": dict(receipt.committed_venv_identity),
             "pm_base_closure_sha256": receipt.pm_base_closure_sha256,
             "pm_executable_relative_path": receipt.pm_executable_relative_path,
             "pm_executable_member_sha256": receipt.pm_executable_member_sha256,
@@ -706,6 +720,9 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
             receipt.pm_runtime_receipt_handle, receipt.transaction_handle,
             receipt.prepared_generation_id)
         try:
+            if dict(receipt.committed_venv_identity) != dict(self._committed_venv_identity(current_pm)):
+                raise NativeWorkerRuntimeMaterializationUnavailable(
+                    "committed PM venv identity changed after prepared materialization")
             current_pm_by_path = {member.relative_path: member for member in current_pm.members}
             for fd, row in zip(receipt._member_fds, expected, strict=True):
                 info = os.fstat(fd)
@@ -750,8 +767,96 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
             raise NativeWorkerRuntimeMaterializationUnavailable("materialization receipt file is malformed") from None
         if (not isinstance(parsed, dict) or set(parsed) != {"body", "body_sha256"}
                 or parsed["body_sha256"] != receipt.receipt_sha256
-                or _sha(parsed["body"]) != receipt.receipt_sha256):
+                or _sha(parsed["body"]) != receipt.receipt_sha256
+                or not isinstance(parsed["body"], dict)
+                or parsed["body"].get("committed_venv_identity")
+                   != dict(receipt.committed_venv_identity)):
             raise NativeWorkerRuntimeMaterializationUnavailable("materialization receipt digest changed")
+
+    def _committed_venv_identity(self, pm: Any) -> Mapping[str, Any]:
+        """Copy the actual protected PM receipt and observed committed executable."""
+        handle = getattr(getattr(pm, "selection", None), "receipt_handle", None)
+        if not isinstance(handle, str) or not handle or "/" in handle:
+            raise NativeWorkerRuntimeMaterializationUnavailable("PM receipt handle is not a fixed leaf")
+        root_fd = receipts_fd = receipt_fd = -1
+        try:
+            root_fd = os.open(self.runtime_receipts.runtime_root,
+                              os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                              | getattr(os, "O_CLOEXEC", 0))
+            root = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root.st_mode) or root.st_uid != 0 or root.st_gid != 0
+                    or stat.S_IMODE(root.st_mode) != 0o700):
+                raise ValueError
+            receipts_fd = os.open("receipts", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                                  | getattr(os, "O_CLOEXEC", 0), dir_fd=root_fd)
+            receipt_dir = os.fstat(receipts_fd)
+            if (not stat.S_ISDIR(receipt_dir.st_mode) or receipt_dir.st_uid != 0
+                    or receipt_dir.st_gid != 0 or stat.S_IMODE(receipt_dir.st_mode) != 0o700):
+                raise ValueError
+            name = handle + ".json"
+            path_info = os.stat(name, dir_fd=receipts_fd, follow_symlinks=False)
+            receipt_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW
+                                 | getattr(os, "O_CLOEXEC", 0), dir_fd=receipts_fd)
+            info = os.fstat(receipt_fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or (info.st_dev, info.st_ino) != (path_info.st_dev, path_info.st_ino)
+                    or info.st_size <= 0 or info.st_size > 64 * 1024):
+                raise ValueError
+            raw = os.pread(receipt_fd, 64 * 1024 + 1, 0)
+            if len(raw) != info.st_size or len(raw) > 64 * 1024:
+                raise ValueError
+            record = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_pairs,
+                                parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+            current = self.runtime_receipts._record(handle)
+            if (not isinstance(record, dict) or record != current
+                    or record.get("handle") != handle
+                    or record.get("runtime_executable_artifact_id") != "observed:pm-committed-venv-python"
+                    or record.get("pm_sync_outcome") != "succeeded"):
+                raise ValueError
+            selected = pm.selection
+            from .pm_runtime import _match_receipt, _observe_runtime
+            executable = selected.python_path
+            base = self.runtime_receipts.runtime_root / record["generation"]
+            venv_root = base / record["runtime_venv_relative"]
+            observed = _observe_runtime(executable, expected_uid=0, expected_root=base)
+            _match_receipt(record, executable, observed, venv_root)
+            if (observed["sha256"] != selected.runtime_sha256
+                    or (observed["device"], observed["inode"], observed["uid"],
+                        observed["gid"], observed["mode"])
+                       != (selected.device, selected.inode, selected.uid,
+                           selected.gid, selected.mode)):
+                raise ValueError
+            return MappingProxyType({
+                "schema": 1,
+                "identity_kind": "pm-committed-hermes-venv-v1",
+                "pm_runtime_receipt_handle": handle,
+                "pm_receipt_sha256": hashlib.sha256(raw).hexdigest(),
+                "pm_generation": record["generation"],
+                "source_commit": record["source_commit"],
+                "runtime_relative": record["runtime_relative"],
+                "runtime_venv_relative": record["runtime_venv_relative"],
+                "runtime_closure_sha256": record["runtime_closure_sha256"],
+                "executable_identity_id": record["runtime_executable_artifact_id"],
+                "executable_sha256": observed["sha256"],
+                "executable_device": observed["device"],
+                "executable_inode": observed["inode"],
+                "executable_uid": observed["uid"],
+                "executable_gid": observed["gid"],
+                "executable_mode": observed["mode"],
+            })
+        except NativeWorkerRuntimeMaterializationUnavailable:
+            raise
+        except Exception:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "exact committed PM venv identity could not be observed from its protected receipt") from None
+        finally:
+            for descriptor_fd in (receipt_fd, receipts_fd, root_fd):
+                if descriptor_fd >= 0:
+                    try:
+                        os.close(descriptor_fd)
+                    except OSError:
+                        pass
 
     def _verify_output_member_paths(self,
                                     receipt: RootPreparedNativeWorkerRuntimeMaterialization) -> None:

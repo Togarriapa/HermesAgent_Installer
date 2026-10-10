@@ -1406,35 +1406,6 @@ class ProtectedEnrollmentCatalog:
                      HostServiceProfile, HostServiceProfile], ...]:
         """Return the finite protected worker source candidates without caller IDs.
 
-        This is input to a separate held-source/active-publication resolver;
-        it is not executable authority. Only the signed row set in this exact
-        service generation can be returned.
-        """
-        if service_generation_digest != self.digest:
-            raise EnrollmentDenied("native worker candidates belong to a stale service generation")
-        if not self._native_worker_network_records:
-            return ()
-        active_rows = tuple(self._active_network_generation_records.values())
-        if len(active_rows) > 1:
-            raise EnrollmentDenied("native worker source candidate set is not a singleton")
-        candidates = []
-        for active in active_rows:
-            network, current_active, runtime = self.resolve_native_worker_generation(
-                active.get("network_id"), active.get("process_profile_id"),
-                service_generation_digest=service_generation_digest)
-            service = self.resolve(current_active["service_enrollment_id"],
-                                   current_active["service_generation"])
-            profile = self.resolve_profile_generation(
-                current_active["process_profile_id"], current_active["process_profile_generation"])
-            candidates.append((network, current_active, runtime, profile, service))
-        return tuple(candidates)
-
-    def resolve_selected_native_worker_generation_candidates(
-            self, service_generation_digest: str,
-    ) -> tuple[tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any],
-                     HostServiceProfile, HostServiceProfile], ...]:
-        """Return the finite protected worker source candidates without caller IDs.
-
         This is input to the separately held-source/active-publication resolver;
         it is not itself executable authority.  Only the signed singleton row
         set in this exact catalog generation can be returned.
