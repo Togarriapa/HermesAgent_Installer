@@ -147,17 +147,25 @@ class RootPreparedAuthorityEndpointCustodian:
     """Bind one current selected UID socket and retain its real listening FD."""
 
     def __init__(self, binding: Any, prepared_receipt: Any, held_release: Any,
-                 current_actor: Any):
+                 current_actor: Any, prepared_authority_root_receipt: Any):
         from .bootstrap_runtime_factory import RootSelectedInstallationBinding
         from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
+        from .runtime_root_custody import RootPreparedAuthorityRootReceipt
         if (type(binding) is not RootSelectedInstallationBinding
                 or not isinstance(held_release, VerifiedInstallerReleaseReceipt)
-                or not isinstance(current_actor, RootActorObservation)):
+                or not isinstance(current_actor, RootActorObservation)
+                or type(prepared_authority_root_receipt) is not RootPreparedAuthorityRootReceipt):
             raise PreparedAuthorityEndpointUnavailable(
-                "prepared endpoint requires the current selected binding, held release, and root actor")
+                "prepared endpoint requires current binding, held release, root actor, and authority-root custody")
         session = binding._session
         session._check_live()
         current_actor.verify_current(held_release)
+        prepared_authority_root_receipt.verify_current()
+        if (session._prepared_authority_runtime_root_receipt is not prepared_authority_root_receipt
+                or session._prepared_authority_runtime_root_custodian is None
+                or session._prepared_authority_runtime_root_custodian.binding is not binding):
+            raise PreparedAuthorityEndpointUnavailable(
+                "authority root receipt is not owned by this exact setup session")
         prepared = session._resolve_current_prepared_enrollment()
         if (prepared_receipt is not prepared
                 or prepared.state != "prepared"
@@ -172,6 +180,7 @@ class RootPreparedAuthorityEndpointCustodian:
         self.prepared_receipt = prepared
         self.held_release = held_release
         self.current_actor = current_actor
+        self.prepared_authority_root_receipt = prepared_authority_root_receipt
         self._issuer = object()
         self._identities: dict[str, Any] = {}
         self._receipts: dict[str, RootPreparedAuthorityListenerReceipt] = {}
@@ -183,13 +192,17 @@ class RootPreparedAuthorityEndpointCustodian:
 
     @classmethod
     def from_root_setup(cls, current_binding: Any, prepared_receipt: Any,
-                        held_release: Any, current_actor: Any) -> "RootPreparedAuthorityEndpointCustodian":
-        return cls(current_binding, prepared_receipt, held_release, current_actor)
+                        held_release: Any, current_actor: Any, *,
+                        prepared_authority_root_receipt: Any
+                        ) -> "RootPreparedAuthorityEndpointCustodian":
+        return cls(current_binding, prepared_receipt, held_release, current_actor,
+                   prepared_authority_root_receipt)
 
     def retain_prepared_identity(self, identity_receipt: Any) -> str:
         """Retain the exact fresh NSS/root-marker/root-FD projection for lookup."""
         from .native_worker_recipes import RootPreparedServiceIdentityReceipt
         self._check_live()
+        self.prepared_authority_root_receipt.verify_current()
         if (type(identity_receipt) is not RootPreparedServiceIdentityReceipt
                 or identity_receipt._issuer is not self.binding._session._seal
                 or identity_receipt.expires_monotonic <= time.monotonic()):
@@ -331,14 +344,16 @@ class RootPreparedAuthorityEndpointCustodian:
             raise PreparedAuthorityEndpointUnavailable("prepared listener custody has been released") from None
         try:
             directory = os.fstat(directory_fd)
-            path_directory = _SOCKET_DIR.lstat()
+            self.prepared_authority_root_receipt.verify_current()
             leaf = os.stat(receipt.relative_socket, dir_fd=directory_fd, follow_symlinks=False)
             accepting = listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN)
         except OSError:
             raise PreparedAuthorityEndpointUnavailable("prepared listener custody changed") from None
         if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0
                 or directory.st_gid != 0 or stat.S_IMODE(directory.st_mode) != 0o711
-                or (directory.st_dev, directory.st_ino) != (path_directory.st_dev, path_directory.st_ino)
+                or (directory.st_dev, directory.st_ino) != (
+                    self.prepared_authority_root_receipt.device,
+                    self.prepared_authority_root_receipt.inode)
                 or (leaf.st_dev, leaf.st_ino) != leaf_identity
                 or (leaf.st_dev, leaf.st_ino) != (receipt.socket_device, receipt.socket_inode)
                 or not stat.S_ISSOCK(leaf.st_mode) or leaf.st_uid != 0
@@ -351,11 +366,13 @@ class RootPreparedAuthorityEndpointCustodian:
         return receipt
 
     def close(self) -> None:
+        threads = []
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             for handle, (listener, directory_fd, leaf_identity, stop, thread) in tuple(self._listeners.items()):
+                threads.append(thread)
                 stop.set()
                 try:
                     listener.close()
@@ -372,11 +389,13 @@ class RootPreparedAuthorityEndpointCustodian:
                     os.close(directory_fd)
                 except OSError:
                     pass
-                thread.join(timeout=1.0)
             self._listeners.clear()
             self._receipts.clear()
             self._identities.clear()
             self._used_nonces.clear()
+        for thread in threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=1.0)
 
     def _challenge_loop(self, receipt: RootPreparedAuthorityListenerReceipt,
                         stop: threading.Event) -> None:
@@ -424,22 +443,62 @@ class RootPreparedAuthorityEndpointCustodian:
                 pass
             finally:
                 connection.close()
+        self._expire_listener(receipt, stop)
+
+    def _expire_listener(self, receipt: RootPreparedAuthorityListenerReceipt,
+                         stop: threading.Event) -> None:
+        """Revoke only this issuer's exact expired socket and held descriptors."""
+        with self._lock:
+            if self._closed or time.monotonic() < receipt.expires_monotonic:
+                return
+            retained = self._listeners.get(receipt.service_identity_receipt_handle)
+            if (retained is None or retained[3] is not stop
+                    or retained[2] != (receipt.socket_device, receipt.socket_inode)):
+                return
+            listener, directory_fd, identity, stop_event, _thread = retained
+            stop_event.set()
+            try:
+                listener.close()
+            except OSError:
+                pass
+            leaf = f"{receipt.service_uid}.sock"
+            try:
+                info = os.stat(leaf, dir_fd=directory_fd, follow_symlinks=False)
+                if ((info.st_dev, info.st_ino) == identity and stat.S_ISSOCK(info.st_mode)
+                        and info.st_uid == 0 and info.st_gid == receipt.service_gid
+                        and stat.S_IMODE(info.st_mode) == 0o660):
+                    os.unlink(leaf, dir_fd=directory_fd)
+            except OSError:
+                pass
+            try:
+                os.close(directory_fd)
+            except OSError:
+                pass
+            self._listeners.pop(receipt.service_identity_receipt_handle, None)
+            self._receipts.pop(receipt.receipt_handle, None)
 
     def _open_directory(self) -> int:
-        flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
-                 getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        receipt = self.prepared_authority_root_receipt
+        fd = -1
         try:
-            fd = os.open(_SOCKET_DIR, flags)
+            receipt.verify_current()
+            fd = os.dup(receipt.root_fd)
             info = os.fstat(fd)
-            path_info = _SOCKET_DIR.lstat()
-        except OSError:
+        except (OSError, AttributeError, TypeError):
+            if fd >= 0:
+                os.close(fd)
             raise PreparedAuthorityEndpointUnavailable("fixed authority socket directory is unavailable") from None
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
                 or stat.S_IMODE(info.st_mode) != 0o711
-                or (info.st_dev, info.st_ino) != (path_info.st_dev, path_info.st_ino)):
+                or (info.st_dev, info.st_ino) != (receipt.device, receipt.inode)):
             os.close(fd)
             raise PreparedAuthorityEndpointUnavailable("fixed authority socket directory custody is invalid")
         return fd
+
+    def _socket_path(self, receipt: RootPreparedAuthorityListenerReceipt) -> str:
+        current = self.prepared_authority_root_receipt
+        current.verify_current()
+        return f"/proc/self/fd/{current.root_fd}/{receipt.relative_socket}"
 
     def _challenge_self(self, receipt: RootPreparedAuthorityListenerReceipt) -> str:
         nonce = secrets.token_urlsafe(32)
@@ -450,7 +509,7 @@ class RootPreparedAuthorityEndpointCustodian:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(_CHALLENGE_TIMEOUT)
         try:
-            client.connect(str(_SOCKET_DIR / receipt.relative_socket))
+            client.connect(self._socket_path(receipt))
             client.sendall(request)
             client.shutdown(socket.SHUT_WR)
             response_bytes = _recv_bounded(client)
