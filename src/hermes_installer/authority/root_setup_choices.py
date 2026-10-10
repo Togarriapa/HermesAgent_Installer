@@ -119,6 +119,10 @@ class RootSetupChoiceRegistry:
         from .bootstrap_runtime_factory import RootSelectedMemoryServiceEnablementChoice
         from .native_policy_preparation import RootNativePolicyConfigurationChoice
         from .bootstrap_runtime_factory import RootSelectedApplicationQualificationChoice
+        try:
+            from .public_web_selection import RootSelectedPublicWebPermissionChoice
+        except ImportError:
+            RootSelectedPublicWebPermissionChoice = None  # type: ignore[assignment,misc]
         if type(actual_root_tty_choice) is RootSelectedMemoryServiceEnablementChoice:
             purpose = "memory-service-enablement"
             resolver_name = "resolve_current_memory_service_enablement_choice"
@@ -161,6 +165,22 @@ class RootSetupChoiceRegistry:
                 identity.principal.receipt_id, identity.namespace.receipt_handle,
                 identity.identity_receipt_handle, actual_root_tty_choice.qualification_consent_receipt_handle)
             disabled = False
+        elif (RootSelectedPublicWebPermissionChoice is not None
+              and type(actual_root_tty_choice) is RootSelectedPublicWebPermissionChoice):
+            purpose = "public-free-web-read"
+            resolver_name = "resolve_current_public_web_permission_choice"
+            payload = _public_web_choice_payload(actual_root_tty_choice)
+            selectors = (actual_root_tty_choice.principal_selection_handle,
+                         actual_root_tty_choice.namespace_selection_handle)
+            prepared_generation = actual_root_tty_choice.prepared_generation_id
+            profile_id = actual_root_tty_choice.profile_id
+            principal_id = actual_root_tty_choice.principal_id
+            namespace_id = actual_root_tty_choice.namespace_id
+            source_handles_fn = lambda identity: (
+                identity.principal.receipt_id, identity.namespace.receipt_handle,
+                identity.identity_receipt_handle,
+                *actual_root_tty_choice.target_contract_source_receipt_handles)
+            disabled = not actual_root_tty_choice.web_scope_ids
         else:
             raise AuthorityDenied("setup-choice.choice", "unsupported or unretained root TTY choice type")
         self._verify_current_setup(current_setup_selection)
@@ -290,9 +310,10 @@ class RootSetupChoiceRegistry:
         """Enumerate only exact current signed choices for this live setup.
 
         The publisher/compiler can join the finite retained set to its prepared
-        catalog without reading this registry's private row map. Stale, expired,
-        revoked, or not-yet-reattached choices are omitted; malformed stored
-        signatures still fail closed through `_verify_row`.
+        catalog without reading this registry's private row map. A signed row for
+        this setup session that is revoked, expired, or not reattached is a hard
+        error: omitting it would let the compiler reinterpret stale or withdrawn
+        intent as no choice.
         """
         self._verify_current_setup(current_setup_selection)
         session_handle = self._setup_session_handle_for_selection(current_setup_selection)
@@ -309,11 +330,11 @@ class RootSetupChoiceRegistry:
                 continue
             self._verify_row(row)
             if row.get("revocation_epoch") != 1:
-                continue
-            try:
-                snapshot = self.resolve_current_setup_choice(handle, row["purpose"])
-            except AuthorityDenied:
-                continue
+                raise AuthorityDenied(
+                    "setup-choice.revoked",
+                    "current setup session contains a revoked choice; restart selection explicitly",
+                )
+            snapshot = self.resolve_current_setup_choice(handle, row["purpose"])
             current.append(snapshot)
         return tuple(current)
 
@@ -349,9 +370,109 @@ class RootSetupChoiceRegistry:
             self._save()
             return row["revocation_epoch"]
 
+    def revoke_current_profile_purpose(self, current_setup_selection: Any,
+                                       purpose: str, profile_id: str) -> int:
+        """Durably clear one purpose for a profile selected in this live setup.
+
+        This is a deny-only operation. Callers must still pass the exact sealed
+        setup facade; it cannot create or refresh a choice.
+        """
+        if (purpose not in _DOMAIN_PURPOSES or not isinstance(profile_id, str)
+                or not profile_id or any(ord(char) < 0x20 for char in profile_id)):
+            raise AuthorityDenied("setup-choice.revoke", "purpose or profile selector is malformed")
+        self._verify_current_setup(current_setup_selection)
+        self._check_release()
+        session_handle = self._setup_session_handle_for_selection(current_setup_selection)
+        revoked = 0
+        with self._lock:
+            for handle, row in self._rows.items():
+                payload = row.get("choice_payload", {})
+                candidate_profile = _choice_profile_id_from_payload(payload, row.get("purpose", ""))
+                if (row.get("setup_session_handle") == session_handle
+                        and row.get("purpose") == purpose
+                        and candidate_profile == profile_id
+                        and row.get("revocation_epoch") == 1):
+                    self._revoke_row(handle, row)
+                    self._live_choices.pop(handle, None)
+                    revoked += 1
+            self._save()
+        return revoked
+
     def adopt_published_choice(self, selection_handle: str,
                                actual_active_publication_receipt: Any) -> str:
-        raise AuthorityDenied("setup-choice.adoption", "active publisher adoption receipt producer is not attached")
+        """Verify one publisher-retained adoption of this exact signed choice.
+
+        The active publisher owns durable adoption state. This method is a
+        non-mutating join: changing this signed setup row would change its
+        signed-record digest and invalidate the publisher's proof.
+        """
+        from .setup_policy_publication import PublishedSetupChoiceAdoption, _SEAL as _PUBLISHER_SEAL
+
+        if (not isinstance(selection_handle, str)
+                or type(actual_active_publication_receipt) is not PublishedSetupChoiceAdoption
+                or actual_active_publication_receipt._seal is not _PUBLISHER_SEAL
+                or actual_active_publication_receipt.selection_handle != selection_handle):
+            raise AuthorityDenied("setup-choice.adoption", "exact publisher choice adoption is required")
+        receipt = actual_active_publication_receipt
+        # Check the independent active publisher proof first. It binds this
+        # setup choice to the current published generation and remains valid
+        # after the setup TTY lease expires; no setup lease is renewed here.
+        try:
+            current = receipt.verify_current()
+        except Exception:
+            raise AuthorityDenied("setup-choice.adoption", "publisher adoption is not current") from None
+        if current is not receipt:
+            raise AuthorityDenied("setup-choice.adoption", "publisher adoption resolver returned another receipt")
+        with self._lock:
+            row = self._rows.get(selection_handle)
+        if row is None:
+            raise AuthorityDenied("setup-choice.adoption", "signed setup choice is absent")
+        self._verify_row(row)
+        if (not isinstance(row, Mapping) or set(row) != _RECORD_FIELDS
+                or row.get("selection_handle") != selection_handle
+                or row.get("choice_payload_sha256") != _digest(row.get("choice_payload"))
+                or type(row.get("choice_epoch")) is not int
+                or type(row.get("revocation_epoch")) is not int):
+            raise AuthorityDenied("setup-choice.record", "published setup choice row is malformed")
+        if time.time() >= row["setup_deadline_unix"]:
+            raise AuthorityDenied("setup-choice.expired", "expired setup intent cannot be adopted")
+        payload = row["choice_payload"]
+        profile_id = _choice_profile_id_from_payload(payload, row["purpose"])
+        principal_id = payload.get("principal_id")
+        namespace_id = payload.get("namespace_id")
+        claims = {
+            "selection_handle": selection_handle,
+            "purpose": row["purpose"],
+            "key_id": row["key_id"],
+            "signed_record_sha256": hashlib.sha256(_canonical(row)).hexdigest(),
+            "choice_payload_sha256": row["choice_payload_sha256"],
+            "choice_epoch": row["choice_epoch"],
+            "revocation_epoch": row["revocation_epoch"],
+            "issued_at_unix": row["issued_at_unix"],
+            "setup_deadline_unix": row["setup_deadline_unix"],
+            "release_deployment_receipt_sha256": row["release_deployment_receipt_sha256"],
+            "setup_session_handle": row["setup_session_handle"],
+            "transaction_handle": row["transaction_handle"],
+            "plan_id": row["plan_id"],
+            "prepared_generation": row["prepared_generation"],
+            "principal_selection_handle": row["principal_selection_handle"],
+            "namespace_selection_handle": row["namespace_selection_handle"],
+            "private_profile_selection_handle": row["private_profile_selection_handle"],
+            "source_member_receipt_handles": tuple(row["source_member_receipt_handles"]),
+            "principal_id": receipt.principal_id if principal_id is None else principal_id,
+            "profile_id": profile_id,
+            "namespace_id": receipt.namespace_id if namespace_id is None else namespace_id,
+            "principal_binding_sha256": payload.get("principal_binding_sha256"),
+            "namespace_binding_sha256": payload.get("namespace_binding_sha256"),
+        }
+        if (any(getattr(receipt, key, None) != value for key, value in claims.items())
+                or receipt.publication_receipt_handle == ""
+                or receipt.publication_sha256 == ""
+                or receipt.generation_id == ""
+                or receipt.service_generation_digest == ""
+                or receipt.selection_catalog_sha256 == ""):
+            raise AuthorityDenied("setup-choice.adoption", "publisher receipt does not join the exact current signed choice")
+        return receipt.publication_receipt_handle
 
     def _verify_current_setup(self, selection: Any) -> None:
         if not callable(getattr(selection, "verify_current_setup_controller", None)):
@@ -414,12 +535,20 @@ class RootSetupChoiceRegistry:
     def _resolve_typed_choice(self, selection: Any, choice: Any, purpose: str) -> Any:
         from .bootstrap_runtime_factory import RootSelectedMemoryServiceEnablementChoice, RootSelectedApplicationQualificationChoice
         from .native_policy_preparation import RootNativePolicyConfigurationChoice
+        try:
+            from .public_web_selection import RootSelectedPublicWebPermissionChoice
+        except ImportError:
+            RootSelectedPublicWebPermissionChoice = None  # type: ignore[assignment,misc]
         if type(choice) is RootSelectedMemoryServiceEnablementChoice and purpose == "memory-service-enablement":
             name, handle = "resolve_current_memory_service_enablement_choice", choice.choice_handle
         elif type(choice) is RootNativePolicyConfigurationChoice and purpose == "native-policy-preparation":
             name, handle = "resolve_current_native_policy_configuration_choice", choice.choice_handle
         elif type(choice) is RootSelectedApplicationQualificationChoice and purpose == "application-qualification":
             name, handle = "resolve_application_setup_choice", choice.selection_handle
+        elif (RootSelectedPublicWebPermissionChoice is not None
+              and type(choice) is RootSelectedPublicWebPermissionChoice
+              and purpose == "public-free-web-read"):
+            name, handle = "resolve_current_public_web_permission_choice", choice.choice_handle
         else:
             raise AuthorityDenied("setup-choice.purpose", "choice type is not admitted for this exact purpose")
         resolver = getattr(selection, name, None)
@@ -440,17 +569,29 @@ class RootSetupChoiceRegistry:
             handle = payload.get("choice_handle")
         elif purpose == "application-qualification":
             handle = payload.get("selection_handle")
+        elif purpose == "public-free-web-read":
+            handle = payload.get("choice_handle")
         else:
             raise AuthorityDenied("setup-choice.purpose", "persisted purpose has no typed setup producer")
         from .bootstrap_runtime_factory import RootSelectedMemoryServiceEnablementChoice, RootSelectedApplicationQualificationChoice
         from .native_policy_preparation import RootNativePolicyConfigurationChoice
+        try:
+            from .public_web_selection import RootSelectedPublicWebPermissionChoice
+        except ImportError:
+            RootSelectedPublicWebPermissionChoice = None  # type: ignore[assignment,misc]
+        if purpose == "public-free-web-read" and RootSelectedPublicWebPermissionChoice is None:
+            raise AuthorityDenied("setup-choice.purpose", "public web TTY choice producer is unavailable")
         expected = {"memory-service-enablement": RootSelectedMemoryServiceEnablementChoice,
                     "native-policy-preparation": RootNativePolicyConfigurationChoice,
-                    "application-qualification": RootSelectedApplicationQualificationChoice}[purpose]
+                    "application-qualification": RootSelectedApplicationQualificationChoice,
+                    **({"public-free-web-read": RootSelectedPublicWebPermissionChoice}
+                       if RootSelectedPublicWebPermissionChoice is not None else {})}[purpose]
         if purpose == "memory-service-enablement":
             name = "resolve_current_memory_service_enablement_choice"
         elif purpose == "native-policy-preparation":
             name = "resolve_current_native_policy_configuration_choice"
+        elif purpose == "public-free-web-read":
+            name = "resolve_current_public_web_permission_choice"
         else:
             name = "resolve_application_setup_choice"
         resolver = getattr(selection, name, None)
@@ -570,6 +711,80 @@ def _memory_choice_payload(choice: Any) -> dict[str, Any]:
     }
 
 
+def _choice_profile_id(choice: Any, purpose: str) -> str | None:
+    if purpose == "memory-service-enablement":
+        return getattr(choice, "profile_id", None)
+    if purpose == "public-free-web-read":
+        return getattr(choice, "profile_id", None)
+    if purpose == "native-policy-preparation":
+        return getattr(choice, "service_profile_id", None)
+    if purpose == "application-qualification":
+        return getattr(choice, "target_profile_id", None)
+    if purpose == "existing-model-selection":
+        return getattr(choice, "target_profile_id", None)
+    return None
+
+
+def _choice_profile_id_from_payload(payload: Mapping[str, Any], purpose: str) -> str | None:
+    """Read the purpose-specific profile field from the canonical signed row."""
+    field_by_purpose = {
+        "memory-service-enablement": "profile_id",
+        "public-free-web-read": "profile_id",
+        "native-policy-preparation": "service_profile_id",
+        "application-qualification": "target_profile_id",
+        "existing-model-selection": "target_profile_id",
+    }
+    field = field_by_purpose.get(purpose)
+    value = payload.get(field) if field is not None else None
+    return value if isinstance(value, str) and value else None
+
+
+def _public_web_choice_payload(choice: Any) -> dict[str, Any]:
+    """Preserve exact v142 scope bytes in the durable signed choice record."""
+    payload = _dataclass_choice_payload(
+        choice, {"_issuer_token", "scope_payloads"})
+    scope_ids = payload.get("web_scope_ids")
+    scope_bytes = getattr(choice, "scope_payloads", None)
+    digests = payload.get("scope_payload_sha256s")
+    if (not isinstance(scope_ids, list) or not scope_ids
+            or scope_ids != sorted(set(scope_ids))
+            or not isinstance(scope_bytes, tuple) or len(scope_bytes) != len(scope_ids)
+            or not isinstance(digests, list) or len(digests) != len(scope_ids)):
+        raise AuthorityDenied("setup-choice.public-scope", "public scope choice is empty or malformed")
+    decoded: list[dict[str, Any]] = []
+    for scope_id, raw, expected_digest in zip(scope_ids, scope_bytes, digests):
+        if type(raw) is not bytes or hashlib.sha256(raw).hexdigest() != expected_digest:
+            raise AuthorityDenied("setup-choice.public-scope", "public scope bytes or digest are invalid")
+        try:
+            row = json.loads(raw.decode("utf-8", "strict"))
+        except Exception:
+            raise AuthorityDenied("setup-choice.public-scope", "public scope payload is invalid JSON") from None
+        if (type(row) is not dict or row.get("enrollment_id") != scope_id
+                or _canonical(row) != raw):
+            raise AuthorityDenied("setup-choice.public-scope", "public scope bytes are not canonical or do not match the ID")
+        decoded.append(row)
+    payload["scope_payloads"] = decoded
+    _validate_public_choice_parallel_fields(choice, len(scope_ids))
+    return payload
+
+
+def _validate_public_choice_parallel_fields(choice: Any, count: int) -> None:
+    names = (
+        "target_selection_handles", "scope_payload_sha256s",
+        "configuration_observation_handles", "configuration_sha256s",
+        "target_contract_artifact_ids", "target_contract_sha256s",
+        "target_contract_source_receipt_handles",
+    )
+    for name in names:
+        values = getattr(choice, name, None)
+        if (not isinstance(values, tuple) or len(values) != count
+                or not all(isinstance(value, str) and value for value in values)):
+            raise AuthorityDenied("setup-choice.public-scope", f"public scope provenance {name} is malformed")
+    if (tuple(sorted(set(choice.target_selection_handles))) != choice.target_selection_handles
+            or len(set(choice.target_selection_handles)) != count):
+        raise AuthorityDenied("setup-choice.public-scope", "target selection handles are not canonical")
+
+
 def _memory_choice_matches(row: Mapping[str, Any], choice: Any) -> bool:
     return (row["purpose"] == "memory-service-enablement"
             and row["choice_payload"] == _memory_choice_payload(choice)
@@ -582,6 +797,18 @@ def _choice_matches_row(row: Mapping[str, Any], choice: Any) -> bool:
     purpose = row["purpose"]
     if purpose == "memory-service-enablement":
         return _memory_choice_matches(row, choice)
+    if purpose == "public-free-web-read":
+        if (f"{type(choice).__module__}.{type(choice).__qualname__}"
+                != "hermes_installer.authority.public_web_selection.RootSelectedPublicWebPermissionChoice"):
+            return False
+        try:
+            payload = _public_web_choice_payload(choice)
+        except AuthorityDenied:
+            return False
+        return (row["choice_payload"] == payload
+                and row["prepared_generation"] == choice.prepared_generation_id
+                and row["principal_selection_handle"] == choice.principal_selection_handle
+                and row["namespace_selection_handle"] == choice.namespace_selection_handle)
     expected = {
         "native-policy-preparation": "native_policy_preparation.RootNativePolicyConfigurationChoice",
         "application-qualification": "bootstrap_runtime_factory.RootSelectedApplicationQualificationChoice",

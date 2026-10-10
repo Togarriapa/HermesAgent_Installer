@@ -120,7 +120,7 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
             "hermes_installer.authority.native_source_definitions",
             fromlist=["_ROLE_DECLARATIONS"],
         )._ROLE_DECLARATIONS[0]
-        wrong = _receipt(session, declaration.closure_member_path, b"different installed module")
+        wrong = _receipt(session, declaration.release_member_path, b"different installed module")
         session.receipts = (wrong,)
         binding = RootSelectedInstallationBinding(session, session._seal)
         module = __import__(

@@ -45,6 +45,7 @@ class RootSelectedPublicWebScope:
     target_contract_artifact_id: str
     target_contract_sha256: str
     target_contract_source_receipt_handle: str
+    scope_payload: bytes
     scope_payload_sha256: str
     service_generation_digest: str
 
@@ -139,18 +140,19 @@ class RootSelectedPublicWebScope:
             "targets", "request_bytes_limit", "response_bytes_limit", "deadline_seconds",
         )
         payload = {key: item[key] for key in payload_fields}
-        payload_digest = hashlib.sha256(json.dumps(
+        payload_bytes = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        ).encode("utf-8")).hexdigest()
+        ).encode("utf-8")
+        payload_digest = hashlib.sha256(payload_bytes).hexdigest()
         scope = EnrolledPublicWebScope(
             ids["enrollment_id"], ids["target_id"], ids["generation"], ids["principal_id"],
             ids["profile_id"], ids["recipient"], tuple(targets), request_limit,
-            response_limit, float(deadline),
+            response_limit, deadline,
         )
         return cls(scope, ids["target_selection_handle"], ids["configuration_observation_handle"],
                    item["configuration_sha256"], ids["target_contract_artifact_id"],
                    item["target_contract_sha256"], ids["target_contract_source_receipt_handle"],
-                   payload_digest, service_generation_digest)
+                   payload_bytes, payload_digest, service_generation_digest)
 
 
 _BUILD_ENV = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "SOURCE_DATE_EPOCH",
