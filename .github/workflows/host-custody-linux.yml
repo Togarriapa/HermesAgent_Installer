@@ -97,15 +97,26 @@ jobs:
           test -f "$keyring" && test ! -L "$keyring"
           test "$(dpkg-query -S "$keyring")" = "ubuntu-keyring: $keyring"
           sudo dpkg --verify ubuntu-keyring
+          for path in /usr /usr/share /usr/share/keyrings "$keyring"; do
+            stat -c 'pre-repair %n uid=%u gid=%g mode=%a' "$path"
+          done
           before="$(sha256sum "$keyring" | cut -d ' ' -f1)"
-          # Some hosted Ubuntu images unpack /usr as runner-owned. Repair only
-          # this exact trust path in the disposable CI VM; never relax the
-          # runtime root-owned/no-write source check or alter keyring bytes.
+          # Some hosted Ubuntu images leave /usr/share writable by the runner.
+          # Repair only this trust path in the disposable CI VM; never relax
+          # the runtime root-owned/no-write source check or alter keyring bytes.
           sudo chown root:root /usr /usr/share /usr/share/keyrings "$keyring"
           sudo chmod go-w /usr /usr/share /usr/share/keyrings "$keyring"
           after="$(sha256sum "$keyring" | cut -d ' ' -f1)"
           test "$before" = "$after"
-          sudo python -c 'import os,stat; paths=("/usr","/usr/share","/usr/share/keyrings","/usr/share/keyrings/ubuntu-archive-keyring.gpg"); assert all(os.stat(p,follow_symlinks=False).st_uid == 0 and not (os.stat(p,follow_symlinks=False).st_mode & 0o022) for p in paths); print("Ubuntu archive keyring and trust path are root-owned and non-writable")'
+          for path in /usr /usr/share /usr/share/keyrings "$keyring"; do
+            test ! -L "$path"
+            test "$(stat -c '%u:%g' "$path")" = "0:0"
+            mode="$(stat -c '%a' "$path")"
+            mode_bits=$((8#$mode))
+            test $((mode_bits & 18)) -eq 0
+            stat -c 'post-repair %n uid=%u gid=%g mode=%a' "$path"
+          done
+          echo "Ubuntu archive keyring and trust path are root-owned and non-writable"
 
       - name: Exercise selected private loopback namespace and nft enforcement
         if: ${{ always() && steps.prepare-private-loopback-tools.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
