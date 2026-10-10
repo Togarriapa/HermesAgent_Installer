@@ -464,3 +464,10 @@ The system SHALL use the v109 source-verified transform module and exact origina
 #### Scenario: Missing source topology
 - **WHEN** staging omits a required original manifest directory or changes the selected source links
 - **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Source bounded local registration results
+The system SHALL use exact v110 local handler result envelopes and recursive public JSON limits while preserving untrusted source classification and actual owner CAS controls. It SHALL NOT replace protected passthrough backend result authority with generic object schemas.
+
+#### Scenario: Protected backend schema missing
+- **WHEN** finance, wallet or source-receipt output lacks its actual bounded typed backend result schema
+- **THEN** that executable candidate remains unavailable without omitting the original family acceptance obligation.
