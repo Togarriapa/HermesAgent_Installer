@@ -4113,6 +4113,7 @@ class RootBootstrapSession:
         self._native_component_target_registry: Any | None = None
         self._native_registration_projection_registry: Any | None = None
         self._native_source_definition_registry: Any | None = None
+        self._native_schema_derivation_registry: Any | None = None
         self._native_policy_choices: dict[str, Any] = {}
         self._native_policy_tty_proofs: dict[str, Any] = {}
         self._native_policy_records_by_selection: dict[str, Any] = {}
@@ -4281,17 +4282,21 @@ class RootBootstrapSession:
             from .native_registration_projection import RootNativeRegistrationProjectionRegistry
             from .native_policy_preparation import RootNativePolicyPreparationRegistry
             from .native_source_definitions import RootNativeSourceDefinitionRegistry
+            from .native_schema_derivation import RootNativeSchemaDerivationRegistry
             journal = self._current_root_journal_selection().path
             binding = self._selected_installation
             targets = RootNativeComponentTargetRegistry.from_root_setup(binding, principal, journal)
             projections = RootNativeRegistrationProjectionRegistry.from_root_setup(binding, journal)
             source_definitions = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+            schema_derivations = RootNativeSchemaDerivationRegistry.from_root_setup(binding, journal)
             registry = RootNativePolicyPreparationRegistry.from_root_setup(
                 binding, principal, targets, binding, projections, binding, journal)
             registry.attach_source_definition_registry(source_definitions)
+            registry.attach_schema_derivation_registry(schema_derivations)
             self._native_component_target_registry = targets
             self._native_registration_projection_registry = projections
             self._native_source_definition_registry = source_definitions
+            self._native_schema_derivation_registry = schema_derivations
             self._native_policy_preparation_registry = registry
         self._verify_current_setup_controller()
         return self._native_policy_preparation_registry
@@ -6179,6 +6184,19 @@ class RootBootstrapSession:
         prepared = self.resolve_prepared_receipt(prepared_setup_receipt_handle)
         bundle = self.prepare_selected_native_bundle()
         self._resolve_current_prepared_native_bundle(bundle)
+        policy_selection_handle = self._current_native_policy_selection_handle
+        if not isinstance(policy_selection_handle, str) or not policy_selection_handle:
+            raise BootstrapEnrollmentPending(
+                "native assembly requires a current root-TTY native policy configuration choice")
+        policy_selection = self.resolve_current_native_policy_selection(policy_selection_handle)
+        policy_records = self.resolve_current_prepared_native_policy_records(policy_selection_handle)
+        if (policy_selection.setup_session_id != self._handle.session_id
+                or policy_selection.transaction_handle != self._authorization.transaction_handle
+                or policy_selection.prepared_generation_id != prepared.generation_id
+                or policy_selection.prepared_generation_digest != prepared.generation_digest
+                or policy_records.native_policy_selection_handle != policy_selection_handle):
+            raise BootstrapEnrollmentPending(
+                "native policy selection or source records do not match current prepared custody")
         if (bundle.materialization_receipt_handle != native_materialization_receipt_handle
                 or self._native_materialization_receipts.get(native_materialization_receipt_handle)
                    is not bundle.materialization_receipt):
@@ -6275,6 +6293,7 @@ class RootBootstrapSession:
             "materialization_receipt_handle": bundle.materialization_receipt_handle,
             "hermes_source_receipt_handle": bundle.hermes_source_receipt_handle,
             "resources_source_receipt_handle": bundle.resources_source_receipt_handle,
+            "native_policy_preparation_handle": policy_selection_handle,
             "definitions_handle": secrets.token_urlsafe(36),
             "definitions_sha256": hashlib.sha256(_canonical({
                 "registrations": [{"name": row.native_tool_name,
@@ -6304,6 +6323,7 @@ class RootBootstrapSession:
             materialization_receipt_handle=bundle.materialization_receipt_handle,
             hermes_source_receipt_handle=bundle.hermes_source_receipt_handle,
             resources_source_receipt_handle=bundle.resources_source_receipt_handle,
+            native_policy_preparation_handle=policy_selection_handle,
             definitions_handle=seed["definitions_handle"], definitions_sha256=seed["definitions_sha256"],
             issued_monotonic=now, expires_monotonic=expires,
             _registry_seal=self._factory._native_assembly_seal,
