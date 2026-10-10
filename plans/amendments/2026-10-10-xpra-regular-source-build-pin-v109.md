@@ -1,0 +1,3 @@
+# Xpra regular source build pin v109
+
+HI-T09/HI-T13 v106 producer compatibility: source-owner final frozen stdlib module SHA183900aa12d4d871569d6b86509e06e6961eefaf2d99ea3d1e7c007b507d4cf4,58622bytes, actual reopened source verified. Builder file mount root relative path empty and archive output role data. Preserve exact original regular directory topology before five-link reconstruction. Adjacent v2 artifact supersedes live pin, immutable v106 unchanged. Owner local fixture tar036a29dd72e4c3fc63269b27f5f2ed6b00f09b2f1304487ec2f22c3aa55435aa and9passed/3skipped are source measurements only; managed build/ARM/runtime/acceptance remain open. Baseline unchanged.
