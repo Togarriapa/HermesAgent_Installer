@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -174,6 +175,8 @@ class VerifiedNativeChannelPeerBinding:
                 or type(self.peer_pid) is not int or self.peer_pid <= 0
                 or type(self.issued_monotonic) not in (int, float)
                 or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
                 or self.expires_monotonic <= self.issued_monotonic):
             raise ValueError("verified native channel peer binding is malformed")
 
@@ -241,6 +244,8 @@ class RootRetainedChannelDeliveryProof:
                 or not _SHA256.fullmatch(self.original_source_context_digest)
                 or type(self.issued_monotonic) not in (int, float)
                 or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
                 or self.expires_monotonic <= self.issued_monotonic):
             raise ValueError("retained channel delivery proof is malformed")
 
@@ -268,6 +273,8 @@ class RootChannelInputDelivery:
                 or type(self.sequence) is not int or self.sequence < 1
                 or type(self.issued_monotonic) not in (int, float)
                 or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
                 or self.expires_monotonic <= self.issued_monotonic
                 or self._issuer_token is None):
             raise ValueError("root channel input delivery is malformed")
@@ -289,6 +296,7 @@ class _BoundPeer:
     pending: list[tuple[ChannelEventDelivery, bytes, object]] = field(default_factory=list,
                                                                           repr=False)
     event_handles: set[str] = field(default_factory=set, repr=False)
+    event_sequences: dict[str, int] = field(default_factory=dict, repr=False)
     reserved_event_handles: set[str] = field(default_factory=set, repr=False)
     closed: bool = False
 
@@ -558,6 +566,7 @@ class RootChannelPeerDeliveryRegistry:
             peer.event_handles.add(proof.event_handle)
             self._reserved_bytes -= len(record.payload)
             peer.pending.append((channel_delivery, bytes(record.payload), record))
+            peer.event_sequences[proof.event_handle] = delivery.sequence
             self._event_bytes += len(record.payload)
 
     def cancel_retained_channel_proof(self, proof: RootRetainedChannelDeliveryProof) -> bool:
@@ -670,6 +679,13 @@ class RootChannelPeerDeliveryRegistry:
                     "channel event has no unique current recipient peer; delivery remains unavailable",
                 )
             peer = candidates[0]
+            if event_handle.handle in peer.event_handles:
+                sequence = peer.event_sequences.get(event_handle.handle)
+                if type(sequence) is not int or sequence < 1:
+                    raise AuthorityDenied("channel.replay", "previous channel event sequence is unavailable")
+                return sequence
+            if event_handle.handle in peer.reserved_event_handles:
+                raise AuthorityDenied("channel.replay", "channel event delivery is already being issued")
             binding = self.resolve_verified_native_peer_binding(
                 peer.binding.binding_handle, channel_ingress_id=channel_ingress_id,
                 source_observer_enrollment_id=event_handle.source_observer_enrollment_id,
@@ -684,16 +700,13 @@ class RootChannelPeerDeliveryRegistry:
         if type(delivery) is not RootChannelInputDelivery:
             raise AuthorityDenied("channel.publish", "root channel delivery issuer returned an invalid result")
         # The AuthorityService issuer has already atomically registered both
-        # recipient-bound handles and called publish_issued_delivery. Recheck
-        # that its exact delivery is now retained for the selected peer.
-        with self._lock:
-            peer = self._peers.get(binding.binding_handle)
-            if (peer is None or peer.closed
-                    or event_handle.handle not in peer.event_handles
-                    or not any(item[0].delivery_handle == delivery.delivery_handle
-                               for item in peer.pending)):
-                raise AuthorityDenied("channel.publish", "root issuer did not queue the event delivery")
-            return delivery.sequence
+        # recipient-bound handles and queued the event. A receiver may take it
+        # immediately after queue commit, so do not inspect the queue afterward.
+        if (delivery.event_handle != event_handle.handle
+                or delivery.native_binding_handle != binding.binding_handle
+                or delivery.payload_sha256 != event_handle.payload_sha256):
+            raise AuthorityDenied("channel.publish", "root issuer returned a mismatched event delivery")
+        return delivery.sequence
 
     def take(self, *, peer_uid: int, peer_pid: int, peer_pidfd: int,
              binding_handle: str) -> ChannelEventDelivery | None:

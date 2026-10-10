@@ -261,12 +261,17 @@ class ComposioV3WebhookIngress:
         if state == "duplicate":
             if getattr(duplicate_result, "body_sha256", None) != verified.body_sha256:
                 raise ChannelIngressUnavailable("Composio webhook replay identity conflicts with a different payload")
-            return ComposioDeliveryResult(True, True, getattr(duplicate_result, "event_handle", None))
+            retained_event = getattr(duplicate_result, "event_handle", None)
+            if retained_event is not None:
+                _publish_captured_channel_event(
+                    self._controller_registry, self.selection.source_issuer_id, retained_event)
+            return ComposioDeliveryResult(True, True, retained_event)
         if state != "reserved" or getattr(duplicate_result, "body_sha256", None) != verified.body_sha256:
             raise ChannelIngressUnavailable("Composio webhook replay ledger rejected or conflicted with this event")
         payload = verified.canonical_payload
         event_handle = "e" + secrets.token_urlsafe(32)
         token = self._context.set(verified)
+        replay_committed = False
         try:
             proof = self._issuer.mint_source_proof(
                 self._issuer_capability, event_id=event_handle,
@@ -285,9 +290,16 @@ class ComposioV3WebhookIngress:
                 raise ChannelIngressUnavailable("root selected Composio ingress proof is malformed")
             result = self._controller_registry.capture_selected_ingress(proof_handle, proof)
             self._replay_ledger.commit(duplicate_result, result)
+            replay_committed = True
+            _publish_captured_channel_event(
+                self._controller_registry, self.selection.source_issuer_id, result)
             return ComposioDeliveryResult(True, False, result)
         except BaseException:
-            self._replay_ledger.rollback(duplicate_result)
+            # A retained root event is immutable after capture. Keep its replay
+            # reservation so a retry can republish that exact event without
+            # minting a second source proof.
+            if not replay_committed:
+                self._replay_ledger.rollback(duplicate_result)
             raise
         finally:
             self._context.reset(token)
@@ -460,6 +472,39 @@ class ComposioV3WebhookIngress:
         return current
 
 
+def _channel_delivery_registry(controller_registry: Any) -> Any | None:
+    """Resolve the exact channel queue attached to this root event graph."""
+    from .channel_peer_delivery import RootChannelPeerDeliveryRegistry
+    from .resource_source_controllers import RootResourceControllerRegistry
+
+    service = getattr(controller_registry, "service", None)
+    registry = getattr(service, "channel_peer_delivery_registry", None)
+    if type(controller_registry) is RootResourceControllerRegistry:
+        if (type(registry) is not RootChannelPeerDeliveryRegistry
+                or registry.service is not service
+                or registry.resource_registry is not controller_registry):
+            return None
+    elif registry is None:
+        # Non-root controller doubles are used only by isolated contract tests.
+        return None
+    return registry if callable(getattr(registry, "publish_captured_event", None)) else None
+
+
+def _publish_captured_channel_event(
+    controller_registry: Any, source_issuer_id: str, event_handle: Any,
+) -> int:
+    registry = _channel_delivery_registry(controller_registry)
+    if registry is None:
+        raise ChannelIngressUnavailable(
+            "captured channel event is retained but recipient-bound channel delivery is unavailable")
+    try:
+        return registry.publish_captured_event(
+            channel_ingress_id=source_issuer_id, event_handle=event_handle)
+    except Exception as exc:
+        raise ChannelIngressUnavailable(
+            f"captured channel event is retained but could not be delivered: {type(exc).__name__}") from None
+
+
 class NativeChannelIngressProducer:
     """Root-composed accepted-event hook for pinned Telegram and Discord SDKs.
 
@@ -534,6 +579,8 @@ class NativeChannelIngressProducer:
             return "protected current channel selection could not be read"
         if selected is not self.selection:
             return "selected channel generation changed or is unavailable"
+        if not _channel_delivery_registry(self._controller_registry):
+            return "root recipient-bound channel event delivery is unavailable"
         if not self._active_clients:
             return "selected channel connector is not initialized and authenticated"
         for platform, client in self._active_clients.items():
@@ -774,6 +821,10 @@ class NativeChannelIngressProducer:
         if getattr(reservation, "state", None) == "duplicate":
             if getattr(reservation, "body_sha256", None) != body_digest:
                 raise ChannelIngressUnavailable("native channel replay identity conflicts with a different payload")
+            retained_event = getattr(reservation, "event_handle", None)
+            if retained_event is not None:
+                _publish_captured_channel_event(
+                    self._controller_registry, selection.source_issuer_id, retained_event)
             with self._lock:
                 self._replayed += 1
             return
@@ -788,6 +839,7 @@ class NativeChannelIngressProducer:
             account_binding_digest=account_digest, received_monotonic=now,
         )
         event_id = "e" + secrets.token_urlsafe(32)
+        replay_committed = False
         try:
             proof = self._issuer.mint_source_proof(
                 self._issuer_capability, event_id=event_id,
@@ -805,8 +857,12 @@ class NativeChannelIngressProducer:
                 raise ChannelIngressUnavailable("root selected native ingress proof is malformed")
             captured = self._controller_registry.capture_selected_ingress(proof_handle, proof)
             self._replay_ledger.commit(reservation, captured)
+            replay_committed = True
+            _publish_captured_channel_event(
+                self._controller_registry, selection.source_issuer_id, captured)
         except BaseException:
-            self._replay_ledger.rollback(reservation)
+            if not replay_committed:
+                self._replay_ledger.rollback(reservation)
             raise
         with self._lock:
             self._accepted += 1
