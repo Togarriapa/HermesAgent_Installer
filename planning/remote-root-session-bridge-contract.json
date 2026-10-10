@@ -501,7 +501,19 @@
         "issued_monotonic",
         "expires_monotonic"
       ],
-      "receipt": "RootPrivateLoopbackNetworkReceipt actual registry/kernel netns+port/role enforcement and actual current enrolled listener/process/positive-negative probes. Static fields/port-open checks cannot mint success. Root-private handles no caller netns path/PID/port selectors; retained namespaceFD/cgroup/process proof resolved current before connects and revoked on member exit/generation/session change."
+      "receipt": "RootPrivateLoopbackNetworkReceipt actual registry/kernel netns+port/role enforcement and actual current enrolled listener/process/positive-negative probes. Static fields/port-open checks cannot mint success. Root-private handles no caller netns path/PID/port selectors; retained namespaceFD/cgroup/process proof resolved current before connects and revoked on member exit/generation/session change.",
+      "selected_kernel_policy": {
+        "artifact_id": "installer-private-loopback-nft-v1",
+        "source_path": "plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97/private-loopback-policy-v1.json",
+        "installed_path": "templates/private-loopback-policy-v1.json",
+        "sha256": "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc",
+        "size_bytes": 1482,
+        "mechanism": "isolated-netns-nft-uid-ports-systemd-bind-v1",
+        "namespace_path": "Root derivation /run/hermes-installer/netns/<SHA256(UTF8(network_id+NUL+generation))>; held root namespace fd/dev/inode verified before each unit launch. No caller namespace path; inode cannot equal host. PrivateNetwork=no only when exact NetworkNamespacePath overrides ordinary private creation; actual isolated kernel namespace receipt is mandatory, never host network fallback.",
+        "rules_API": "Root private network owner compiles exact nft inet table hermes_installer_private only inside retained selected netns from listener/client row foreign keys and actual NSS exclusive role UIDs. Atomic nft transaction default drop input/output/forward plus only exact mapped UID/address/TCPport/conntrack direction rules above. Readback ruleset digest and actual netns interface/routes/manager bind BPF properties included in existing network receipt. Missing kernel/nft/manager support denies, no broad allow fallback.",
+        "roles": "Remote group: gateway TCP client\u2192xpra display listener127.0.0.1:14500; Desktop uses selected Xauthority/X11 AF_UNIX and receives no TCP allow by default. Public cloudflared origin is only selected protected gateway AF_UNIX HTTP socket, outside isolated Xpra namespace; official cloudflared unix origin transport supports this. Provider group separate: native producer TCP client\u2192protected provider gateway listener port selected enrollment, gateway root RPC\u2192root broker upstream, no internet in pair netns. No other endpoints or ephemeral listener ports.",
+        "runtime_evidence": "Actual installed systemd/nft/kernel tool artifact identities+SHA/versions/root-owned origin resolved from protected host tool catalog before rule application; no fabricated preknown host hash or global package replacement. Linux probes must prove allowed connect/reply, wrong UID/port/address/bind, sibling/host/external/DNS/IPv6 deny, changed netns/rules/cgroup/member UID invalidation. Source documentation supports mechanism; it does not prove actual target support."
+      }
     },
     "root_launch_admission": {
       "owner": "hermes_installer.authority.native_display_startup.RootSelectedDisplayLaunchAuthority",
