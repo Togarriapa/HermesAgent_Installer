@@ -9,6 +9,7 @@ import signal
 import socket
 import struct
 import json
+import secrets
 from unittest import mock
 from pathlib import Path
 
@@ -52,13 +53,23 @@ def _contract(allowed: int, denied: int) -> dict[str, object]:
     }
 
 
+def _test_authority_endpoint(tmp_path: Path, monkeypatch):
+    path = Path("/tmp") / f"hpg-{os.getpid()}-{secrets.token_hex(4)}.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(path))
+    listener.listen(4)
+    monkeypatch.setattr(_HELPER, "_selected_authority_socket", lambda _uid: str(path))
+    return listener
+
+
 def _probe_child(allowed: int, denied: int, result_queue) -> None:
     checks, state = _HELPER._probe(_contract(allowed, denied))
     result_queue.put((os.getpid(), checks, state))
 
 
-def test_live_worker_probe_reports_unsupported_effects_instead_of_authorizing_start():
+def test_live_worker_probe_reports_unsupported_effects_instead_of_authorizing_start(tmp_path, monkeypatch):
     """Run real local bind attempts; a successful forbidden bind is not a pass."""
+    endpoint = _test_authority_endpoint(tmp_path, monkeypatch)
     allowed, denied = _free_port(), _free_port()
     while denied == allowed:
         denied = _free_port()
@@ -89,10 +100,12 @@ def test_live_worker_probe_reports_unsupported_effects_instead_of_authorizing_st
     assert (state == "ready") is actual_denials
     if denied_probe["outcome"] == "bound":
         assert state == "unsupported"
+    endpoint.close()
 
 
-def test_actual_gate_runner_never_executes_after_observed_unsupported_bind_policy():
+def test_actual_gate_runner_never_executes_after_observed_unsupported_bind_policy(tmp_path, monkeypatch):
     """Drive main() with real socket probes and assert its unsupported branch."""
+    endpoint = _test_authority_endpoint(tmp_path, monkeypatch)
     allowed, denied = _free_port(), _free_port()
     while denied == allowed:
         denied = _free_port()
@@ -147,6 +160,7 @@ def test_actual_gate_runner_never_executes_after_observed_unsupported_bind_polic
     finally:
         manager.close()
         worker.close()
+        endpoint.close()
 
 
 def test_contract_validation_rejects_role_port_mismatch_before_probe():
@@ -164,6 +178,7 @@ def test_non_enforcement_errno_does_not_count_as_denial():
     """Controlled result check keeps conflict/unavailable distinct from EPERM."""
     row = _contract(14500, 14501)
     original = _HELPER._bind_probe
+    original_unix = _HELPER._unix_control_probe
     try:
         def controlled(family, address, port):
             if port == 14500 and address == "127.0.0.1":
@@ -175,10 +190,12 @@ def test_non_enforcement_errno_does_not_count_as_denial():
             return {"outcome": "error", "errno": 1}
 
         _HELPER._bind_probe = controlled
+        _HELPER._unix_control_probe = lambda _contract: {"outcome": "connected", "errno": None}
         _checks, state = _HELPER._probe(row)
         assert state == "unsupported"
     finally:
         _HELPER._bind_probe = original
+        _HELPER._unix_control_probe = original_unix
 
 
 def test_sigcont_alone_cannot_release_the_before_app_gate():
