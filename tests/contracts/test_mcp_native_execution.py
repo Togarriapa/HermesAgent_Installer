@@ -299,7 +299,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
         selected_action = NativeActionSelection(
             package_id="package-a", profile_id="profile-a", generation="process-gen-a",
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
-            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
+            operation="mcp.request",
+            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}', 
         )
 
         def action_resolver(_bridge, identity, tool_name):
@@ -344,6 +345,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
             profile_id="profile-a", generation="process-gen-a",
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
             tool_name="mcp__figma__read_metadata",
+            operation="mcp.request",
+            canonical_arguments=b'{"fileKey":"selected-file"}',
             arguments_sha256=hashlib.sha256(b'{"fileKey":"selected-file"}').hexdigest(),
             parent_closure_digest="b" * 64, receipt_handles=(self.source_handle,),
             observer_id="provider-result-observer", loaded_package_proof=self.source_observers.loaded_proof,

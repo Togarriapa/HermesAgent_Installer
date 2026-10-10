@@ -197,6 +197,7 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 generation=generation,
                 adapter_id="hermes-main",
                 action_id="chat.complete",
+                operation="plugin.selected-tool.execute",
                 validate_arguments=lambda args: args == b'{"x":1}',
             )
 
@@ -245,6 +246,14 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 peer_pid=producer_pid,
             )
             grant = EffectAuthorization.from_wire(grant_wire)
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_invocation_for_effect(
+                    context, grant, "plugin.unselected.execute", request_digest,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_invocation_for_effect(
+                    context, grant, operation, "0" * 64,
+                )
             result = service._perform_effect(
                 producer_uid,
                 gateway_pid,
@@ -282,6 +291,16 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 expires_monotonic=grant.monotonic_expires_at,
                 cancelled=lambda: False,
             )
+            retained = registry._deliveries[delivery.response_delivery_handle]
+            self.assertEqual(retained.response_bytes, response_bytes)
+            self.assertEqual(retained.response_digest, response_digest)
+            self.assertIs(retained.request_context, context)
+            self.assertIs(retained.authorization, grant)
+            self.assertEqual(retained.request_digest, request_digest)
+            self.assertEqual(retained.retry_index, 0)
+            self.assertEqual(retained.response_receipt_handle, retained.receipt_handles[-1])
+            self.assertEqual(retained.response_status, 200)
+            self.assertEqual(retained.response_headers["Content-Type"], "application/json")
             self.assertFalse(hasattr(delivery, "producer_context_handle"))
             lookup_payload = {
                 "schema": 1,
