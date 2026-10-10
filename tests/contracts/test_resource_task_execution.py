@@ -9,6 +9,7 @@ import pytest
 
 from hermes_installer.authority.resource_task_execution import (
     RootResourceTaskRunner,
+    _validate_admission,
     _strict_prompt,
 )
 from hermes_installer.authority.types import AuthorityDenied
@@ -165,6 +166,74 @@ def test_service_rejects_changed_parent_closure_before_any_process_start():
             exact_stdin=_strict_prompt(task), timeout=5.0, cancelled=lambda: False,
         )
     assert starts == []
+
+
+def test_root_event_controller_binding_is_typed_separately_from_worker_peer():
+    """Root role PIDFDs are accepted as provenance, never as worker receipts."""
+    from hermes_installer.authority.types import Sensitivity
+    from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+
+    task = admitted_task()
+    admission = RootResourceJobAdmissionHandle(
+        handle_id="root-admission-handle-1234567890123456", job_id=task.job_id,
+        node_id=task.node_id, child_admission_id=task.admission_id, attempt_index=0,
+        backend_enrollment_id=task.backend_enrollment_id,
+        resource_generation=task.resource_generation, profile_id="profile-1",
+        profile_generation="profile-generation-1", native_package_id=task.native_package_id,
+        native_package_generation=task.native_package_generation,
+        process_enrollment_id=task.process_enrollment_id,
+        process_generation=task.process_generation, operation_id=task.operation_id,
+        child_target_id="process-target-1", child_capability="hermes-profile-invoke",
+        task_body_recipe_id=task.task_body_recipe_id,
+        task_request_schema_id=task.task_request_schema_id,
+        task_payload=task.task_payload_bytes, task_payload_sha256=task.task_payload_sha256,
+        parent_closure_digest=task.parent_closure_digest, expires_monotonic=20.0,
+    )
+    source = RootAdmittedTaskSource(
+        source_context_handle=task.source_context_handle,
+        verified_source_receipt_handles=("r" * 40,),
+        signed_receipt_wires=(b'{"receipt_id":"receipt-1"}',),
+        sensitivity=Sensitivity.PRIVATE, lineage_hash="b" * 64,
+        recipient_ceiling=("profile-1",), principal_id="principal:one",
+        profile_id="profile-1", namespace_id="namespace:one",
+        parent_closure_digest=task.parent_closure_digest,
+        controller_binding_handle="controller-handle-123456789",
+        expires_monotonic=19.0,
+    )
+    controller = RootTaskController(
+        schema=1, controller_handle=source.controller_binding_handle,
+        controller_kind="root-scheduler", controller_role_artifact_id="role-artifact",
+        controller_role_sha256="d" * 64, pid=42, pidfd=8, uid=0,
+        identity="root-scheduler-identity", controller_profile_id=None,
+        controller_generation="root-controller-generation", source_receipt_id=None,
+        subject_principal_id=source.principal_id, subject_profile_id=source.profile_id,
+        subject_namespace_id=source.namespace_id, service_generation_digest="e" * 64,
+        expires_monotonic=18.0,
+    )
+    selection = SelectedResourceProfileTask(
+        resource_backend_id=task.backend_enrollment_id, resource_id="resource-1",
+        resource_generation=task.resource_generation, profile_id="profile-1",
+        principal_id=source.principal_id, profile_generation=admission.profile_generation,
+        process_enrollment_id=task.process_enrollment_id,
+        process_generation=task.process_generation, operation_id=task.operation_id,
+        process_start_target=admission.child_target_id, native_package_id=task.native_package_id,
+        native_package_generation=task.native_package_generation,
+        task_body_recipe_id=task.task_body_recipe_id,
+        task_request_schema_id=task.task_request_schema_id,
+        process_operation=object(), launch_recipe=object(), native_package=object(),
+        task_body_recipe=object(),
+    )
+
+    assert _validate_admission(
+        admission, task, source, controller, selection, now=1.0,
+        service_generation_digest="e" * 64, expected_resource_id="resource-1",
+        expected_principal_id="principal:one",
+    ) == b"hello"
+
+    # A root role remains an independently authenticated controller; the
+    # runner's real path also requires ResourceJobAuthority's live resolver.
+    assert controller.uid == 0
+    assert controller.controller_profile_id is None
 
 
 @pytest.mark.parametrize("changes", [
