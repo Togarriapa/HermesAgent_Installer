@@ -194,3 +194,7 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T144.1 app build/source broker: Exact finite Node/Bun source/license/notice catalog selection and held isolated toolchain producer; actual digest/member/currentness failures and no global effects.
 
 - [ ] SK-T144.2 application environment build/probe: Actual offline lock-preserving Bun package closure/build and separate Node/Bun/native origin probe; missing artifact/license/cache/native support exact unavailable prerequisites.
+
+- [ ] SK-T145.1 memory lifecycle/selected startup authority/custody: Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD.
+
+- [ ] SK-T145.2 memory lifecycle integration: Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership.

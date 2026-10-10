@@ -118,3 +118,5 @@ Locked package/license receipts v136: `plans/amendments/2026-10-10-locked-packag
 Existing model-store source v139: `plans/amendments/2026-10-10-existing-model-store-selection-source-v139.md`; actual fixed root/child FD selection and source observations distinct private profile/deployment. No model acquisition or acceptance promotion.
 
 Hyperframes finite toolchain source v144: `plans/amendments/2026-10-10-hyperframes-toolchain-source-v144.md`; separate held Node/Bun source receipts, exact offline lock and native probe, no Python substitution/global install. All AC open.
+
+Memory process control re-admission v145: `plans/amendments/2026-10-10-memory-process-control-readmission-v145.md`; fresh current short status/stop proof joins original owned process, immutable deadline and revocation cleanup. All AC open.

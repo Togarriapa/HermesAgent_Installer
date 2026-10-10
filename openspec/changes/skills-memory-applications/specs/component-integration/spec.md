@@ -781,3 +781,10 @@ The installer SHALL select exact independently verified Node and Bun source arti
 #### Scenario: Upstream workspace has no exact Bun declaration
 - **WHEN** Hyperframes needs a Bun toolchain
 - **THEN** only the reviewed finite source selection is acquired and qualified without guessing a project pin, enabling lifecycle scripts or claiming native compatibility
+
+### Requirement: Fresh memory owned process control admission v145
+The installer SHALL reobserve current authorization for status and stop after initial admission expiry while retaining exact original process ownership and deadline.
+
+#### Scenario: Memory service outlives its start proof
+- **WHEN** the original short admission expires while the owned process remains within its original deadline
+- **THEN** productive control requires a fresh same-process admission and revocation cleanup remains bound to retained PIDFD ownership without extending the old proof
