@@ -36,6 +36,7 @@ from typing import Any, Iterable, Iterator, Mapping
 
 from .bootstrap_enrollment import (
     BootstrapEnrollmentError, BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+    bootstrap_runtime_error_step,
 )
 from .application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 from .application_effect_source_catalog import (
@@ -2967,29 +2968,38 @@ def bootstrap_selected_release(choices: object, candidate_selection_registry: ob
     if (not isinstance(choices, RootSetupExplicitChoices)
             or not isinstance(candidate_selection_registry, RootBootstrapCandidateSelectionRegistry)):
         raise TypeError("first-source bootstrap requires the sealed root TTY choice and its registry")
-    with _bootstrap_os_error_step("bootstrap.tty_selection"):
-        selection = candidate_selection_registry.resolve(choices)
+    with bootstrap_runtime_error_step("bootstrap.tty_selection"):
+        with _bootstrap_os_error_step("bootstrap.tty_selection"):
+            selection = candidate_selection_registry.resolve(choices)
     journal = candidate_selection_registry
-    with _bootstrap_os_error_step("source_cas.construct"):
-        source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
-            journal, fixed_source_origin_policy_for_root_bootstrap())
-    distribution_registry = RootInstallerDistributionRegistry.from_owned_source_CAS(source_cas, journal)
-    distribution_handle = source_cas.acquire_selected(selection.candidate_git_sha)
-    with _bootstrap_os_error_step("source_cas.resolve"):
-        source = distribution_registry.resolve(distribution_handle)
+    with bootstrap_runtime_error_step("source_cas.construct"):
+        with _bootstrap_os_error_step("source_cas.construct"):
+            source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
+                journal, fixed_source_origin_policy_for_root_bootstrap())
+    with bootstrap_runtime_error_step("source_cas.registry"):
+        distribution_registry = RootInstallerDistributionRegistry.from_owned_source_CAS(source_cas, journal)
+    with bootstrap_runtime_error_step("source_cas.acquire"):
+        distribution_handle = source_cas.acquire_selected(selection.candidate_git_sha)
+    with bootstrap_runtime_error_step("source_cas.resolve"):
+        with _bootstrap_os_error_step("source_cas.resolve"):
+            source = distribution_registry.resolve(distribution_handle)
     if source.candidate_git_sha != selection.candidate_git_sha:
         raise InstallerReleaseBuildError("fixed-origin source CAS does not match the root TTY choice")
-    runtime_artifact_registry = RootInstallerRuntimeArtifactRegistry()
-    interpreter_registry = RootInstallerInterpreterRegistry.from_owned_source_CAS(
-        distribution_registry, journal, runtime_artifact_registry)
-    with _bootstrap_os_error_step("installer_runtime.provision"):
-        interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
-    with _bootstrap_os_error_step("bootstrap.handoff"):
-        handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
-            distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
-        handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
-    with _bootstrap_os_error_step("bootstrap.reexec"):
-        handoff_registry.reexec_selected_bootstrap(handoff)
+    with bootstrap_runtime_error_step("installer_runtime.registry"):
+        runtime_artifact_registry = RootInstallerRuntimeArtifactRegistry()
+        interpreter_registry = RootInstallerInterpreterRegistry.from_owned_source_CAS(
+            distribution_registry, journal, runtime_artifact_registry)
+    with bootstrap_runtime_error_step("installer_runtime.provision"):
+        with _bootstrap_os_error_step("installer_runtime.provision"):
+            interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
+    with bootstrap_runtime_error_step("bootstrap.handoff"):
+        with _bootstrap_os_error_step("bootstrap.handoff"):
+            handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
+                distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
+            handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
+    with bootstrap_runtime_error_step("bootstrap.reexec"):
+        with _bootstrap_os_error_step("bootstrap.reexec"):
+            handoff_registry.reexec_selected_bootstrap(handoff)
     raise BootstrapEnrollmentPending("isolated source bootstrap exec returned without replacing the current process")
 
 

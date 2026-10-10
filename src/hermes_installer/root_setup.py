@@ -429,7 +429,9 @@ def run_root_setup_action(
     if selection_handle is not None:
         return _result(selected_action, RootSetupState.PENDING, "runtime",
                        "The selected root reference is validly shaped, but its installed resolver is not connected.")
-    from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
+    from .authority.bootstrap_enrollment import (
+        BootstrapEnrollmentPending, bootstrap_runtime_error_step,
+    )
     from .authority.installer_release import InstalledRootReleaseVerifier
     from .authority.installer_release_build import (
         InstallerReleaseBuildError,
@@ -442,12 +444,14 @@ def run_root_setup_action(
     # source/runtime bootstrap. Present-but-invalid and inaccessible pointers
     # are errors, never invitations to replace the installed release.
     try:
-        predecessor = observe_deployment_predecessor()
-        predecessor.verify_current()
+        with bootstrap_runtime_error_step("installed_release.predecessor"):
+            predecessor = observe_deployment_predecessor()
+            predecessor.verify_current()
         if predecessor.state == "absent":
             selection_registry = RootBootstrapCandidateSelectionRegistry()
             try:
-                choices = selection_registry.issue_explicit_tty_choice(selected_action)
+                with bootstrap_runtime_error_step("bootstrap.tty_selection"):
+                    choices = selection_registry.issue_explicit_tty_choice(selected_action)
                 bootstrap_selected_release(choices, selection_registry)
                 return _result(selected_action, RootSetupState.FAILED, "distribution",
                                "Isolated source bootstrap returned without its required same-process handoff.")
@@ -472,15 +476,17 @@ def run_root_setup_action(
     # the installed-release handoff only.
     from .authority.installer_release import InstalledRootReleaseVerifier
     # The predecessor probe above already verified the installed pointer.
-    _import_v180_native_support_closure()
-    _import_v187_listener_activation_closure()
-    from .authority.bootstrap_runtime_factory import (
-        RootBootstrapRuntimeFactory,
-        RootInitialSetupAggregate,
-    )
+    with bootstrap_runtime_error_step("installed_release.import_closure"):
+        _import_v180_native_support_closure()
+        _import_v187_listener_activation_closure()
+        from .authority.bootstrap_runtime_factory import (
+            RootBootstrapRuntimeFactory,
+            RootInitialSetupAggregate,
+        )
 
     try:
-        release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+        with bootstrap_runtime_error_step("installed_release.actor_observation"):
+            release, actor = InstalledRootReleaseVerifier.from_current_root_process()
     except BootstrapEnrollmentPending as exc:
         return _result(selected_action, RootSetupState.PENDING, "distribution", _safe_reason(exc))
     except (OSError, RuntimeError) as exc:
@@ -491,7 +497,8 @@ def run_root_setup_action(
     session = None
     actor_verified = False
     try:
-        actor.verify_current(release)
+        with bootstrap_runtime_error_step("installed_release.actor_verification"):
+            actor.verify_current(release)
         actor_verified = True
         selection_leaf = Path("/etc/hermes-installer/root-setup-selection.json")
         try:
@@ -1029,11 +1036,19 @@ def _read_target_account_name() -> str:
 
 def _safe_reason(error: BaseException) -> str:
     from .authority.bootstrap_enrollment import (
-        BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+        BootstrapEnrollmentPending, BootstrapRuntimeStepFailure, BootstrapSystemCallFailure,
     )
 
     if isinstance(error, BootstrapEnrollmentPending):
         return "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
+    if type(error) is BootstrapRuntimeStepFailure:
+        step = error.step
+        if type(step) is not str or step not in BootstrapRuntimeStepFailure.STEPS:
+            return "Root setup could not verify its required authority (RuntimeError)."
+        error_kind = error.error_kind
+        if type(error_kind) is not str or error_kind not in BootstrapRuntimeStepFailure.ERROR_KINDS:
+            return "Root setup could not verify its required authority (RuntimeError)."
+        return f"Root setup failed at {step} ({error_kind})."
     if isinstance(error, BootstrapSystemCallFailure):
         if type(error) is not BootstrapSystemCallFailure:
             return "Root setup could not verify its required authority (OSError)."
