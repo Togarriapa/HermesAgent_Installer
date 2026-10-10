@@ -1045,3 +1045,17 @@ The installer SHALL enroll an existing Home Assistant MCP instance only through 
 #### Scenario: Credential is revoked after a successful read
 - **WHEN** reconnect receives unauthorized or revoked credential evidence
 - **THEN** new reads are denied, stale transport handles are retired and HA configuration remains unchanged
+
+### Requirement: Actual setup and fixture source producers
+
+The installer SHALL produce the v199 current setup startup projection from actual selected source roles and protected publication, and independently issue the child-owned closed qualification source transaction/session before fixture publication.
+
+#### Scenario: Current producers issue genuine selections
+
+- **WHEN** actual selected source roles and protected publication are current, or the independently observed fixed fixture controller issues its own source transaction
+- **THEN** only the concrete owner may issue its private startup projection or fixture source session, preserving original deadlines and source/PM custody
+
+#### Scenario: Caller identity or acquisition cycle is substituted
+
+- **WHEN** caller rows, copied session handles, stale receipts, production activation under fixture authority or publication as source-session prerequisite is attempted
+- **THEN** the operation is denied without a capability proof or acceptance promotion

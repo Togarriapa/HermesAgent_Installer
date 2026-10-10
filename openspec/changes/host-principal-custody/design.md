@@ -360,3 +360,5 @@ Actual daemon/setup process separation requires a closed source-issued startup i
 Durable Xpra startup adoption v198: `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`. Existing HI-T197.1/.2 and VD-T197.4 require schema2 actual build/CAS/catalog reopening under a separate overlay signing domain, and admission-to-active lifecycle ownership. All acceptance remains OPEN.
 
 Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.
+
+Finite actual setup/fixture source producers v199: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`. Existing HI197/173/178 tasks require genuine setup protected selection/role producer and distinct child-owned qualification acquisition; no copied stores, caller rows or publication cycle. All acceptance OPEN.
