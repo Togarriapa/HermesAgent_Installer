@@ -22,6 +22,7 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootBootstrapSession,
     RootRunnableRoleReceiptProjection,
     RootRunnableRoleRow,
+    _runnable_role_matches_compiled_rule,
     _service_requires_package_runtime,
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
@@ -60,6 +61,20 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             "process.start": "hermes-agent-health:start",
         }))
         self.assertTrue(_service_requires_package_runtime(None))
+
+    def test_observed_pm_executable_requires_exact_compiled_v189_artifact_id(self):
+        observed = RootRunnableRoleRow(
+            "official-pm-runtime", "pm-runtime", "h" * 40,
+            "observed:pm-committed-venv-python", "a" * 64, 100, "pm-runtime", (),
+        )
+        rule = {
+            "required_phase": "runnable",
+            "allowed_artifact_ids": ["observed:pm-committed-venv-python"],
+            "allowed_output_kinds": ["pm-runtime"],
+        }
+        self.assertTrue(_runnable_role_matches_compiled_rule(observed, rule))
+        rule["allowed_artifact_ids"] = ["observed:arbitrary-python"]
+        self.assertFalse(_runnable_role_matches_compiled_rule(observed, rule))
 
     def test_policy_identity_tags_reject_cross_domain_principal_substitution(self):
         from hermes_installer.authority.bootstrap_runtime_factory import (
@@ -597,6 +612,18 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             authorization.transaction_handle, "d" * 64, 10, "test-seal")
         with self.assertRaises(BootstrapEnrollmentPending):
             factory.activate_runnable(authorization, identity, {}, seal="test-seal")
+        # A selected worker can enter the sealed-role path without generic CAS
+        # handles; it still fails unless every exact producer/selection proof is
+        # present. The source provider appends its independent held source handle.
+        with self.assertRaisesRegex(BootstrapEnrollmentPending,
+                                    "selected native worker requires the exact signed selection"):
+            factory.activate_runnable(
+                authorization, identity, {}, seal="test-seal",
+                native_worker_recipe_handles=("selected-recipe",),
+                native_policy_selection=object(),
+                native_worker_generation_producer=object(),
+                runnable_role_receipts=object(),
+            )
         unsealed = RootRuntimeArtifactReceipt(
             "official-pm-runtime", "pm-runtime-fixture", "c" * 64,
             authorization.transaction_handle, "d" * 64, 10, "other-session-seal")

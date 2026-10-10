@@ -1620,6 +1620,17 @@ def _service_requires_package_runtime(operation_targets: Any) -> bool:
     )
 
 
+def _runnable_role_matches_compiled_rule(row: Any, rule: Any) -> bool:
+    """Match a typed role only against the compiler's finite resolved list."""
+    return (
+        type(row) is RootRunnableRoleRow
+        and isinstance(rule, Mapping)
+        and row.artifact_id in rule.get("allowed_artifact_ids", ())
+        and row.output_kind in rule.get("allowed_output_kinds", ())
+        and isinstance(row.sha256, str) and bool(_SHA.fullmatch(row.sha256))
+    )
+
+
 class RootRunnableRoleProjectionRegistry:
     """Join the current PM observation and reserved native CAS outputs."""
 
@@ -4068,10 +4079,10 @@ class RootSetupPolicyFactory:
         policy = self.resolver.resolve_policy(authorization.plan_artifact_id,
                                               compilation_phase="active")
         self._root_journal_join(authorization)
-        if not receipts:
+        selected_worker = bool(native_worker_recipe_handles)
+        if not receipts and not selected_worker:
             _fail("runnable activation requires actual root-resolved runtime and launcher receipts")
         selection = policy.catalog_selections
-        selected_worker = bool(native_worker_recipe_handles)
         if selected_worker:
             from .native_policy_preparation import RootNativePolicyPreparationSelection
             from .native_worker_service_generation import RootPreparedNativeServiceGenerationProducer
@@ -4122,9 +4133,7 @@ class RootSetupPolicyFactory:
                             or rule["required_phase"] != "runnable"):
                         _fail(f"required typed runnable-role row for {role} is absent")
                     role_row = row_matches[0]
-                    if (role_row.artifact_id not in rule["allowed_artifact_ids"]
-                            or role_row.output_kind not in rule["allowed_output_kinds"]
-                            or not _SHA.fullmatch(role_row.sha256)):
+                    if not _runnable_role_matches_compiled_rule(role_row, rule):
                         _fail(f"typed runnable-role receipt for {role} differs from the compiled role pin")
                     if (role == "official-pm-runtime"
                             and binding["receipt_field"] == "package_runtime_records"
