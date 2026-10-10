@@ -245,6 +245,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
         return self._session._resolve_native_assembly_definitions(selection_handle)
 
+    def resolve_native_registration_projection(self, selection_handle: str) -> tuple[Any, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native registration binding is not owned by this setup session")
+        return self._session._resolve_native_registration_projection(selection_handle)
+
     def resolve_native_assembly_member(self, selection_handle: str,
                                        artifact_receipt_handle: str) -> bytes:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -541,6 +546,7 @@ class RootNativeAssemblyDefinitions:
     source_issuer_records: tuple[Mapping[str, Any], ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
     action_registration_records: tuple[Mapping[str, Any], ...]
+    registration_records: tuple[Mapping[str, Any], ...]
     candidate_records: tuple[Mapping[str, Any], ...]
     closure_members: tuple[RootNativeAssemblyMember, ...]
     boundary_overlay_receipt_handle: str
