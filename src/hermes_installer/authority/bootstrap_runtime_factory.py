@@ -54,6 +54,10 @@ from .bootstrap_enrollment import (
     _validate_sha256,
     _verify_release_file_at,
 )
+from .application_runtime_selection import (
+    RootApplicationRuntimePreparationInputSelection,
+    RootApplicationRuntimePreparationSelection,
+)
 
 
 _SELECTION_PATH = Path("/etc/hermes-installer/root-setup-selection.json")
@@ -409,6 +413,50 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("application source selection is not owned by this setup session")
         return self._session.resolve_application_source_preparation(choice_handle, application_id)
+
+    def resolve_application_runtime_preparation_input(
+            self, qualification_choice_handle: str, application_id: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application runtime inputs are not owned by this setup session")
+        return self._session._resolve_application_runtime_preparation_input(
+            qualification_choice_handle, application_id)
+
+    def resolve_application_runtime_preparation_input_selection(self, selection_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application runtime input is not owned by this setup session")
+        return self._session._resolve_application_runtime_preparation_input_selection(selection_handle)
+
+    def resolve_application_runtime_preparation(
+            self, qualification_choice_handle: str, application_id: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application runtime preparation is not owned by this setup session")
+        return self._session._resolve_application_runtime_preparation(
+            qualification_choice_handle, application_id)
+
+    def resolve_application_runtime_preparation_selection(self, selection_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application runtime preparation is not owned by this setup session")
+        return self._session._resolve_application_runtime_preparation_selection(selection_handle)
+
+    def attach_application_source_preparation_registry(self, registry: Any) -> None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application source registry is not owned by this setup session")
+        self._session._attach_application_source_preparation_registry(registry)
+
+    def attach_application_runtime_preparation_selection_registry(self, registry: Any) -> None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application runtime selector is not owned by this setup session")
+        self._session._attach_application_runtime_preparation_selection_registry(registry)
+
+    def attach_application_package_closure_registry(self, registry: Any) -> None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application package closure is not owned by this setup session")
+        self._session._attach_application_package_closure_registry(registry)
+
+    def attach_application_node_bun_toolchain_registry(self, registry: Any) -> None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application Node/Bun toolchain is not owned by this setup session")
+        self._session._attach_application_node_bun_toolchain_registry(registry)
 
     def resolve_application_qualification_consent(
         self, choice_handle: str, phase_id: str,
@@ -3809,6 +3857,10 @@ class RootBootstrapSession:
         self._application_setup_choices: dict[str, RootSelectedApplicationQualificationChoice] = {}
         self._application_source_preparations: dict[str, Any] = {}
         self._application_source_preparation_handles: dict[tuple[str, str], str] = {}
+        self._application_source_preparation_registry: Any | None = None
+        self._application_runtime_preparation_selection_registry: Any | None = None
+        self._application_package_closure_registry: Any | None = None
+        self._application_node_bun_toolchain_registry: Any | None = None
         self._application_choice_tty_proofs: dict[str, Any] = {}
         self._application_controller_tty_proofs: dict[str, Any] = {}
         self._application_controller_bindings: dict[str, RootApplicationSetupControllerBinding] = {}
@@ -4884,6 +4936,125 @@ class RootBootstrapSession:
         self._application_source_preparations[selection_handle] = selection
         self._application_source_preparation_handles[selection_key] = selection_handle
         return selection
+
+    def _attach_application_source_preparation_registry(self, registry: Any) -> None:
+        self._check_live()
+        from .application_source_preparation import RootApplicationSourcePreparationRegistry
+        if (type(registry) is not RootApplicationSourcePreparationRegistry
+                or getattr(registry, "binding", None) is not self._selected_installation):
+            raise BootstrapEnrollmentPending("application source registry is not owned by this setup binding")
+        if (self._application_source_preparation_registry is not None
+                and self._application_source_preparation_registry is not registry):
+            raise BootstrapEnrollmentPending("another application source registry is already attached")
+        self._application_source_preparation_registry = registry
+
+    def _attach_application_runtime_preparation_selection_registry(self, registry: Any) -> None:
+        self._check_live()
+        from .application_runtime_selection import RootApplicationRuntimePreparationSelectionRegistry
+        if (type(registry) is not RootApplicationRuntimePreparationSelectionRegistry
+                or getattr(registry, "binding", None) is not self._selected_installation
+                or getattr(registry, "source_registry", None)
+                   is not self._application_source_preparation_registry):
+            raise BootstrapEnrollmentPending("application runtime selector does not match the attached source registry")
+        if (self._application_runtime_preparation_selection_registry is not None
+                and self._application_runtime_preparation_selection_registry is not registry):
+            raise BootstrapEnrollmentPending("another application runtime selector is already attached")
+        self._application_runtime_preparation_selection_registry = registry
+
+    def _attach_application_package_closure_registry(self, registry: Any) -> None:
+        self._check_live()
+        from .application_runtime_preparation import RootApplicationOfflinePackageClosureRegistry
+        if (type(registry) is not RootApplicationOfflinePackageClosureRegistry
+                or getattr(registry, "binding", None) is not self._selected_installation
+                or getattr(registry, "source_registry", None)
+                   is not self._application_source_preparation_registry):
+            raise BootstrapEnrollmentPending("application package registry does not match this setup/source binding")
+        selector = self._application_runtime_preparation_selection_registry
+        if selector is None:
+            raise BootstrapEnrollmentPending("root application runtime selector must be attached before package closure")
+        if (self._application_package_closure_registry is not None
+                and self._application_package_closure_registry is not registry):
+            raise BootstrapEnrollmentPending("another application package registry is already attached")
+        selector.attach_package_registry(registry)
+        self._application_package_closure_registry = registry
+
+    def _attach_application_node_bun_toolchain_registry(self, registry: Any) -> None:
+        self._check_live()
+        selector = self._application_runtime_preparation_selection_registry
+        if (selector is None or getattr(registry, "choices", None) is not self._selected_installation):
+            raise BootstrapEnrollmentPending("Node/Bun toolchain registry does not match the current setup selector")
+        if (self._application_node_bun_toolchain_registry is not None
+                and self._application_node_bun_toolchain_registry is not registry):
+            raise BootstrapEnrollmentPending("another Node/Bun toolchain registry is already attached")
+        selector.attach_node_toolchain_registry(registry)
+        self._application_node_bun_toolchain_registry = registry
+
+    def _application_runtime_selection_registry(self) -> Any:
+        self._check_live()
+        registry = self._application_runtime_preparation_selection_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("root application runtime-preparation selector is unavailable")
+        return registry
+
+    def _resolve_application_runtime_preparation_input(
+            self, qualification_choice_handle: str,
+            application_id: str) -> RootApplicationRuntimePreparationInputSelection:
+        registry = self._application_runtime_selection_registry()
+        try:
+            selected = registry.resolve_application_runtime_preparation_input(
+                qualification_choice_handle, application_id)
+        except Exception as exc:
+            from .application_runtime_selection import ApplicationRuntimeSelectionDenied
+            if isinstance(exc, ApplicationRuntimeSelectionDenied):
+                raise BootstrapEnrollmentPending(str(exc)) from None
+            raise
+        if type(selected) is not RootApplicationRuntimePreparationInputSelection:
+            raise BootstrapEnrollmentPending("root app selector returned no sealed source/lock input")
+        return selected
+
+    def _resolve_application_runtime_preparation_input_selection(
+            self, selection_handle: str) -> RootApplicationRuntimePreparationInputSelection:
+        registry = self._application_runtime_selection_registry()
+        try:
+            selected = registry.resolve_application_runtime_preparation_input_selection(selection_handle)
+        except Exception as exc:
+            from .application_runtime_selection import ApplicationRuntimeSelectionDenied
+            if isinstance(exc, ApplicationRuntimeSelectionDenied):
+                raise BootstrapEnrollmentPending(str(exc)) from None
+            raise
+        if type(selected) is not RootApplicationRuntimePreparationInputSelection:
+            raise BootstrapEnrollmentPending("root app selector returned no current source/lock input")
+        return selected
+
+    def _resolve_application_runtime_preparation(
+            self, qualification_choice_handle: str,
+            application_id: str) -> RootApplicationRuntimePreparationSelection:
+        registry = self._application_runtime_selection_registry()
+        try:
+            selected = registry.resolve_application_runtime_preparation(
+                qualification_choice_handle, application_id)
+        except Exception as exc:
+            from .application_runtime_selection import ApplicationRuntimeSelectionDenied
+            if isinstance(exc, ApplicationRuntimeSelectionDenied):
+                raise BootstrapEnrollmentPending(str(exc)) from None
+            raise
+        if type(selected) is not RootApplicationRuntimePreparationSelection:
+            raise BootstrapEnrollmentPending("root app selector returned no sealed runtime preparation selection")
+        return selected
+
+    def _resolve_application_runtime_preparation_selection(
+            self, selection_handle: str) -> RootApplicationRuntimePreparationSelection:
+        registry = self._application_runtime_selection_registry()
+        try:
+            selected = registry.resolve_application_runtime_preparation_selection(selection_handle)
+        except Exception as exc:
+            from .application_runtime_selection import ApplicationRuntimeSelectionDenied
+            if isinstance(exc, ApplicationRuntimeSelectionDenied):
+                raise BootstrapEnrollmentPending(str(exc)) from None
+            raise
+        if type(selected) is not RootApplicationRuntimePreparationSelection:
+            raise BootstrapEnrollmentPending("root app selector returned no current runtime preparation selection")
+        return selected
 
     def observe_selected_resource_profile(self) -> str:
         """Mint a current resource-profile choice from the verified bundle and root TTY.
