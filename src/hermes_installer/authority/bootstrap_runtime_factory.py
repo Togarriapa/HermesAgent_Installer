@@ -203,6 +203,7 @@ class RootReleaseModuleReceipt:
     _session_id: str = field(repr=False, compare=False)
     _session_seal: str = field(repr=False, compare=False)
     _session: Any = field(repr=False, compare=False)
+    _prepared_generation_id: str | None = field(default=None, repr=False, compare=False)
 
     def read_current(self) -> bytes:
         """Read the exact installed module through the held release FD."""
@@ -429,6 +430,11 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("release member binding is not owned by this setup session")
         return self._session._resolve_release_member_receipt(selection_handle, artifact_id)
+
+    def resolve_prepared_release_module_receipts(self) -> tuple[RootReleaseModuleReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("prepared release modules are not owned by this setup session")
+        return self._session._resolve_prepared_release_module_receipts()
 
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
@@ -3351,6 +3357,7 @@ class RootBootstrapSession:
         self._prepared_native_bundle: RootPreparedNativeBundle | None = None
         self._native_assembly_selections: dict[str, RootNativeBootstrapAssemblySelection] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
+        self._prepared_release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
         self._native_schema_receipts: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
@@ -4190,6 +4197,57 @@ class RootBootstrapSession:
         self._release_member_receipts[receipt_handle] = receipt
         return receipt
 
+    def _resolve_prepared_release_module_receipts(self) -> tuple[RootReleaseModuleReceipt, ...]:
+        """Mint held module receipts for the actual 42 captured tool registrations.
+
+        This API is available before a native assembly selection exists, which
+        breaks the source-receipt/selection cycle without widening membership:
+        the source module paths come only from actual `register_tool` captures.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("release registration modules require current empty prepared custody")
+        from .native_registration_projection import capture_actual_hermes_registrations
+        captured = capture_actual_hermes_registrations()
+        if len(captured) != 42:
+            raise BootstrapEnrollmentPending("installed native source did not yield the exact 42 registrations")
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        by_path: dict[str, list[tuple[str, str, int]]] = {}
+        for captured_row in captured:
+            path = "src/" + captured_row.registration_source_path
+            rows = [row for row in release.files
+                    if row.relative_path == path and "module" in row.roles]
+            if (len(rows) != 1 or rows[0].sha256 != captured_row.registration_source_sha256
+                    or rows[0].artifact_id not in plan.allowed_artifact_ids):
+                raise BootstrapEnrollmentPending("actual registration source module is not pinned by selected release")
+            by_path[path] = [(rows[0].artifact_id, rows[0].sha256, rows[0].size_bytes)]
+        output: list[RootReleaseModuleReceipt] = []
+        for path, choices in sorted(by_path.items()):
+            if len(choices) != 1:
+                raise BootstrapEnrollmentPending("captured registration module path is ambiguous")
+            artifact_id, digest, size = choices[0]
+            matches = [row for row in actor.module_origins
+                       if row[1] == str(release.release_root / path) and row[4] == digest]
+            if len(matches) != 1:
+                raise BootstrapEnrollmentPending("registration module is outside current root actor import closure")
+            handle = secrets.token_urlsafe(36)
+            receipt = RootReleaseModuleReceipt(
+                artifact_id, path, digest, size,
+                release.release_commit, release.deployment_receipt_sha256,
+                handle, self._handle.session_id, self._seal, self,
+                prepared.generation_id,
+            )
+            self._prepared_release_member_receipts[handle] = receipt
+            receipt.read_current()
+            output.append(receipt)
+        actor.verify_current(release)
+        return tuple(output)
+
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Mint one of the fixed local-result schema receipts from the held root catalog.
@@ -4235,30 +4293,30 @@ class RootBootstrapSession:
             self._native_schema_receipt_registry = RootNativeRegistrationResultSchemaReceiptRegistry(
                 observer, self._factory._receipt_registry, self._authorization)
         binding = (prepared.provision_receipt_handle, prepared.generation_id)
-        if self._native_schema_receipt_registry_minted_for != binding:
-            registry_receipts = self._native_schema_receipt_registry.mint(
-                prepared_setup_receipt_handle=binding[0], prepared_generation_id=binding[1],
-            )
+        if self._native_schema_receipt_registry_minted_for not in {None, binding}:
             self._native_schema_receipts.clear()
             self._native_schema_receipts_by_artifact.clear()
-            deadline = min(prepared.expires_monotonic,
-                           self._factory.session_store.current_deadline(self._handle))
-            for root_receipt in registry_receipts:
-                schema = root_receipt.schema
-                wrapper_handle = secrets.token_urlsafe(36)
-                wrapper = RootNativeRegistrationSchemaReceipt(
-                    artifact_id=schema.artifact_id, sha256=schema.sha256,
-                    size_bytes=schema.size_bytes, relative_path=schema.relative_path,
-                    artifact_receipt_handle=root_receipt.source_receipt_handle,
-                    setup_session_id=self._handle.session_id,
-                    transaction_handle=self._authorization.transaction_handle,
-                    prepared_generation_id=prepared.generation_id,
-                    expires_monotonic=deadline, _schema_receipt=root_receipt,
-                    _session_seal=self._seal, _session=self,
-                )
-                self._native_schema_receipts[wrapper_handle] = wrapper
-                self._native_schema_receipts_by_artifact[schema.artifact_id] = wrapper
-            self._native_schema_receipt_registry_minted_for = binding
+        (root_receipt,) = self._native_schema_receipt_registry.mint(
+            prepared_setup_receipt_handle=binding[0], prepared_generation_id=binding[1],
+            artifact_id=artifact_id,
+        )
+        schema = root_receipt.schema
+        deadline = min(prepared.expires_monotonic,
+                       self._factory.session_store.current_deadline(self._handle))
+        wrapper_handle = secrets.token_urlsafe(36)
+        wrapper = RootNativeRegistrationSchemaReceipt(
+            artifact_id=schema.artifact_id, sha256=schema.sha256,
+            size_bytes=schema.size_bytes, relative_path=schema.relative_path,
+            artifact_receipt_handle=root_receipt.source_receipt_handle,
+            setup_session_id=self._handle.session_id,
+            transaction_handle=self._authorization.transaction_handle,
+            prepared_generation_id=prepared.generation_id,
+            expires_monotonic=deadline, _schema_receipt=root_receipt,
+            _session_seal=self._seal, _session=self,
+        )
+        self._native_schema_receipts[wrapper_handle] = wrapper
+        self._native_schema_receipts_by_artifact[schema.artifact_id] = wrapper
+        self._native_schema_receipt_registry_minted_for = binding
         wrapper = self._native_schema_receipts_by_artifact.get(artifact_id)
         if wrapper is None:
             raise BootstrapEnrollmentPending("native result schema receipt could not be retained")
@@ -4640,12 +4698,19 @@ class RootBootstrapSession:
                 or not secrets.compare_digest(receipt._session_seal, self._seal)
                 or self._release_member_receipts.get(receipt.source_receipt_handle) is not receipt):
             raise BootstrapEnrollmentPending("release member receipt is not retained by this live setup session")
-        selection = next((item for item in self._native_assembly_selections.values()
-                          if item.setup_session_id == receipt._session_id
-                          and item.expires_monotonic > time.monotonic()), None)
-        if selection is None:
-            raise BootstrapEnrollmentPending("release member receipt has no current native assembly selection")
-        self._revalidate_native_assembly_selection(selection)
+        if receipt._prepared_generation_id is not None:
+            prepared = self._last_receipt
+            if (self._prepared_release_member_receipts.get(receipt.source_receipt_handle) is not receipt
+                    or prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                    or prepared.generation_id != receipt._prepared_generation_id):
+                raise BootstrapEnrollmentPending("prepared release module receipt is stale")
+        else:
+            selection = next((item for item in self._native_assembly_selections.values()
+                              if item.setup_session_id == receipt._session_id
+                              and item.expires_monotonic > time.monotonic()), None)
+            if selection is None:
+                raise BootstrapEnrollmentPending("release member receipt has no current native assembly selection")
+            self._revalidate_native_assembly_selection(selection)
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
