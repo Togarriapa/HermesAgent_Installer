@@ -438,6 +438,23 @@ class RootSelectedResourceProfile:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedNativeBundle:
+    """Path-free result of the root-owned pre-active resource/runtime sequence."""
+
+    setup_session_id: str
+    transaction_handle: str
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    hermes_source_receipt_handle: str
+    pm_runtime_receipt_handle: str
+    resources_source_receipt_handle: str
+    resource_profile_selection_receipt_handle: str
+    materialization_receipt_handle: str
+    materialization_receipt: Any = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootNativeBootstrapAssemblySelection:
     """One-use proof binding prepared setup, source, runtime and native compiler facts."""
 
@@ -3443,6 +3460,44 @@ class RootBootstrapSession:
         self._native_materialization_receipts[receipt.receipt_handle] = receipt
         return receipt
 
+    def prepare_selected_native_bundle(self) -> RootPreparedNativeBundle:
+        """Run the reviewed source, PM, TTY-profile and native-materialization steps.
+
+        This helper keeps the order and joins inside the root factory. It does
+        not activate a service or claim that its native tool schemas, actions,
+        observers, or boundary overlay have been proven.
+        """
+        self._check_live()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("native bundle preparation requires the current empty prepared commit")
+        source_handle = self._source_receipt(self._authorization)
+        pm_handle = self.provision_official_pm_runtime()
+        if not self._resource_profiles:
+            resource_handle = self.observe_selected_resource_profile()
+        elif len(self._resource_profiles) == 1:
+            resource_handle = next(iter(self._resource_profiles))
+            self.resolve_selected_resource_profile(resource_handle)
+        else:
+            raise BootstrapEnrollmentPending("native bundle has ambiguous Resources profile selections")
+        materialized = self.stage_selected_native_resources()
+        self._check_live()
+        if self._last_receipt is not prepared or self._last_receipt.generation_id != prepared.generation_id:
+            raise BootstrapEnrollmentPending("prepared generation changed while staging native resources")
+        from .native_materialization import NativeMaterializationReceipt
+        if (not isinstance(materialized, NativeMaterializationReceipt)
+                or materialized.receipt_handle not in self._native_materialization_receipts
+                or self._native_materialization_receipts[materialized.receipt_handle] is not materialized):
+            raise BootstrapEnrollmentPending("native materialization did not return a retained root receipt")
+        profile = self.resolve_selected_resource_profile(resource_handle)
+        return RootPreparedNativeBundle(
+            self._handle.session_id, self._authorization.transaction_handle,
+            prepared.generation_id, prepared.generation_digest,
+            source_handle, pm_handle, profile.resources_source_receipt_handle,
+            resource_handle, materialized.receipt_handle, materialized, self._seal,
+        )
+
     def _persist_resource_profile_choice(self, receipt: RootSelectedResourceProfile,
                                          tty_proof: Any) -> None:
         root = self._factory.resolver.journal_root / "resource-profile-choices"
@@ -3702,5 +3757,6 @@ __all__ = [
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",
     "RootSetupChoices", "RootSetupPolicyGenerationPublisher",
     "RootSetupPrincipalSelectionRegistry", "RootFirstStagePolicyCompiler",
+    "RootPreparedNativeBundle",
     "ReviewedNativeCapabilitySelection", "VerifiedReviewedNativeCapabilityMap",
 ]
