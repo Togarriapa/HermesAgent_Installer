@@ -302,3 +302,12 @@ The system SHALL verify all five selected Xpra link target strings, SHA256 and b
 #### Scenario: Link target hash mismatch
 - **WHEN** any target byte digest or size differs
 - **THEN** build staging denies without broadening symlink authority.
+
+### Requirement: Only usable loopback topology with inert kernel fallback templates
+
+The installer SHALL enforce v122 exact current topology, nft and subject invariants, permitting only the finite verified inert kernel fallback records alongside usable loopback.
+
+#### Scenario: Fallback interface becomes usable
+
+- **WHEN** an optional fallback interface becomes UP, addressed, routed, linked or configured, or actual nft/subject proof is missing
+- **THEN** the root namespace lease is denied or revoked and owned selected subjects are stopped; diagnostic interface names alone never authorize startup

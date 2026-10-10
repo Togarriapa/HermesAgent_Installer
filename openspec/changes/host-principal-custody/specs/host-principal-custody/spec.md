@@ -506,3 +506,37 @@ The system SHALL use the v114 literal catalog-compatible schema/artifact IDs for
 #### Scenario: Earlier impossible identity
 - **WHEN** a source row contains the superseded colon artifact ID
 - **THEN** selection fails until the corrected exact source map is used.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Bounded source-derived native financial and web results
+
+The installer SHALL validate source-derived financial observations and web result artifacts using v120 exact selected schemas and actual root receipt currentness, preserving untrusted result semantics.
+
+#### Scenario: False web artifact receipt
+
+- **WHEN** a web result supplies a structurally valid receipt that does not resolve current root artifact/source membership
+- **THEN** result promotion is denied and no provenance or authority is inferred from the returned dictionary
+
+### Requirement: Source exact financial account alias domain
+
+The installer SHALL preserve v121 actual source account alias regex and128-character bound when validating selected financial observations.
+
+#### Scenario: Valid selected alias exceeds96 characters
+
+- **WHEN** the actual selected alias satisfies the source128-character domain
+- **THEN** it is not rejected solely by the superseded v120 max96 ceiling; all other proof and output checks remain required
+
+### Requirement: Independent selected native process role association
+
+The installer SHALL join observer process identity to explicit v123 protected process-role module/source/current loaded proofs, independently of action adapters.
+
+#### Scenario: Action adapter is supplied as a process role
+
+- **WHEN** an observer role has no exact protected process-role member/current loaded module proof
+- **THEN** source capture is denied even if a selected action adapter exists with the same name or artifact digest
