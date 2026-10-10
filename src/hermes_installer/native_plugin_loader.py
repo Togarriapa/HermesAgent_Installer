@@ -397,16 +397,11 @@ class _NativePluginContextResultAdapter:
         package = object.__getattribute__(self, "_NativePluginContextResultAdapter__package")
         adapter_id = object.__getattribute__(self, "_NativePluginContextResultAdapter__adapter_id")
         candidate = package.candidate(name)
-        expected_schema = None if candidate is None else {
-            "name": candidate.native_tool_name,
-            "description": candidate.description,
-            "parameters": _thaw_frozen_json(candidate.argument_schema),
-        }
         if (candidate is None or candidate.is_native_mcp or candidate.adapter_id != adapter_id
                 or candidate.native_server_name != "hermes-installer"
                 or toolset != candidate.toolset or description != candidate.description
-                or not isinstance(schema, dict) or expected_schema is None
-                or _canonical(schema) != _canonical(expected_schema)):
+                or not isinstance(schema, dict)
+                or _canonical(schema) != _canonical(_thaw_frozen_json(candidate.argument_schema))):
             raise NativePluginLoadUnavailable("native PluginContext tool differs from the selected candidate index")
         if is_async:
             @functools.wraps(handler)
