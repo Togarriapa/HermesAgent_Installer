@@ -327,6 +327,11 @@ class AuthorityService:
         self.native_input_delivery_registry = None
         self.channel_peer_delivery_registry = None
         self.native_turn_observation_registry = None
+        self.native_channel_context_store = None
+        self._root_channel_delivery_token = object()
+        self._root_channel_input_deliveries: dict[int, Any] = {}
+        self._root_channel_source_registrations: dict[int, Any] = {}
+        self._root_channel_context_registrations: dict[int, Any] = {}
         self.private_input_consent_registry = None
         self.memory_capture_consent_registry = None
         self.native_mcp_dispatcher = None
@@ -1215,18 +1220,6 @@ class AuthorityService:
             raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
         self.native_input_delivery_registry = registry
 
-    def attach_channel_peer_delivery_registry(self, registry: Any) -> None:
-        """Attach the fixed selected channel bind/take registry once."""
-        from .channel_peer_delivery import RootChannelPeerDeliveryRegistry
-
-        if (self.channel_peer_delivery_registry is not None
-                or type(registry) is not RootChannelPeerDeliveryRegistry
-                or getattr(registry, "service", None) is not self
-                or not callable(getattr(registry, "bind", None))
-                or not callable(getattr(registry, "take", None))):
-            raise AuthorityDenied("channel.delivery", "root selected channel delivery registry is invalid")
-        self.channel_peer_delivery_registry = registry
-
     def attach_native_turn_observation_registry(self, registry: Any) -> None:
         """Attach the exact root-native turn observer once during assembly."""
         from .native_turn_observation import RootNativeTurnObservationRegistry
@@ -1237,6 +1230,333 @@ class AuthorityService:
                 or not callable(getattr(registry, "finish_selected_native_turn", None))):
             raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
         self.native_turn_observation_registry = registry
+
+    def attach_channel_peer_delivery_registry(self, registry: Any) -> None:
+        """Attach the root-selected, PIDFD-bound channel peer/event registry."""
+        from .channel_peer_delivery import RootChannelPeerDeliveryRegistry
+
+        if (self.channel_peer_delivery_registry is not None
+                or type(registry) is not RootChannelPeerDeliveryRegistry
+                or registry.service is not self
+                or not callable(getattr(registry, "prove_retained_event_for_peer", None))
+                or not callable(getattr(registry, "resolve_retained_channel_proof", None))
+                or not callable(getattr(registry, "publish_issued_delivery", None))
+                or not callable(getattr(registry, "validate_retained_channel_proof", None))):
+            raise AuthorityDenied("channel.attach", "root channel peer delivery registry is invalid")
+        self.channel_peer_delivery_registry = registry
+
+    def attach_native_channel_context_store(self, store: Any) -> None:
+        """Attach the exact one-use native channel context delivery store."""
+        from .native_channel_context import RootNativeChannelContextStore
+
+        if (self.native_channel_context_store is not None
+                or type(store) is not RootNativeChannelContextStore
+                or store.service is not self
+                or not callable(getattr(store, "register_channel_context", None))
+                or not callable(getattr(store, "verify_registered_channel_context", None))
+                or not callable(getattr(store, "rollback_channel_context", None))):
+            raise AuthorityDenied("channel.context", "root native channel context store is invalid")
+        self.native_channel_context_store = store
+
+    def issue_root_channel_event_delivery(
+        self, event_handle: Any, channel_ingress_id: str,
+        verified_native_peer_binding: Any,
+    ) -> Any:
+        """Create a source- and peer-bound one-use delivery for one retained event.
+
+        This is root-internal only.  It re-resolves the exact event and native
+        peer proof, signs a source child without changing its historical
+        producer identity, and publishes only after both owner registries have
+        retained the source and context bindings.
+        """
+        from .channel_peer_delivery import (
+            RootChannelInputDelivery, RootRetainedChannelDeliveryProof,
+            VerifiedNativeChannelPeerBinding,
+        )
+        from .resource_source_controllers import RootResourceEventHandle
+        from .source_observers import SourceReceiptHandle
+
+        channel_registry = self.channel_peer_delivery_registry
+        source_registry = self.source_observer_registry
+        context_store = self.native_channel_context_store
+        if (channel_registry is None or source_registry is None or context_store is None
+                or type(event_handle) is not RootResourceEventHandle
+                or type(verified_native_peer_binding) is not VerifiedNativeChannelPeerBinding
+                or not isinstance(channel_ingress_id, str)
+                or channel_ingress_id != verified_native_peer_binding.channel_ingress_id
+                or verified_native_peer_binding.expires_monotonic <= self.monotonic()):
+            raise AuthorityDenied("channel.delivery", "root channel event or selected native peer is unavailable")
+        proof = None
+        source_token = None
+        context_token = None
+        source_handle = None
+        receipt = None
+        delivery = None
+        try:
+            proof = channel_registry.prove_retained_event_for_peer(
+                event_handle, verified_native_peer_binding)
+            if (type(proof) is not RootRetainedChannelDeliveryProof
+                    or channel_registry.validate_retained_channel_proof(
+                        proof, event_handle=event_handle,
+                        native_binding=verified_native_peer_binding) is not True):
+                raise AuthorityDenied("channel.proof", "retained event and native peer are not current")
+            retained_event, native_binding = channel_registry.resolve_retained_channel_proof(proof)
+            if retained_event is not event_handle or native_binding is not verified_native_peer_binding:
+                raise AuthorityDenied("channel.proof", "retained event proof changed its selected peer")
+            resource_registry = channel_registry.resource_registry
+            record = resource_registry.resolve_retained_event(event_handle)
+            if (record.handle is not event_handle or not isinstance(record.payload, bytes)
+                    or canonical_digest(record.payload) != event_handle.payload_sha256
+                    or canonical_digest(record.payload) != proof.event_payload_sha256
+                    or len(record.payload) != proof.event_payload_size_bytes):
+                raise AuthorityDenied("channel.event", "retained event payload no longer matches its proof")
+            parents = tuple(record.parent_receipts)
+            parent_ids = tuple(sorted(item.receipt_id for item in parents))
+            closure_digest = canonical_digest(sorted(
+                (item.receipt_id, canonical_digest(item.claims())) for item in parents))
+            if (not parents or len(parents) != len(parent_ids)
+                    or parent_ids != tuple(event_handle.source_receipt_ids)
+                    or closure_digest != event_handle.parent_closure_digest
+                    or tuple(record.parent_context.source_receipts) != parents):
+                raise AuthorityDenied("channel.lineage", "retained event source closure is incomplete")
+            binding = self._binding(native_binding.peer_uid)
+            if (binding.profile_id != native_binding.profile_id
+                    or binding.principal_id != native_binding.principal_id
+                    or binding.namespace_id != native_binding.namespace_id
+                    or self.profile_generations.get(binding.profile_id) != native_binding.generation
+                    or any((item.uid, item.profile_id, item.principal_id, item.namespace_id,
+                            item.process_generation) !=
+                           (binding.uid, binding.profile_id, binding.principal_id,
+                            binding.namespace_id, native_binding.generation)
+                           for item in parents)):
+                raise AuthorityDenied("channel.identity", "event ancestry and selected peer differ")
+            self._verify_context_signature(record.parent_context)
+            self._assert_current_context(record.parent_context, binding, binding.uid)
+            for parent in parents:
+                self._verify_source_receipt(parent, binding)
+            now = self.monotonic()
+            expiry = min(proof.expires_monotonic, native_binding.expires_monotonic,
+                         event_handle.expires_monotonic, now + 30.0)
+            if not now < expiry:
+                raise AuthorityDenied("channel.expired", "event and peer leases do not overlap")
+            source_leaf = [item for item in parents
+                           if item.source_kind == "native-input"
+                           and item.payload_digest == event_handle.payload_sha256]
+            if len(source_leaf) != 1:
+                raise AuthorityDenied("channel.lineage", "event source closure has no unique input leaf")
+            parent_ceiling = frozenset.intersection(*(frozenset(item.recipient_ceiling) for item in parents))
+            generation = self.profile_generations[binding.profile_id]
+            enrollment_id = canonical_digest({
+                "uid": binding.uid, "principal_id": binding.principal_id,
+                "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+                "generation": generation, "authority_epoch": self.authority_epoch,
+            })
+            from .types import Sensitivity
+            receipt = SourceReceipt(
+                receipt_id=secrets.token_urlsafe(24),
+                issuer_id="host-authority:root-channel-event-v129",
+                source_kind="native-input", principal_id=binding.principal_id,
+                profile_id=binding.profile_id, namespace_id=binding.namespace_id,
+                uid=binding.uid, origin_id=f"{event_handle.resource_id}:{event_handle.event_id}",
+                process_generation=generation, payload_digest=canonical_digest(record.payload),
+                sensitivity=max((Sensitivity.PRIVATE, *(item.sensitivity for item in parents)),
+                                key=lambda value: list(Sensitivity).index(value)),
+                parent_lineage_hash=event_handle.parent_closure_digest,
+                policy_revision=self._policy_revision(), recipient_ceiling=parent_ceiling,
+                issued_at_monotonic=now, monotonic_expires_at=expiry, signature="pending",
+                enrollment_id=enrollment_id,
+                native_process_identity=source_leaf[0].native_process_identity,
+                parent_receipt_ids=parent_ids, nonce=secrets.token_urlsafe(24),
+            )
+            receipt = replace(receipt, signature=self._sign({
+                "domain": "root-channel-event-source-v129", **receipt.claims()}))
+            source_handle = SourceReceiptHandle(secrets.token_urlsafe(32))
+            with self._lock:
+                if len(self._source_receipt_handles) >= 100_000 or str(source_handle) in self._source_receipt_handles:
+                    raise AuthorityDenied("source.capacity", "root source receipt store is unavailable")
+                self._source_receipt_handles[str(source_handle)] = receipt
+            source_context = self._issue_root_channel_context(
+                binding, native_binding, parents, receipt, record.payload, expiry)
+            context_token = context_store.register_channel_context(
+                proof=proof, native_binding=native_binding,
+                source_receipt_handle=str(source_handle), source_context=source_context,
+                event_payload_sha256=proof.event_payload_sha256,
+                event_payload_size_bytes=proof.event_payload_size_bytes,
+                expires_monotonic=expiry,
+            )
+            source_token = source_registry.register_root_channel_event_delivery(
+                proof, source_handle, receipt, source_context, record.payload, expiry,
+                context_token.producer_context_delivery_handle)
+            if (str(source_token.source_receipt_handle) != str(source_handle)
+                    or source_token.producer_context_delivery_handle
+                    != context_token.producer_context_delivery_handle):
+                raise AuthorityDenied("channel.registration", "source and context registrations differ")
+            sequence = channel_registry.sequence_for_retained_channel_proof(proof)
+            delivery = RootChannelInputDelivery(
+                secrets.token_urlsafe(32), event_handle.handle,
+                native_binding.binding_handle, str(source_handle),
+                context_token.producer_context_delivery_handle,
+                proof.event_payload_sha256, sequence, self.monotonic(), expiry,
+                self._root_channel_delivery_token,
+            )
+            with self._lock:
+                if len(self._root_channel_input_deliveries) >= 100_000:
+                    raise AuthorityDenied("channel.capacity", "root channel delivery ledger is full")
+                key = id(delivery)
+                self._root_channel_input_deliveries[key] = delivery
+                self._root_channel_source_registrations[key] = source_token
+                self._root_channel_context_registrations[key] = context_token
+            source_registry.commit_root_channel_event_delivery(source_token)
+            channel_registry.publish_issued_delivery(proof, delivery)
+            return delivery
+        except AuthorityDenied:
+            self._rollback_root_channel_delivery(
+                proof, delivery, source_token, context_token, source_handle)
+            raise
+        except Exception:
+            self._rollback_root_channel_delivery(
+                proof, delivery, source_token, context_token, source_handle)
+            raise AuthorityDenied("channel.delivery", "root channel source delivery could not be issued") from None
+
+    def _issue_root_channel_context(
+        self, binding: PrincipalBinding, native_binding: Any,
+        parent_receipts: tuple[SourceReceipt, ...], receipt: SourceReceipt,
+        event_payload: bytes, expires_monotonic: float,
+    ) -> HostContext:
+        """Sign a channel context while preserving historical producer IDs."""
+        if (not parent_receipts or not isinstance(event_payload, bytes)
+                or canonical_digest(event_payload) != receipt.payload_digest
+                or receipt.native_process_identity == self._native_process_identity(
+                    native_binding.peer_pid, native_binding.peer_uid)):
+            raise AuthorityDenied("channel.context", "channel source/recipient identities are not distinct")
+        peer_identity = self._native_process_identity(native_binding.peer_pid, native_binding.peer_uid)
+        all_receipts = (*parent_receipts, receipt)
+        if (len(all_receipts) > 64 or len({item.receipt_id for item in all_receipts}) != len(all_receipts)
+                or any(not set(item.parent_receipt_ids).issubset(
+                    {parent.receipt_id for parent in all_receipts}) for item in all_receipts)):
+            raise AuthorityDenied("channel.context", "channel context source closure is invalid")
+        purpose, intent = "resource-channel-input", f"resource-channel:{receipt.origin_id}"
+        sensitivity, base_lineage = self.policy.classify(
+            purpose=purpose, intent=intent, source_contexts=(), binding=binding)
+        order = (Sensitivity.PUBLIC, Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN)
+        sensitivity = max((sensitivity, *(item.sensitivity for item in all_receipts)), key=order.index)
+        lineage = canonical_digest({
+            "base": base_lineage,
+            "receipts": sorted((item.receipt_id, canonical_digest(item.claims())) for item in all_receipts),
+            "parents": sorted(item.parent_lineage_hash for item in all_receipts),
+        })
+        now = self.monotonic()
+        generation = self.profile_generations[binding.profile_id]
+        enrollment_id = canonical_digest({
+            "uid": binding.uid, "principal_id": binding.principal_id,
+            "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+            "generation": generation, "authority_epoch": self.authority_epoch,
+        })
+        context = HostContext(
+            principal_id=binding.principal_id, profile_id=binding.profile_id,
+            namespace_id=binding.namespace_id, uid=binding.uid, purpose=purpose,
+            intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
+            trace_id=secrets.token_urlsafe(24), sensitivity=sensitivity,
+            lineage_hash=lineage, policy_revision=self._policy_revision(),
+            capabilities=binding.capabilities, issued_at_monotonic=now,
+            monotonic_expires_at=min(expires_monotonic, now + MAX_CONTEXT_LEASE),
+            nonce=secrets.token_urlsafe(24), grant_id=secrets.token_urlsafe(24),
+            signature="pending", source_receipts=all_receipts,
+            final_payload_digest=canonical_digest(event_payload),
+            enrollment_id=enrollment_id, generation=generation,
+            operation="native.request.dispatch", native_process_identity=peer_identity,
+        )
+        return replace(context, signature=self._sign({
+            "domain": "root-channel-event-context-v129", **context.claims()}))
+
+    def validate_root_channel_input_delivery(self, proof: Any, delivery: Any) -> bool:
+        """Check exact service receipt and both owner-held registrations."""
+        from .channel_peer_delivery import RootChannelInputDelivery
+
+        if type(delivery) is not RootChannelInputDelivery:
+            return False
+        with self._lock:
+            retained = self._root_channel_input_deliveries.get(id(delivery))
+            source_token = self._root_channel_source_registrations.get(id(delivery))
+            context_token = self._root_channel_context_registrations.get(id(delivery))
+        if (retained is not delivery or delivery._issuer_token is not self._root_channel_delivery_token
+                or source_token is None or context_token is None
+                or not self.channel_peer_delivery_registry.validate_retained_channel_proof(proof)
+                or proof.event_handle != delivery.event_handle
+                or proof.native_binding_handle != delivery.native_binding_handle
+                or proof.event_payload_sha256 != delivery.payload_sha256
+                or delivery.expires_monotonic <= self.monotonic()):
+            return False
+        try:
+            _event, native_binding = self.channel_peer_delivery_registry.resolve_retained_channel_proof(proof)
+            peer_fd = native_binding.duplicate_peer_pidfd()
+            try:
+                source = self.source_observer_registry.resolve_root_channel_source_delivery(
+                    delivery.source_receipt_handle, peer_uid=native_binding.peer_uid,
+                    peer_pid=native_binding.peer_pid, peer_pidfd=peer_fd, require_pending=True)
+                context_ok = self.native_channel_context_store.verify_registered_channel_context(
+                    delivery.producer_context_delivery_handle, proof=proof,
+                    native_binding=native_binding, source_receipt_handle=delivery.source_receipt_handle,
+                    peer_uid=native_binding.peer_uid, peer_pid=native_binding.peer_pid,
+                    peer_pidfd=peer_fd)
+            finally:
+                os.close(peer_fd)
+            return bool(str(source) == delivery.source_receipt_handle and context_ok)
+        except Exception:
+            return False
+
+    def revoke_root_channel_input_delivery(self, channel_delivery: Any) -> bool:
+        """Revoke both owner-held registrations for one expired queued delivery."""
+        delivery_handle = getattr(channel_delivery, "delivery_handle", None)
+        with self._lock:
+            key = next((item_key for item_key, item in self._root_channel_input_deliveries.items()
+                        if item.delivery_handle == delivery_handle), None)
+            if key is None:
+                return False
+            delivery = self._root_channel_input_deliveries.pop(key)
+            source_token = self._root_channel_source_registrations.pop(key, None)
+            context_token = self._root_channel_context_registrations.pop(key, None)
+        revoked = False
+        if source_token is not None:
+            try:
+                revoked = self.source_observer_registry.rollback_root_channel_event_delivery(source_token) or revoked
+            except Exception:
+                pass
+        if context_token is not None:
+            try:
+                revoked = self.native_channel_context_store.rollback_channel_context(context_token) or revoked
+            except Exception:
+                pass
+        with self._lock:
+            self._source_receipt_handles.pop(delivery.source_receipt_handle, None)
+        return revoked
+
+    def _rollback_root_channel_delivery(self, proof: Any, delivery: Any,
+                                       source_token: Any, context_token: Any,
+                                       source_handle: Any) -> None:
+        if delivery is not None:
+            with self._lock:
+                self._root_channel_input_deliveries.pop(id(delivery), None)
+                self._root_channel_source_registrations.pop(id(delivery), None)
+                self._root_channel_context_registrations.pop(id(delivery), None)
+        if source_token is not None:
+            try:
+                self.source_observer_registry.rollback_root_channel_event_delivery(source_token)
+            except Exception:
+                pass
+        if context_token is not None:
+            try:
+                self.native_channel_context_store.rollback_channel_context(context_token)
+            except Exception:
+                pass
+        if source_handle is not None:
+            with self._lock:
+                self._source_receipt_handles.pop(str(source_handle), None)
+        if proof is not None and self.channel_peer_delivery_registry is not None:
+            try:
+                self.channel_peer_delivery_registry.cancel_retained_channel_proof(proof)
+            except Exception:
+                pass
 
     def attach_private_input_consent_registry(self, registry: Any) -> None:
         """Attach the root-held private-egress consent registry exactly once."""
@@ -2824,6 +3144,26 @@ class AuthorityService:
                 binding_handle=payload["binding_handle"],
             )
             return delivery.to_wire() if delivery is not None else None
+        if operation == "native.channel.context.take":
+            store = self.native_channel_context_store
+            if (store is None or peer_pidfd is None
+                    or not isinstance(payload, dict)
+                    or set(payload) != {"schema", "producer_context_delivery_handle"}
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("producer_context_delivery_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                        payload["producer_context_delivery_handle"])):
+                raise AuthorityDenied("channel.context", "native channel context handle is unavailable")
+            delivery = store.take_channel_context(
+                peer_uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                producer_context_delivery_handle=payload["producer_context_delivery_handle"],
+            )
+            result = delivery.to_wire() if delivery is not None else None
+            if result is not None:
+                from .native_channel_context import NativeChannelContextDelivery
+                if type(delivery) is not NativeChannelContextDelivery:
+                    raise AuthorityDenied("channel.context", "native channel context result is not root retained")
+            return result
         if operation in {"native.invocation.begin", "native.invocation.contexts"}:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
@@ -4105,18 +4445,32 @@ class AuthorityService:
                     self._source_receipts_consumed[receipt.receipt_id] = receipt.monotonic_expires_at
 
     def _verify_context_signature(self, context: HostContext) -> None:
-        self._verify_signature(context.claims(), context.signature)
+        claims = context.claims()
+        if context.purpose == "resource-channel-input":
+            self._verify_signature(
+                {"domain": "root-channel-event-context-v129", **claims},
+                context.signature,
+            )
+        else:
+            self._verify_signature(claims, context.signature)
 
     def _verify_source_receipt(self, receipt: SourceReceipt, binding: PrincipalBinding,
                                *, allow_expired: bool = False) -> None:
-        self._verify_signature(receipt.claims(), receipt.signature)
+        claims = receipt.claims()
+        if receipt.issuer_id == "host-authority:root-channel-event-v129":
+            self._verify_signature(
+                {"domain": "root-channel-event-source-v129", **claims},
+                receipt.signature,
+            )
+        else:
+            self._verify_signature(claims, receipt.signature)
         expected_enrollment = canonical_digest({
             "uid": binding.uid, "principal_id": binding.principal_id,
             "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
             "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
             "authority_epoch": self.authority_epoch,
         })
-        if (receipt.issuer_id != "host-authority"
+        if (receipt.issuer_id not in {"host-authority", "host-authority:root-channel-event-v129"}
                 or receipt.uid != binding.uid
                 or receipt.principal_id != binding.principal_id
                 or receipt.profile_id != binding.profile_id
