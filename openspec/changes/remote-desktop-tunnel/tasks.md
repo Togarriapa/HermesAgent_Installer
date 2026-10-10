@@ -131,3 +131,10 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 - [ ] `RT-T223.2` Complete genuine current source/PM/wheel/native config/CAS/final-runtime joins and exact gateway-only directory-link policy under v223; all runtime/target acceptance OPEN.
 
 - [ ] `VD-T223.3` Verify real sealed source/build/materialization joins and specified source/ELF/link/currentness/fake-authority failures under v223; all runtime/target acceptance OPEN.
+
+
+## Current remote identity adoption v225
+
+- [ ] `RT-T225.1` Implement actual retained source projection, compiler member/core selectors and typed signed immutable existing transaction-journal adoption writer.
+- [ ] `RT-T225.2` Implement fresh active identity/private role observations and genuine current root network lease resolver under exact v225 APIs.
+- [ ] `VD-T225.3` Verify actual publication/journal restart joins and specified missing proof/replay/signature/currentness/NSS/kernel/cleanup failures; target acceptance OPEN.

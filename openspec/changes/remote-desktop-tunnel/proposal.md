@@ -89,3 +89,8 @@ Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-bui
 
 
 Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+
+## Current remote identity adoption v225
+
+Add actual precommit three-role source member, current core selectors and postpublication signed enrollment-journal adoption; fresh active identity/network resolvers follow `plans/amendments/2026-10-10-current-remote-identity-adoption-v225.md`. RT-T225.1/.2 and VD-T225.3 remain OPEN.

@@ -97,3 +97,8 @@ Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-bui
 
 
 Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+
+## Durable remote identity currentness v225
+
+Use the exact schemas/APIs in `planning/current-remote-identity-adoption-v225.json`: source projection precedes publication; immutable signed adoption follows exact committed receipt. Current protected member/core/journal/NSS/root/lease observations issue fresh receipts after restart without restored setup seals. Publication-before-journal crashes deny activation until original authorized transaction completes. Source pins and all runtime/target acceptance remain pending.

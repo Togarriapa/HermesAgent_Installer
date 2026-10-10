@@ -3366,5 +3366,22 @@
       "parent durable evidence"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "current_remote_identity_adoption_v225": {
+    "contract": "planning/current-remote-identity-adoption-v225.json",
+    "tasks": {
+      "RT-T225.1": [
+        "RT-T212.1",
+        "RT-T222.2"
+      ],
+      "RT-T225.2": [
+        "RT-T225.1"
+      ],
+      "VD-T225.3": [
+        "RT-T225.1",
+        "RT-T225.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

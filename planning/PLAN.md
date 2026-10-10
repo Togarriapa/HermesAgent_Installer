@@ -181,3 +181,6 @@ Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal
 
 
 Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.
+
+
+Current remote identity adoption v225: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225.md`; RT-T225.1 → RT-T225.2 → VD-T225.3 OPEN. Actual publication/core/member + immutable signed existing journal adoption, fresh restart NSS/root/network proof; no old setup seal/all AC OPEN.

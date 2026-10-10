@@ -387,3 +387,15 @@ The installer SHALL apply only exact tested source/schema tuples and complete co
 #### Scenario: CPython or link closure substituted
 - **WHEN** libpython/stdlib/native loader closure is missing, source/schema bytes differ or any link differs from the exact gateway lib64-to-lib held-directory case
 - **THEN** build/package/runtime admission SHALL deny without generic directory-link permission or ambient dependency substitution
+
+
+### Requirement: Durable current three-role adoption and fresh network authority v225
+The installer SHALL implement `planning/current-remote-identity-adoption-v225.json` using actual current three-role source/runtime receipts, selected immutable publication member/core and signed existing transaction journal adoption before activation.
+
+#### Scenario: Restart or publication without adoption
+- **WHEN** a daemon restarts or a publication exists without exact signed adoption and current NSS/root facts
+- **THEN** it SHALL resolve fresh current protected source/journal observations or deny activation, never restore expired setup seals or reinterpret prepared identities as active
+
+#### Scenario: Network authority requested
+- **WHEN** active remote startup requires listener/client identity or lease renewal
+- **THEN** the resolver SHALL join exact fresh three-role identities to current protected namespace/network rows and actual nft/kernel lease proof, preserving private14500/8765 and Desktop AF_UNIX restrictions and refusing stale or foreign cleanup
