@@ -3,7 +3,8 @@ import time
 import unittest
 
 from hermes_installer.authority.bootstrap_runtime_factory import (
-    RootReleaseModuleReceipt, RootSelectedInstallationBinding,
+    RootPreparedReleaseMemberReceipt, RootReleaseModuleReceipt,
+    RootSelectedInstallationBinding,
 )
 from hermes_installer.authority.native_source_definitions import (
     NativeSourceDefinitionUnavailable,
@@ -16,15 +17,41 @@ class _Session:
         self._seal = "session-seal"
         self._closed = False
         self.receipts = tuple(receipts)
+        self.bytes_by_path = {}
 
     def _check_live(self):
         return None
 
-    def _resolve_prepared_release_module_receipts(self):
+    def _resolve_prepared_worker_role_module_receipts(self):
         return self.receipts
+
+    def _read_prepared_release_member(self, receipt):
+        return self.bytes_by_path[receipt.relative_path]
 
     def _read_release_member_receipt(self, receipt):
         return self.bytes_by_path[receipt.relative_path]
+
+    def _resolve_prepared_native_source_definition_module_receipt(self):
+        raw = b"root imported source definition adapter"
+        path = "hermes_installer/authority/native_source_definitions.py"
+        self.bytes_by_path[path] = raw
+        receipt = object.__new__(RootReleaseModuleReceipt)
+        values = {
+            "artifact_id": "root-release:" + path,
+            "relative_path": path,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "size_bytes": len(raw),
+            "release_commit": "release-commit",
+            "deployment_receipt_sha256": "b" * 64,
+            "source_receipt_handle": "d" * 32,
+            "_session_id": "session-id",
+            "_session_seal": self._seal,
+            "_session": self,
+            "_prepared_generation_id": "generation",
+        }
+        for key, value in values.items():
+            object.__setattr__(receipt, key, value)
+        return receipt
 
 
 class _Selection:
@@ -36,7 +63,7 @@ class _Selection:
 
 def _receipt(session, path, raw):
     session.bytes_by_path = {path: raw}
-    receipt = object.__new__(RootReleaseModuleReceipt)
+    receipt = object.__new__(RootPreparedReleaseMemberReceipt)
     values = {
         "artifact_id": "root-release:" + path,
         "relative_path": path,
@@ -45,10 +72,14 @@ def _receipt(session, path, raw):
         "release_commit": "release-commit",
         "deployment_receipt_sha256": "b" * 64,
         "source_receipt_handle": "c" * 32,
-        "_session_id": "session-id",
+        "setup_session_id": "session-id",
+        "prepared_generation_id": "generation",
+        "_receipt_seal": __import__(
+            "hermes_installer.authority.bootstrap_runtime_factory",
+            fromlist=["_PREPARED_RELEASE_MEMBER_SEAL"],
+        )._PREPARED_RELEASE_MEMBER_SEAL,
         "_session_seal": session._seal,
         "_session": session,
-        "_prepared_generation_id": "generation",
     }
     for key, value in values.items():
         object.__setattr__(receipt, key, value)
@@ -64,14 +95,15 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
             fromlist=["_REGISTRY_SEAL"],
         )
         registry = RootNativeSourceDefinitionRegistry(
-            binding, session._resolve_prepared_release_module_receipts,
+            binding, session._resolve_prepared_worker_role_module_receipts,
+            session._resolve_prepared_native_source_definition_module_receipt,
             _seal=module._REGISTRY_SEAL,
         )
 
         bundle = registry.prepare_for_policy(_Selection())
 
         self.assertIs(registry.resolve_current(bundle), bundle)
-        self.assertIsNone(bundle.definition_source_receipt)
+        self.assertIsNotNone(bundle.definition_source_receipt)
         self.assertEqual(bundle.role_module_receipts, ())
         self.assertIn("hermes_installer.native_invocations", bundle.missing_prerequisite_ids)
         self.assertIn("hermes_installer.native_boundary", bundle.missing_prerequisite_ids)
@@ -96,7 +128,8 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
             fromlist=["_REGISTRY_SEAL"],
         )
         registry = RootNativeSourceDefinitionRegistry(
-            binding, session._resolve_prepared_release_module_receipts,
+            binding, session._resolve_prepared_worker_role_module_receipts,
+            session._resolve_prepared_native_source_definition_module_receipt,
             _seal=module._REGISTRY_SEAL,
         )
 
@@ -105,13 +138,13 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
 
     def test_constructor_rejects_unsealed_resolver_injection(self):
         with self.assertRaises(TypeError):
-            RootNativeSourceDefinitionRegistry(object(), lambda: ())
+            RootNativeSourceDefinitionRegistry(object(), lambda: (), lambda: None)
 
     def test_setup_binding_requires_dedicated_source_receipt_resolver(self):
         session = _Session()
         binding = RootSelectedInstallationBinding(session, session._seal)
-        with self.assertRaises(NativeSourceDefinitionUnavailable):
-            RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+        registry = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+        self.assertIsInstance(registry, RootNativeSourceDefinitionRegistry)
 
 
 if __name__ == "__main__":
