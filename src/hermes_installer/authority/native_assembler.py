@@ -93,7 +93,12 @@ def assemble_native_package(selection: _Selection, definitions: Any,
             or not isinstance(overlay_source, str) or len(overlay_source) != 40
             or not isinstance(member_bytes, Mapping)):
         raise NativeAssemblyDenied("native package identity or selected overlay is invalid")
-    if set(schema_bytes) != {row.get("schema_id") for row in schema_rows}:
+    # RootNativeAssemblyDefinitions uses the strict projection's canonical
+    # schema key `id`. Do not accept a second alias here: the same row set is
+    # consumed by native_registration_projection before compilation.
+    if (any(not isinstance(row, Mapping) or not isinstance(row.get("id"), str)
+            or "schema_id" in row for row in schema_rows)
+            or set(schema_bytes) != {row["id"] for row in schema_rows}):
         raise NativeAssemblyDenied("native schema documents do not match selected schema records")
     _validate_process_role_records(selection, process_roles, closure_defs)
 

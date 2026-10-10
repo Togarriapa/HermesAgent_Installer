@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-from hermes_installer.authority.native_assembler import assemble_native_package
+import pytest
+
+from hermes_installer.authority.native_assembler import NativeAssemblyDenied, assemble_native_package
 from hermes_installer.authority.native_output_receipts import _verify_payload
 
 
@@ -33,7 +35,7 @@ class Definitions:
     adapter_records = ()
     dependency_records = ()
     source_issuer_records = ()
-    native_schema_records = ({"schema_id": "schema-demo"},)
+    native_schema_records = ({"id": "schema-demo"},)
     native_schema_bytes = (("schema-demo", b'{"type":"object"}'),)
     action_registration_records = ({"adapter_id": "demo", "action_id": "lookup"},)
     registration_records = ()
@@ -129,3 +131,28 @@ def test_assembler_compiles_five_consistent_finite_output_documents():
                             "manifest.json", hashlib.sha256(output.entrypoint_manifest).hexdigest(),
                             len(output.entrypoint_manifest), 0o644),
                     ))
+
+
+def test_assembler_uses_projection_schema_id_and_rejects_alias_or_mismatch():
+    Definitions.native_schema_records = ({"id": "schema-demo"},)
+    Definitions.native_schema_bytes = (("schema-demo", b'{"type":"object"}'),)
+    Definitions.boundary_overlay_bytes = _canonical({
+        "schema": 1,
+        "source_commit": Definitions.boundary_overlay_source_commit,
+        "compiler_artifact_id": Selection.compiler_artifact_id,
+        "compiler_sha256": Selection.compiler_sha256,
+        "members": [{"path": Member.relative_path, "sha256": Member.sha256,
+                     "size_bytes": Member.size_bytes, "mode": Member.mode}],
+    })
+    assemble_native_package(Selection(), Definitions(),
+                            {Member.artifact_receipt_handle: b"selected adapter bytes"})
+
+    Definitions.native_schema_records = ({"schema_id": "schema-demo"},)
+    with pytest.raises(NativeAssemblyDenied, match="native schema documents"):
+        assemble_native_package(Selection(), Definitions(),
+                                {Member.artifact_receipt_handle: b"selected adapter bytes"})
+
+    Definitions.native_schema_records = ({"id": "other-schema"},)
+    with pytest.raises(NativeAssemblyDenied, match="native schema documents"):
+        assemble_native_package(Selection(), Definitions(),
+                                {Member.artifact_receipt_handle: b"selected adapter bytes"})

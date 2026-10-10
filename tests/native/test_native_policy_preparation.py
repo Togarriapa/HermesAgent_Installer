@@ -7,6 +7,7 @@ import pytest
 from hermes_installer.authority.native_policy_preparation import (
     NativePolicyCoverageRecord,
     NativePolicyPreparationDenied,
+    RootPreparedNativeCaptureProfile,
     RootNativePolicyConfigurationChoice,
     _issue_root_native_policy_configuration_choice,
     _validate_choice,
@@ -14,6 +15,9 @@ from hermes_installer.authority.native_policy_preparation import (
     _selection_matches_choice_payload,
     RootNativePolicyPreparationSelection,
     _SELECTION_SEAL,
+)
+from hermes_installer.authority.native_schema_derivation import (
+    RootPreparedNativeActionSchemaDefinitions,
 )
 
 
@@ -70,6 +74,47 @@ def test_pending_coverage_requires_exact_resume_prerequisites() -> None:
         "component-a", "registration-a", "configurable-pending",
         ("account-evidence", "target-permission"), "configure-native-component-and-resume")
     assert row.missing_prerequisite_ids == ("account-evidence", "target-permission")
+
+
+def test_capture_profile_record_cannot_be_constructed_from_caller_fields() -> None:
+    fields = {
+        "native_policy_selection_handle": "selection",
+        "source_definition_receipt_handle": "definition-receipt",
+        "artifact_id": "installer-native-input-capture-profile-v1",
+        "relative_path": "plans/amendments/capture-profile.json",
+        "sha256": "a" * 64,
+        "size_bytes": 100,
+        "capture_schema_id": "native-authenticated-input-v1",
+        "source_kind": "native-input",
+        "source_action_ids": ("authenticated-input",),
+        "max_payload_bytes": 1024,
+        "role_id": "hermes-native-invocations-v1",
+        "call_site": "read_selected_native_input",
+        "source_receipt_handle": "profile-receipt",
+        "issued_monotonic": time.monotonic(),
+        "expires_monotonic": time.monotonic() + 30,
+    }
+    with pytest.raises(TypeError, match="registry issued"):
+        RootPreparedNativeCaptureProfile(**fields, _seal=object())
+
+
+def test_schema_source_definition_bundle_cannot_be_caller_minted() -> None:
+    with pytest.raises(TypeError, match="root registry issued"):
+        RootPreparedNativeActionSchemaDefinitions(
+            definition_handle="d" * 64,
+            native_policy_selection_handle="s" * 64,
+            selection_sha256="a" * 64,
+            package_id="hermes-agent-native-package-v1",
+            native_package_generation="b" * 64,
+            service_profile_id="hermes-agent-native-v1",
+            service_generation="service-generation",
+            module_receipt_handles=(), definition_records=(),
+            schema_artifact_receipts=(), schema_derivation_receipts=(),
+            native_schema_records=(), schema_bytes=(),
+            missing_prerequisite_ids=("native-action-schema-cas-child-receipt",),
+            definitions_sha256="c" * 64, issued_monotonic=1.0,
+            expires_monotonic=2.0, _seal=object(),
+        )
 
 
 def test_all_reviewed_registrations_remain_pending_until_real_joins_exist() -> None:
