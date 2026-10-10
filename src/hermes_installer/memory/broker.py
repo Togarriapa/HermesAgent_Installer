@@ -90,6 +90,7 @@ class PrivateEngine(Protocol):
     engine_id: str
     route_class: str
     private: bool
+    route_ids: Mapping[str, str]
     def extract(self, *, text: str, context: HostContext, timeout: float,
                 cancelled: Callable[[], bool]) -> list[str]: ...
     def embed(self, *, facts: list[str], context: HostContext, timeout: float,
@@ -654,7 +655,7 @@ def _result(raw: bytes) -> dict[str, Any]:
 
 def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
              queue: DurableMemoryQueue | None, owner_state: OwnerState,
-             engines: Mapping[str, PrivateEngine],
+             engines: Mapping[tuple[str, str, str], PrivateEngine],
              eligibility: Callable[[MemoryTarget, str, HostContext], bool] | None,
              maximum_timeout: float,
              compound_executor: MemoryCompoundExecutor | None = None):
@@ -709,11 +710,22 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 return _reply(queue.result(context,_text(body.get("receipt_id"),"receipt",128)))
             if action in {"extract","embed"}:
                 stage = "memory-" + ("extraction" if action == "extract" else "embedding")
-                engine = engines.get(target.provider)
+                # A local engine is enrolled per concrete profile target. A
+                # provider-name key would let one profile accidentally reuse
+                # another profile's engine, model cache, or authorization.
+                engine = engines.get((target.profile_id, target.namespace_id, target.provider))
                 if eligibility is None or not eligibility(target,stage,context):
                     raise BrokerUnavailable(stage + " is not policy eligible")
                 if engine is None or engine.route_class != "private-local" or engine.private is not True:
                     raise BrokerUnavailable(stage + " private/local engine is not enrolled")
+                enrollment = target.enrollment
+                route_ids = getattr(engine, "route_ids", None)
+                expected_route = (enrollment.private_extraction_embedding_routes.get(
+                    "extract" if action == "extract" else "embed") if enrollment is not None else None)
+                if (not isinstance(route_ids, Mapping)
+                        or route_ids.get("extract" if action == "extract" else "embed") != expected_route
+                        or not isinstance(expected_route, str) or not expected_route):
+                    raise BrokerDenied("private engine route differs from the protected profile enrollment")
                 if action == "extract":
                     record = body.get("record")
                     if not isinstance(record,dict):
@@ -971,7 +983,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
 
 def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
         owner_state: OwnerState, queue: DurableMemoryQueue|None, ipc: ServiceIPC|None,
-        engines: Mapping[str,PrivateEngine]|None=None,
+        engines: Mapping[tuple[str,str,str],PrivateEngine]|None=None,
         eligibility: Callable[[MemoryTarget,str,HostContext],bool]|None=None,
         compound_executor: MemoryCompoundExecutor | None = None,
         maximum_timeout: float=20.0):
@@ -988,6 +1000,8 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
             raise ValueError("target map key differs from immutable enrollment")
     result={}
     engines = dict(engines or {})
+    if any(key not in table for key in engines):
+        raise ValueError("private memory engines must be keyed by an exact enrolled profile target")
     for provider in PROVIDERS:
         if not any(target.provider == provider for target in table.values()):
             continue
@@ -1044,6 +1058,8 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
             "eligibility": lambda *_: False, "maximum_timeout": 15.0,
             "consent_active": lambda _consent_id: False,
             "consent_ready": False, "background_effect": None,
+            "capture_coordinator": None,
+            "capture_unavailable_reason": "protected memory state-root catalog is unavailable",
             "state_directories": {}, "state_root_ready": False,
         }
     from hermes_installer.memory.root_state import resolve_memory_state_directory
@@ -1195,6 +1211,25 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
             ).execute(enrollment=enrollment, **kwargs)
     compound_ledger = compound_ledgers
     compound_executor = ProfiledCompoundExecutor()
+    capture_coordinator = None
+    capture_unavailable_reason = None
+    turn_registry = getattr(authority_service, "native_turn_observation_registry", None)
+    if queue is None:
+        capture_unavailable_reason = "durable memory queue or background consent authority is unavailable"
+    elif turn_registry is None:
+        capture_unavailable_reason = "root native completed-turn observer is unavailable"
+    else:
+        from hermes_installer.memory.capture import (
+            MemoryCaptureUnavailable, attach_root_memory_capture_coordinator,
+        )
+        try:
+            capture_coordinator = attach_root_memory_capture_coordinator(
+                service=authority_service, targets=targets, queue=queue,
+                owner_state=owner_state,
+                expected_active_generation_digest=expected_active_generation_digest,
+            )
+        except MemoryCaptureUnavailable as exc:
+            capture_unavailable_reason = str(exc)
     return {
         "targets": targets,
         "owner_ledger": ledger,
@@ -1209,6 +1244,8 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         "consent_active": consent_active,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
+        "capture_coordinator": capture_coordinator,
+        "capture_unavailable_reason": capture_unavailable_reason,
         "step_authority": step_authority,
         "state_directories": state_directories, "state_root_ready": True,
     }
