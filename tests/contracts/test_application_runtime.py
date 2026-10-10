@@ -144,7 +144,7 @@ def test_runtime_receipt_refuses_without_actual_custody_probe_producer(tmp_path:
         runtime_registry.record_observed_environment(source_handle, selected_lock, probe_handle)
 
 
-def test_production_factory_routes_only_registered_workloads_and_canonical_request() -> None:
+def test_production_factory_passes_original_action_arguments_without_selector() -> None:
     from hermes_installer.authority.application_runtime import RootSelectedApplicationRuntimeRouter
 
     calls = []
@@ -157,14 +157,13 @@ def test_production_factory_routes_only_registered_workloads_and_canonical_reque
             "t" * 40, "c" * 40, "complete", 10.0, 20.0,
         )
     router.dispatch_workload = dispatch
-    adapter = SelectedApplicationWorkloadFactory(router=router).build("browser-fixture")
-    receipt = adapter.invoke("i" * 40, {"fixture_url": "http://127.0.0.1:8080/fixture"},
+    adapter = SelectedApplicationWorkloadFactory(router=router).build()
+    canonical = b'{"fixture_url":"http://127.0.0.1:8080/fixture"}'
+    receipt = adapter.invoke("i" * 40, canonical,
                              peer_uid=501, peer_pid=77, peer_pidfd=8, cancelled=lambda: False)
     assert receipt.state == "complete"
     assert calls[0][0] == "i" * 40
-    assert calls[0][1] == b'{"arguments":{"fixture_url":"http://127.0.0.1:8080/fixture"},"id":"browser-fixture"}'
-    with pytest.raises(SelectedApplicationUnavailable, match="not in the fixed"):
-        SelectedApplicationWorkloadFactory(router=router).build("arbitrary-command")
+    assert calls[0][1] == canonical
 
 
 @dataclass(frozen=True)

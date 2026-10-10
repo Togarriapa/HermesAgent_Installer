@@ -687,7 +687,7 @@ class RootSelectedApplicationRuntimeRouter:
     def dispatch_workload(self, invocation_context_handle: str,
                  canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
                  peer_pidfd: int | None, cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
-        """Production finite-workload entry point; app selection stays root-owned."""
+        """Dispatch original native action arguments; root selects the recipe."""
         return self._dispatch(
             invocation_context_handle, canonical_arguments,
             expected_application_id=None, peer_uid=peer_uid,
@@ -710,16 +710,11 @@ class RootSelectedApplicationRuntimeRouter:
                 or not callable(cancelled) or cancelled()):
             raise SelectedApplicationUnavailable("selected application invocation is malformed or cancelled")
         try:
-            request = json.loads(canonical_arguments.decode("utf-8"))
-            if (not isinstance(request, dict) or set(request) != {"id", "arguments"}
-                    or _canonical(request) != canonical_arguments
-                    or not isinstance(request["id"], str)
-                    or not isinstance(request["arguments"], dict)):
+            arguments = json.loads(canonical_arguments.decode("utf-8"))
+            if not isinstance(arguments, dict) or _canonical(arguments) != canonical_arguments:
                 raise ValueError
-            from hermes_installer.components.workloads import Workload
-            workload = Workload(request["id"], MappingProxyType(request["arguments"]))
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-            raise SelectedApplicationUnavailable("selected workload request is not the exact canonical workload object") from None
+            raise SelectedApplicationUnavailable("selected action arguments are not canonical JSON") from None
         try:
             invocation = self.selected_invocation_resolver.resolve_selected_application_invocation(
                 invocation_context_handle, canonical_arguments,
@@ -740,7 +735,10 @@ class RootSelectedApplicationRuntimeRouter:
             if (type(self.workload_authority) is not RootApplicationWorkloadAuthority
                     or type(self.workload_runner) is not ManagedApplicationWorkloadRunner):
                 raise TypeError
-            admission = self.workload_authority.admit_selected_workload(invocation, workload)
+            # The root authority joins the protected invocation/action mapping
+            # and original canonical arguments before constructing the fixed
+            # component Workload. The request cannot select an app or recipe.
+            admission = self.workload_authority.admit_selected_workload(invocation, canonical_arguments)
         except Exception:
             raise SelectedApplicationUnavailable("root application workload admission is unavailable") from None
         if (type(admission) is not RootApplicationWorkloadAdmission
