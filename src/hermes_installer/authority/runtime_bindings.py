@@ -113,6 +113,22 @@ class RootRuntimeBindings:
         return self.enrollment_catalog.resolve_memory_enrollment(
             memory_enrollment_id, service_generation_digest=service_generation_digest)
 
+    def resolve_current_memory_service_enablement_selection(
+            self, enrollment: Any, *, service_generation_digest: str) -> Mapping[str, Any]:
+        """Resolve the explicit active installer service choice for one memory recipe.
+
+        The protected enrollment parser must provide this exact selector. It is
+        intentionally separate from private provider-route and capture consent
+        records; absence means lifecycle startup is unavailable.
+        """
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("memory lifecycle enablement selection is stale")
+        resolver = getattr(self.enrollment_catalog,
+                           "resolve_current_memory_service_enablement_selection", None)
+        if not callable(resolver):
+            raise EnrollmentDenied("memory lifecycle enablement selection is unavailable")
+        return resolver(enrollment, service_generation_digest=service_generation_digest)
+
     def resolve_private_memory_engine_selection(self, selection_id: str, *,
                                                 service_generation_digest: str) -> Mapping[str, Any]:
         if service_generation_digest != self.service_generation_digest:

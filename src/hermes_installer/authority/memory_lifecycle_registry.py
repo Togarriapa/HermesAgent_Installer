@@ -23,6 +23,10 @@ from hermes_installer.memory.lifecycle_authority import (
     RootMemoryServiceLifecycle,
     RootVerifiedMemoryLifecycleAdmission,
 )
+from hermes_installer.authority.memory_lifecycle_evidence import (
+    RootMemoryPrestartReceiptRegistry,
+    RootMemorySemanticReadinessRegistry,
+)
 
 
 class RootMemoryLifecycleRegistryDenied(PermissionError):
@@ -31,11 +35,11 @@ class RootMemoryLifecycleRegistryDenied(PermissionError):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RootMemoryServiceStartReceipt:
-    """Root-private actual start and route-readiness evidence.
+    """Root-private actual start and backend-semantic evidence.
 
-    ``readiness_kind`` distinguishes source-pinned HTTP route readiness from
-    semantic memory functionality. Neither `state=running` nor a readiness
-    HTTP response means extraction, search, or embedding is usable.
+    The receipt only records an actual selected provider search operation. A
+    provider status route, `state=running`, or this receipt alone does not
+    prove private extraction or embedding deployment availability.
     """
 
     schema: int
@@ -64,7 +68,7 @@ class RootMemoryServiceStartReceipt:
                 self.receipt_handle, self.admission_handle, self.provider, self.profile_id,
                 self.service_enrollment_id, self.service_generation,
                 self.service_generation_digest, self.process_id, self.start_operation_id))
-                or self.readiness_kind not in {"pending", "route-ready", "liveness-only"}
+                or self.readiness_kind not in {"pending", "route-ready", "liveness-only", "backend-semantic"}
                 or type(self.issued_monotonic) not in (int, float)
                 or type(self.expires_monotonic) not in (int, float)
                 or self.expires_monotonic <= self.issued_monotonic
@@ -117,6 +121,8 @@ class RootMemoryLifecycleRegistry:
         )
         if (type(lifecycle) is not RootMemoryServiceLifecycle
                 or not callable(monotonic)
+                or type(source_receipt_registry) is not RootMemoryPrestartReceiptRegistry
+                or type(connector_registry) is not RootMemorySemanticReadinessRegistry
                 or any(not callable(getattr(owner, method, None)) for owner, method in required)):
             raise RootMemoryLifecycleRegistryDenied("root memory lifecycle evidence registries are unavailable")
         self.bindings = bindings
@@ -320,11 +326,15 @@ class RootMemoryLifecycleRegistry:
             )
             if (probe is None or not callable(getattr(probe, "is_current", None))
                     or not probe.is_current()
-                    or getattr(probe, "route_id", None)
-                    != admission._enrollment.lifecycle_binding.readiness_route_id
-                    or getattr(probe, "schema_id", None)
-                    != admission._enrollment.lifecycle_binding.readiness_schema_id):
-                raise RootMemoryLifecycleRegistryDenied("source-pinned memory readiness observation failed")
+                    or getattr(probe, "readiness_kind", None) != "backend-semantic"
+                    or getattr(probe, "route_id", None) not in {
+                        "openviking-find", "agentmemory-search"}
+                    or getattr(probe, "schema_id", None) not in {
+                        getattr(admission._enrollment.fixed_route_map.get("openviking-find"),
+                                "result_schema_id", None),
+                        getattr(admission._enrollment.fixed_route_map.get("agentmemory-search"),
+                                "result_schema_id", None)}):
+                raise RootMemoryLifecycleRegistryDenied("actual selected memory semantic operation was not verified")
         except Exception:
             raise RootMemoryLifecycleRegistryDenied("selected memory readiness could not be verified") from None
         finally:
@@ -333,10 +343,10 @@ class RootMemoryLifecycleRegistry:
                 close()
         if not admission.is_current(now=self.monotonic()):
             raise RootMemoryLifecycleRegistryDenied("selected memory evidence expired after readiness probe")
-        # Liveness-only routes are reported as such; only route validators that
-        # return the exact semantic proof kind may be labeled route-ready.
+        # A provider's status route is never promoted. Only an actual selected
+        # semantic operation result can make the service backend-semantic.
         readiness_kind = getattr(probe, "readiness_kind", None)
-        if readiness_kind not in {"route-ready", "liveness-only"}:
+        if readiness_kind != "backend-semantic":
             raise RootMemoryLifecycleRegistryDenied("readiness validator returned an unknown evidence class")
         handle = __import__("secrets").token_urlsafe(32)
         def current_receipt() -> bool:
