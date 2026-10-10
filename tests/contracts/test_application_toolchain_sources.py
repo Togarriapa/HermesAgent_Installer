@@ -87,36 +87,47 @@ class SelectedToolchainSourcePinTests(unittest.TestCase):
             _RECORD_SEAL,
         )
 
-        def record(handle, observer_id, fd, expiry):
+        def record(handle, observer_id, fd, expiry, *, artifact_id=_BUN_LICENSE_ID,
+                   prep_handle="4" * 32):
             return VerifiedApplicationToolchainSourceObservation(
-                1, handle, "application-bun-1.4.3-license", "application-bun-1.4.3-license",
+                1, handle, artifact_id, artifact_id,
                 SOURCE_POLICY_ARTIFACT_ID, SOURCE_POLICY_SHA256, "1" * 64,
                 "license", "", "2" * 64, 5_807, 1, 2, 0, 0, 0o444,
-                "session", "transaction", "3" * 64, "4" * 32, "5" * 32,
+                "session", "transaction", "3" * 64, prep_handle, "5" * 32,
                 "6" * 32, 1, 10.0, expiry, fd, observer_id, _RECORD_SEAL)
 
         with tempfile.TemporaryFile() as file:
             first_fd = os.dup(file.fileno())
             expired_fd = os.dup(file.fileno())
+            replacement_fd = os.dup(file.fileno())
+            different_fd = os.dup(file.fileno())
             observer = object.__new__(RootSelectedApplicationToolchainSourceObserver)
             observer._observer_id = "observer-one"
             observer._held = {}
             observer.monotonic = lambda: 20.0
             live = record("live-handle-" + "a" * 32, observer._observer_id, first_fd, 30.0)
             expired = record("expired-handle-" + "b" * 32, observer._observer_id, expired_fd, 19.0)
+            replacement = record("replacement-handle-" + "c" * 32, observer._observer_id,
+                                 replacement_fd, 30.0)
+            different = record("different-handle-" + "d" * 32, observer._observer_id,
+                              different_fd, 30.0, artifact_id="application-bun-1.4.3-linux-arm64")
             observer._held[live.observation_handle] = live
             observer._held[expired.observation_handle] = expired
+            observer._held[replacement.observation_handle] = replacement
+            observer._held[different.observation_handle] = different
 
-            observer._prune_expired_observations()
-            self.assertEqual(tuple(observer._held), (live.observation_handle,))
+            observer._prune_expired_observations("4" * 32, _BUN_LICENSE_ID)
+            self.assertEqual(tuple(observer._held), (different.observation_handle,))
             with self.assertRaises(OSError):
                 os.fstat(expired_fd)
-            observer.release(live)
-            self.assertEqual(observer._held, {})
             with self.assertRaises(OSError):
                 os.fstat(first_fd)
+            with self.assertRaises(OSError):
+                os.fstat(replacement_fd)
+            observer.release(different)
+            self.assertEqual(observer._held, {})
             with self.assertRaises(ApplicationToolchainSourceDenied):
-                observer.release(live)
+                observer.release(different)
 
     def test_redirect_handler_accepts_only_the_pinned_bun_asset_host(self):
         from hermes_installer.authority.application_toolchain_sources import _TwoHopAllowlistedRedirect

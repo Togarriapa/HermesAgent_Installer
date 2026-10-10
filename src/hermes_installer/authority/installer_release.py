@@ -106,6 +106,9 @@ REQUIRED_LAUNCHER_MODULES = (
      "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py"),
 )
 REVIEWED_SOURCE_ARTIFACTS = (
+    ("installer-native-mcp-discovery-capture-profile-v171",
+     "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+     "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, "amendment"),
     ("installer-native-input-capture-profile-v1",
      "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
      "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837, "amendment"),
@@ -129,6 +132,16 @@ REVIEWED_SOURCE_ARTIFACTS = (
     ("glm52-quantized-readme-6bbb01e",
      "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
      "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17_468, "amendment"),
+    ("hermes-agent-health-request-v1", "fixtures/native-health/request.txt",
+     "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182, "native-health-fixture"),
+    ("hermes-agent-health-seed-v1", "fixtures/native-health/seed-value.txt",
+     "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67, "native-health-fixture"),
+    ("hermes-agent-health-expected-result-v1", "fixtures/native-health/expected-tool-result.json",
+     "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240, "native-health-fixture"),
+    ("hermes-agent-health-overlay-read-result-v1", "fixtures/native-health/tool-result.schema.json",
+     "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526, "native-health-fixture"),
+    ("hermes-agent-health-fixture-v1", "fixtures/native-health/recipe.json",
+     "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845, "native-health-fixture"),
 )
 LAUNCHER_PATH = "bin/hermes-installer-root-setup"
 INTERPRETER_PATH = "runtime/bin/python"
@@ -139,7 +152,8 @@ MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_FILES = 50_000
 MAX_FILE_BYTES = 512 * 1024 * 1024
 ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
-                   "artifact-catalog", "bootstrap-policy", "baseline", "amendment", "runtime-member"})
+                   "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                   "runtime-member", "native-health-fixture"})
 _SEAL = object()
 _SHA = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -557,7 +571,7 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for row in rows:
         for role in row.roles:
             by_role.setdefault(role, []).append(row)
-    for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment"):
+    for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture"):
         if role not in by_role:
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
@@ -578,6 +592,14 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
                         for row in by_role["template"]}
     if actual_templates != expected_templates or len(by_role["template"]) != len(FIXED_TEMPLATES):
         raise InstallerReleaseError("installed templates differ from the current fixed artifact layout")
+    expected_health_fixtures = {artifact_id: (relative_path, digest, size)
+                                for artifact_id, relative_path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS
+                                if role == "native-health-fixture"}
+    actual_health_fixtures = {row.artifact_id: (row.relative_path, row.sha256, row.size_bytes)
+                              for row in by_role["native-health-fixture"]}
+    if (actual_health_fixtures != expected_health_fixtures
+            or len(by_role["native-health-fixture"]) != len(expected_health_fixtures)):
+        raise InstallerReleaseError("installed native health fixtures differ from their exact reviewed closure")
     if any("bootstrap-policy" in row.roles for row in rows):
         raise InstallerReleaseError("generated bootstrap policy cannot be a base release role")
     modules = [row for row in by_role["module"]]
@@ -708,6 +730,10 @@ def _artifact_id_for(path: str, roles: list[str]) -> str:
         return "installer-root-setup-plan-v1"
     if "artifact-catalog" in roles and path == ARTIFACT_CATALOG_PATH:
         return "installer-protected-artifact-catalog-v1"
+    if "native-health-fixture" in roles:
+        for artifact_id, relative_path, _digest, _size, role in REVIEWED_SOURCE_ARTIFACTS:
+            if role == "native-health-fixture" and path == relative_path:
+                return artifact_id
     if "module" in roles:
         for artifact_id, relative_path, _digest, _size, role in REVIEWED_SOURCE_MODULES:
             if role == "module" and path == relative_path:
@@ -758,6 +784,13 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
         raise InstallerReleaseError("runtime-member role is outside the selected runtime closure")
     if "runtime-member" in roles and mode is not None and mode not in {0o444, 0o555}:
         raise InstallerReleaseError("runtime-member mode is outside the sealed runtime mode set")
+    if "native-health-fixture" in roles:
+        expected = {path: (artifact_id, digest, size)
+                    for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS
+                    if role == "native-health-fixture"}
+        if (roles != ["native-health-fixture"] or path not in expected
+                or (digest, size) != (expected[path][1], expected[path][2])):
+            raise InstallerReleaseError("native health fixture role differs from its exact reviewed data member")
     if path.startswith("plans/2026-10-09-v1/") and roles != ["baseline"]:
         raise InstallerReleaseError("frozen baseline files must carry only their baseline role")
     if "baseline" in roles and not path.startswith("plans/2026-10-09-v1/"):

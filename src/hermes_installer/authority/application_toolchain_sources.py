@@ -208,7 +208,7 @@ class RootSelectedApplicationToolchainSourceObserver:
                 or not isinstance(preparation_input_selection_handle, str)
                 or not _HANDLE.fullmatch(preparation_input_selection_handle)):
             raise ApplicationToolchainSourceDenied("selected toolchain source request is malformed")
-        self._prune_expired_observations()
+        self._prune_expired_observations(preparation_input_selection_handle, tool_id)
         if tool_id not in _PINNED and tool_id != _BUN_LICENSE_ID:
             raise ApplicationToolchainSourceDenied("source ID is outside the finite Node/Bun/license policy")
         pin = _BUN_LICENSE_PIN if tool_id == _BUN_LICENSE_ID else _PINNED[tool_id]
@@ -334,10 +334,14 @@ class RootSelectedApplicationToolchainSourceObserver:
         del self._held[observation.observation_handle]
         observation.close()
 
-    def _prune_expired_observations(self) -> None:
+    def _prune_expired_observations(self, preparation_handle: str | None = None,
+                                    tool_id: str | None = None) -> None:
         now = self.monotonic()
         for handle, observation in tuple(self._held.items()):
-            if observation.expires_monotonic <= now or observation._fd < 0:
+            same_selection = (preparation_handle is not None
+                              and observation.preparation_input_selection_handle == preparation_handle
+                              and observation.tool_id == tool_id)
+            if observation.expires_monotonic <= now or observation._fd < 0 or same_selection:
                 del self._held[handle]
                 observation.close()
 

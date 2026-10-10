@@ -392,6 +392,25 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertFalse(any("glm52" in row.artifact_id and "weight" in row.artifact_id
                              for row in catalog.artifacts.values()))
 
+    def test_mcp_discovery_profile_catalog_row_is_exact_and_source_only(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "mcp-profile-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        spec = catalog.artifacts["installer-native-mcp-discovery-capture-profile-v171"]
+        path = "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json"
+        body = (repo / path).read_bytes()
+        self.assertEqual(
+            (spec.sha256, spec.size_bytes, spec.max_bytes),
+            ("bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, 4_601),
+        )
+        self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (4_601, spec.sha256))
+        self.assertIsNone(spec.archive_format)
+        self.assertEqual(spec.tree_files, ())
+        self.assertEqual(spec.redirect_hosts, ("raw.githubusercontent.com",))
+
     def test_native_module_and_hyperframes_toolchain_catalog_rows_are_finite_and_exact(self):
         repo = Path(__file__).parents[2]
         catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
@@ -420,6 +439,29 @@ class ArtifactBrokerContracts(unittest.TestCase):
         for artifact_id, (digest, size) in expected_modules.items():
             spec = catalog.artifacts[artifact_id]
             self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+        health_fixtures = {
+            "hermes-agent-health-request-v1": ("a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182),
+            "hermes-agent-health-seed-v1": ("b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67),
+            "hermes-agent-health-expected-result-v1": ("23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240),
+            "hermes-agent-health-overlay-read-result-v1": ("6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526),
+            "hermes-agent-health-fixture-v1": ("ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
+        }
+        health_paths = {
+            "hermes-agent-health-request-v1": "request.txt",
+            "hermes-agent-health-seed-v1": "seed-value.txt",
+            "hermes-agent-health-expected-result-v1": "expected-tool-result.json",
+            "hermes-agent-health-overlay-read-result-v1": "tool-result.schema.json",
+            "hermes-agent-health-fixture-v1": "recipe.json",
+        }
+        for artifact_id, (digest, size) in health_fixtures.items():
+            spec = catalog.artifacts[artifact_id]
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertEqual(spec.source_url,
+                             "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/"
+                             "8f7178cc1e69c61536a4388a75588be8683fd1e7/src/hermes_installer/"
+                             f"native_health_fixture/{health_paths[artifact_id]}")
             self.assertIsNone(spec.archive_format)
             self.assertEqual(spec.tree_files, ())
         toolchains = {
