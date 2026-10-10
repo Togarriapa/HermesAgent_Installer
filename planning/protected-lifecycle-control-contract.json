@@ -1140,5 +1140,35 @@
     "compiler_origin": "Installed release module role resolves lib/python/hermes_installer/authority/native_materialization.py plus complete imported registry/native_install and selected component/schema/overlay module closure. Actual current root actor module origins and bytes checked against installed deployment receipt, never source archive SHA as executable proof.",
     "publication": "Prepared snapshot may retain native_packages=[] throughout compilation. The sealed selection authorizes only root owned bounded source-to-output compilation. Five exact output_cas_selection roles bind same selection/transaction/package generation. Active compiler consumes actual output receipts and atomically publishes native_packages/adapters/schema/issuer/MCP rows in active service_generations; only then launch/mount/dispatch authority can exist. No active package is required to authorize its own initial assembly.",
     "evidence": "Prepared-to-five-output compilation with native_packages empty; wrong compiler origin, missing source/schema/PM proof, altered staged definition/generation, caller rows, stale/replayed selection and dispatch-before-activation denied. All acceptance remains pending."
+  },
+  "bootstrap_action_handoff_clarification": {
+    "schema": 1,
+    "tasks": [
+      "BD-T01",
+      "HI-T09"
+    ],
+    "field": "lifecycle_action",
+    "type": "literal enum install|resume|update",
+    "binding": "Actual root TTY RootSetupExplicitChoices observation binds action in candidate selection snapshot and exact protected handoff canonical bytes/digest. Candidate Git SHA is independently selected/verified. Action does not grant capabilities, choose arbitrary argv, or bypass installed actor/ownership policy.",
+    "sequence": "Observe secure fixed deployments/current.json predecessor: absent only after verifying protected parent and no leaf; present requires InstalledRootReleaseVerifier actual full receipt verification. Invalid/inaccessible presence fails closed. First-source path is allowed only typed proven absent. Stage-only source acquisition/runtime staging preserves lifecycle_action in same-PID sealed FD3 handoff. Trusted CAS actor consumes that snapshot, builds/publishes/verifies actual installed release, then same-PID execs exact installed root launcher under isolated interpreter with only the validated finite action. Never call root_setup.main from source as a substitute for installed actor. Installed launcher revalidates actual release/actor/PID/TTY and selected ownership/session before action.",
+    "predecessor_API": "installer_release_build.observe_deployment_predecessor()->VerifiedDeploymentPredecessor root-local; exact fields schema,state(absent|present-verified),parent_device,parent_inode,candidate_git_sha(null if absent),deployment_receipt_sha256(null if absent),deployment_receipt_device(null if absent),deployment_receipt_inode(null if absent),verified_release_receipt_handle(null if absent). Root-held sealed proof, bounded currentness; publication rechecks same predecessor CAS. No caller path or boolean absence proof.",
+    "safe_status": "Unprivileged launcher_status may expose only installed/pending state, candidate digest and exact missing prerequisite/resume action; no root paths, credential refs, handles or authority. Status is not actor admission."
+  },
+  "xpra_output_store_clarification": {
+    "identity": "Reuse actual ContentAddressedBuildStore BuildOutput artifact_id for deterministic non-executable archive: build-output:<actual archive SHA256>:file:d. Only the exact ID returned by root typed held output observation is acceptable, never synthesizing a trusted row from a digest string.",
+    "resolve": "RootXpraOverlayReceiptRegistry resolves the actual BuildOutput through existing protected store, reopens stable root held bytes and verifies SHA/size/type/source transformation. Root active publication copies the verified derived artifact row into selected artifact catalog; source and transformed tree hashes remain distinct from tar SHA. Missing actual source/output observation prevents activation, never a fabricated static catalog hash."
+  },
+  "reviewed_native_capability_selection": {
+    "artifact_id": "installer-reviewed-native-capability-map-v1",
+    "source_path": "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json",
+    "installed_path": "templates/reviewed-native-capability-map-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+    "size_bytes": 2026,
+    "API": "RootSetupPrincipalSelectionRegistry.resolve_reviewed_capability_selection(current_identity_receipt_handle,selected_effect_policy_receipt_handle)->RootReviewedCapabilitySelection root-private. Verifies actual installed source artifact and selected current identity/System group IDs, then exact finite source projection above; no caller capability tuple. Root prepared policy has empty tuple, not active worker authority.",
+    "selection_fields": "principal_id,profile_id,namespace_id,capabilities,identity_receipt_handle,effect_policy_receipt_handle,map_artifact_id,map_sha256,issued_monotonic,expires_monotonic; sealed root only. Active principal binding uses actual selected dedicated NSS UID and exact namespace/profile tuple; must recheck actual current Authentik policy before protected writes.",
+    "release_role": "Release builder includes exact new template artifact bytes/role in verified module/template closure. Deployed plan may reference this policy as separately selected release template; original v81 five-artifact list stays immutable and does not become an unexplained sixth item. Root registry resolves it by explicit artifact ID+SHA in verified installed release, never ambient path."
   }
 }
