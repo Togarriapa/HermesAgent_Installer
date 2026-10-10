@@ -286,12 +286,17 @@ Exact contract: `planning/xpra-link-count-correction-v250.json`.
 
 
 ## v251 Desktop native source and packaging
+## Native plugin backend composition v253
 
 - [ ] RT-T251.1 Implement distinct held Desktop policy/verifier/one-use grant/CAS and native provider; exact signed253 package and licensing closure, failure/currentness/cancellation effects.
 - [ ] RT-T251.2 Produce independently observed native/sysroot/prepared packaging manifests with actual offline compiler/HUD/Electron ABI and licensed owned PNG toolset, preserve sandbox/stamp and v240 fixed driver.
 - [ ] VD-T251.3 Exercise changed signature/index/hash/control/relations/license/links, wrong issuer/role/choice/controller, cancellation, PNG failures and actual managed ARM64 output; genuine runtime/Pi acceptance separately open.
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
 
 Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all AC OPEN.
+- [ ] RB-T253.1: Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites.
+- [ ] HI-T253.2: Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.
+- [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.
 
 
 ## v251b Non-circular Desktop native pipeline
@@ -299,3 +304,4 @@ Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all 
 - [ ] RT-T251b.1 Implement true prebuild input manifest/provider and remove native generated outputs as source prerequisites, preserving genuine signed/source/current receipt joins.
 - [ ] RT-T251b.2 Generate native tree/joined manifest through actual fixed managed driver and independently reopen retained packaged native facts before receipt; no hash-only native completion.
 - [ ] VD-T251b.3 Test missing/generated-input cycle, forged native result, absent retained tree, selfhash, ABI/packaged mapping/cancellation/currentness failure and genuine bounded offline ARM64 pipeline; runtime acceptance separate.
+- [ ] RB-T253.1 / HI-T253.2 / VD-T253.3 (v253b): Implement reviewed sealed dependency/result-schema/GitHub observation corrections; confirmation protocols cannot authorize writes.

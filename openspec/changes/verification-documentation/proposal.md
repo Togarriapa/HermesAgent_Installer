@@ -226,6 +226,7 @@ Exact contract: `planning/xpra-link-count-correction-v250.json`.
 
 
 ## v251 Desktop native signed-source policy
+## Native plugin backend composition v253
 
 Extends frozen v226/v229/v240 for R0028/R0035/R0037/R0203/R0204/R0211. This append-only source contract supplies the previously missing genuine Desktop-specific policy; it does not approve a runtime or modify earlier plans.
 
@@ -238,6 +239,8 @@ Packaging uses the measured official 7zip archive and official npm wasm-vips 0.0
 Actual native/sysroot/package manifests project held current receipt objects. Exact official PM314, Node26 build, Electron40.10.2 binary/headers, native compiler and ELF dependency identities remain separate. Private origin-bound link resolution and hardlink materialization cannot access ambient paths. Preserve the v240 fixed prepared AppDir invocation, honest source stamp, enabled Electron sandbox and final installed ownership/mode proof.
 
 RT-T251.1 → RT-T251.2 → VD-T251.3 are OPEN. Luna native owner implements actual acquisition/CAS/provider; Luna Desktop owner implements actual native/package driver and licensed icons integration. Whole-build caps and packaged renderer/backend qualification remain genuinely pending. No null managed plan may execute; all AC and Pi acceptance remain OPEN. Baseline and older amendments remain unchanged.
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+Current worker mediation alone cannot supply missing root backend handlers.
 
 
 ## v251b Native build input/output direction
@@ -249,3 +252,4 @@ Exact contract: `planning/official-desktop-native-build-direction-v251b.json`. N
 Use fresh manager-owned fixed work/desktop descriptor custody and fixed final output/desktop-appdir. Preserve acyclic member/recipe closures and exact outer output fields; qualification binds generated native manifest bytes without a self-hash. No arbitrary paths or unobserved temporary-tree claims. Native completion remains distinct from sandbox/backend/renderer/session qualification.
 
 RT-T251b.1 → RT-T251b.2 → VD-T251b.3 are OPEN. No full-build caps are invented; null plan stays denied pending genuine full-pipeline measurement and reviewed limits. All AC and target acceptance remain OPEN.
+v253b source API review: `planning/native-plugin-producer-sealed-api-v253b.json` requires retained sealed vault/journal dependency getter, independent current result schema FK, fixed new GitHub /user observer and pending writes until actual attestor. No acceptance change.

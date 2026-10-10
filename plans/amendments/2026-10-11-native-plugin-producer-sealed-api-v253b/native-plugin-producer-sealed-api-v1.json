@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "native-plugin-producer-sealed-api-v253b",
+  "refines": "planning/native-plugin-backend-composition-v253.json",
+  "status": "specified; implementation and all account/native acceptance OPEN",
+  "review": {
+    "owner": "luna_application_effect_source",
+    "candidate": "62c238e83a1b057880e5f01fab6cde7e6e8d6f55",
+    "result": "Existing broker DTO/factories compatible; four concrete source API corrections required."
+  },
+  "sealed_dependencies": {
+    "entry": "RootSelectedPluginBackendEnrollmentRegistry.from_root_setup(binding: RootSelectedInstallationBinding)",
+    "binding_getter": "RootSelectedInstallationBinding.resolve_plugin_backend_producer_dependencies() -> RootPluginBackendProducerDependencies",
+    "owner": "New private exact-type sealed dependency capability minted/retained by same RootBootstrapSession only after binding._check/current installation membership. It retains exact root vault, transaction journal held FD, current native-policy/source/registration/schema/target/principal/namespace/release owners. No public path/callback/map fields, worker-facing session attribute traversal or caller-supplied dependencies. Registry verifies retained object membership and current binding before every use; only producer can duplicate required held FDs.",
+    "facades": [
+      "binding.observe_plugin_backend_configuration(native_policy_selection_handle, adapter_id) -> RootSelectedPluginBackendChoice",
+      "binding.collect_selected_plugin_credential(choice_handle, secret_reader) -> RootPluginCredentialObservation",
+      "binding.reuse_selected_plugin_credential(choice_handle, reference) -> RootPluginCredentialObservation"
+    ],
+    "secret_reader": "Root-only existing masked foreground TTY secret capture function, not credential/account authorization or arbitrary transport callback; current live foreground proof and exact choice rechecked. Never worker-callable secret reader. Actual root-owned token/reference inputs only."
+  },
+  "result_schema": {
+    "dto": "PluginActionEnrollment carries argument schema only; do not add caller result schema to its constructor.",
+    "envelope_correction": "Add required result_schema_id to v253 action envelope alongside result_schema_artifact_id and result_schema_sha256. Non-action rows use explicit null. Parser resolves all three against exact selected reviewed result schema record/member artifact and current observed result source issuer. Any ID/hash/artifact mismatch, missing observer or altered extra field denies executable row.",
+    "runtime": "Existing NativeRuntimeObserver/source result capture validates actual bytes against this independently resolved schema; argument-schema-only DTO never substitutes for result authority."
+  },
+  "github": {
+    "producer": "RootGitHubPluginAccountObserver resolves current retained choice/vault credential internally. New fixed source GET https://api.github.com/user plus GET https://api.github.com/repos/<selected owner>/<selected repo>; no arbitrary host/path/method/header/requester injected.",
+    "observations": "Validate immutable positive numeric account id, bounded canonical login, immutable positive numeric repository id and exact canonical full_name matching selection. Retain only genuine observed read readiness/permission plus response source custody and current original deadline. Existing GitHubRESTBackend repo.get remains effect executor; /user is new observer code, not an existing backend capability.",
+    "writes": "No inference of write/admin authority from /user, repo.get, token possession or returned read fields. First available executable action is repo.get only; any further action needs its own exact reviewed account/target/schema/permission joins."
+  },
+  "confirmation": {
+    "audit": "Existing plugin confirmation classes are protocols, not a deployed concrete attestor registry.",
+    "rule": "Mutating rows stay pending with missing prerequisite root-plugin-final-payload-confirmation-attestor until genuine root-issued current one-use exact final payload/target/account/task confirmation producer exists and is integrated. Never claim current attestor exists or use a caller confirmation bool/ID. Read-only repo.get needs no invented attestor. Existing idempotency and verify-after-write rules remain mandatory when writes become available."
+  },
+  "qualification": "First genuine positive uses production signed loader/factory/handler and real GitHubRESTBackend repo.get under isolated module/test-scoped bounded transport fixture. FixtureEffects or worker/provider injection prohibited. Account/native host acceptance OPEN.",
+  "tasks": [
+    "RB-T253.1",
+    "HI-T253.2",
+    "VD-T253.3"
+  ]
+}

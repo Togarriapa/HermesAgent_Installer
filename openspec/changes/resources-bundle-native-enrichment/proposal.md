@@ -182,3 +182,12 @@ Root service process lane v236: planning/root-service-process-authority-lane-v23
 Root process proof joins v236b: planning/root-service-process-proof-joins-v236b.json requires actual primaryhermes/default health-home FD/PM/currentcore binding, runtime service epoch/current adapter revision, distinct published declaration source proof and schema4 preserving exact v225schema3. No inferred profile field, claimdigest alias or restored setupseal. Existing236tasks/allACOPEN.
 
 Cold process custody v236b: planning/root-service-process-cold-source-custody-v236b.json supersedes post-compose-only declaration construction with independent verification-only selected-key/journal/core/heldsource custody before strict parsing, then genuine dormant runtime ordinary adoptedchoice revalidation before all serving/effects. Existing tasks/allAC OPEN.
+
+
+## Native plugin backend composition v253
+
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+Current worker mediation alone cannot supply missing root backend handlers.
+
+
+v253b source API review: `planning/native-plugin-producer-sealed-api-v253b.json` requires retained sealed vault/journal dependency getter, independent current result schema FK, fixed new GitHub /user observer and pending writes until actual attestor. No acceptance change.

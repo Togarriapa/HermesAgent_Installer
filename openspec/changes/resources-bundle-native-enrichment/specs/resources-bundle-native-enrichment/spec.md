@@ -550,3 +550,23 @@ The installer SHALL apply planning/root-service-process-cold-source-custody-v236
 #### Scenario: A construction or currentness gap denies activation
 - **WHEN** source custody or ordinary runtime validation fails or changes between phases
 - **THEN** partial custody is closed and no socket, native unit, task, health, root or user effect is enabled; no fake service or reconstructed setup proof is accepted
+
+
+### Requirement: Source-bound native plugin backend composition v253
+The installer SHALL implement the closed v253 root source/account/target producer, signed active enrollment parser and production broker composition. Only current issuer-owned receipts may establish backend authority. Original full coverage, privacy, budget and grant/replay checks remain required.
+
+#### Scenario: Genuine backend effect and replay denial
+- **WHEN** a selected native tool has a current protected package and fully joined backend enrollment
+- **THEN** the production root factory routes its authorized request to the actual fixed backend, captures its schema-validated effect result and rejects replay or stale/sibling authority
+
+#### Scenario: Missing backend account
+- **WHEN** source discovery exists but the selected account/credential/target or backend producer is unavailable
+- **THEN** keep that action pending with exact prerequisite and resume without claiming functional acceptance or reducing original scope
+
+
+### Requirement: Sealed plugin producer dependencies v253b
+The installer SHALL obtain vault/journal/source owners through the sealed binding getter, resolve result-schema authority independently of argument DTOs, and keep mutations pending until an actual root confirmation attestor exists.
+
+#### Scenario: Account read does not establish writes
+- **WHEN** fixed GitHub /user and selected repository observations validate account/read readiness
+- **THEN** admit only independently joined read actions and retain write/admin/confirmation prerequisites as pending

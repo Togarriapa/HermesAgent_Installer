@@ -1,0 +1,325 @@
+{
+  "schema": 1,
+  "id": "native-plugin-backend-composition-v253",
+  "status": "specified; implementation and all target/account acceptance OPEN",
+  "source_audit": {
+    "candidate": "62c238e83a1b057880e5f01fab6cde7e6e8d6f55",
+    "observed_gap": "Existing mediated worker dispatch reaches AuthorityService, but protected enrollment has no selected plugin backend account/action/target projection and production root runtime composition never invokes the two existing broker factories. FixtureEffects does not prove this path.",
+    "source_files": [
+      "plugin_accounts_broker.py",
+      "plugin_homelab_broker.py",
+      "authority/native_policy_preparation.py",
+      "authority/native_component_targets.py",
+      "authority/enrollment.py",
+      "authority/runtime_bindings.py"
+    ]
+  },
+  "requirements": [
+    "RB08 protected original plugin effects",
+    "original Resources native registration/action/workflow obligations",
+    "provider credential/budget/privacy obligations",
+    "host principal/target custody",
+    "functional verification and truthful unavailable state"
+  ],
+  "refines": [
+    "planning/active-authority-receipt-aggregate-v231.json",
+    "planning/native-package-binding-contract.json"
+  ],
+  "scope": {
+    "initial_fixed_backends": [
+      "github",
+      "composio",
+      "codex",
+      "authentik-authorization",
+      "cloudflare-homelab",
+      "homelab-ops-broker"
+    ],
+    "coverage": "Keep original 42 registration/61 action/2 workflow projections and all original adapter obligations. Four owner-overlay operations remain separate. Backend readiness is per selected action; absent production adapters remain configurable-pending with exact prerequisite and resume operation. Six initial brokers do not reduce the full requested scope.",
+    "excluded": "HA enrollment/read is deferred to its own contract. No external install-test messaging, new spend, broad account discovery, arbitrary URLs, source CLI renaming or worker-written authority."
+  },
+  "producer": {
+    "module": "hermes_installer.authority.plugin_backend_enrollment",
+    "class": "RootSelectedPluginBackendEnrollmentRegistry",
+    "constructor": "from_root_setup(binding: RootSelectedInstallationBinding) -> registry; same binding owns native policy, source registration/schema/target registries, verified release, root vault and transaction journal; no public provider-map, policy-row or callback arguments.",
+    "choice": "RootBootstrapSession.observe_plugin_backend_configuration(native_policy_selection_handle, adapter_id) -> RootSelectedPluginBackendChoice. Add closed RootSetupChoiceRegistry purpose plugin-backend-enrollment and typed root foreground TTY observer; adapter_id must belong to the current reviewed selected native schema coverage. Display exact adapter/account/target/action set, privacy recipient and zero additional budget before root observation. configure-later records pending only.",
+    "choice_fields": [
+      "choice_handle",
+      "choice_observation_id",
+      "native_policy_selection_handle",
+      "adapter_id",
+      "principal_id",
+      "namespace_id",
+      "profile_id",
+      "selected_action_binding_ids",
+      "selected_target_selector_ids",
+      "credential_observation_handle",
+      "configuration_sha256",
+      "epoch",
+      "expires_monotonic"
+    ],
+    "choice_authority": "Issuer generates handles/epochs; exact current signed native policy choice, original session/transaction/prepared generation/plan, selected principal/namespace/source registration coverage and current root TTY proof required. Public fields do not authorize independently. Configuration bytes remain issuer-held; digest is SHA256 of canonical closed configuration, not a caller digest.",
+    "credentials": "collect_selected_credential(choice_handle) / reuse_selected_credential(choice_handle, reference) issue sealed current observation only after RootCredentialVault writes/resolves exact selected principal and root peer UID 0 plus finite adapter scope. Secret input masked and never appears in argv, logs, projection, worker files or evidence. Codex uses actual host-managed runner/auth and owned workspace; never copies credentials. Reference alone is not credential/account proof.",
+    "prepare": "prepare_for_policy(native_policy_selection_handle, precompile: RootActivePolicyPrecompile) -> RootPreparedPluginBackendEnrollmentBundle; resolve_current(bundle_handle, native_policy_selection_handle, precompile) rechecks every retained dependency. No rows supplied by caller.",
+    "bundle_fields": [
+      "receipt_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "plan_sha256",
+      "native_policy_selection_handle",
+      "publication_handle",
+      "precompile_output_closure_sha256",
+      "source_receipt_handles",
+      "account_observation_handles",
+      "target_observation_handles",
+      "action_records",
+      "account_records",
+      "target_records",
+      "pending_records",
+      "projection_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "bundle_lifetime": "Exact issuer membership/type/seal and original dependency deadlines; at most now+30s for compilation. Durable adoption is publication-owned source preference; never replay old setup seal or extend setup TTL.",
+    "configuration_fields": {
+      "common": [
+        "schema",
+        "adapter_id",
+        "decision",
+        "selected_action_binding_ids",
+        "recipient",
+        "account_observation_handle",
+        "target_observation_handles",
+        "credential_observation_handle"
+      ],
+      "github": [
+        "repositories"
+      ],
+      "composio": [
+        "connection_selector_ids",
+        "tool_slug_selector_ids",
+        "toolkit_version_selector_ids"
+      ],
+      "codex": [
+        "workspace_selection_handles"
+      ],
+      "authentik-authorization": [
+        "current_identity_selection_handle",
+        "delivery_recipient_selection_handles"
+      ],
+      "cloudflare-homelab": [
+        "owned_account_selection_handle",
+        "owned_zone_selection_handle",
+        "owned_dns_selection_handles",
+        "owned_tunnel_selection_handles"
+      ],
+      "homelab-ops-broker": [
+        "broker_enrollment_selection_handle",
+        "host_target_selection_handles"
+      ]
+    },
+    "configuration_validation": "Closed common+adapter-specific schema. Values that identify accounts, schemas, ownership, workspace paths or provider grants are root-issued current selector handles, never raw caller authority. GitHub repository text is explicit TTY selection input only and becomes eligible after fixed source observation. All source action lists are intersection of original current selected schemas and observed account/target permissions. Credential scope is fixed source operation scope selected by registry, not caller string; write references cannot replace read or sibling account scope."
+  },
+  "fixed_source_observers": {
+    "github": "RootGitHubPluginAccountObserver uses actual GitHubRESTBackend/BoundedNetwork fixed TLS source routes: authenticated GET /user and GET /repos/<explicit selected owner>/<repo>. Bind observed immutable user/repository IDs and canonical repository full_name to current root-selected account/repository allowlist. Read success alone never establishes write/admin permission; selected mutating action additionally needs genuine provider permission plus existing exact runtime confirmation, idempotency and post-write verification. No account-wide enumeration. API version remains source fixed.",
+    "composio": "RootComposioPluginAccountObserver validates selected connection ID/tool slug/toolkit version and actual provider argument/result schema/classification against current source adapter and root-selected account. Only exact selected connection metadata read through fixed provider adapter is permitted; unavailable metadata/auth producer leaves that action pending. Never tools execute to discover permission, arbitrary toolkit or caller mutation classification.",
+    "codex": "RootCodexPluginWorkspaceObserver consumes actual managed runner enrollment/auth readiness and root-owned workspace custody with current selected service profile; observe no shell/tool execution. Retain directory FD/inode/member/root identity and selected writable permission; run stays mutating and confirmation-gated. Missing runner or workspace producer stays pending.",
+    "authentik-authorization": "Reuse current root AuthentikReadPolicy principal_snapshot and exact selected identity domain/recipient rules. Current effective hierarchy/System membership verifier is required when existing source handler requires it. Local owner is not an Authentik subject. No synthetic group membership.",
+    "cloudflare-homelab": "RootCloudflareHomelabTargetObserver consumes actual selected scoped account/zone credential and read-only fixed API observations of explicitly selected owned DNS/tunnel objects/configuration. Preserve exact approved hostname/service/target source enums; strings in source are not ownership proof. Do not borrow setup management token into worker/runtime. HA object effects remain excluded here.",
+    "homelab-ops-broker": "RootHomelabOpsTargetObserver consumes genuine enrolled broker TLS origin and fixed selected host target custody/identity from current root target registry, scoped credential and fixed inspect metadata proof. Source allowed host labels alone are insufficient; no run/write to discover readiness. Missing genuine target provider leaves pending.",
+    "implementation_rule": "These are concrete source-specific producer classes owned by Luna, not constructor callback slots. Only existing fixed reviewed provider adapters may transport observations. Observer output is sealed root-owned receipt with source/artifact/schema/account/target/current choice joins; raw network response is untrusted and schema-checked before issuance. No invented success receipt."
+  },
+  "projection": {
+    "authority_fields": [
+      "plugin_backend_account_records",
+      "plugin_backend_action_records",
+      "plugin_backend_target_records",
+      "plugin_backend_source_records"
+    ],
+    "placement": "Add closed top-level fields to strict signed authority core enrollment schema and ProtectedEnrollment; active v231 aggregate consumes only registry-sealed bundle for same precompile reservation. Prepared empty EnrollmentPolicy.records remains empty. No dependency on future active row to authorize its own source observation.",
+    "payload_fieldsets": {
+      "PluginActionEnrollment": [
+        "adapter_id",
+        "manifest_sha256",
+        "handler_artifact_id",
+        "handler_sha256",
+        "action_id",
+        "argument_schema_id",
+        "operation",
+        "capability",
+        "target_id",
+        "generation",
+        "principal_id",
+        "profile_id",
+        "recipient",
+        "enrollment_id",
+        "argument_schema",
+        "request_bytes_limit",
+        "response_bytes_limit",
+        "deadline_seconds",
+        "credential_reference_id",
+        "scope_reference_id",
+        "confirmation_policy_id",
+        "idempotency_policy_id",
+        "mutating",
+        "verify_after_write",
+        "verification_action_id"
+      ],
+      "PluginAccountEnrollment": [
+        "adapter_id",
+        "enrollment_id",
+        "principal_id",
+        "profile_id",
+        "recipient",
+        "credential_reference_id",
+        "credential_scope",
+        "account_id",
+        "action_ids",
+        "repositories",
+        "composio_connections",
+        "toolkit_versions",
+        "composio_argument_schemas",
+        "composio_result_schemas",
+        "composio_mutating_actions",
+        "codex_workspaces"
+      ],
+      "CodexWorkspaceBinding": [
+        "workspace_id",
+        "root_identity",
+        "writable",
+        "service_profile_id",
+        "workspace_selection_receipt_handle"
+      ],
+      "HomelabTargetEnrollment": [
+        "adapter_id",
+        "enrollment_id",
+        "principal_id",
+        "profile_id",
+        "recipient",
+        "account_id",
+        "zone_id",
+        "tunnel_ids",
+        "dns_record_ids",
+        "tunnel_hostname_by_id",
+        "tunnel_service_by_hostname",
+        "broker_origin",
+        "host_target_ids",
+        "credential_reference_id",
+        "credential_scope",
+        "action_ids",
+        "system_recipient_ids"
+      ],
+      "HomelabActionEnrollment": [
+        "adapter_id",
+        "manifest_sha256",
+        "handler_artifact_id",
+        "handler_sha256",
+        "action_id",
+        "argument_schema_id",
+        "operation",
+        "capability",
+        "target_id",
+        "generation",
+        "principal_id",
+        "profile_id",
+        "recipient",
+        "enrollment_id",
+        "argument_schema",
+        "mutating",
+        "confirmation_policy_id",
+        "idempotency_policy_id",
+        "request_bytes_limit",
+        "response_bytes_limit",
+        "deadline_seconds"
+      ]
+    },
+    "envelope_fields": [
+      "record_id",
+      "record_kind",
+      "adapter_id",
+      "payload",
+      "native_policy_selection_handle",
+      "choice_handle",
+      "choice_epoch",
+      "package_artifact_id",
+      "package_sha256",
+      "package_generation",
+      "registration_id",
+      "argument_schema_artifact_id",
+      "argument_schema_sha256",
+      "result_schema_artifact_id",
+      "result_schema_sha256",
+      "handler_artifact_id",
+      "handler_sha256",
+      "source_receipt_handles",
+      "source_projection_sha256",
+      "principal_id",
+      "namespace_id",
+      "profile_id"
+    ],
+    "record_rules": "record_kind selects exactly one source dataclass fieldset: account, action, homelab-target or homelab-action. All fields required; explicit null only where source dataclass permits. Frozen sets serialize sorted unique arrays; maps sorted string keys, no extra fields/nonfinite values. account/target rows use null registration/schema fields only when inapplicable; action rows require all exact FK values. Codex workspace host root path remains root-private owned-root selector, serialized payload stores workspace_id/root_identity/writable/service_profile_id plus root-owned workspace selection receipt, not arbitrary root path. Loader reconstructs path only via current held custody.",
+    "source_fields": [
+      "schema",
+      "projection_sha256",
+      "native_policy_selection_handle",
+      "choice_handle",
+      "choice_epoch",
+      "precompile_output_closure_sha256",
+      "source_receipt_handles",
+      "account_record_ids",
+      "target_record_ids",
+      "action_record_ids"
+    ],
+    "digest": "projection_sha256 = SHA256 UTF-8 canonical JSON (sort_keys true, separators comma/colon, ensure_ascii true, allow_nan false) of domain native-plugin-backend-inputs-v253 plus normalized account/target/action source rows and current source/choice/reservation lineage, excluding projection_sha256 itself and future active generation/claim. Compiler commits actual core bytes/SHA/size and full actual service generation digest separately.",
+    "joins": "Exactly current original registration -> reviewed PluginActionSchema argument/result artifact -> current selected package/handler source identity -> root observed account/target -> root selected principal/namespace/service profile/recipient -> exact existing EffectRule operation/capability/target/enrollment generation. No action row without its actual EffectRule/target and result observer issuer. Partial backend slice never changes original coverage cardinalities.",
+    "pending": "Pending records are status only: registration_id/action_binding_id, missing_prerequisite_ids and resume_operation_id. Never serialize an executable active action for missing account, provider, license, runtime, schema, target, credential, confirmation or current source proof. Explicit selected incomplete configuration blocks the affected action only, with truthful exact status."
+  },
+  "runtime": {
+    "parser": "ProtectedPluginBackendCatalog.from_verified_enrollment(enrollment, current_core) strict parser validates closed fields, unique keys/FKs, current signed core/source projection/package/member receipts and source manifests; no raw map constructor exposed to worker. Add to actual ProtectedEnrollment loader and RootRuntimeBindings.",
+    "factory": "RootPluginBackendFactory.from_published_authority_core(core, runtime_bindings, vault) obtains fixed production BoundedNetwork, root journal SQLitePluginEffectLedger, current managed Codex runner, confirmation registry and Authentik policy through existing root composition. It constructs GitHubRESTBackend, ComposioToolBackend, CodexManagedRunnerAdapter, FixedHomelabHTTPSBackend and existing AuthentikSystemMembershipVerifier only for fully joined records. No caller backend/handler/provider injection.",
+    "compose": "build_root_runtime_bindings calls factory and merges build_plugin_effect_handlers and build_plugin_homelab_effect_handlers into actual AuthorityService effect_handlers before dispatch. Duplicate (operation,target) denies composition. Executable row with missing actual backend/handler denies that declared enrollment; never silently skip into effect.unavailable. Unconfigured/pending rows remain unavailable with exact resume.",
+    "currentness": "Resolve against fresh current publication/core/source projection/member readback and current account/target/credential revocation before every effect; daemon restart reconstructs catalog from protected publication and root journals. Runtime never needs live RootBootstrapSession. Current key/source/package/service generation or choice revocation invalidates dependent rows/grants.",
+    "grants": "Reuse exact AuthorityService authorization, replay consumption, peer/PIDFD/current package, canonical request digest, target/principal/profile/recipient and original deadline; source action/result capture validation remains mandatory. Handler cap <=30s and min original effect/controller/task/source/credential observation deadlines. No renewal of start grants or expired leases. Public/free and private routes remain distinct; metered additional budget zero.",
+    "writes": "Existing one-use payload-bound independent human confirmation plus durable idempotency/ambiguous-effect ledger and fixed post-write readback required. Source/account configure does not authorize a mutation. Source ops require effective current System membership where specified. No outbound installation-test writes/messages."
+  },
+  "qualification": {
+    "positive": "Source-owned controlled fixture runs genuine root producer -> compiler/signed protected loader -> production runtime factory -> native selected runtime context/dispatcher -> AuthorityClient/AuthorityService -> real GitHubRESTBackend finite repo.get transport effect -> existing observed result source capture. Use real root-owned fixture transport with fixed recipe/endpoint custody isolated from production; no FixtureEffects or injected handler success. Observe actual request count/route, bounded response/schema, grant consume and result/source receipt ancestry. Fixture source assets/pins only after committed measured source review.",
+    "failure_cases": [
+      "sibling account/repository/credential principal UID scope",
+      "unknown action/extra argument/result fields",
+      "package/handler/schema/source/projection tamper",
+      "expired/revoked choice/account/target/publication",
+      "missing actual backend versus pending enrollment",
+      "replayed grant/request or duplicated write",
+      "private-to-public route and nonzero budget",
+      "confirmation payload mismatch/absent System proof",
+      "cancel/deadline/network/TLS failure and ambiguous write reconciliation",
+      "daemon restart current publication and revoked dependency"
+    ],
+    "acceptance": "Fixture effects prove their boundary only. Real account auth/read and native Pi dispatch remain separate OPEN evidence. No test-only producer accepted by production. Full original coverage remains OPEN."
+  },
+  "tasks": {
+    "RB-T253.1": "Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites. Initial positive producer is Github authenticated user plus exact selected repository read; other source observers may issue only genuine observations and remain pending until implemented.",
+    "HI-T253.2": "Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.",
+    "VD-T253.3": "Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN."
+  },
+  "baseline_requirement_ids": [
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0051",
+    "R0052",
+    "R0053",
+    "R0055",
+    "R0056",
+    "R0060",
+    "R0061",
+    "R0032",
+    "R0107",
+    "R0108",
+    "R0109",
+    "R0110",
+    "R0111"
+  ]
+}
