@@ -158,8 +158,9 @@ _rows = {
         _obj({"url": _string(2048, 1)}, ["url"]),
         _obj({"url": _string(2048, 1), "content_type": _string(256, 1), "content": _string(2_000_000),
               "untrusted_source": {"type": "boolean", "enum": [True]},
-              "authority": {"type": "string", "enum": ["none"]}, "redirects": {"type": "integer", "minimum": 0, "maximum": 4},
-              "source_receipt": _source_receipt()},
+              "authority": {"type": "string", "enum": ["none"]},
+              "redirects": {"type": "array", "items": _string(2048, 1), "minItems": 1, "maxItems": 32},
+              "source_receipt": _artifact_receipt()},
              ["url", "content_type", "content", "untrusted_source", "authority", "redirects", "source_receipt"])),
 }
 
