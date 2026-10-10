@@ -115,7 +115,7 @@ class RootMemoryCaptureConsentRegistry:
         if existing is not None:
             raise ValueError("memory capture consent registry is already attached")
         registry = cls(service, root_setup_choice_registry, memory_enrollment_catalog, root_journal)
-        service.memory_capture_consent_registry = registry
+        service.attach_memory_capture_consent_registry(registry)
         return registry
 
     def resolve_selected_memory_binding(self, enrollment_id: str) -> Any:
@@ -296,13 +296,18 @@ class RootMemoryCaptureConsentRegistry:
 
     def _verify_completed_turn_receipt(self, handle: str, enrollment: Any) -> Any:
         registry = getattr(self.service, "native_turn_observation_registry", None)
-        resolver = getattr(registry, "resolve_completed_turn_receipt", None)
+        resolver = getattr(registry, "resolve_completed_turn", None)
         if not isinstance(handle, str) or not callable(resolver):
             raise AuthorityDenied("memory.turn", "root completed-turn receipt resolver is unavailable")
         receipt = resolver(handle)
-        if (receipt is None or getattr(receipt, "profile_id", None) != enrollment.profile_id
-                or getattr(receipt, "namespace_id", None) != enrollment.namespace_identity
-                or getattr(receipt, "complete", None) is not True):
+        from .native_turn_observation import RootCompletedNativeTurn
+        if (type(receipt) is not RootCompletedNativeTurn
+                or receipt.receipt_handle != handle
+                or receipt.profile_id != enrollment.profile_id
+                or receipt.expires_monotonic <= self.monotonic()
+                or getattr(self.service, "service_generation_digest", None) is None
+                or receipt.service_generation_digest != self.service.service_generation_digest
+                or receipt.process_generation != self.service.profile_generations.get(receipt.profile_id)):
             raise AuthorityDenied("memory.turn", "completed turn receipt is not current for this profile")
         return receipt
 

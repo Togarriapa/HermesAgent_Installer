@@ -89,6 +89,7 @@ class RootPrivateInputConsent:
     service_generation_digest: str
     input_selection_digest: str
     input_observation_handle: str
+    retained_input_selection_handle: str
     provider_route_ids: tuple[str, ...]
     private_recipient_ids: tuple[str, ...]
     additional_metered_budget_usd: float
@@ -120,6 +121,7 @@ class RootPrivateInputConsent:
             "service_generation_digest": self.service_generation_digest,
             "input_selection_digest": self.input_selection_digest,
             "input_observation_handle": self.input_observation_handle,
+            "retained_input_selection_handle": self.retained_input_selection_handle,
             "provider_route_ids": list(self.provider_route_ids),
             "private_recipient_ids": list(self.private_recipient_ids),
             "additional_metered_budget_usd": self.additional_metered_budget_usd,
@@ -175,7 +177,7 @@ class RootPrivateInputConsentRegistry:
         if existing is not None:
             raise ValueError("private input consent registry is already attached")
         registry = cls(service, root_setup_choice_registry, selected_provider_catalog, root_journal)
-        service.private_input_consent_registry = registry
+        service.attach_private_input_consent_registry(registry)
         return registry
 
     def issue_selected_private_input_consent(self, current_explicit_choice_receipt_handle: str,
@@ -363,6 +365,7 @@ class RootPrivateInputConsentRegistry:
             "namespace_id": row["namespace_id"], "profile_generation": row["profile_generation"],
             "service_generation_digest": service_digest, "input_selection_digest": input_digest,
             "input_observation_handle": getattr(proof, "proof_nonce", input_handle), "provider_route_ids": route_ids,
+            "retained_input_selection_handle": input_handle,
             "private_recipient_ids": recipients, "additional_metered_budget_usd": 0.0,
             "policy_revision": row["policy_revision"],
             "policy_selection_sha256": row["policy_selection_sha256"],
