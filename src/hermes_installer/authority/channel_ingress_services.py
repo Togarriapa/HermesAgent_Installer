@@ -17,7 +17,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Protocol
 
 from .channel_provenance import (
     AuthenticatedHttpRequest, AuthenticatedSubjectReceipt,
@@ -621,32 +621,143 @@ class RootAudioCaptureRequest:
     artifact_id: str
 
 
-class RootAudioSessionAuthority:
+class RootAudioSessionAuthority(Protocol):
     """Root auth-session lookup boundary implemented by the selected runtime."""
     def take_capture_workflow_result(self, selection_handle: object,
                                      workflow_result: object) -> RootAudioCaptureRequest:
         """Resolve/consume a root workflow result; never trust caller IDs."""
-        raise NotImplementedError
+        ...
 
     def current_input_session(self, selection_handle: object,
                               session_handle: str) -> RootAudioInputSession:
-        raise NotImplementedError
+        ...
 
 
-class RootPrivateAudioArtifactCatalog:
+class RootPrivateAudioArtifactCatalog(Protocol):
     """Root memory-only artifact catalog interface; paths never leave root."""
     def resolve_capture(self, selection_handle: object, session: RootAudioInputSession,
+                        artifact_id: str) -> RootAudioCaptureArtifact: ...
+    def current_capture(self, selection_handle: object, session: RootAudioInputSession,
+                           artifact: RootAudioCaptureArtifact) -> RootAudioCaptureArtifact: ...
+    def read_capture_bytes(self, selection_handle: object, session: RootAudioInputSession,
+                           artifact: RootAudioCaptureArtifact, *, maximum_bytes: int) -> bytearray: ...
+    def consume_capture(self, selection_handle: object,
+                        artifact: RootAudioCaptureArtifact) -> None: ...
+
+
+class RootInMemoryAudioArtifactCatalog(RootPrivateAudioArtifactCatalog):
+    """Concrete root-only sealed PCM catalog with bounded memory lifetime.
+
+    The trusted voice-session workflow supplies captured bytes after its own
+    current permission/device checks. This catalog owns the bytes thereafter;
+    no pathname, caller artifact ID, or raw PCM enters the plugin event.
+    """
+    _MEDIA_TYPE = "audio/pcm;format=s16le;rate=16000;channels=1"
+
+    def __init__(self, selection: AudioIngressSelection, selection_handle: object, *,
+                 owner_generation: str, monotonic: Callable[[], float] = time.monotonic,
+                 artifact_ttl_seconds: float = 60.0):
+        if (not isinstance(selection, AudioIngressSelection) or selection_handle is None
+                or not isinstance(owner_generation, str) or not owner_generation
+                or not 0 < artifact_ttl_seconds <= 60):
+            raise ValueError("selected audio artifact policy, generation and opaque selection are required")
+        self.selection, self.selection_handle = selection, selection_handle
+        self.owner_generation, self.monotonic = owner_generation, monotonic
+        self.artifact_ttl_seconds = artifact_ttl_seconds
+        self._lock = threading.RLock()
+        self._items: dict[str, tuple[RootAudioInputSession, RootAudioCaptureArtifact, bytearray]] = {}
+
+    def store_capture(self, selection_handle: object, session: RootAudioInputSession,
+                      pcm: bytearray, *, operation_id: str) -> RootAudioCaptureArtifact:
+        if (selection_handle is not self.selection_handle
+                or not isinstance(session, RootAudioInputSession)
+                or not isinstance(pcm, bytearray)
+                or not isinstance(operation_id, str) or not _HANDLE.fullmatch(operation_id)):
+            raise IngressServiceDenied("audio capture does not come from the selected root workflow")
+        now = self.monotonic()
+        size = len(pcm)
+        if (session.profile_id != self.selection.profile_id
+                or session.owner_generation != self.owner_generation
+                or session.device_enrollment_id != self.selection.device_enrollment_id
+                or not _HANDLE.fullmatch(session.session_handle)
+                or not _HANDLE.fullmatch(session.consent_receipt_handle)
+                or not now < session.expires_monotonic <= now + 60
+                or not 1 <= size <= min(self.selection.max_capture_bytes, 32 * 1024 * 1024)
+                or size % 32
+                or size // 32 > min(60000, self.selection.max_capture_seconds * 1000)):
+            raise IngressServiceDenied("audio bytes differ from selected current session or PCM bounds")
+        raw = bytearray(pcm)
+        artifact_id, receipt_handle, capture_handle = (secrets.token_urlsafe(24),
+                                                       secrets.token_urlsafe(32),
+                                                       secrets.token_urlsafe(32))
+        artifact = RootAudioCaptureArtifact(
+            artifact_id, hashlib.sha256(raw).hexdigest(), size, self._MEDIA_TYPE,
+            session.profile_id, session.owner_generation, operation_id, receipt_handle,
+            capture_handle, session.device_enrollment_id,
+            self.selection.capture_backend_artifact_id, self.selection.capture_backend_sha256,
+            self.selection.sample_format_schema_id,
+            min(now + self.artifact_ttl_seconds, session.expires_monotonic),
+        )
+        with self._lock:
+            self._prune_locked(now)
+            if len(self._items) >= 16:
+                raw[:] = b"\0" * len(raw)
+                raise IngressServiceDenied("selected in-memory audio artifact catalog is full")
+            self._items[artifact_id] = (session, artifact, raw)
+        pcm[:] = b"\0" * len(pcm)
+        return artifact
+
+    def resolve_capture(self, selection_handle: object, session: RootAudioInputSession,
                         artifact_id: str) -> RootAudioCaptureArtifact:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        with self._lock:
+            self._prune_locked(self.monotonic())
+            row = self._items.get(artifact_id)
+            if row is None or row[0] is not session:
+                raise IngressServiceDenied("audio artifact is absent or belongs to another selected session")
+            return row[1]
+
     def current_capture(self, selection_handle: object, session: RootAudioInputSession,
                         artifact: RootAudioCaptureArtifact) -> RootAudioCaptureArtifact:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        with self._lock:
+            self._prune_locked(self.monotonic())
+            row = self._items.get(artifact.artifact_id) if isinstance(artifact, RootAudioCaptureArtifact) else None
+            if row is None or row[0] is not session or row[1] is not artifact:
+                raise IngressServiceDenied("audio artifact is stale, consumed or reconstructed")
+            return row[1]
+
     def read_capture_bytes(self, selection_handle: object, session: RootAudioInputSession,
                            artifact: RootAudioCaptureArtifact, *, maximum_bytes: int) -> bytearray:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        if type(maximum_bytes) is not int or not 1 <= maximum_bytes <= self.selection.max_capture_bytes:
+            raise IngressServiceDenied("audio artifact read bound is invalid")
+        with self._lock:
+            current = self.current_capture(selection_handle, session, artifact)
+            data = self._items[current.artifact_id][2]
+            if len(data) > maximum_bytes or hashlib.sha256(data).hexdigest() != current.sha256:
+                raise IngressServiceDenied("audio artifact no longer matches its sealed digest or size")
+            return bytearray(data)
+
     def consume_capture(self, selection_handle: object,
                         artifact: RootAudioCaptureArtifact) -> None:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        with self._lock:
+            row = self._items.pop(artifact.artifact_id, None)
+            if row is None or row[1] is not artifact:
+                raise IngressServiceDenied("audio artifact is already consumed or reconstructed")
+            row[2][:] = b"\0" * len(row[2])
+
+    def _require_selection(self, selection_handle: object) -> None:
+        if selection_handle is not self.selection_handle:
+            raise IngressServiceDenied("audio artifact selection handle is not current")
+
+    def _prune_locked(self, now: float) -> None:
+        expired = [key for key, (_session, artifact, _data) in self._items.items()
+                   if artifact.expires_monotonic <= now]
+        for key in expired:
+            _session, _artifact, data = self._items.pop(key)
+            data[:] = b"\0" * len(data)
 
 
 class RootAudioCaptureReceiptResolver:

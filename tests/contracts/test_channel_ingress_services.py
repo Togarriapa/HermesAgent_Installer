@@ -16,7 +16,8 @@ import pytest
 from hermes_installer.authority.channel_ingress_services import (
     AuthoritySourceReceiptResolver, IngressServiceDenied,
     RootAudioCaptureReceiptResolver, RootAudioCaptureRequest, RootAudioCaptureArtifact,
-    RootAudioInputSession, RootIngressDisposition, RootLoopbackHttpIngressListener,
+    RootAudioInputSession, RootInMemoryAudioArtifactCatalog,
+    RootIngressDisposition, RootLoopbackHttpIngressListener,
 )
 from hermes_installer.authority.channel_provenance import AuthenticatedSubjectReceipt
 from hermes_installer.authority.source_observers import SourceReceiptHandle
@@ -423,3 +424,27 @@ def test_root_audio_resolver_binds_current_consent_device_artifact_and_parent_re
     resolver.consume_capture(selection_handle,proof)
     with pytest.raises(IngressServiceDenied,match="unknown, consumed"):
         resolver.current_selected_capture(selection_handle,proof)
+
+
+def test_root_audio_memory_catalog_seals_bounds_and_zeroes_pcm_without_paths():
+    selection = AudioIngressSelection("audio-selection", "audio-channel", 1, "profile-001",
+        "role-001", "issuer-001", "device-001", "capture-backend-001", "d"*64,
+        "session-policy-001", 32000, 60, "pcm16-mono-16000-v1")
+    selection_handle = object()
+    session = RootAudioInputSession("S"*43, "profile-001", "generation-001", "device-001",
+        "e"*64, "C"*43, time.monotonic()+30)
+    catalog = RootInMemoryAudioArtifactCatalog(selection, selection_handle,
+        owner_generation="generation-001")
+    pcm = bytearray(b"\x01\x00" * 16000)
+    artifact = catalog.store_capture(selection_handle, session, pcm, operation_id="O"*43)
+    assert not any(pcm)
+    assert artifact.size_bytes == 32000
+    assert artifact.sha256 == hashlib.sha256(b"\x01\x00" * 16000).hexdigest()
+    assert not hasattr(artifact, "path")
+    assert catalog.resolve_capture(selection_handle, session, artifact.artifact_id) is artifact
+    data = catalog.read_capture_bytes(selection_handle, session, artifact, maximum_bytes=32000)
+    assert bytes(data) == b"\x01\x00" * 16000
+    catalog.consume_capture(selection_handle, artifact)
+    assert not catalog._items
+    with pytest.raises(IngressServiceDenied, match="stale|consumed"):
+        catalog.read_capture_bytes(selection_handle, session, artifact, maximum_bytes=32000)
