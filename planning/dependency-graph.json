@@ -3652,5 +3652,16 @@
     },
     "owner": "luna_remote_receipt_pipeline with central runtime and native executor owners",
     "acceptance": "All AC OPEN"
+  },
+  "candidate_update_source_review_v241": {
+    "contract": "planning/candidate-update-source-review-v241.json",
+    "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+    "existing_task_dependencies": {
+      "VD-T235.3": [
+        "BD-T235.1",
+        "LC-T235.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

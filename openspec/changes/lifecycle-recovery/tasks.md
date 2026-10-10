@@ -104,3 +104,6 @@ First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-boot
 
 - [ ] LC-T235.2: Implement the v235 exact predecessor-bound candidate owned atomic pointer publication/conditional rollback/reexec and runtime update recovery; preserve all existing data/authority and exact pending prerequisites.
 - [ ] VD-T235.3 (v235): Verify genuine installed-predecessor candidate pipeline, pointer/controller/input drift, crash/rollback/preservation failures; target acceptance separate.
+
+
+- [ ] BD-T235.1 / LC-T235.2 / VD-T235.3 (v241): Apply only reviewed root_setup tuple literals after spec publication; run unexcluded narrow candidate checks and genuine full positive/current predecessor/failure/recovery evidence. Source review is separate from completion.

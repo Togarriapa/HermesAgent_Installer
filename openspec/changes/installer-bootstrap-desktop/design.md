@@ -316,3 +316,6 @@ v228 exact Jarvis/runtime source review: `plans/amendments/2026-10-10-jarvis-run
 
 See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.
 Predecessor-bound candidate update v235: planning/predecessor-bound-candidate-update-v235.json requires current verified old release admission before exact candidate staging, sealed samecontroller input joins, existing publisher present CAS, durable owned rollback and candidate reexec. Distribution and runtime generation acceptance remain separate. BD-T235.1/VD-T235.3 OPEN; all AC OPEN.
+
+
+v241 narrow candidate update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md` and `planning/candidate-update-source-review-v241.json`. Exact committed ae399 source fixes cold recovery, complete postCAS rollback and issued FD3 cleanup. Only existing root_setup tuple updates in both tables are approved; builder/publisher remain source-held metadata, no recipe/catalog changes. Genuine full positive/unexcluded/Pi evidence and BD-T235.1/LC-T235.2/VD-T235.3/all AC OPEN.

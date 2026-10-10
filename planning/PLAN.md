@@ -226,3 +226,6 @@ v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `plannin
 ## v239 Remote output/CAS/materialization producer
 
 `planning/preactive-remote-build-output-receipts-v239.json` adds the genuine terminal-to-CAS/attestation-to-materialization edge required by v202/v209/v225/v237. RT-T239.1/.2/.3/VD-T239.4 and all AC remain open. No unrelated FixedBuildProfile or active service identity is inferred.
+
+
+v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md`; existing BD-T235.1/LC-T235.2/VD-T235.3 OPEN. Exact root_setup two-table tuple edit only; builder/publisher metadata, no native/catalog alias changes; full positive/unexcluded/Pi evidence pending and all AC OPEN.

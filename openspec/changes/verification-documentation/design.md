@@ -201,3 +201,6 @@ See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active
 See `planning/preactive-remote-build-output-receipts-v239.json`: executor-owned terminal membership precedes exact adapter observation, immutable CAS/attestation and root-held data-root materialization. Only genuine typed proofs mint v209/v202 runtime receipts; v225 owns publication/restart adoption. Existing scopes/deadlines and all AC remain open.
 
 The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.
+
+
+v241 narrow candidate update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md` and `planning/candidate-update-source-review-v241.json`. Exact committed ae399 source fixes cold recovery, complete postCAS rollback and issued FD3 cleanup. Only existing root_setup tuple updates in both tables are approved; builder/publisher remain source-held metadata, no recipe/catalog changes. Genuine full positive/unexcluded/Pi evidence and BD-T235.1/LC-T235.2/VD-T235.3/all AC OPEN.

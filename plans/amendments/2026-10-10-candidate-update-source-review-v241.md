@@ -1,0 +1,9 @@
+# Candidate update source review v241
+
+Original lifecycle/preservation requirements R0029/R0055/R0148/R0151/R0153/R0172/R0190 and existing BD-T235.1/LC-T235.2/VD-T235.3 govern this source review. The normative exact source/member/pin and evidence mapping is `planning/candidate-update-source-review-v241.json`. Reviewed committed source `ae39993068be32f22629dd529c1d36e86584d59f`, tree `fa0e16d8f96769a5d80296344cf505a5ca773635`, is integrated unchanged in narrow candidate5e882475.
+
+The corrected source binds genuine predecessor/current TTY/source/interpreter/actor/build admission, sealed FD3 entry, present pointer CAS, conditional rollback and fresh samecandidate/sameprior durable recovery. Full postpublication launcher verification and postrename fsync now run inside conditional rollback; rollback can restore fully verified old closure despite failing candidate bytes and never overwrites a foreign pointer. Fresh adoption issues distinct current one-use evidence without recreating old FD/seals or extending expiry.
+
+Only root_setup requires static tuple SHA/size replacement in both existing release tables. Builder/publisher source bytes are reviewed candidate-held metadata, without self-pin. Direct source/catalog/recipe audit found no aliases needing changes. Luna applies the two literal edits only after root publication, then root runs the unexcluded narrow suite and actual target evidence.
+
+Independent host contracts45 passed; reported ARM64 focused82 passed/2 skipped excluded the known pin test. The actual replacement/rollback fixture still mocks authority proof and cannot establish full positive update custody. Genuine complete fixed-path update/Pi evidence and all tasks/AC01..18 remain OPEN. Frozen baseline and prior amendments are unchanged; no runtime code or remote refs are altered here.

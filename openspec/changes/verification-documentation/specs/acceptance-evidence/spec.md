@@ -1280,3 +1280,21 @@ The installer SHALL derive the v202 aggregate remote identity and prepared netwo
 #### Scenario: Caller strings are not enrollment proof
 - **WHEN** hostname, supplied IDs or incomplete role/policy evidence replaces the root reservation
 - **THEN** aggregate issuance SHALL deny without creating a runnable network or active identity
+
+
+## ADDED Requirements
+
+### Requirement: Exact reviewed update source application
+The installer SHALL apply only the finite source pin mapping in `planning/candidate-update-source-review-v241.json` while retaining v235 admission, preservation, one-use transition and rollback authority.
+
+#### Scenario: Pointer replace succeeds before fsync reports failure
+- **WHEN** the update publication fails after its exact owned pointer CAS
+- **THEN** the transaction conditionally restores the independently verified predecessor and preserves any newer foreign pointer
+
+#### Scenario: Cold recovery adopts an expired original intent
+- **WHEN** a unique durable transaction matches actual current candidate and retained prior closure
+- **THEN** only fresh samecandidate/sameprior TTY authority may issue a distinct current one-use installed entry, without restoring the old seal or changing its deadline
+
+#### Scenario: Partial replacement fixture passes
+- **WHEN** mocked authority with actual filesystem replacement and rollback succeeds
+- **THEN** evidence remains partial and does not claim genuine complete update or Pi acceptance

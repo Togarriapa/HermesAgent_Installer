@@ -239,3 +239,6 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T239.4: Verify terminal forgery, source/schema/root races, expiry, cross-role and owned rollback failures plus actual pipeline effect; target acceptance separate.
 
 - [ ] RT-T239.3: Issue same-transaction remote enrollment reservation and current source/NSS-derived private-network policy selection; wire exact v202 aggregate and separate v225 kernel lease.
+
+
+- [ ] BD-T235.1 / LC-T235.2 / VD-T235.3 (v241): Apply only reviewed root_setup tuple literals after spec publication; run unexcluded narrow candidate checks and genuine full positive/current predecessor/failure/recovery evidence. Source review is separate from completion.
