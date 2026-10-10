@@ -131,22 +131,22 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         expected = {
             "installer-module:hermes_installer.components.native_plugins": (
                 "lib/python/hermes_installer/components/native_plugins.py",
-                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
             "installer-module:hermes_installer.components.public_registries": (
                 "lib/python/hermes_installer/components/public_registries.py",
-                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
             "installer-native-invocations-module-v137": (
                 "src/hermes_installer/native_invocations.py",
-                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
             "installer-native-boundary-module-v137": (
                 "src/hermes_installer/native_boundary.py",
-                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
+                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
             "installer-native-source-definitions-module-v137": (
-                "src/hermes_installer/authority/native_source_definitions.py",
-                "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7", 10_063),
+                "lib/python/hermes_installer/authority/native_source_definitions.py",
+                "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c", 10_311, "module"),
         }
-        self.assertEqual({artifact_id: (path, digest, size)
-                          for artifact_id, path, digest, size in REVIEWED_SOURCE_MODULES}, expected)
+        self.assertEqual({artifact_id: (path, digest, size, role)
+                          for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
         rows = [
             VerifiedReleaseFile("installer-root-setup-launcher-v1", ("launcher",), LAUNCHER_PATH,
                                 "1" * 64, 1, 1, 1, 0o555),
@@ -159,8 +159,8 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         ]
         rows.extend(VerifiedReleaseFile(artifact_id, ("template",), path, digest, size, 1, 10 + i, 0o444)
                     for i, (artifact_id, path, digest, size) in enumerate(FIXED_TEMPLATES))
-        rows.extend(VerifiedReleaseFile(artifact_id, ("module",), path, digest, size, 1, 100 + i, 0o444)
-                    for i, (artifact_id, path, digest, size) in enumerate(REVIEWED_SOURCE_MODULES))
+        rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 100 + i, 0o444)
+                    for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_MODULES))
         rows.extend((
             VerifiedReleaseFile("baseline-file", ("baseline",), "plans/2026-10-09-v1/file.json",
                                 "5" * 64, 1, 1, 200, 0o444),
@@ -175,10 +175,24 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                                          "0" * 64, row.size_bytes, row.device, row.inode, row.mode)
         with self.assertRaises(InstallerReleaseError):
             _fixed_roles(bad, "closure.json")
+        worker = next(i for i, row in enumerate(rows)
+                      if row.artifact_id == "installer-native-invocations-module-v137")
+        bad_role = list(rows)
+        row = bad_role[worker]
+        bad_role[worker] = VerifiedReleaseFile(row.artifact_id, ("module",), row.relative_path,
+                                               row.sha256, row.size_bytes, row.device, row.inode, row.mode)
+        with self.assertRaises(InstallerReleaseError):
+            _fixed_roles(bad_role, "closure.json")
 
     def test_glm_source_artifact_ids_bind_exact_baseline_and_amendment_members(self):
         repo = Path(__file__).parents[2]
         expected = {
+            "installer-application-toolchain-source-policy-v144": (
+                "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",
+                "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6", 7_060, "amendment"),
+            "installer-application-pep517-backend-sources-v1": (
+                "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
+                "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623", 15_907, "amendment"),
             "glm52-artifact-metadata-v1": (
                 "planning/glm52-artifact-metadata.json",
                 "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56_232, "baseline"),

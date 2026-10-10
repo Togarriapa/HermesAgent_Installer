@@ -409,7 +409,7 @@ class ArtifactBrokerContracts(unittest.TestCase):
             "installer-native-boundary-module-v137": (
                 "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
             "installer-native-source-definitions-module-v137": (
-                "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7", 10_063),
+                "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c", 10_311),
         }
         for artifact_id, (digest, size) in expected_modules.items():
             spec = catalog.artifacts[artifact_id]
