@@ -358,9 +358,9 @@ def run_root_setup_action(
     Selection handles are accepted only as opaque root-issued references.
     Their resolution remains inside the installed registries. Lifecycle
     recovery and update are kept pending until their durable rehydration and
-    generation-CAS consumers are available; installation drives the current
-    source/runtime and native materialization stages before reporting the
-    still-unconnected active-health boundary.
+    generation-CAS consumers are available; installation drives current
+    source/runtime and native materialization before requiring distinct
+    allowlisted runtime-role receipts for strict active enrollment.
     """
     try:
         selected_action = RootSetupAction(action)
@@ -446,6 +446,8 @@ def run_root_setup_action(
             if selected_action is not RootSetupAction.INSTALL:
                 return _result(selected_action, RootSetupState.PENDING, "admission",
                                "No installed root selection exists; run install to begin fresh setup.")
+            from .authority.installer_release_build import ensure_initial_setup_fixed_prefixes
+            ensure_initial_setup_fixed_prefixes()
             initial_aggregate = RootInitialSetupAggregate(release, actor)
             release = actor = None  # type: ignore[assignment]
             account = _read_target_account_name()

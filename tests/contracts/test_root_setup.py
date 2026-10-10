@@ -225,6 +225,43 @@ class RootSetupBoundaryTests(unittest.TestCase):
         bootstrap.assert_not_called()
         self.assertEqual(result.state, RootSetupState.PENDING)
 
+    def test_first_install_ensures_fixed_prefixes_before_credential_vault_composition(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
+
+        class Held:
+            def close(self):
+                pass
+
+            def verify_current(self, *_args):
+                pass
+
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "held-release",
+            "verify_current": lambda self: None,
+        })()
+        actor = Held()
+        release = Held()
+
+        def compose_initial(*_args, **_kwargs):
+            self.assertTrue(ensure_prefixes.called)
+            raise BootstrapEnrollmentPending("composition fixture stop")
+
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                   return_value=Held()), \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   return_value=(release, actor)), \
+             patch.object(root_setup.Path, "lstat", side_effect=FileNotFoundError), \
+             patch("hermes_installer.authority.installer_release_build.ensure_initial_setup_fixed_prefixes") as ensure_prefixes, \
+             patch("hermes_installer.authority.bootstrap_runtime_factory.RootInitialSetupAggregate",
+                   side_effect=compose_initial):
+            result = run_root_setup_action(RootSetupAction.INSTALL)
+        ensure_prefixes.assert_called_once_with()
+        self.assertEqual(result.state, RootSetupState.PENDING)
+        self.assertEqual(result.phase, "runtime")
+
     def test_unverifiable_present_predecessor_fails_without_bootstrap_or_actor_fallback(self) -> None:
         from hermes_installer.authority.installer_release_build import InstallerReleaseBuildError
 
