@@ -45,6 +45,7 @@ from .bootstrap_enrollment import (
     VerifiedArtifactReceipt,
     VerifiedRootSetupAuthorization,
     VerifiedRootSetupPlan,
+    _validate_authority_base,
     _atomic_root_file,
     _canonical,
     _create_service_root,
