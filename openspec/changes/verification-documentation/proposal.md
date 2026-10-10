@@ -104,3 +104,8 @@ Exact closed source/member/catalog/preload application under existing VD-T180.6/
 ## Safe bootstrap diagnostics v196
 
 Exact finite output redaction, reviewed two-member source update and ownership/evidence: `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md` / `planning/safe-bootstrap-diagnostics-source-review-v196.json`. Guards/phases and all acceptance remain unchanged; actual source-CAS failure diagnosis is independent of still-open display/task runtime custody.
+
+
+## Installed startup and qualification custody v197
+
+Actual daemon/setup process separation requires a closed source-issued startup intent and concrete tagged admission; installed qualification must construct its own real fixture source/publication/session/runtime graph. Exact finite contract/order/failures: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md` / `planning/installed-startup-qualification-custody-v197.json`. No private store copy, production relabel or BPF relaxation; all original AC and future source pins OPEN.
