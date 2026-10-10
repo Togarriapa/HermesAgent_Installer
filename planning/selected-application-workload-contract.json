@@ -377,5 +377,593 @@
     },
     "implementation_owners": "Factory typed choice/source selection/consent journal; application_source_preparation actual rootsource/lock producer; application_execution selected phase admission/runtime/managedprobe; applicationworkload router; activecompiler actualreceiptactivation. No source manifest/runtime review substitutes successful probe/result receipts.",
     "status": "All actualsource/runtime/functional app and all18ACopen, no fabricated native mappings. Baseline unchanged."
+  },
+  "preactive_qualification_runtime_v130": {
+    "schema": 1,
+    "id": "preactive-qualification-runtime-proof-v1",
+    "requirements": [
+      "SK-F03",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "v107 active selected runtime prerequisite persists in actual request/admission despite v117 preactive source choice; RuntimeReview is not environment proof and existing probe is Python-only while Hyperframes is Node.",
+    "request_type": "hermes_installer.authority.application_workload_execution.RootPreparedApplicationQualificationRequest",
+    "request_fields": [
+      "schema",
+      "request_handle",
+      "request_id",
+      "purpose",
+      "workflow_id",
+      "application_id",
+      "adapter_id",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "qualification_choice_handle",
+      "qualification_consent_receipt_handle",
+      "source_preparation_selection_handle",
+      "prepared_source_receipt_handle",
+      "selected_lock_receipt_handle",
+      "runtime_preparation_selection_handle",
+      "runtime_preparation_receipt_handle",
+      "runtime_probe_receipt_handle",
+      "namespace_selection_receipt_handle",
+      "principal_selection_receipt_handle",
+      "controller_binding_handle",
+      "source_receipt_handles",
+      "source_context_digest",
+      "source_generation_manifest_sha256",
+      "lock_sha256",
+      "runtime_manifest_sha256",
+      "canonical_workload_sha256",
+      "argument_schema_id",
+      "fixture_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "request_rule": "Purpose installer-owned-qualification only; exact finite v107 four workflow/application/fixture mapping and actual source/lock/preparation/probe/TTY same-choice v117 consent/controller/namespace closure. No selected_runtime_row_sha256/enclosing active generation/RootSelectedApplicationRuntime/active RootApplicationRuntimeReceipt prerequisite in this type. Retain operational RootApplicationQualificationRequest and application.dispatch active checks separately. Nullable principal only if exact selected preparation purpose explicitly permits isolated root-installer-owned local fixture with no product/account/data/provider effect; never fabricate principal ID or relax operational principal requirement.",
+    "request_API": "RootApplicationWorkloadAuthority.observe_selected_qualification_request(root_setup_session_handle,workflow_id)->RootPreparedApplicationQualificationRequest for prepared setup; root context producer resolves actual completed preparation/probe/fixture receipts. resolve_selected_qualification_request returns exact retained current type; request still root-only/no CLI argument JSON authority.",
+    "admission_type": "RootPreparedApplicationQualificationAdmission",
+    "admission": "admit_prepared_qualification(request_handle)->RootPreparedApplicationQualificationAdmission; exact request/choice/consent/source/lock/runtime preparation/probe/controller/namespace membership/currentness/canonical workload. One-use root admission retains actual prepared selected fixed process recipe/subject and environment closure. It may run only fixed owned qualification fixture through existing application managed substrate under root setup authority, never synthesize active row. Fresh process grant keeps actual root controller PIDFD separate selected launch subject; cleanup/current terminal/result receipt mandatory.",
+    "operational": "application.dispatch and active qualification keep exact current selected_application_runtimes row/source/runtime/account/private consent/active digest checks. Prepared admission cannot be passed as operational admission or used for arbitrary app args/network/account/native actions. Activation consumes actual preparation/probe/qualification receipts and only then publishes active row. No native mapping for four fixtures.",
+    "environment_producer": {
+      "owner_module": "hermes_installer.authority.application_runtime_preparation",
+      "type": "RootApplicationRuntimePreparationReceipt",
+      "API": "RootApplicationRuntimePreparationRegistry.from_root_setup(selected_installation_binding,source_preparation_registry,artifact_observer,managed_process_custody,root_journal,authority_service).prepare_selected_runtime(runtime_preparation_selection_handle)->RootApplicationRuntimePreparationReceipt; resolve_application_runtime_preparation_receipt(handle)->same current retained proof. Root factory mints selection from actual source/lock choice and fixed reviewed component adapter, not active row or caller executable/path.",
+      "fields": [
+        "receipt_handle",
+        "runtime_preparation_selection_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "application_id",
+        "runtime_kind",
+        "source_receipt_handle",
+        "lock_receipt_handle",
+        "lock_sha256",
+        "toolchain_artifact_receipt_handles",
+        "runtime_root_receipt_handle",
+        "runtime_manifest_sha256",
+        "executable_artifact_id",
+        "executable_sha256",
+        "executable_device",
+        "executable_inode",
+        "executable_uid",
+        "executable_gid",
+        "executable_mode",
+        "dependency_manifest_sha256",
+        "build_terminal_receipt_handle",
+        "probe_artifact_receipt_handle",
+        "controller_binding_handle",
+        "namespace_selection_receipt_handle",
+        "qualification_consent_receipt_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "source": "Actual isolated environment produced from exact pinned v117 source manifest/lock and source-reviewed fixed component adapter recipe, selected immutable toolchain/runtime artifact receipts, exact hash-verified dependency artifacts and root owned held environment tree. No global downgrade/unpinned install/latest/lazy model/ambient venv. Fixed managed build/prepare operation terminal/source/runtime closure required; RuntimeReview and unexecuted lock scan insufficient. No install scripts enabled merely because package metadata lists them; selected source-reviewed recipe authorizes only verified finite commands and bounded zero-budget acquisition.",
+      "runtime_kinds": {
+        "graphify": "python",
+        "browser-use": "python",
+        "scrapegraph-ai": "python",
+        "hyperframes": "node"
+      },
+      "toolchains": "Python uses separately isolated component env on actual official PM Python3.14 receipt unless exact source requirement conflicts and selected verified component toolchain exists. Hyperframes uses actual source-required selected Node/Bun toolchain and bun.lock; never Python probe/runtime or guessed Node/Bun version/hash. Root receipt IDs/source recipe pins come from held actual catalog/release/PM toolchain observers. If Node/Bun locked builder/source recipe is not reviewed or installed, preserve explicit missing prerequisite; no fake runtime."
+    },
+    "probe": {
+      "type": "RootApplicationRuntimeProbeReceipt remains canonical application_workload_execution type; add runtime_kind and observed_abi discriminated object, preserving source/lock/environment/actual terminal/controller lineage.",
+      "producer": "Existing root selected probe runner gets exact preparation receipt/environment/executable, invokes fixed reviewed installed release probe module/artifact under same managed subject; actual probe artifact source receipt/hash/import closure is required before run. Runtime preparation owner implements pinned probe source and release role application-runtime-probe; builder includes actual module pin, no invented preknown hash. No caller script/argv/interpreter path.",
+      "python_fields": [
+        "version_info",
+        "implementation",
+        "cache_tag",
+        "SOABI",
+        "machine",
+        "resolved_executable_sha256",
+        "environment_manifest_sha256",
+        "import_origin_manifest_sha256"
+      ],
+      "node_fields": [
+        "node_version",
+        "v8_version",
+        "modules_abi",
+        "platform",
+        "arch",
+        "resolved_executable_sha256",
+        "environment_manifest_sha256",
+        "module_origin_manifest_sha256"
+      ],
+      "validation": "Exact executable/toolchain bytes/identity/runtime kind/environment dependency manifest and isolated actual module origins match source-reviewed adapter/lock recipe. Python user-site/sys.path and Node NODE_PATH/preload/global package escape denied. Hyperframes Node/Bun build toolchain proof distinct from Node runtime probe. Node does not fill fake Python fields. ABI probe demonstrates environment identity/imports only, not browser/render/graph/scrape functionality."
+    },
+    "tasks": [
+      "SK-T130.1: application execution owner implement prepared request/admission path from actual completed preparation/probe/choice/source/lock/fixture, preserve operational active checks.",
+      "SK-T130.2: runtime preparation owner implement actual isolated source-backed environment producer and fixed installed Python/Node discriminated probe source/receipt; report unavailable toolchain or recipe exactly rather than RuntimeReview substitution.",
+      "SK-T130.3: factory/source/probe/custody owner wire genuine held runtime/toolchain/root/controller/namespace receipts before request mint; test missing runtime/probe, active-row fabrication, Python-for-Node, stale consent/controller/environment/fixture and arbitrary dispatch denial. All four real workflows/ARM/AC12 open."
+    ]
+  },
+  "application_offline_runtime_build_v132": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "v115 setup build service permits only Xpra; v130 environment producer needs four finite source-derived runtime build targets and actual offline package closure, without active-before-build cycle. Source/lock review is not installed environment or platform proof.",
+    "profiles": [
+      {
+        "application_id": "graphify",
+        "source_identity": "Graphify-Labs/graphify",
+        "source_revision": "5b74d7d74911cf435c8f1636b6f96ea202cc6246",
+        "runtime_kind": "python",
+        "source_runtime_constraint": ">=3.10",
+        "build_profile_id": "application-graphify-runtime-prepare-v1",
+        "operation_id": "application-graphify-runtime-prepare-v1",
+        "target_id": "application-graphify-runtime-prepare:start"
+      },
+      {
+        "application_id": "browser-use",
+        "source_identity": "browser-use/browser-use",
+        "source_revision": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+        "runtime_kind": "python",
+        "source_runtime_constraint": ">=3.11,<4",
+        "build_profile_id": "application-browser-use-runtime-prepare-v1",
+        "operation_id": "application-browser-use-runtime-prepare-v1",
+        "target_id": "application-browser-use-runtime-prepare:start"
+      },
+      {
+        "application_id": "hyperframes",
+        "source_identity": "heygen-com/hyperframes",
+        "source_revision": "46f6cb356785bed79e1ce7b79d7e7accc697786a",
+        "runtime_kind": "node",
+        "source_runtime_constraint": "Node>=22; actual Bun workspace builder separately pinned",
+        "build_profile_id": "application-hyperframes-runtime-prepare-v1",
+        "operation_id": "application-hyperframes-runtime-prepare-v1",
+        "target_id": "application-hyperframes-runtime-prepare:start"
+      },
+      {
+        "application_id": "scrapegraph-ai",
+        "source_identity": "ScrapeGraphAI/Scrapegraph-ai",
+        "source_revision": "194055e203afce41ed4e70365dbc416bad756115",
+        "runtime_kind": "python",
+        "source_runtime_constraint": ">=3.12,<4",
+        "build_profile_id": "application-scrapegraph-ai-runtime-prepare-v1",
+        "operation_id": "application-scrapegraph-ai-runtime-prepare-v1",
+        "target_id": "application-scrapegraph-ai-runtime-prepare:start"
+      }
+    ],
+    "template": {
+      "artifact_id": "installer-prepared-application-build-service-template-v1",
+      "relative_path": "plans/amendments/2026-10-10-application-offline-runtime-build-v132/prepared-application-build-service-template-v1.json",
+      "sha256": "8cc3bbce52901c5f05bab99622d77d9d4d44f4a5fe27eb636e3fe8e23beab0d9",
+      "size_bytes": 1498,
+      "release_role": "prepared-build-service-template"
+    },
+    "service_selection": "Reuse v115 RootPreparedBuildServiceSelection and same actual dedicated NSS/root/controller mechanism. RootSelectedInstallationBinding.resolve_prepared_build_service(build_profile_id) additionally accepts only the four exact v132 profile IDs, resolves this separate held installed template, and binds exact target/operation/source/lock/package/runtime selection. Prepared worker/service arrays remain empty; no fake active HostServiceProfile or worker peer identity. Issuer signs selected build subject separately actual root controller PIDFD and consumes one-use selected setup build grant. Xpra v115 template/limits unchanged.",
+    "selection_type": "hermes_installer.authority.bootstrap_runtime_factory.RootApplicationRuntimePreparationSelection",
+    "selection_API": "RootSelectedInstallationBinding.resolve_application_runtime_preparation(qualification_choice_handle,application_id)->RootApplicationRuntimePreparationSelection; registry retains selection_handle. No caller recipe/paths/hash rows.",
+    "selection_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "qualification_choice_handle",
+      "qualification_consent_receipt_handle",
+      "application_id",
+      "workflow_id",
+      "runtime_kind",
+      "source_preparation_selection_handle",
+      "prepared_source_receipt_handle",
+      "selected_lock_receipt_handle",
+      "source_generation_manifest_sha256",
+      "lock_sha256",
+      "source_runtime_constraint",
+      "build_profile_id",
+      "operation_id",
+      "target_id",
+      "prepared_build_service_selection_handle",
+      "runtime_toolchain_receipt_handles",
+      "package_closure_receipt_handle",
+      "build_recipe_sha256",
+      "output_root_receipt_handle",
+      "probe_artifact_receipt_handle",
+      "namespace_selection_receipt_handle",
+      "principal_selection_receipt_handle",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selection_rule": "Factory produces only from current actual v117 source/lock choice+receipts, selected runtime/package closure, this exact source table/template, actual root output selection and installed reviewed probe source. Root build recipe digest covers tagged literals/build mount paths, sandbox/bounds, source/lock/package/toolchain pins and output spec. Missing input has explicit preparation unavailable state; do not fabricate receipt or use active app row. Root retains current opaque selection for package preparation before final build selection can resolve; package receipt issued first, complete runtime selection after actual membership.",
+    "package_closure": {
+      "owner_module": "hermes_installer.authority.application_runtime_preparation",
+      "type": "RootApplicationOfflinePackageClosureReceipt",
+      "API": "RootApplicationOfflinePackageClosureRegistry.from_root_setup(selected_installation_binding,source_preparation_registry,artifact_observer,root_journal,authority_service).prepare_selected_packages(source_preparation_selection_handle)->RootApplicationOfflinePackageClosureReceipt; resolve_selected_packages(receipt_handle,source_preparation_selection_handle)->same current held closure. Builder owner implements alongside runtime preparation; no unowned Coral package_sets dependency.",
+      "fields": [
+        "receipt_handle",
+        "source_preparation_selection_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "prepared_generation_digest",
+        "application_id",
+        "source_receipt_handle",
+        "lock_receipt_handle",
+        "lock_sha256",
+        "platform",
+        "runtime_toolchain_receipt_handles",
+        "package_records",
+        "package_closure_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "package_record_fields": [
+        "package_name",
+        "package_version",
+        "lock_member_id",
+        "lock_integrity_algorithm",
+        "lock_integrity_digest",
+        "artifact_receipt_handle",
+        "artifact_sha256",
+        "size_bytes",
+        "artifact_kind",
+        "platform_tags",
+        "license_receipt_handle"
+      ],
+      "rule": "Exact platform-selected immutable source lock entries and complete transitive/build dependency closure. Every selected file has genuine root held artifact bytes with lock SHA256 or SHA512 integrity, independent actual SHA256/size, current source/lock/toolchain/platform/license membership. Public immutable acquisition only from reviewed lock-bound official package artifact origin policy and existing bounded TLS/integrity broker; no caller URL, credentials, range/latest resolver, unverified shared cache, extra package or native auto-download. Wheel/PEP517 build inputs or Bun package/native lifecycle script closure must be explicitly source reviewed and fully present before network-denied unit starts; unsupported/missing integrity/origin/license/script artifact leaves exact package unavailable. Cache layout is only deterministic transport for this receipt, never proof itself. No model/browser/FFmpeg fetch implied. Fixed aggregate artifact/expanded bounds no greater v132 template."
+    },
+    "recipes": {
+      "python": "Held official PM Python3.14 and PM uv executable receipts, separately isolated selected output environment; tagged fixed uv sync --locked --offline --no-dev, fixed source mount/project and root-owned UV_PROJECT_ENVIRONMENT/output/cache/work selection. Preserve full pinned workspace manifests and lock bytes unchanged. No inherited user config/environment, keyring or network. Runtime probes recheck actual executable ABI/import-origin/dependency tree and source compatibility. Build hooks only from exact reviewed project/backend/build-dependency closure in private network-denied unit. No automatic extras/all or lock rewrite.",
+      "browser_use_uv": "Source owner measured Browser Use provenance uv0.12.23 versus official PM uv0.12.3. Do not alias versions or claim match; exact selected toolchain compatibility must be separately reviewed and exercised or affected build unavailable. No latest/global replacement.",
+      "hyperframes": "Distinct held exact Bun builder and Node runtime receipts, fixed bun install --frozen-lockfile --offline against complete verified package cache/workspace; no prefer-offline fallback. No lifecycle scripts unless exact pinned source/native script+dependency closure reviewed. Probe actual Bun build provenance separately Node/V8/modules ABI/module origins. sharp/onnxruntime/Puppeteer/ffmpeg native support and Chromium/FFmpeg require separate actual selected artifacts and functional proofs; Node version alone insufficient. Unknown Bun/Node artifact hashes stay missing, never invented."
+    },
+    "outputs": "One selected non-executable environment archive plus bounded manifest/probe records avoids legacy generic BuildOutput 512-file tree scanner. Use deterministic archive over verified environment member manifest; bounded<=2GiB archived AND expanded, <=131072 members, canonical paths/modes, no special files/hardlink/escape. Actual environment interpreter alias resolves only separately held selected runtime artifact; no arbitrary external symlink. Root safe extraction reopens owned tree, observes member hashes/modes/executable+dependency origins and issues v130 preparation receipt after actual completed build terminal+cleanup. Archive digest measured, never preknown/fabricated. Preserve original source/lock/recipe digest and actual toolchain receipt joins.",
+    "limits": "v132 ceilings are reviewed resource/security policy, NOT measured sufficiency/performance or ARM64 proof: 2GiB memory/output/expanded environment,128 tasks,600s,1MiB bounded stdout/result. Exceeding cap fails closed with exact phase; no silent global ceiling loosening. Each app actual CI measurements/ABI/native fixture remain required. Xpra bounds unchanged.",
+    "primary_sources": [
+      "https://docs.astral.sh/uv/reference/cli/",
+      "https://docs.astral.sh/uv/concepts/projects/sync/",
+      "https://docs.astral.sh/uv/configuration/environment/",
+      "https://bun.com/docs/pm/cli/install"
+    ],
+    "evidence": "Build owner inspected exact four source revisions/manifest+lock requirements; source/lock receipts dynamic actual immutable file hashes. No dependency artifact bundle, Bun/Node pins, environment size/duration measurement or ARM64 environment/probe yet established.",
+    "tasks": [
+      "SK-T132.1 factory: sealed finite runtime preparation/build subject selection and exact template release pin",
+      "SK-T132.2 build owner: lock-selected genuine offline package closure and finite managed Python/Bun environment build/archive/preparation receipt; preserve missing integrity/toolchain blockers",
+      "SK-T132.3 build/execution owners: installed independent Python/Node ABI/origin probes, genuine preparation/probe qualification joins, bound/failure/source mismatch tests and actual isolated platform CI; no active row prerequisite"
+    ],
+    "status": "All original scope/AC remain open; no baseline change, privileged Mac install, huge model download, spending or unowned service replacement."
+  },
+  "setup_selector_private_profile_v133": {
+    "schema": 1,
+    "requirements": [
+      "HI-T03",
+      "SK-F02",
+      "SK-T01",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "Actual setup choice exact-compares ephemeral principal/namespace receipt IDs after long source/runtime phases. v124 also asks a distinct private profile selection without an issuer. v91 already supplies exact owner-private native profile/namespace source; create a genuine purpose selection from it, not Resources or namespace alias.",
+    "identity_owner": "hermes_installer.authority.setup_principal.RootSetupPrincipalSelectionRegistry",
+    "principal_selector_type": "RootSetupPrincipalSelector",
+    "principal_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "principal_id",
+      "authentik_subject_id",
+      "username",
+      "email",
+      "authentik_policy_selection_handle",
+      "policy_selection_sha256",
+      "policy_revision",
+      "direct_group_ids",
+      "effective_group_ids",
+      "system_member",
+      "service_profile_id",
+      "reviewed_capability_map_sha256",
+      "selected_capability_ceiling",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "namespace_selector_type": "RootSetupNamespaceSelector",
+    "namespace_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_handle",
+      "principal_binding_sha256",
+      "target_profile_id",
+      "namespace_id",
+      "namespace_policy",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "selector_API": [
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_principal_selector(normal_session_store,normal_session_handle)->RootSetupPrincipalSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_namespace_selector(normal_session_store,normal_session_handle)->RootSetupNamespaceSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_current_setup_identity(principal_selection_handle,namespace_selection_handle,normal_session_handle)->RootCurrentSetupIdentitySnapshot"
+    ],
+    "snapshot_type": "RootCurrentSetupIdentitySnapshot",
+    "snapshot_fields": [
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_binding_sha256",
+      "namespace_binding_sha256",
+      "principal",
+      "namespace",
+      "identity_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selector_semantics": "Selectors are root-retained immutable setup intent, bound actual adopted current subject and v30 fixed service profile/v91 private namespace source through current normal session deadline only. They confer no authority, no proof that Authentik is currently valid, no System/action permission or persistent receipt lease. Actual policy/vault references remain root-only. Every phase resolves current actual TLS Authentik identity against held selected policy and same subject/email/groups/System/policy/profile/namespace/capability ceiling; change/revocation/unknown response denies rather than auto-widens or silently adopts another subject. Current setup/controller/plan/prepared predecessor must match. New boot/session requires explicit verified adoption linkage/current actor, not saved monotonic lease revival.",
+    "fresh_semantics": "principal and namespace are existing VerifiedRootSetupPrincipalSelection and VerifiedRootNamespaceSelection CURRENT authority snapshots, each <=30s and <=all actual evidence/session deadlines; namespace.principal_selection_receipt_id equals same returned pair principal.receipt_id. Expired snapshots are never extended/reused as authority. Re-observe actual identity before each authorization/phase resolution, issue a new fresh pair or retain a still-current same-evidence pair only within original lease. Returning pair atomically prevents convenience getters independently minting inconsistent IDs. Stable selector binding hashes/IDs remain unchanged. Root snapshot binds real newly observed identity receipt and current selected effect source; no ambient permission.",
+    "consumer_correction": "RootBootstrapSession exposes resolve_adopted_principal_selector/resolve_adopted_namespace_selector and resolve_current_setup_identity() root-only. Root TTY application/memory/model/profile choices and their source/runtime selections add principal_selection_handle and namespace_selection_handle, comparing stable registry membership+binding digest. Existing *_selection_receipt_handle fields refer only actual snapshot evidence for the current phase; initial choice may retain them as historical evidence but never exact-equal a newly refreshed receipt ID or treat history current. Source receipt/probe/admission phases resolve fresh pair using stable selectors before effects/minting and maintain currentness during live effect leases. This is explicit v117/v124/v127/v130 field refinement, not a blanket validator bypass.",
+    "activation": "Prepared capability ceiling remains v91 empty. Active effect selection requires separate verified active publication/current rules and fresh active principal binding, never upgrading a prepared selector into worker effect authority. Purpose intent can project only exact same subject/profile/namespace through verified publication handoff with independent actual selected source/operation/account/consent checks.",
+    "private_profile": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "registry": "RootPrivateProfileSelectionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_journal)",
+      "choice_type": "RootPrivateProfileSelection",
+      "choice_API": "RootBootstrapSession.observe_private_profile_selection(purpose)->RootPrivateProfileSelection; internal root TTY configuration transaction only. Allowed purposes memory-service-enablement and existing-model-selection. May be recorded in SAME explicit v124 enablement or v127 existing-model choice, no additional repeated approval prompt. No caller profile/namespace/receipt/boolean authority.",
+      "choice_fields": [
+        "selection_handle",
+        "choice_observation_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_binding_sha256",
+        "namespace_binding_sha256",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "purpose",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "source_template_receipt_handles",
+        "reviewed_capability_map_sha256",
+        "controller_binding_handle",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic",
+        "revocation_epoch"
+      ],
+      "source": "Resolve actual adopted principal/service_profile_id hermes-agent-native-v1 and independent namespace through current pair/stable selectors, verified installed v30 installer-bootstrap-compiler-template-v1 and v91 installer-reviewed-native-capability-map-v1 (SHA41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565). Namespace policy exactly per-selected-principal-native-profile-v1 and namespace ID v91 SHA recipe; rederive/validate, not caller input. The semantic private-purpose receipt is newly minted from these actual sources/current choice; it is distinct from namespace and Resources selection, although profile ID correctly remains the same native service profile. No phantom private OS/profile ID, no Resources identity reuse.",
+      "private_constraints": "privacy_classification=private; public_egress_allowed=false; additional_metered_budget_usd=0 for this purpose-scoped selection. Enforces owner-private selected namespace and no public/metered fallback for memory/model purpose. Does not globally relabel every tool in the native profile or authorize any new route. Capture opt-in, private input/provider egress consent, service-start enablement and model ownership/loading proofs remain independently required. No account/license/endpoint/model availability inferred.",
+      "resolver_API": "RootPrivateProfileSelectionRegistry.resolve_current_private_profile(selection_handle,purpose)->VerifiedRootPrivateProfileSelection",
+      "snapshot_fields": [
+        "receipt_handle",
+        "selection_handle",
+        "purpose",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_selection_receipt_handle",
+        "namespace_selection_receipt_handle",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "currentness": "Non-consuming resolver verifies exact registry membership/purpose/source/choice/controller/session/prepared binding/revocation and obtains current setup identity pair; <=30s private-purpose snapshot with actual new principal/namespace receipt IDs. Intent is persistent only through session deadline. Disable/selectionchange invalidates purpose projection; no persistent intent alone is start/capture/egress permission.",
+      "consumers": "v124 RootSelectedMemoryServiceEnablementChoice adds private_profile_selection_handle, principal_selection_handle, namespace_selection_handle; historical *_receipt_handle fields remain evidence only. Current phase resolves VerifiedRootPrivateProfileSelection before issuing enablement snapshot. v127 existing-model directory selection adds same stable selector handles and private_profile_selection_handle; source observer privately opens genuine root TTY selected held directory separately, never substitutes profile/namespace receipt for directory/root FD. Active publication projects exact private-purpose choice to actual owner/profile/namespace/generation only with actual enrollment/source/runtime receipts."
+    },
+    "tasks": [
+      "HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests",
+      "SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease",
+      "SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies"
+    ],
+    "status": "All original scope and AC open; no baseline edit, live account/weights/endpoint effect or privileged Mac install."
+  },
+  "locked_package_source_license_receipts_v136": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "SK-F02",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "v132 has no actual dynamic lock-selected package receipt producer; v117 phase stage-pinned-source-locks does not authorize package acquisition. Deployment requires noneditable project install. v135 supporting quantizer evidence must be cryptographically retained without redefining member-only digest.",
+    "qualification_phase": {
+      "added_phase_id": "acquire-locked-runtime-packages",
+      "producer": "Same actual root TTY observe_application_qualification_workflow choice/RootApplicationQualificationConsent, disclose exact hash-locked public package acquisition separately from local fixture effects in that normal configuration choice. No additional repeated approval after that explicit choice. New observations include this phase; older choices not containing it remain denied until installer configuration explicitly selects that phase; do not silently widen retained consent.",
+      "resolver": "Existing RootBootstrapSession.resolve_application_qualification_consent(choice_handle,phase_id) returns fresh <=30s purpose snapshot against current v133 selectors/session/controller/choice epoch; package registry requires this exact phase before any fetch.",
+      "limits": "Only complete selected immutable lock closure for the chosen four v132 applications/platform/toolchains. No arbitrary URI/provider/model/browser/FFmpeg downloads, new version selection, extra groups/extras, metered budget or license override."
+    },
+    "producer": {
+      "owner_module": "hermes_installer.authority.application_runtime_preparation",
+      "registry": "RootApplicationOfflinePackageClosureRegistry",
+      "API": "Existing v132 prepare_selected_packages(source_preparation_selection_handle) acquires and observes each selected artifact and license under this registry; resolve_selected_packages revalidates exact held closure/source/lock/consent/controller. Internal acquisition/writer helper is implementation-owned, no generic source-fetch or caller artifact rows.",
+      "artifact_type": "RootApplicationLockedPackageArtifactReceipt",
+      "artifact_fields": [
+        "receipt_handle",
+        "artifact_id",
+        "application_id",
+        "source_preparation_selection_handle",
+        "qualification_choice_handle",
+        "qualification_consent_receipt_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_digest",
+        "lock_receipt_handle",
+        "lock_sha256",
+        "lock_member_id",
+        "package_name",
+        "package_version",
+        "artifact_kind",
+        "platform_tags",
+        "origin_policy_id",
+        "source_url",
+        "lock_integrity_algorithm",
+        "lock_integrity_digest",
+        "artifact_sha256",
+        "size_bytes",
+        "cas_device",
+        "cas_inode",
+        "cas_mode",
+        "controller_binding_handle",
+        "issued_monotonic",
+        "expires_monotonic",
+        "signature"
+      ],
+      "artifact_id": "app-runtime-package-<actual lowercase SHA256 of acquired bytes>",
+      "store": "Protected root journal selection child application-runtime-packages/sha256/<artifact_sha256>; secure root0 0700 parent; exclusive nofollow file write/fsync, atomic publish immutable0444 regular file, retain actual nofollow FD and device/inode/size/mode. Existing package receipt private registry membership and domain-separated existing AuthorityService signature bind all fields; do not call generic RootArtifactReceiptRegistry.mint for an absent static ArtifactCatalog ID. Restore only actual durable registry/CAS with fresh phase/currentness; monotonic expiry never revived across boot.",
+      "read": "Only root package registry resolver opens exact retained selected artifact; dynamic artifact is a scoped package record in v132 package_records, not an active arbitrary ArtifactCatalog entry. Ordinary ArtifactCatalog stays immutable. Build unit receives fixed offline cache/mount from validated genuine closure, cache name alone is not evidence."
+    },
+    "integrity": {
+      "algorithms": [
+        "sha256",
+        "sha512"
+      ],
+      "rule": "uv lock exact file SHA256 lowercase64 or supported exact lock SHA512; npm/Bun SRI sha512-<strict base64 exactly64 decoded bytes> or sha256-<strict base64 exactly32 decoded bytes>. Normalize within a typed algorithm/digest record and verify full actual bytes, also compute independent SHA256/size. Reject ambiguous conflicting digests, missing integrity, credential-bearing URLs, unsupported Git/range/latest/local dependencies and absent selected platform/build dependencies rather than resolve latest or strip the lock. Complete platform transitive/PEP517/native-script closure is still required.",
+      "origins": {
+        "policy_id": "installer-locked-public-package-origin-v1",
+        "python": {
+          "scheme": "https",
+          "host": "files.pythonhosted.org",
+          "path_prefix": "/packages/",
+          "port": 443
+        },
+        "npm": {
+          "scheme": "https",
+          "host": "registry.npmjs.org",
+          "path_rule": "Exact selected npm package/version tarball URL from the verified lock, including scoped package encoding; no metadata latest/tag lookup",
+          "port": 443
+        }
+      },
+      "transport": "Fixed root GET only for exact selected immutable lock URL, verified TLS chain+hostname, no userinfo/fragment, no credential/auth/cookie headers or inherited proxy/header configuration, no redirects or HTTP downgrade, no logging secret-bearing query. Reject origin mismatch before request. Bound actual bytes and aggregate archives/expanded closure by v132 hard ceilings; record response transport evidence privately. Lock contents alone do not add an origin. Any new origin requires source-owned reviewed refinement."
+    },
+    "license": {
+      "type": "RootApplicationPackageLicenseObservation",
+      "fields": [
+        "receipt_handle",
+        "artifact_receipt_handle",
+        "artifact_sha256",
+        "package_name",
+        "package_version",
+        "metadata_kind",
+        "metadata_member_path",
+        "metadata_member_sha256",
+        "declared_license_expression",
+        "license_member_records",
+        "evidence_sha256",
+        "eligibility",
+        "review_policy_receipt_handle",
+        "issued_monotonic",
+        "expires_monotonic",
+        "signature"
+      ],
+      "member_fields": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "metadata_kind_enum": [
+        "python-core-metadata",
+        "npm-package-json"
+      ],
+      "eligibility_enum": [
+        "observed-declaration",
+        "reviewed-eligible",
+        "unavailable"
+      ],
+      "rule": "Extract without executing package code from the exact held integrity-verified wheel/sdist/npm tarball. Validate package name/version against selected lock and member paths/duplicates/types/expansion bounds. Python records actual METADATA/PKG-INFO License-Expression and License-File member bytes where supplied; legacy License/classifier is retained as declaration only. npm records actual package.json license and exact referenced/bundled license files. No inferred license from dependency name, parent project or lock hash. Absent/ambiguous/conflicting required evidence yields unavailable with exact blocker. Metadata declaration alone is observed-declaration; reviewed-eligible requires actual root-held source-reviewed component/package license-policy receipt covering this exact package/artifact/expression/member evidence and preserving notices. Do not fabricate that verdict/policy receipt or treat a URL as the license bytes. The builder implements genuine evidence observer; source review of the selected package closure/policy is a separate task, not an unrestricted TTY license override.",
+      "digest": "evidence_sha256=SHA256 canonical UTF8 JSON of artifact_sha256, package_name, package_version, metadata_kind, metadata_member_path, metadata_member_sha256, declared_license_expression, sorted license_member_records; no newline, sort_keys=True,separators=(comma,colon),ensure_ascii=False. AuthorityService domain-separated root observation signs exact fields and retained evidence; root-private receipt is not ingress SourceReceipt.",
+      "closure": "v132 package_records.license_receipt_handle references this current genuine observation. Runtime build admission requires reviewed-eligible actual selected license policy. Unknown declaration/origin/platform remains exact pending; acquisition observation is not installation or acceptance."
+    },
+    "deployment_recipe": {
+      "python_fixed_tokens": [
+        "uv",
+        "sync",
+        "--locked",
+        "--offline",
+        "--no-dev",
+        "--no-default-groups",
+        "--no-editable"
+      ],
+      "rule": "Supersedes only v132 Python sync flags: actual held PM uv executable followed by fixed literals and previously root-bound source/project/output/python/cache mounts. No inherited user groups/extras/config, editable source-path dependency, lock rewrite or network. Actual selected uv must support these flags; Browser Use provenance uv0.12.23 versus PM0.12.3 discrepancy remains independently reviewed/tested, not aliased. Post-build relocatable environment/probe origin checks remain mandatory.",
+      "primary_sources": [
+        "https://docs.astral.sh/uv/concepts/projects/sync/",
+        "https://docs.astral.sh/uv/reference/cli/",
+        "https://packaging.python.org/en/latest/specifications/core-metadata/",
+        "https://docs.npmjs.com/cli/v11/configuring-npm/package-json/"
+      ]
+    },
+    "model_supporting_license_evidence": {
+      "refines": "v135 source receipt retention in v127 ExistingModelArtifactObservation; member_observation_sha256 remains exact member-only hash.",
+      "added_signed_observation_field": "supporting_source_receipt_sha256",
+      "digest": "SHA256 canonical UTF8 JSON sorted by artifact_id of exact supporting root source observations projected as {artifact_id,sha256,size_bytes,receipt_handle}; includes v135 glm52-quantized-readme-6bbb01e actual catalog receipt. No newline; same canonical sort_keys/separators/ensure_ascii=False. Root-held durable registry record retains the actual observation handles/pins/bytes and verifies current membership on restore; signature includes this digest. No caller supporting rows/active selection fields or model weight evidence is added.",
+      "implementation": "Models observer constructs supporting-source evidence from fixed held v135 contract and actual RootCatalogArtifactObserver. Host authority finite existing model-observation signer/verifier adds this exact claim; no private _sign or new key/source kind."
+    },
+    "tasks": [
+      {
+        "id": "SK-T136.1",
+        "owner": "factory",
+        "work": "Actual same-choice package acquisition phase and fresh purpose resolution; old phase snapshots denied; no repeated routine prompt."
+      },
+      {
+        "id": "SK-T136.2",
+        "owner": "build owner",
+        "work": "Genuine lock-selected dynamic package CAS receipts and license evidence observer, exact TLS/origin/integrity/phase/root retention failures; review actual selected closure licensing before build."
+      },
+      {
+        "id": "SK-T136.3",
+        "owner": "build/source owners",
+        "work": "Fixed noneditable/no-default-groups deployment recipe and actual source/ABI/import-origin/offline tests; keep platform/toolchain gaps explicit."
+      },
+      {
+        "id": "SK-T136.4",
+        "owner": "models/host authority",
+        "work": "Signed supporting source receipt digest and durable exact v135 evidence membership; preserve member digest domain."
+      }
+    ],
+    "acceptance": "All original AC open; no package/model acquisition performed by Sol, no deployment readiness inferred."
   }
 }

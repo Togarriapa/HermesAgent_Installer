@@ -1,0 +1,3 @@
+# Preactive qualification runtime proof v130
+
+SK-F03/R0067/R0138/AC12 v117 actual request/admission cycle and absent environment/probe producer: prepared qualification consumes actual source/lock/environment/probe/ownedfixture/choice/consent receipts independently active rows. Operational dispatch remains strict active. Four finite actual source profiles; Hyperframes Node versus Python ABI probe explicitly discriminated. Source recipes/toolchain/probe pins must be actual observed source/release/runtime receipts, no fabricated hash/default/runtime readiness. All original obligations/AC open; frozen baseline unchanged. Adjacent fields/tasks.

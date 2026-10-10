@@ -2366,5 +2366,9 @@
   "native_schema_catalog_identity_v114": "Exact eight catalog-compatible IDs -> actual root artifact source receipts -> v113 staged registrations; no aliases/allACopen",
   "prepared_build_service_selection_v115": "Actualrootprepared NSS/root/template subject -> selectedXpraBuild -> manager/attestation -> outputactivation; no active-beforebuild cycle/allACopen",
   "pinned_runtime_redirect_v116": "Actual ARMbootstrap acquisition exactGitHub302policy -> pinnedsizeSHA CAS -> isolatedruntime/reexec; actualruntime/acceptance pending",
-  "preactive_application_source_v117": "Actualrootchoice/localpurposeconsent -> sourcefullmanifest/locks -> runtimeprobe -> receiptactivation -> actualfixture; noactivebeforeprepare/allACopen"
+  "preactive_application_source_v117": "Actualrootchoice/localpurposeconsent -> sourcefullmanifest/locks -> runtimeprobe -> receiptactivation -> actualfixture; noactivebeforeprepare/allACopen",
+  "native_policy_preparation_v137": "Actual root choice/current principal+namespace/component target/account/permission/source role/schema observations -> sealed staged61 action42 registration/workflow/role/observer definitions -> actual output receipts -> atomic active publication -> live imported-role/PIDFD observation; all18 acceptance open",
+  "public_input_web_permission_v138": "Actual configured finite web scope+PUBLIC captured input+purpose permission -> current recipient intersection -> genuine web transport/CAS/result; PRIVATE/UNKNOWN source ancestry always denied/allACopen",
+  "existing_model_source_v135_v139": "Actual inventory/upstreamMIT/quantizer declaration catalog observations+purpose private selector+held fixed existing-store/child -> every149 member source verification -> separately owned runtime/load/deploy; no weights download/embedding inference/allACopen",
+  "application_packages_v136": "Actual root qualification acquisition phase+source/lock/toolchain/platform+integrity/origin/license evidence -> scoped dynamic packageCAS/offline supported transport -> noneditable environment/probe -> qualification, not active-before-build/allACopen"
 }
