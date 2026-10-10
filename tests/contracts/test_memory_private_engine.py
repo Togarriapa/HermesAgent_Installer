@@ -6,13 +6,16 @@ import math
 import sys
 import types
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from unittest.mock import patch
 
-from hermes_installer.authority.types import HostContext, Sensitivity
+from hermes_installer.authority.types import AuthorityDenied, HostContext, Sensitivity
 from hermes_installer.memory.private_engine import (
     PrivateMemoryEngineUnavailable, RootPrivateMemoryEngine,
 )
+from hermes_installer.memory.broker import MemoryTarget, _build_private_engine_registry
+from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from test_memory_enrollment import record as enrollment_record
 
 
 @dataclass(frozen=True)
@@ -35,14 +38,16 @@ class _SelectedRoutes:
     expires_monotonic: float = 100.0
 
 
-def _context() -> HostContext:
+def _context(action="extract") -> HostContext:
+    stage = "extraction" if action == "extract" else "embedding"
     return HostContext(
         principal_id="principal:one", profile_id="profile:one", namespace_id="namespace:one",
-        uid=1001, purpose="memory-extraction", intent_id="memory:extract",
+        uid=1001, purpose="memory-" + stage, intent_id="memory:" + action,
         trace_id="trace:fixture", sensitivity=Sensitivity.PRIVATE,
         lineage_hash="b" * 64, policy_revision="policy:fixture",
         capabilities=frozenset(), issued_at_monotonic=1, monotonic_expires_at=30,
         nonce="nonce:fixture", grant_id="grant:fixture", signature="signature:fixture",
+        operation="memory." + action,
     )
 
 
@@ -103,7 +108,7 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         }).encode()])
         engine = self._engine(dispatcher)
         self.assertEqual(engine.embed(
-            facts=["first", "second"], context=_context(),
+            facts=["first", "second"], context=_context("embed"),
             timeout=20, cancelled=lambda: False,
         ), [[1.0, 0.0], [0.25, 0.75]])
         call = dispatcher.calls[0][1]
@@ -111,7 +116,7 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         self.assertEqual(call["model_id"], "embed-fixture-v1")
         self.assertEqual(json.loads(call["payload"])["encoding_format"], "float")
         self.assertEqual(engine.embed(
-            facts=[], context=_context(), timeout=20, cancelled=lambda: False,
+            facts=[], context=_context("embed"), timeout=20, cancelled=lambda: False,
         ), [])
         self.assertEqual(len(dispatcher.calls), 1)
 
@@ -130,11 +135,50 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         }, allow_nan=True).encode()])
         engine = self._engine(bad_vector)
         with self.assertRaises(PrivateMemoryEngineUnavailable):
-            engine.embed(facts=["fact"], context=_context(), timeout=5, cancelled=lambda: False)
+            engine.embed(facts=["fact"], context=_context("embed"), timeout=5, cancelled=lambda: False)
 
         expired = _SelectedRoutes(expires_monotonic=9.0)
         with self.assertRaises(PrivateMemoryEngineUnavailable):
             self._engine(_Dispatcher([]), selected=expired)
+
+    def test_runtime_registry_joins_engine_selection_to_exact_enrollment_or_stays_off(self):
+        enrollment = MemoryServiceEnrollment.from_protected_record(enrollment_record())
+        target = MemoryTarget.from_enrollment(enrollment)
+        target_key = (target.profile_id, target.namespace_id, target.provider)
+        routes = replace(
+            _SelectedRoutes(), profile_id=target.profile_id, namespace_id=target.namespace_id,
+            memory_owner_generation=enrollment.memory_owner_generation,
+            service_generation_digest="c" * 64,
+            extract_route_id=enrollment.private_extraction_embedding_routes["extract"],
+            embed_route_id=enrollment.private_extraction_embedding_routes["embed"],
+            expires_monotonic=1e12,
+        )
+        provider_pkg = types.ModuleType("hermes_installer.providers")
+        provider_pkg.__path__ = []
+        provider_mod = types.ModuleType("hermes_installer.providers.private_memory")
+        provider_mod.RootSelectedPrivateMemoryEngineRoutes = _SelectedRoutes
+        with patch.dict(sys.modules, {
+            "hermes_installer.providers": provider_pkg,
+            "hermes_installer.providers.private_memory": provider_mod,
+        }):
+            engines, unavailable = _build_private_engine_registry(
+                {target_key: target},
+                lambda enrollment_id, owner_epoch: (
+                    routes, _Dispatcher([])
+                ) if (enrollment_id, owner_epoch) == (
+                    enrollment.service_enrollment_id, enrollment.memory_owner_generation
+                ) else None,
+                "c" * 64,
+            )
+            self.assertEqual(set(engines), {target_key})
+            self.assertEqual(unavailable, {})
+            denied, reasons = _build_private_engine_registry(
+                {target_key: target}, lambda *_: (_ for _ in ()).throw(
+                    AuthorityDenied("memory.selection", "no eligible selected route")
+                ), "c" * 64,
+            )
+        self.assertEqual(denied, {})
+        self.assertIn("no eligible selected route", reasons[target_key])
 
 
 if __name__ == "__main__":
