@@ -84,6 +84,8 @@ _FILES = {
             "            args.query = sys.stdin.read()\n",
             "        if _qfile == \"-\":\n"
             "            try:\n"
+            "                from hermes_installer.native_plugin_loader import ensure_selected_native_plugins_ready\n"
+            "                ensure_selected_native_plugins_ready()\n"
             "                from hermes_installer.native_invocations import read_selected_native_input\n"
             "                args.query = read_selected_native_input(sys.stdin.buffer)\n"
             "            except Exception:\n"
