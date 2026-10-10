@@ -1103,3 +1103,12 @@ The installer SHALL apply v210 complete metadata rules for selected filters and 
 #### Scenario: Actual whole-context semantic read
 - **WHEN** informed rootTTY whole-context selection produces a one-use exact Assist GetLiveContext({}) grant and authentic bounded nonempty response
 - **THEN** only its genuine whole-context membership and functional receipt are recorded, with later membership changes denied before worker data release and no entity-ID/admin/control authority inferred
+
+## ADDED Requirements
+
+### Requirement: Published home facts and live task proof separation
+The installer SHALL use the corrected field split in planning/jarvis-published-home-live-task-split-v214.json without fabricating future task enrollments in published source-home rows.
+
+#### Scenario: Compile home crosswalk before tasks exist
+- **WHEN** verified source homes are published before task admission
+- **THEN** only actual source/home/runtime/principal/namespace facts are compiled and live task/context/process/resource facts are resolved later through genuine current grants

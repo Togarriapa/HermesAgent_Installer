@@ -3200,5 +3200,15 @@
       ]
     },
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "jarvis_published_home_live_task_split_v214": {
+    "contract": "planning/jarvis-published-home-live-task-split-v214.json",
+    "tasks": [
+      "RB-T213.1",
+      "HI-T213.2",
+      "VD-T213.3"
+    ],
+    "corrects": "v213 row field split",
+    "acceptance": "All AC OPEN"
   }
 }
