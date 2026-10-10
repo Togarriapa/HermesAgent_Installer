@@ -50,8 +50,7 @@ class _SelectedAdapter:
     def register(self, context, runtime_context):
         context.register_tool(
             "selected_tool", "hermes-installer",
-            {"name": "selected_tool", "description": "Selected tool",
-             "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+            {"type": "object", "properties": {}, "additionalProperties": False},
             lambda: runtime_context.plugin_effects.invoke(),
             description="Selected tool",
         )
