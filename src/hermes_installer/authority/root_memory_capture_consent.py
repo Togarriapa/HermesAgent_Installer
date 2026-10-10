@@ -295,12 +295,12 @@ class RootMemoryCaptureConsentRegistry:
             raise AuthorityDenied("memory.stale", "current memory TTY choice or policy changed")
 
     def _verify_completed_turn_receipt(self, handle: str, enrollment: Any) -> Any:
+        from .native_turn_observation import RootCompletedNativeTurn
         registry = getattr(self.service, "native_turn_observation_registry", None)
         resolver = getattr(registry, "resolve_completed_turn", None)
         if not isinstance(handle, str) or not callable(resolver):
             raise AuthorityDenied("memory.turn", "root completed-turn receipt resolver is unavailable")
         receipt = resolver(handle)
-        from .native_turn_observation import RootCompletedNativeTurn
         if (type(receipt) is not RootCompletedNativeTurn
                 or receipt.receipt_handle != handle
                 or receipt.profile_id != enrollment.profile_id

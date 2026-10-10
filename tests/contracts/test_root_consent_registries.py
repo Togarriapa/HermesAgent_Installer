@@ -56,6 +56,7 @@ def test_private_input_consent_is_absent_by_default_and_survives_restart(tmp_pat
     first = RootPrivateInputConsentRegistry.from_authority_service(
         service, _NoChoiceRegistry(), _NoSelectedCatalog(), journal,
     )
+    assert service.private_input_consent_registry is first
 
     assert first.selection_handle_for_current_profile(binding) is None
     with pytest.raises(AuthorityDenied, match="TTY private-route choice resolver is unavailable"):
@@ -81,6 +82,32 @@ def test_memory_capture_is_separate_and_absent_by_default(tmp_path: Path) -> Non
     with pytest.raises(AuthorityDenied, match="typed selected memory enrollment is required"):
         registry.issue_selected_capture_consent("untrusted-handle", object())
     assert not (journal / "memory-capture-consent" / "registry.json").exists()
+
+
+def test_service_consent_attachments_are_exact_and_one_time(tmp_path: Path) -> None:
+    service, _ = _service()
+    journal = _protected_root(tmp_path)
+    private = RootPrivateInputConsentRegistry(
+        service, _NoChoiceRegistry(), _NoSelectedCatalog(), journal,
+    )
+    memory = RootMemoryCaptureConsentRegistry(
+        service, _NoChoiceRegistry(), _NoSelectedCatalog(), journal,
+    )
+    service.attach_private_input_consent_registry(private)
+    service.attach_memory_capture_consent_registry(memory)
+    assert service.private_input_consent_registry is private
+    assert service.memory_capture_consent_registry is memory
+
+    with pytest.raises(AuthorityDenied, match="registry is invalid"):
+        service.attach_private_input_consent_registry(private)
+    with pytest.raises(AuthorityDenied, match="registry is invalid"):
+        service.attach_memory_capture_consent_registry(memory)
+
+    other_service, _ = _service()
+    with pytest.raises(AuthorityDenied, match="registry is invalid"):
+        other_service.attach_private_input_consent_registry(private)
+    with pytest.raises(AuthorityDenied, match="registry is invalid"):
+        other_service.attach_memory_capture_consent_registry(memory)
 
 
 def test_consent_receipts_cannot_be_constructed_from_wire_values() -> None:
