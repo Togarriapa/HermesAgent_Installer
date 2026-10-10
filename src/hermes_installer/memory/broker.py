@@ -1302,7 +1302,8 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         vault: Any = None, connector_factory: RootConnectorFactory | None = None,
         service_catalog: Any = None, process_manager: Any = None,
         enrollment_resolver: Callable[[str, str], MemoryServiceEnrollment] | None = None,
-        private_engine_resolver: Callable[[str, int], tuple[Any, Any]] | None = None) -> dict[str, Any]:
+        private_engine_resolver: Callable[[str, int], tuple[Any, Any]] | None = None,
+        private_network_lease_resolver: Any | None = None) -> dict[str, Any]:
     """Assemble the root memory runtime from protected enrollment only.
 
     Fixed compound execution is composed only with the current root service
@@ -1320,6 +1321,10 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         targets[key] = target
     if connector_factory is not None:
         raise ValueError("raw memory HTTP connector factories are not supported")
+    if private_network_lease_resolver is not None:
+        from hermes_installer.authority.memory_runtime_composition import RootMemoryNetworkLeaseResolver
+        if type(private_network_lease_resolver) is not RootMemoryNetworkLeaseResolver:
+            raise ValueError("memory runtime requires the exact root private-network lease resolver")
     if not callable(root_journal_resolver) or not expected_active_generation_digest:
         # A service enrollment is not authority to choose its own state path.
         # Until the protected root-journal catalog is supplied, expose no
@@ -1455,7 +1460,9 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
             ledger_resolver=lambda profile: compound_ledgers[profile],
             service_catalog=service_catalog,
             process_manager=process_manager, vault=vault, owner_state=owner_state,
-            consent_active=consent_active, ledger_profiles=tuple(compound_ledgers))
+            consent_active=consent_active,
+            private_network_lease_resolver=private_network_lease_resolver,
+            ledger_profiles=tuple(compound_ledgers))
         registered = step_authority.register()
         if registered:
             # This is an in-process root callback, never a worker RPC verb.
@@ -1514,6 +1521,8 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         "capture_coordinator": capture_coordinator,
         "capture_unavailable_reason": capture_unavailable_reason,
         "step_authority": step_authority,
+        "namespace_connector": (step_authority.namespace_transport
+                                if step_authority is not None else None),
         "state_directories": state_directories, "state_root_ready": True,
     }
 
