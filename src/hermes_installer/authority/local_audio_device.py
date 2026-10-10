@@ -24,6 +24,7 @@ from .channel_ingress_services import (
 )
 from .channel_provenance import SelectedAudioCaptureReceipt
 from hermes_installer.components.plugin_channel_provenance import AudioIngressSelection
+from hermes_installer.components.plugin_channel_provenance import SelectedAudioIngressProducer
 
 
 SOUNDDEVICE_VERSION = "0.5.6"
@@ -514,3 +515,61 @@ class RootSelectedAudioArtifactStore:
     def _require_selection(self, selection_handle: object) -> None:
         if selection_handle is not self.selection_handle:
             raise LocalAudioDeviceUnavailable("audio selection handle is not current")
+
+
+@dataclass(frozen=True, slots=True)
+class RootLocalAudioIngressBundle:
+    """Concrete root-owned device, receipt, observer and source producer set."""
+    device_service: RootLocalAudioDeviceService
+    artifact_catalog: RootInMemoryAudioArtifactCatalog
+    capture_resolver: RootAudioCaptureReceiptResolver
+    ingress_observer: Any
+    source_producer: SelectedAudioIngressProducer
+    artifact_store: RootSelectedAudioArtifactStore
+
+
+def build_root_local_audio_ingress(
+    selection: AudioIngressSelection,
+    selection_handle: object,
+    *,
+    owner_generation: str,
+    controller_identity_digest: str,
+    service_generation_digest: str,
+    sounddevice_module: Any | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    tty_path: str = "/dev/tty",
+) -> RootLocalAudioIngressBundle:
+    """Compose the actual root capture path for one protected audio selection.
+
+    The caller must provide a selection resolved from the active protected
+    snapshot and the corresponding opaque root handle. Device adoption and
+    capture permission still require foreground-TTY interactions.
+    """
+    from .channel_provenance import RootSelectedAudioIngressObserver
+
+    if not isinstance(selection, AudioIngressSelection):
+        raise TypeError("protected audio ingress selection is required")
+    if (not selection.profile_id or not selection.device_enrollment_id
+            or not isinstance(owner_generation, str) or not owner_generation):
+        raise ValueError("protected profile and explicit device enrollment are required")
+    catalog = RootInMemoryAudioArtifactCatalog(
+        selection, selection_handle, owner_generation=owner_generation,
+        monotonic=monotonic,
+    )
+    service = RootLocalAudioDeviceService(
+        selection, selection_handle, profile_id=selection.profile_id,
+        owner_generation=owner_generation, artifact_catalog=catalog,
+        sounddevice_module=sounddevice_module, monotonic=monotonic, tty_path=tty_path,
+    )
+    resolver = service.create_capture_receipt_resolver()
+    observer = RootSelectedAudioIngressObserver(
+        selection, selection_handle, resolver,
+        controller_identity_digest=controller_identity_digest,
+        service_generation_digest=service_generation_digest,
+        monotonic=monotonic,
+    )
+    producer = SelectedAudioIngressProducer(selection, selection_handle, observer,
+                                             clock=monotonic)
+    artifact_store = RootSelectedAudioArtifactStore(
+        selection, selection_handle, observer, resolver, monotonic=monotonic)
+    return RootLocalAudioIngressBundle(service, catalog, resolver, observer, producer, artifact_store)

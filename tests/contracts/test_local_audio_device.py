@@ -12,6 +12,7 @@ from hermes_installer.authority.channel_ingress_services import RootInMemoryAudi
 from hermes_installer.authority.local_audio_device import (
     LocalAudioDeviceUnavailable, RootLocalAudioDeviceService,
     RootSelectedAudioArtifactStore, SOUNDDEVICE_VERSION,
+    build_root_local_audio_ingress,
 )
 from hermes_installer.authority.channel_provenance import RootSelectedAudioIngressObserver
 from hermes_installer.components.plugin_channel_provenance import (
@@ -198,3 +199,19 @@ def test_real_root_audio_proof_resolver_reads_and_consumes_only_current_sealed_a
     audio[:] = b"\0" * len(audio)
     service.close_input_session(selection_handle, session.session_handle)
     assert catalog._items == {}
+
+
+def test_composition_binds_device_services_to_one_protected_audio_selection():
+    selection = _selection()
+    selection_handle = object()
+    bundle = build_root_local_audio_ingress(
+        selection, selection_handle, owner_generation="owner-generation-01",
+        controller_identity_digest="c" * 64, service_generation_digest="d" * 64,
+        sounddevice_module=_FakeSoundDevice(),
+    )
+    assert bundle.device_service.selection is selection
+    assert bundle.artifact_catalog.selection_handle is selection_handle
+    assert bundle.capture_resolver.sessions is bundle.device_service
+    assert bundle.ingress_observer.capture_authority is bundle.capture_resolver
+    assert bundle.source_producer.observer is bundle.ingress_observer
+    assert bundle.artifact_store.resolver is bundle.capture_resolver
