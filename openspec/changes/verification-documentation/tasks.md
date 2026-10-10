@@ -275,3 +275,11 @@ Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gatewa
 - [ ] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
 - [ ] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
 - [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.
+
+
+## v250 Original Xpra archive link count correction
+
+- [ ] RT-T250.1 Consume exact3093 symlink/0 hardlink source cohort and reject changed origin/kind.
+- [ ] VD-T250.2 Verify independent raw archive facts and preserve currentness/managed runtime gates; all AC OPEN.
+
+Exact contract: `planning/xpra-link-count-correction-v250.json`.

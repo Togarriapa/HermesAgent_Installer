@@ -258,3 +258,6 @@ Append-only `plans/amendments/2026-10-10-gateway-wheel-license-transport-v248.md
 ## Version-aware predecessor v249
 
 Append-only `plans/amendments/2026-10-10-version-aware-predecessor-verification-v249.md` / `planning/version-aware-predecessor-verification-v249.json`; BD-T249.1, LC-T249.2, VD-T249.3 open. Exact reviewed whole historical cohort verifies old custody only, no old actor/newest pin bypass or instance-specific allowlist.
+
+
+v250: `plans/amendments/2026-10-10-xpra-link-count-correction-v250.md` / `planning/xpra-link-count-correction-v250.json`; RT-T250.1 and VD-T250.2 OPEN. Direct399-archive raw-header audit corrects counts to3093 symlinks/0 hardlinks; immutable v245 graph hash remains unchanged, all AC OPEN.

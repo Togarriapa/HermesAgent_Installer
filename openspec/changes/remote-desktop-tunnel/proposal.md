@@ -163,3 +163,10 @@ Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bo
 ### Gateway license policy role correction v248b
 
 Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.
+
+
+## v250 Original Xpra archive link count correction
+
+Append-only v250 corrects only v245 cohort count: original399 signed-policy archives contain3093 symlinks and zero hardlinks; original graph file/hash remain correct. Preserve all source/currentness/private-root/transform/runtime gates.
+
+Exact contract: `planning/xpra-link-count-correction-v250.json`.

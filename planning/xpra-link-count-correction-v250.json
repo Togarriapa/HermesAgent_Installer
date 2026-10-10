@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-xpra-link-count-correction-v250.md",
+  "extends": [
+    "v238",
+    "v245"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "owner": "luna_xpra_runtime_builder",
+  "correction": {
+    "subject": "v245 source_evidence symlink_count/hardlink_count and amendment count prose",
+    "previous_summary": {
+      "symlink_count": 3052,
+      "hardlink_count": 41
+    },
+    "actual_original_archive_headers": {
+      "archive_count": 399,
+      "link_count": 3093,
+      "symlink_count": 3093,
+      "hardlink_count": 0,
+      "raw_tar_type_counts": {
+        "2": 3093
+      }
+    },
+    "reason": "Direct independent read of every original ar data-tar header proves all3093 links are symlinks. Earlier diagnostic extracted-tree3052 count was not the canonical archive inventory; the difference never established hardlinks. No inference about that earlier extraction is used as source proof.",
+    "unchanged_observation": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/deb-link-observations.json",
+    "unchanged_observation_sha256": "419c6355d2a00d91325f2286cb70973f412b5fd504103fc1d64fb856531860f6",
+    "unchanged_policy_sha256": "2b316eb88b634713af2a3fffe53dd495aa0bd61bad371aee0b51b2dbca26898e",
+    "projection_match": "Every original symlink package/version/path/target/mode row exactly matches immutable v245 observation; no revised observation file or source policy graph hash is required.",
+    "old_artifacts": "Frozen v245 and earlier files remain unchanged; this append-only correction is authoritative for cohort counts."
+  },
+  "evidence": {
+    "path": "plans/amendments/2026-10-10-xpra-link-count-correction-v250/readonly-original-archive-audit.json",
+    "sha256": "78a30a6375c5946cf6cf0fb9de59991d471ee073cf6412ed40f7c9c08392d920",
+    "method": "Read399 actual cached archives without filesystem extraction/installation/effects. Recheck each exact SHA/size against v238 signed-policy rows and v245 archive observation. Parse original ar data.tar member; count tar typeflag2 symlink and typeflag1 hardlink. Independently compare projected origin rows to v245 observation.",
+    "raw_header_origin_rows_sha256": "aab82fa7a4471d84d6813ab054f5e5c5afabf83f798ad9682a5e83a93dcc1402",
+    "archive_facts_sha256": "cbc7eaf43c2d029948f739235ee8907e1fb310a289156fb0757b0cb85c808213",
+    "source_only": "Signed source byte/format facts, not setup/current CAS receipts, materialization, native qualification or Pi acceptance."
+  },
+  "implementation": {
+    "graph": "Existing v245 materializer consumes exactly3093 origin-bound symlink rows for this cohort. No hardlink staging, alias or transform may be inferred from the old41 statement. Any actual new hardlink or changed archive/row denies this closed reviewed cohort and requires its own source review.",
+    "preserved": "Exact signed archive/license/current CAS/PM314/choice/NSS/controller ownership, private virtual-root resolution,64-hop/cycle/escape/conflict checks, bounded owned sysroot and exact291-byte single glibc token transform all remain required. Source-only unresolved links remain unmounted/quarantined unless required paths are actually proven; no host aliases, global installation or ambient files.",
+    "runtime": "Actual managed offline driver/native output and Xvfb/HTML5 session qualification remain pending; no static ready receipt."
+  },
+  "tasks": {
+    "RT-T250.1": "Align actual source graph/materializer count tests to3093 symlinks/0 hardlinks and reject unexpected kind/changed archive origin.",
+    "VD-T250.2": "Retain independent raw-header origin audit and failure/currentness coverage; do not substitute source facts for current runtime proof."
+  },
+  "acceptance": "All AC OPEN; no code/source cohort pins or runtime/Pi acceptance."
+}

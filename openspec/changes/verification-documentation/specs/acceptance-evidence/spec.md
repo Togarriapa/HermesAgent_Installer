@@ -1378,3 +1378,17 @@ The system SHALL verify an old installed predecessor with an internally selected
 #### Scenario: Unknown or mixed historical cohort is denied
 - **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
 - **THEN** predecessor verification denies before candidate effects and preserves the original pointer
+
+
+## ADDED Requirements
+
+### Requirement: Original archive headers as link count evidence
+The implementation SHALL interpret the v238/v245 cohort as3093 original archive symlinks and zero hardlinks under the append-only v250 correction. It SHALL preserve immutable origin observations and all existing bounded private graph/currentness/runtime proof requirements.
+
+#### Scenario: Original exact signed archive cohort
+- **WHEN** every original archive hash and tar link-kind projection matches the reviewed source observations
+- **THEN** only3093 origin-bound symlink facts SHALL be admitted; source inventory SHALL NOT issue runtime authority
+
+#### Scenario: Inferred or changed hardlink
+- **WHEN** a hardlink is inferred from the earlier count summary or original kind/origin changes
+- **THEN** materializer admission SHALL deny rather than reinterpret the immutable source graph

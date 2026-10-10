@@ -3807,5 +3807,18 @@
       ]
     },
     "acceptance": "open"
+  },
+  "xpra_link_count_correction_v250": {
+    "contract": "planning/xpra-link-count-correction-v250.json",
+    "tasks": {
+      "RT-T250.1": [
+        "RT-T245.1"
+      ],
+      "VD-T250.2": [
+        "RT-T250.1",
+        "VD-T245.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

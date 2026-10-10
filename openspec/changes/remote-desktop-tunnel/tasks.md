@@ -237,3 +237,11 @@ Exact contract: `planning/xpra-sysroot-html5-v245.json`.
 ### Gateway license policy role correction v248b
 
 Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.
+
+
+## v250 Original Xpra archive link count correction
+
+- [ ] RT-T250.1 Consume exact3093 symlink/0 hardlink source cohort and reject changed origin/kind.
+- [ ] VD-T250.2 Verify independent raw archive facts and preserve currentness/managed runtime gates; all AC OPEN.
+
+Exact contract: `planning/xpra-link-count-correction-v250.json`.

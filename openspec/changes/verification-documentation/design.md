@@ -230,3 +230,10 @@ Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gatewa
 ## Immutable historical predecessor refinement v249
 
 Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed historical whole cohort and dedicated predecessor-only receipt in `planning/version-aware-predecessor-verification-v249.json`; old installed code never becomes current actor. Full closed release/pointer custody and original deadlines remain; no target acceptance.
+
+
+## v250 Original Xpra archive link count correction
+
+Append-only v250 corrects only v245 cohort count: original399 signed-policy archives contain3093 symlinks and zero hardlinks; original graph file/hash remain correct. Preserve all source/currentness/private-root/transform/runtime gates.
+
+Exact contract: `planning/xpra-link-count-correction-v250.json`.

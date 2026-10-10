@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "audit": "readonly independent original ar/data-tar headers; no extraction or package installation",
+  "archive_count": 399,
+  "archives_sha256": "cbc7eaf43c2d029948f739235ee8907e1fb310a289156fb0757b0cb85c808213",
+  "archive_link_rows": 3093,
+  "symlink_count": 3093,
+  "hardlink_count": 0,
+  "raw_tar_type_counts": {
+    "2": 3093
+  },
+  "unique_link_paths": 3093,
+  "repeated_archive_link_paths": 0,
+  "same_path_differing_target_or_mode_count": 0,
+  "v245_observation_projection_exact_match": true,
+  "v245_observation_sha256": "419c6355d2a00d91325f2286cb70973f412b5fd504103fc1d64fb856531860f6",
+  "raw_header_origin_rows_sha256": "aab82fa7a4471d84d6813ab054f5e5c5afabf83f798ad9682a5e83a93dcc1402",
+  "policy_sha256": "2b316eb88b634713af2a3fffe53dd495aa0bd61bad371aee0b51b2dbca26898e",
+  "acceptance": "source facts only; no current production receipt or runtime acceptance"
+}
