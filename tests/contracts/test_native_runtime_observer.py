@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import time
 from dataclasses import dataclass
 from types import ModuleType
 from types import SimpleNamespace
@@ -78,6 +79,7 @@ def _authorization(context):
         uid=context.uid, generation=context.generation,
         native_process_identity=context.native_process_identity,
         source_receipts=context.source_receipts,
+        request_digest=None,
     )
 
 
@@ -161,6 +163,59 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         self.assertEqual(source_observers.calls[0][1], "observer.tool")
         self.assertEqual(source_observers.calls[0][2]["payload_bytes"], b"exact root-validated response")
         self.assertEqual(source_observers.calls[1][2], "e" * 40)
+
+    def test_native_tool_result_clears_only_root_resolved_pending_call(self):
+        from hermes_installer.authority.native_runtime_observer import RootNativeToolEffectInvocation
+        from hermes_installer.authority.native_turn_observation import RootNativeTurnObservationRegistry
+
+        observer, source_observers = self._observer()
+        context = _context()
+        payload = b'{"operation":"selected"}'
+        digest = canonical_digest(payload)
+        authorization = _authorization(context)
+        authorization.request_digest = digest
+        identity = SimpleNamespace(
+            kernel_uid=2001, profile_id="profile-a", generation="generation-a",
+        )
+        invocation = RootNativeToolEffectInvocation(
+            invocation_handle="i" * 40, observed_call_handle="c" * 40,
+            response_observation_handle="o" * 40, response_receipt_handle="r" * 40,
+            native_request_handle="n" * 40, turn_handle="t" * 40,
+            producer_identity=identity, producer_pid=123, profile_id="profile-a",
+            generation="generation-a", package_id="package-a",
+            native_package_generation="package-generation-a",
+            service_generation_digest="a" * 64, adapter_id="adapter-a",
+            action_id="action-a", tool_name="selected_tool",
+            arguments_sha256="b" * 64, source_receipt_handles=("r" * 40,),
+            operation="plugin.resource-overlay-store.write", request_digest=digest,
+            expires_monotonic=time.monotonic() + 30.0,
+        )
+        service = SimpleNamespace(
+            _source_receipt_handles={}, service_generation_digest="a" * 64,
+        )
+        invocation_registry = object.__new__(NativeInvocationRegistry)
+        invocation_registry.service = service
+        invocation_registry.source_observers = source_observers
+        invocation_registry.resolve_invocation_for_effect = lambda *args: invocation
+        turn_registry = object.__new__(RootNativeTurnObservationRegistry)
+        turn_registry.service = service
+        recorded = []
+        turn_registry.record_tool_result = lambda *args, **kwargs: recorded.append((args, kwargs))
+        observer.attach_turn_observation(
+            invocation_registry=invocation_registry,
+            native_turn_observation_registry=turn_registry,
+        )
+        receipt = observer.observe_effect_result(
+            service=service, context=context, authorization=authorization,
+            operation="plugin.resource-overlay-store.write", target="overlay.target",
+            response_status=200, result_payload=b"exact result", peer_pid=123,
+            peer_pidfd=456, request_payload=payload, request_sha256=digest,
+        )
+        self.assertEqual(receipt, "r" * 40)
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0][0][0], "t" * 40)
+        self.assertEqual(recorded[0][0][1], receipt)
+        self.assertEqual(recorded[0][1]["observed_call_handle"], "c" * 40)
 
     def test_wrong_operation_cancelled_or_closed_generation_produces_no_event(self):
         observer, source_observers = self._observer()
