@@ -69,3 +69,6 @@ Signed worker/current active overlay producers v183: `plans/amendments/2026-10-1
 
 
 Network wire v184: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; exact schema2 row/FK/hash contracts in `planning/network-row-wire-v184.json`. HI-T184.1/.2/VD-T184.3 OPEN; enclosing digest only in transient runtime projection. No source pin approval/all AC01..18 OPEN.
+
+
+Owner observer/capture/RPC v185: `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; HI-T185.1/.2/VD-T185.3 OPEN, actual role+READY+source call/schema/current peer→one-use local grant→CAS. No backend61 changes or source pin approval; all AC01..18 OPEN.

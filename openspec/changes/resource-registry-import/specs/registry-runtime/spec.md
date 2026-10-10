@@ -348,3 +348,15 @@ The installer SHALL use the exact closed versioned field sets, full-row canonica
 #### Scenario: Wire or phase proof invalid
 - **WHEN** fields/FKs/digests/versions/current source differ or only pre-READY mount custody exists for an effect
 - **THEN** startup/effect SHALL deny without inventing TCP/source/loaded authority or successful acceptance
+
+
+### Requirement: Concrete owner registration capture and RPC v185
+The installer SHALL implement the exact tagged role/registration/READY/source schema and fixed proxy/RPC joins in `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`.
+
+#### Scenario: Actual observed selected local call
+- **WHEN** the current loaded owner role and actual READY registrations, captured provider call/schema and root one-use selected grant all match
+- **THEN** only the four fixed local methods MAY reach current owned CAS/read through the protected RPC
+
+#### Scenario: Registration or captured authority absent
+- **WHEN** source/role/READY/peer/schema/choice/invocation proof is synthetic, stale or absent
+- **THEN** the effect SHALL deny before side effect without skipping backend checks or fabricating local observer/provider provenance
