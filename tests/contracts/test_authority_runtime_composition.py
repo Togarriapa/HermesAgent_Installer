@@ -87,6 +87,13 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert dict(runtime.job_enrollments) == {}
     assert runtime.memory_runtime is None
     assert runtime.build_execution_service is None
+    assert runtime.provider_runtime_selection is None
+    assert runtime.root_tty_consent_choices is None
+    assert runtime.private_input_consent_registry is None
+    assert runtime.memory_capture_consent_registry is None
+    assert runtime.consent_unavailable_reason == (
+        "a fully attached active provider invocation and bridge graph is required for root TTY choices"
+    )
     assert runtime.source_observer_registry is None
     assert runtime.source_observer_unavailable_reason == (
         "source-observer candidates are not complete typed protected joins"
@@ -153,11 +160,11 @@ def test_resource_event_assembly_requires_the_attached_root_task_runtime():
     result = _compose_selected_resource_events(
         service=service, enrollment=enrollment, bindings=bindings,
         jobs={}, selected_resources=object(), source_observers=object(),
-        job_authority=object(),
+        job_authority=object(), vault=object(),
     )
 
     assert result[:6] == (None, None, None, None, None, None)
-    assert result[6] == (
+    assert result[10] == (
         "selected materialized Resources, source observers, or concrete task runtime are unavailable"
     )
     assert service.resource_event_context_issuer is None
@@ -206,7 +213,8 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     schema_digest = hashlib.sha256(schema_bytes).hexdigest()
     adapter = SimpleNamespace(
         adapter_id="adapter:lookup", action_id="action:lookup",
-        operation="native.invoke", argument_schema_id="schema:lookup:arguments", result_schema_id="schema:lookup:result",
+        operation="plugin.lookup", capability="plugins.lookup", target_id="lookup-target",
+        argument_schema_id="schema:lookup:arguments", result_schema_id="schema:lookup:result",
         workflow_bindings=(MappingProxyType({
             "external_tool_name": "search_records",
             "external_action_id": "search-records",
@@ -217,21 +225,45 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         }),),
         adapter_artifact_id="artifact:adapter", adapter_sha256="c" * 64,
     )
+    action_binding_id = "binding:lookup"
+    registration_id = "registration:lookup"
+    workflow_id = "workflow-row:lookup"
+    action_record = SimpleNamespace(
+        action_binding_id=action_binding_id, adapter_id=adapter.adapter_id,
+        action_id=adapter.action_id, operation=adapter.operation,
+        capability=adapter.capability, target_id=adapter.target_id,
+        adapter_artifact_id=adapter.adapter_artifact_id,
+        adapter_sha256=adapter.adapter_sha256,
+        argument_schema_id="schema:lookup:arguments",
+        result_schema_id="schema:lookup:result",
+        generation="generation:one",
+    )
+    registration_record = SimpleNamespace(
+        registration_id=registration_id, adapter_id=adapter.adapter_id,
+        native_tool_name="search_records", handler_kind="finite-workflow",
+        registration_source_artifact_id="registration:source",
+        registration_source_sha256="a" * 64,
+        generation="generation:one",
+        action_bindings=(SimpleNamespace(workflow_id=workflow_id, action_binding_id=None),),
+    )
+    workflow_record = SimpleNamespace(
+        workflow_id=workflow_id, registration_id=registration_id,
+        external_argument_schema_id="schema:lookup:arguments",
+        external_result_schema_id="schema:lookup:result",
+        workflow_artifact_id="workflow:lookup", workflow_sha256="b" * 64,
+        step_action_binding_ids=(action_binding_id,),
+        generation="generation:one",
+    )
     package = SimpleNamespace(
         package_id="package:native", profile_id="profile:producer", generation="generation:one",
+        profile_generation="generation:one",
         compiled_closure_artifact_id="artifact:closure",
         entrypoint_artifact_id="artifact:entry", entrypoint_sha256="d" * 64,
         resolver_artifact_id="artifact:resolver", resolver_sha256="e" * 64,
         adapter_records=MappingProxyType({adapter.adapter_id: adapter}),
-        action_records=MappingProxyType({"action-binding:lookup": SimpleNamespace(
-            adapter_id=adapter.adapter_id, action_id=adapter.action_id,
-            adapter_artifact_id=adapter.adapter_artifact_id,
-            adapter_sha256=adapter.adapter_sha256,
-            argument_schema_id=adapter.argument_schema_id,
-            result_schema_id=adapter.result_schema_id,
-        )}),
-        registration_records=MappingProxyType({}),
-        workflow_records=MappingProxyType({}),
+        action_records=MappingProxyType({action_binding_id: action_record}),
+        registration_records=MappingProxyType({registration_id: registration_record}),
+        workflow_records=MappingProxyType({workflow_id: workflow_record}),
         process_role_records=MappingProxyType({}),
     )
     catalog = SimpleNamespace(
@@ -240,6 +272,10 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         if (profile_id, generation) == (package.profile_id, package.generation) else None,
         resolve_native_package=lambda package_id, generation: package
         if (package_id, generation) == (package.package_id, package.generation) else None,
+        resolve_native_registration_record=lambda _package_id, _generation, selected_id, **_kwargs:
+            registration_record if selected_id == registration_id else None,
+        resolve_native_action_record=lambda _package_id, _generation, selected_id, **_kwargs:
+            action_record if selected_id == action_binding_id else None,
     )
     artifacts = {
         "artifact:closure": SimpleNamespace(sha256="f" * 64, tree_files=("entry.py",)),
@@ -248,6 +284,7 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         "artifact:adapter": SimpleNamespace(sha256="c" * 64),
         "artifact:schema": SimpleNamespace(sha256=schema_digest),
         "workflow:lookup": SimpleNamespace(sha256="b" * 64),
+        "registration:source": SimpleNamespace(sha256="a" * 64),
     }
     bridge = SimpleNamespace(
         bridge_id="bridge:one", producer_profile_id=package.profile_id,
@@ -256,6 +293,7 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     root_bindings = replace(
         bindings, enrollment_catalog=catalog, artifact_catalog=SimpleNamespace(artifacts=artifacts),
         native_bridges={"bridge:one": bridge},
+        protected_rules={(adapter.capability, adapter.operation, adapter.target_id): object()},
         native_schema_artifact_records=({
                 "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
                 "sha256": schema_digest, "size_bytes": len(schema_bytes),
@@ -292,8 +330,10 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
     )
     identity = SimpleNamespace(profile_id=package.profile_id, generation=package.generation)
     selected = resolver(bridge, identity, "search_records")
-    assert (selected.package_id, selected.adapter_id, selected.action_id, selected.operation) == (
-        package.package_id, adapter.adapter_id, adapter.action_id, adapter.operation,
+    assert (selected.package_id, selected.adapter_id, selected.action_id,
+            selected.registration_id, selected.package_generation, selected.operation) == (
+        package.package_id, adapter.adapter_id, adapter.action_id, registration_id,
+        package.generation, adapter.operation,
     )
     assert selected.validate_arguments(b'{"query":"status"}') is True
     assert selected.validate_arguments(b'{"query":""}') is False

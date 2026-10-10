@@ -64,6 +64,16 @@ class _LoadedProof:
     issued_monotonic: float
     expires_monotonic: float
     service_generation_digest: str
+    role_id: str | None = None
+    role_source_receipt_handle: str | None = None
+    role_module_name: str | None = None
+    role_closure_member_path: str | None = None
+    role_source_revision: str | None = None
+    role_source_tree_sha256: str | None = None
+    role_module_device: int | None = None
+    role_module_inode: int | None = None
+    role_module_sha256: str | None = None
+    observed_registration_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,9 +112,15 @@ class _Package:
     adapter_records: dict = None
     action_records: dict = None
     process_role_records: dict = None
+    registration_records: dict = None
 
     def __post_init__(self):
         action = _Adapter()
+        registration = SimpleNamespace(
+            registration_id="registration.native.input",
+            observer_enrollment_ids=("observer.native.primary",),
+            action_bindings=(SimpleNamespace(action_binding_id=action.action_binding_id),),
+        )
         role = SimpleNamespace(
             role_id="native-process-role", package_id=self.package_id,
             native_package_generation=self.generation, profile_id=self.profile_id,
@@ -115,10 +131,12 @@ class _Package:
             role_source_tree_sha256="8" * 64,
             observer_enrollment_ids=("observer.native.primary",),
             action_binding_ids=(action.action_binding_id,),
+            registration_ids=("registration.native.input",),
         )
         object.__setattr__(self, "adapter_records", {"hermes-main": action})
         object.__setattr__(self, "action_records", {action.action_binding_id: action})
         object.__setattr__(self, "process_role_records", {role.role_id: role})
+        object.__setattr__(self, "registration_records", {registration.registration_id: registration})
 
 
 class _Service:
@@ -241,6 +259,14 @@ def _enrollment(**changes):
         target_id="provider.fixed",
         recipient="public-provider",
         allowed_parent_source_kinds=frozenset({"native-input"}),
+        native_package_generation="gen-4",
+        source_action_binding_id="hermes-main:action:authenticated-input",
+        role_source_receipt_handle="role-source-receipt",
+        role_module_name="hermes_installer.runtime.native_role",
+        role_closure_member_path="roles/native_role.py",
+        role_source_revision="reviewed-role",
+        role_source_tree_sha256=_digest("8"),
+        source_registration_ids=("registration.native.input",),
     )
     fields.update(changes)
     return SourceObserverEnrollment(**fields)
@@ -424,7 +450,31 @@ class SourceObserverContracts(unittest.TestCase):
             self.selected_package.entrypoint_sha256, self.selected_package.resolver_sha256,
             123, "mount-1", _digest("1"), frozenset({"ro", "nosuid", "nodev"}),
             8, 99, identity, "native-role-module", _digest("9"), "loader-ready-event",
-            ("authenticated-input",), 9.0, 39.0, _digest("2"))
+            (), 9.0, 39.0, _digest("2"),
+            role_id="native-process-role", role_source_receipt_handle="role-source-receipt",
+            role_module_name="hermes_installer.runtime.native_role",
+            role_closure_member_path="roles/native_role.py",
+            role_source_revision="reviewed-role", role_source_tree_sha256=_digest("8"),
+            role_module_device=8, role_module_inode=99, role_module_sha256=_digest("9"),
+            observed_registration_ids=("registration.native.input",),
+        )
+
+    def role_proof(self, **changes):
+        proof = self.loaded_package_proof(
+            self.identity, self.enrollment, peer_pid=733, peer_pidfd=901)
+        values = dict(
+            role_id="native-process-role",
+            role_source_receipt_handle="role-source-receipt",
+            role_module_name="hermes_installer.runtime.native_role",
+            role_closure_member_path="roles/native_role.py",
+            role_source_revision="reviewed-role",
+            role_source_tree_sha256=_digest("8"),
+            role_module_device=8, role_module_inode=99,
+            role_module_sha256=_digest("9"),
+            observed_registration_ids=("registration.native.input",),
+        )
+        values.update(changes)
+        return replace(proof, **values)
 
     def package(self, package_id, generation):
         return (self.selected_package if package_id == "hermes-package"
@@ -443,6 +493,7 @@ class SourceObserverContracts(unittest.TestCase):
         result = self.registry.capture_observed_source(
             self.enrollment.observer_enrollment_id, event_id, b"captured request")
         self.assertIsInstance(result, SourceReceiptHandle)
+
         self.assertEqual(result, f"h{1:047d}")
         observation = self.service.observations[0]
         self.assertEqual(observation.package_id, self.enrollment.package_id)
@@ -471,6 +522,36 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             self.registry.resolve_delivered_source_receipt(
                 str(result), peer_uid=2003, peer_pid=844, peer_pidfd=1501)
+
+    def test_loaded_role_proof_matches_exact_role_source_and_action_registration(self):
+        selected = replace(
+            self.enrollment,
+            role_source_receipt_handle="role-source-receipt",
+            role_module_name="hermes_installer.runtime.native_role",
+            role_closure_member_path="roles/native_role.py",
+            role_source_revision="reviewed-role",
+            role_source_tree_sha256=_digest("8"),
+            source_registration_ids=("registration.native.input",),
+        )
+        proof = self.role_proof()
+        self.registry.loaded_package_proof_resolver = lambda *_args, **_kwargs: proof
+        accepted = self.registry._resolve_loaded_package_proof(
+            self.identity, selected, self.selected_package, 10.0,
+            peer_pid=733, peer_pidfd=901)
+        self.assertIs(accepted, proof)
+
+        for changes in (
+            {"role_id": "other-role"},
+            {"role_module_sha256": _digest("f")},
+            {"role_module_inode": 0},
+            {"observed_registration_ids": ()},
+        ):
+            forged = self.role_proof(**changes)
+            self.registry.loaded_package_proof_resolver = lambda *_args, _proof=forged, **_kwargs: _proof
+            with self.subTest(changes=changes), self.assertRaises(AuthorityDenied):
+                self.registry._resolve_loaded_package_proof(
+                    self.identity, selected, self.selected_package, 10.0,
+                    peer_pid=733, peer_pidfd=901)
 
     def test_atomic_root_ingress_capture_does_not_expose_generated_event_id(self):
         result = self.registry.capture_observed_ingress(

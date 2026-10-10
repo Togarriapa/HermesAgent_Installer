@@ -195,7 +195,6 @@ class RootRuntimeBindings:
         if selected is None:
             raise EnrollmentDenied("private memory engine selection is unavailable")
         return selected
-
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
         """Return one channel row only after active resource, issuer and controller joins."""
@@ -1548,6 +1547,7 @@ def build_root_runtime_bindings(
         resource_credential_bindings=_derive_resource_credential_bindings(enrollment),
         resource_controller_role_records=tuple(enrollment.resource_controller_role_records),
         resource_backend_records=tuple(enrollment.resource_backend_enrollment_records),
+        private_memory_engine_selections=private_memory_engine_selections,
         remote_startup_records=tuple(enrollment.remote_startup_records),
         private_loopback_network_records=tuple(enrollment.private_loopback_network_records),
         selected_resource_execution_records=tuple(enrollment.selected_resource_execution_records),
@@ -1561,7 +1561,6 @@ def build_root_runtime_bindings(
         artifact_staging_directory=Path(enrollment.artifact_staging_directory),
         application_source_receipts=application_source_receipts,
         application_runtime_receipts=application_runtime_receipts,
-        private_memory_engine_selections=private_memory_engine_selections,
     )
 
 
@@ -1676,6 +1675,15 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
         if len(actions) != 1:
             raise EnrollmentDenied("source observer does not select one exact process-role action binding")
         action = actions[0]
+        registrations = getattr(join, "registrations", {})
+        if not isinstance(registrations, Mapping):
+            raise EnrollmentDenied("source observer registration join is invalid")
+        source_registration_ids = sorted(
+            registration_id for registration_id, registration in registrations.items()
+            if observer_id in getattr(registration, "observer_enrollment_ids", ())
+            and any(binding.action_binding_id == action.action_binding_id
+                    for binding in getattr(registration, "action_bindings", ()))
+        )
         source_kind = selected_kind(issuer.issuer_channel_id, action)
         if source_kind is None:
             raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
@@ -1692,6 +1700,7 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
             "role_sha256": process_role.role_sha256, "channel_id": issuer.issuer_channel_id,
             "capture_schema_id": issuer.capture_schema_id, "source_action_id": action.action_id,
             "source_action_binding_id": action.action_binding_id,
+            "source_registration_ids": source_registration_ids,
             "role_source_receipt_handle": process_role.role_source_receipt_handle,
             "role_module_name": process_role.module_name,
             "role_closure_member_path": process_role.closure_member_path,

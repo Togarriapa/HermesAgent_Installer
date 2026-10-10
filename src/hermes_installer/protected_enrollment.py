@@ -887,14 +887,6 @@ class ProtectedEnrollmentCatalog:
             raise EnrollmentDenied("enrolled service executable changed or is not executable")
         return profile
 
-    def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
-        """Resolve a unique current service enrollment by its opaque ID."""
-        selected = _id(enrollment_id, "enrollment ID")
-        matches = [profile for profile in self._records.values() if profile.enrollment_id == selected]
-        if len(matches) != 1:
-            raise EnrollmentDenied("service enrollment is absent or ambiguous")
-        return self.resolve(matches[0].enrollment_id, matches[0].generation)
-
     def resolve_memory_enrollment(self, memory_enrollment_id: str, *,
                                   service_generation_digest: str) -> Any:
         """Resolve one active protected memory enrollment by its target ID."""
@@ -912,6 +904,13 @@ class ProtectedEnrollmentCatalog:
                 or profile.namespace_identity != record.namespace_identity):
             raise EnrollmentDenied("memory enrollment no longer joins its selected service profile")
         return record
+    def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
+        """Resolve a unique current service enrollment by its opaque ID."""
+        selected = _id(enrollment_id, "enrollment ID")
+        matches = [profile for profile in self._records.values() if profile.enrollment_id == selected]
+        if len(matches) != 1:
+            raise EnrollmentDenied("service enrollment is absent or ambiguous")
+        return self.resolve(matches[0].enrollment_id, matches[0].generation)
 
     def resolve_profile_generation(self, profile_id: str, generation: str) -> HostServiceProfile:
         selected_profile = _id(profile_id, "service profile ID")
