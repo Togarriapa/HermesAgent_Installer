@@ -279,3 +279,5 @@ Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation aft
 Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replacement in planning/bootstrap-handoff-reconfirmation-source-review-v211.json; all other source rows unchanged, no wider runtime cohort. BD-T208.1/VD-T208.2 pin application/unexcluded checks/target evidence OPEN.
 
 OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/sourceobserver/Node npm Electron/native lockedclosure, no Hyperframesconsent or blanketlifecycle scripts. planning/official-desktop-build-acquisition-v218.json; BD-T218.1/.2 VD-T218.3 OPEN.
+
+SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.

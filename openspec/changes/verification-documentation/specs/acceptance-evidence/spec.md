@@ -1144,3 +1144,12 @@ The installer SHALL implement v216 root-session-owned signed observation receipt
 #### Scenario: Unrelated daemon receipt or forged observation
 - **WHEN** a caller supplies SourceReceipt names, copied journal JSON, raw result maps or expired schema/signature/context
 - **THEN** no live setup grant/functional receipt is issued and raw secrets/HTTP bodies remain absent from persistent evidence
+
+## ADDED Requirements
+
+### Requirement: Fixed sealed descriptor exec inheritance
+The installer SHALL carry only its previously authorized sealedFD3 through existingfixedexec using the reviewed inheritance readback in planning/sealed-bootstrap-fd3-source-review-v220.json while retaining allsource/controller/oneuse/expiry/seal checks.
+
+#### Scenario: Sealed memfd is already descriptor three
+- **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
+- **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins

@@ -170,3 +170,5 @@ OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/so
 
 
 HA setup receipt refinement v216: plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md supplies concrete live root-session signer/journal/transport sink/schema-to-functional-call ownership; setup evidence is distinct from daemon SourceReceipt/HostContext and cannot restore authority. All acceptance OPEN.
+
+SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.

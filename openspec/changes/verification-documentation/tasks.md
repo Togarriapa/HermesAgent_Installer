@@ -202,3 +202,5 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
 
 - [ ] MC-R0101.5 / MC-R0101.6 (v216): Implement exact live HA setup observation signer/journal/private transport capture, real discovery schema receipt and one-use functional call; verify effects/failures without forged SourceReceipt/HostContext or raw secret/body persistence.
+
+- [ ] BD-T208.1 / VD-T208.2 (v220): Integrate exact reviewed FD3 source/evidence, full coherent checks and actual target handoff; no installed selfpin or acceptance inference.

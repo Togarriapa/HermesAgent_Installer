@@ -3248,5 +3248,13 @@
       "validated receipt/choice adoption"
     ],
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "sealed_bootstrap_fd3_source_review_v220": {
+    "contract": "planning/sealed-bootstrap-fd3-source-review-v220.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }
