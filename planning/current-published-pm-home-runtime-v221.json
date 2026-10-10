@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "requirements": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0060"
+  ],
+  "refines": [
+    "planning/jarvis-published-home-live-task-split-v214.json",
+    "planning/jarvis-source-profile-task-identity-v215.json"
+  ],
+  "actual_source": "RootActiveCommittedPMExecutableResolver.from_protected_runtime_sources/resolve_selected in authority/committed_pm_executable.py already freshly verifies current publication/runtime row/signedchoice/PM rootjournal receipt/executable/full committedvenvFDclosure. Setup RootPMRuntimeReceiptRegistry.resolve_runtime remains setupTTL-bound and is not postrestart authority. Actual bootstrap_runtime_factory runtime_identity_sha256 is SHA256 canonical11key projection, NOT executableSHAalone.",
+  "existing_resolver": "Reuse exact existing RootActiveCommittedPMExecutableResolver and RootVerifiedCommittedPMExecutableIdentity with fresh currentidentity afterrestart; never restoreoldprocessseal/FD/expiredsetupreceipt. No new persistedPMlineagehandle/parallel signer/store.",
+  "adapter": {
+    "module": "hermes_installer.authority.durable_pm_runtime",
+    "class": "RootPublishedProfileHomePMRuntimeResolver",
+    "factory": "from_root_runtime(published_authority_core, active_committed_pm_executable_resolver, root_journal)",
+    "resolve": "resolve_current_profile_home_runtime(row: RootPublishedNativeProfileHomeRow)->RootVerifiedPublishedProfileHomePMRuntime",
+    "verify": "verify_current(proof,row)->bool; exactprivateissuer/core/currentrow/underlyingexistingresolver currentproof required",
+    "fds": "duplicate_executable_fd(proof,row), duplicate_runtime_member_fd(proof,row,member_id); onlyexactobservedclosuremembers, no callerpaths",
+    "selection": "Row must exactmatch current typed core crosswalk member/publicationclaim sourceID/home/principalnamespace and actual runtime_receipt_handle. Existingresolver selected active service/runtime source must match actual selectedtask serviceprofile/principalNS identity; wrongservice/foreignruntime cannot be relabelled.",
+    "proof_fields": [
+      "proof_handle",
+      "source_profile_id",
+      "home_binding_id",
+      "publication_handle",
+      "service_generation_digest",
+      "crosswalk_member_sha256",
+      "source_output_claim_sha256",
+      "runtime_record_id",
+      "runtime_record_sha256",
+      "pm_runtime_receipt_handle",
+      "pm_receipt_sha256",
+      "pm_generation",
+      "pm_source_commit",
+      "venv_closure_sha256",
+      "runtime_identity_sha256",
+      "executable_sha256",
+      "executable_device",
+      "executable_inode",
+      "executable_uid",
+      "executable_gid",
+      "executable_mode",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "private": "Exactfresh RootVerifiedCommittedPMExecutableIdentity/heldexe+allvenvmemberFDs/currentreceipt/issuerseal, reprhidden. No RPCpaths or boolproofs.",
+    "ttl": "Fresh<=30s and underlyingcurrentidentity/controller/source/taskdeadline expiry; issued observation notdurablegrant. Close releasesduplicates/identity FDcustody."
+  },
+  "projection": {
+    "keys": [
+      "runtime_receipt_handle",
+      "runtime_sha256",
+      "device",
+      "inode",
+      "uid",
+      "gid",
+      "version_info",
+      "implementation",
+      "cache_tag",
+      "soabi",
+      "machine"
+    ],
+    "formula": "SHA256(_canonical(runtime_identity)) with existing producer canonicalJSON exactsortkeys/separators/ensure_ascii=False/allow_nan=False bytes; recompute from validated currentPMreceipt plus actualfresh_executable/runtime observations. Exactsamekeyset/types/values, noextra modefield in projection. Mode separatelyverified bycustody.",
+    "comparisons": "Row.runtime_receipt_handle==fresh identity.pm_runtime_receipt_handle; row.runtime_identity_sha256==recomputedcanonicalprojectionSHA. Rootfreshreceipt opens version_info/implementation/cache_tag/soabi/machine totypedidentity/observation; observedselected PM/runtime features must matchreceipt. ExecutableSHAalone insufficient."
+  },
+  "restart": "Load onlycurrent strictpublishedcore/member/claim/runtime row/signedchoice revocation/currentrootjournalPMrecord+source receipt; reopen immutable selected exe/venvroot nofollow and rehash ALLcommittedmembers/hashes/owner/mode/inode, source/choice/servicegeneration/currentNSS/principalnamespace. New process createsfreshidentity/proof; oldhandle cannotbeverified/resurrected. Update/rollback/revoke/tamper/missingmember closesproof and deniestask/usesownedcleanup.",
+  "integration": "Jarvis home registry uses this freshadapter instead of expiredsetup.resolve_runtime. Taskhome existingliveadmission/context/grant stillbinds exactPMproof/currentcore/namespace/home; PMproofalone authorizes no task/provider/egress. Published16rowfields unchanged; genuineprincipal_id+namespace_id required,UID/GIDtaskNSSliveonly.",
+  "tasks": [
+    {
+      "id": "HI-T221.1",
+      "owner": "durablePM runtime",
+      "work": "Expose exactvalidated projectionmetadata fromexistingfreshresolver and implement narrow publishedhomeadapter/FDcurrentproof with actualcore/source/runtime joins."
+    },
+    {
+      "id": "HI-T221.2",
+      "owner": "Jarvistaskhome",
+      "work": "Wire fresh currentPMproof into activehome/taskbinding aftersetup/restart; preserve originalservice/runtime/namespace/grants and staleinvalidations."
+    },
+    {
+      "id": "VD-T221.3",
+      "owner": "verification",
+      "work": "Test setupTTLexpired but genuinecurrentpublication succeeds, restartfreshproof, oldseal/replay/rowprojection/version/member/source/revocation/serviceNS failures; actualkernel/sourcepinsfuturetestedcommit."
+    }
+  ],
+  "acceptance": "All208profile/207delegate/soleJarvis/originalscope/AC01..18OPEN; actualfreshproducer/kernel effects required, no existingcodeclaim asinstalledacceptance."
+}

@@ -158,3 +158,5 @@ HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210
 Jarvis source-home/live-task correction v214: plans/amendments/2026-10-10-jarvis-published-home-live-task-split-v214.md; exact16publishedfacts/live taskcontextjoins, RB-T213.1/HI-T213.2/VD-T213.3 OPEN; all207/postsetup required/allACOPEN.
 
 Jarvis source-profile task identity v215: plans/amendments/2026-10-10-jarvis-source-profile-task-identity-v215.md; actualserviceprofile distinctprotectedsourcehome, typedliveadmission, prepared/publishedclaimjoins; existing213tasks/allACOPEN.
+
+Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
