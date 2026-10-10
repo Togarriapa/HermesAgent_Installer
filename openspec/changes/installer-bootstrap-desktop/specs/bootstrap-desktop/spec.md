@@ -929,3 +929,21 @@ The installer SHALL apply only the root_setup source tuple in planning/bootstrap
 #### Scenario: Previous root setup source pin differs
 - **WHEN** the previous expected tuple rejects committed reconfirmation bytes
 - **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Dedicated official Desktop acquisition authority
+The installer SHALL use planning/official-desktop-build-acquisition-v218.json for Desktop-specific locked source acquisition and offline build toolchain receipts without relabelling application consent.
+
+#### Scenario: Existing Node bytes selected for Desktop
+- **WHEN** the exact reviewed Node archive is reused by the Desktop builder
+- **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded
+
+## ADDED Requirements
+
+### Requirement: Fixed sealed descriptor exec inheritance
+The installer SHALL carry only its previously authorized sealedFD3 through existingfixedexec using the reviewed inheritance readback in planning/sealed-bootstrap-fd3-source-review-v220.json while retaining allsource/controller/oneuse/expiry/seal checks.
+
+#### Scenario: Sealed memfd is already descriptor three
+- **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
+- **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins

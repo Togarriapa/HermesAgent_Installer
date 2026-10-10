@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md",
+  "extends": [
+    "v210"
+  ],
+  "requirements": [
+    "R0101",
+    "MC-R0101",
+    "MC-F01"
+  ],
+  "tasks": [
+    "MC-R0101.5",
+    "MC-R0101.6"
+  ],
+  "owner": "luna_home_assistant_join",
+  "module": "hermes_installer.authority.home_assistant_setup_observations",
+  "registry": "RootHASetupObservationJournal",
+  "coordinator": "RootHASetupReadCoordinator",
+  "transport_sink": "RootHASetupTransportObservationSink",
+  "signer": "RootHASetupObservationSigner",
+  "domain": "root-ha-setup-observation-v216\\0",
+  "record_fields": [
+    "schema",
+    "receipt_handle",
+    "receipt_kind",
+    "key_id",
+    "setup_session_handle",
+    "transaction_handle",
+    "prepared_generation_id",
+    "choice_handle",
+    "intent_handle",
+    "grant_handle",
+    "principal_selection_handle",
+    "namespace_selection_handle",
+    "profile_id",
+    "profile_generation",
+    "endpoint_sha256",
+    "credential_reference",
+    "protocol_selection_handle",
+    "protocol_descriptor_sha256",
+    "installer_release_manifest_sha256",
+    "actor_observation_sha256",
+    "journal_root_id",
+    "journal_transaction_id",
+    "parent_receipt_handles",
+    "parent_receipt_sha256s",
+    "payload_sha256",
+    "payload_size_bytes",
+    "outcome",
+    "issued_at_unix",
+    "expires_at_unix",
+    "issued_monotonic",
+    "expires_monotonic",
+    "details",
+    "signature",
+    "record_sha256"
+  ],
+  "closed_kind_details": {
+    "connection": [
+      "connection_handle",
+      "peer_address",
+      "peer_port",
+      "server_hostname_sha256",
+      "certificate_sha256",
+      "tls_version",
+      "dns_selection_sha256"
+    ],
+    "request": [
+      "request_id",
+      "method",
+      "arguments_sha256",
+      "connection_receipt_handle"
+    ],
+    "provider-response": [
+      "request_id",
+      "method",
+      "http_status",
+      "content_type",
+      "raw_response_sha256",
+      "raw_response_size_bytes",
+      "connection_receipt_handle"
+    ],
+    "tool-schema": [
+      "tool_name",
+      "canonical_input_schema_sha256",
+      "canonical_annotations_sha256",
+      "canonical_tool_sha256",
+      "protocol_version",
+      "discovery_response_receipt_handles"
+    ],
+    "validated-response": [
+      "request_id",
+      "method",
+      "tool_schema_receipt_handle",
+      "provider_response_receipt_handle",
+      "validated_result_sha256",
+      "scope_membership_sha256",
+      "scope_record_count",
+      "validator_source_member_receipt_handles"
+    ]
+  },
+  "record_limits": {
+    "max_record_bytes": 32768,
+    "max_receipts_per_probe": 128,
+    "max_parent_receipts": 64,
+    "max_probe_seconds": 30
+  },
+  "live_receipt_types": [
+    "RootHASetupConnectionReceipt",
+    "RootHASetupRequestReceipt",
+    "RootHASetupProviderResponseReceipt",
+    "RootHASetupToolSchemaReceipt",
+    "RootHASetupValidatedResponseReceipt"
+  ],
+  "whole_observation_receipt_fields": [
+    "tool_schema_observation_receipt_handle",
+    "request_observation_receipt_handle",
+    "provider_response_observation_receipt_handle",
+    "validated_response_observation_receipt_handle"
+  ],
+  "mode_wire_mapping": {
+    "v210 selected-filter": "assist-filtered-resource",
+    "v210 whole-exposed-set": "assist-exposure-set",
+    "configure-later": "configure-later"
+  },
+  "receipt_semantics": "distinct setup observation evidence; never authority.SourceReceipt or HostContext; no token/header/body/state persistence; no restored live issuer",
+  "source_pins": "pending actual committed new module/transport/factory/key-owner bytes",
+  "acceptance": "AC01..AC18 OPEN"
+}

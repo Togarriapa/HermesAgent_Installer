@@ -1121,3 +1121,35 @@ The installer SHALL use planning/jarvis-source-profile-task-identity-v215.json t
 #### Scenario: Delegate source differs from task service profile
 - **WHEN** a current protected backend selects an internal source profile
 - **THEN** source_profile_id resolves exact current owned home while service profile/principal/namespace/grant checks remain unchanged and no additional serviceprofile identity is fabricated
+
+## ADDED Requirements
+
+### Requirement: Dedicated official Desktop acquisition authority
+The installer SHALL use planning/official-desktop-build-acquisition-v218.json for Desktop-specific locked source acquisition and offline build toolchain receipts without relabelling application consent.
+
+#### Scenario: Existing Node bytes selected for Desktop
+- **WHEN** the exact reviewed Node archive is reused by the Desktop builder
+- **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded
+
+
+## ADDED Requirements
+
+### Requirement: Genuine setup HA observation evidence
+The installer SHALL implement v216 root-session-owned signed observation receipts for actual setup HA TLS/request/provider/schema/validated-response effects, with exact retained producer membership and canonical journal custody. It SHALL preserve daemon SourceReceipt/HostContext restrictions and issue no call authority from historical receipt bytes.
+
+#### Scenario: Actual schema precedes functional call
+- **WHEN** genuine tools/list produces a current source-validated retained schema receipt and informed whole-context intent
+- **THEN** only the one-use exact GetLiveContext({}) functional grant may consume it through the real transport and record actual bounded semantic response evidence
+
+#### Scenario: Unrelated daemon receipt or forged observation
+- **WHEN** a caller supplies SourceReceipt names, copied journal JSON, raw result maps or expired schema/signature/context
+- **THEN** no live setup grant/functional receipt is issued and raw secrets/HTTP bodies remain absent from persistent evidence
+
+## ADDED Requirements
+
+### Requirement: Fixed sealed descriptor exec inheritance
+The installer SHALL carry only its previously authorized sealedFD3 through existingfixedexec using the reviewed inheritance readback in planning/sealed-bootstrap-fd3-source-review-v220.json while retaining allsource/controller/oneuse/expiry/seal checks.
+
+#### Scenario: Sealed memfd is already descriptor three
+- **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
+- **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins

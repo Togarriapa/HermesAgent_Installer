@@ -3219,5 +3219,42 @@
       "VD-T213.3"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_build_acquisition_v218": {
+    "contract": "planning/official-desktop-build-acquisition-v218.json",
+    "tasks": {
+      "BD-T218.1": [
+        "HI-T197.2"
+      ],
+      "BD-T218.2": [
+        "BD-T218.1"
+      ],
+      "VD-T218.3": [
+        "BD-T218.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "ha_setup_observation_receipts_v216": {
+    "contract": "planning/ha-setup-observation-receipts-v216.json",
+    "tasks": [
+      "MC-R0101.5",
+      "MC-R0101.6"
+    ],
+    "order": [
+      "current session/key/source/credential",
+      "actual transport/discovery schema",
+      "one-use exact functional call",
+      "validated receipt/choice adoption"
+    ],
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "sealed_bootstrap_fd3_source_review_v220": {
+    "contract": "planning/sealed-bootstrap-fd3-source-review-v220.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }
