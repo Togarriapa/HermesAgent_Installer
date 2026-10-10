@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from hermes_installer.authority import installer_release as release
 from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
@@ -337,6 +338,50 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             with self.subTest(path=changed_path, roles=roles, mode=mode), \
                     self.assertRaises(InstallerReleaseError):
                 _validate_fixed_layout_role(changed_path, changed_digest, size, roles, mode=mode)
+
+    def test_network_startup_helper_has_one_fixed_release_identity(self):
+        helper_id, source_path, installed_path, digest, size, role = release.NETWORK_STARTUP_HELPER
+        self.assertEqual(helper_id, "installer-private-loopback-worker-gate-v180")
+        self.assertEqual(source_path, "helpers/private-loopback-worker-gate.py")
+        self.assertEqual(installed_path, source_path)
+        self.assertEqual(role, "network-startup-helper")
+        self.assertEqual(_artifact_id_for(installed_path, [role]), helper_id)
+
+        # Until the pin is finalized, verification must reject helper bytes.
+        # Once pinned, only that exact digest and size may enter the release.
+        if digest is None:
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(installed_path, "1" * 64, 1, [role], mode=0o444)
+        else:
+            self.assertIsInstance(digest, str)
+            self.assertIsInstance(size, int)
+            _validate_fixed_layout_role(installed_path, digest, size, [role], mode=0o444)
+        for path, roles, mode in (
+            ("helpers/unreviewed.py", [role], 0o444),
+            (installed_path, ["module"], 0o444),
+            (installed_path, [role, "module"], 0o444),
+            (installed_path, [role], 0o555),
+        ):
+            with self.subTest(path=path, roles=roles, mode=mode), \
+                    self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, "1" * 64, 1, roles, mode=mode)
+
+        body = b"reviewed helper fixture"
+        fixture_sha = hashlib.sha256(body).hexdigest()
+        with patch.object(release, "NETWORK_STARTUP_HELPER", (
+                helper_id, source_path, installed_path, fixture_sha, len(body), role)):
+            _validate_fixed_layout_role(installed_path, fixture_sha, len(body), [role], mode=0o444)
+            for path, changed_sha, changed_roles, changed_mode in (
+                (installed_path, "0" * 64, [role], 0o444),
+                ("helpers/unreviewed.py", fixture_sha, [role], 0o444),
+                (installed_path, fixture_sha, ["module"], 0o444),
+                (installed_path, fixture_sha, [role, "module"], 0o444),
+                (installed_path, fixture_sha, [role], 0o555),
+            ):
+                with self.subTest(path=path, roles=changed_roles, mode=changed_mode), \
+                        self.assertRaises(InstallerReleaseError):
+                    _validate_fixed_layout_role(
+                        path, changed_sha, len(body), changed_roles, mode=changed_mode)
 
     def test_glm_source_artifact_ids_bind_exact_baseline_and_amendment_members(self):
         repo = Path(__file__).parents[2]
