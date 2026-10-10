@@ -178,3 +178,8 @@ Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gatewa
 Append-only v250 corrects only v245 cohort count: original399 signed-policy archives contain3093 symlinks and zero hardlinks; original graph file/hash remain correct. Preserve all source/currentness/private-root/transform/runtime gates.
 
 Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+## Current owned network observation v254
+
+`planning/current-owned-remote-network-observation-v254.json` separates fresh same-owned <=30s kernel/tool observations from original one-use start, actual <=600s finite recipe and independent Access/socket/tunnel deadlines. Complete current generation/adoption/NSS/kernel watchdog must stop exact owned unit on failure; no expiry resurrection or cleanup renewal. Sustained Desktop acceptance remains OPEN, no global Jarvis timeout inferred.

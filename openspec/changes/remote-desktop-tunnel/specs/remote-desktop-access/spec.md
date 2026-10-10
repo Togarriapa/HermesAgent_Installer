@@ -608,3 +608,15 @@ The implementation SHALL interpret the v238/v245 cohort as3093 original archive 
 #### Scenario: Inferred or changed hardlink
 - **WHEN** a hardlink is inferred from the earlier count summary or original kind/origin changes
 - **THEN** materializer admission SHALL deny rather than reinterpret the immutable source graph
+
+
+### Requirement: Fresh same-owned network observation v254
+The installer SHALL refresh only still-live same-owned network observations after full current publication/adoption/NSS and kernel readback. Watchdog failure SHALL deny input and stop the exact owned unit. Original start/process/socket/Access deadlines and removal-only cleanup remain unchanged.
+
+#### Scenario: Current proof refresh with unchanged process deadline
+- **WHEN** current same-generation owned kernel proof approaches expiry and fresh exact tool/readback succeeds before original proof expires
+- **THEN** replace only observation fields, retain process deadline and recheck authority before further effects
+
+#### Scenario: Expired or revoked proof
+- **WHEN** original proof expires or generation/source/adoption/member currentness fails
+- **THEN** deny renewal and effects, stop only verified owned unit and retain ownership-safe cleanup status

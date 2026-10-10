@@ -473,3 +473,15 @@ The system SHALL verify an old installed predecessor with an internally selected
 #### Scenario: Unknown or mixed historical cohort is denied
 - **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
 - **THEN** predecessor verification denies before candidate effects and preserves the original pointer
+
+
+### Requirement: Fresh same-owned network observation v254
+The installer SHALL refresh only still-live same-owned network observations after full current publication/adoption/NSS and kernel readback. Watchdog failure SHALL deny input and stop the exact owned unit. Original start/process/socket/Access deadlines and removal-only cleanup remain unchanged.
+
+#### Scenario: Current proof refresh with unchanged process deadline
+- **WHEN** current same-generation owned kernel proof approaches expiry and fresh exact tool/readback succeeds before original proof expires
+- **THEN** replace only observation fields, retain process deadline and recheck authority before further effects
+
+#### Scenario: Expired or revoked proof
+- **WHEN** original proof expires or generation/source/adoption/member currentness fails
+- **THEN** deny renewal and effects, stop only verified owned unit and retain ownership-safe cleanup status

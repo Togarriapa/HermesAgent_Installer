@@ -269,3 +269,8 @@ v250: `plans/amendments/2026-10-10-xpra-link-count-correction-v250.md` / `planni
 
 
 v253b: `planning/native-plugin-producer-sealed-api-v253b.json`; same253 tasks OPEN. Exact source owner corrections, no runtime/pin/acceptance.
+
+
+## Current owned network observation v254
+
+`planning/current-owned-remote-network-observation-v254.json`; HI-T254.1/LC-T254.2/VD-T254.3 OPEN. Same live owned proof refresh only, unchanged finite recipe/start/Access/socket/tunnel deadlines and current-generation watchdog/owned stop. Sustained Desktop and all AC OPEN.

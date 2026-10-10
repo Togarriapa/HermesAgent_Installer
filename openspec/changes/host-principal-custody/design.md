@@ -446,3 +446,8 @@ Root-owned sealed source/account/target observations feed the v231 active aggreg
 
 
 v253b source API review: `planning/native-plugin-producer-sealed-api-v253b.json` requires retained sealed vault/journal dependency getter, independent current result schema FK, fixed new GitHub /user observer and pending writes until actual attestor. No acceptance change.
+
+
+## Current owned network observation v254
+
+`planning/current-owned-remote-network-observation-v254.json` separates fresh same-owned <=30s kernel/tool observations from original one-use start, actual <=600s finite recipe and independent Access/socket/tunnel deadlines. Complete current generation/adoption/NSS/kernel watchdog must stop exact owned unit on failure; no expiry resurrection or cleanup renewal. Sustained Desktop acceptance remains OPEN, no global Jarvis timeout inferred.

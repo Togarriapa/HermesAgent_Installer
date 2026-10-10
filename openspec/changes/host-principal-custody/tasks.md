@@ -539,3 +539,8 @@ Append-only contract `planning/native-plugin-backend-composition-v253.json` clos
 - [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.
 
 - [ ] RB-T253.1 / HI-T253.2 / VD-T253.3 (v253b): Implement reviewed sealed dependency/result-schema/GitHub observation corrections; confirmation protocols cannot authorize writes.
+
+
+- [ ] HI-T254.1: Integrate same-owned still-live fresh observation renewal with current protected generation/source/adoption/NSS joins and atomic FD custody.
+- [ ] LC-T254.2: Separate actual network observation from unchanged finite process/start/access deadlines, continuously supervise and stop exact managed unit on currentness failure; preserve cleanup domain.
+- [ ] VD-T254.3: Verify actual refresh/currentness/expiry/concurrency/watchdog/terminal/access failures and original recipe cap, leaving sustained Desktop/native acceptance separate OPEN.

@@ -3846,5 +3846,21 @@
       "VD-T253.3"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "current_owned_remote_network_observation_v254": {
+    "contract": "planning/current-owned-remote-network-observation-v254.json",
+    "amendment": "plans/amendments/2026-10-11-current-owned-remote-network-observation-v254.md",
+    "tasks": {
+      "HI-T254.1": [
+        "RT-T234.2"
+      ],
+      "LC-T254.2": [
+        "HI-T254.1"
+      ],
+      "VD-T254.3": [
+        "LC-T254.2"
+      ]
+    },
+    "acceptance": "All AC OPEN; sustained Desktop separate"
   }
 }

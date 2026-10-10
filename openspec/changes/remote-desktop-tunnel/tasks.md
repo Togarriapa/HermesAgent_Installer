@@ -245,3 +245,8 @@ Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gatewa
 - [ ] VD-T250.2 Verify independent raw archive facts and preserve currentness/managed runtime gates; all AC OPEN.
 
 Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+- [ ] HI-T254.1: Integrate same-owned still-live fresh observation renewal with current protected generation/source/adoption/NSS joins and atomic FD custody.
+- [ ] LC-T254.2: Separate actual network observation from unchanged finite process/start/access deadlines, continuously supervise and stop exact managed unit on currentness failure; preserve cleanup domain.
+- [ ] VD-T254.3: Verify actual refresh/currentness/expiry/concurrency/watchdog/terminal/access failures and original recipe cap, leaving sustained Desktop/native acceptance separate OPEN.
