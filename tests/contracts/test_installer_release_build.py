@@ -214,6 +214,42 @@ def test_runtime_lock_requires_version_and_hash_pins():
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
 
 
+def test_runtime_site_search_paths_deduplicate_purelib_and_platlib(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_build.sysconfig, "get_path", lambda _key: str(tmp_path))
+    assert release_build._runtime_site_search_paths() == [str(tmp_path.resolve())]
+
+
+def test_bundled_pip_is_bound_to_fixed_cpython_site_directory(tmp_path):
+    relative_files = (
+        Path("lib/python3.14/site-packages/pip/__init__.py"),
+        Path("lib/python3.14/site-packages/pip-26.2.1.dist-info/METADATA"),
+    )
+    for relative in relative_files:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("pinned runtime archive member", encoding="utf-8")
+
+    class Distribution:
+        files = relative_files
+
+        def locate_file(self, item):
+            return tmp_path / item
+
+    release_build._verify_bundled_pip_distribution(Distribution(), tmp_path)
+
+    class EscapingDistribution:
+        files = (Path("lib/python3.14/site-packages/other-package/__init__.py"),)
+
+        def locate_file(self, item):
+            target = tmp_path / item
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("unexpected package", encoding="utf-8")
+            return target
+
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="escaped its fixed CPython site directory"):
+        release_build._verify_bundled_pip_distribution(EscapingDistribution(), tmp_path)
+
+
 def test_selected_installer_python_requirement_is_parsed_from_toml():
     release_build._require_python_requirement(b'[project]\nrequires-python = ">=3.11"\n')
     with pytest.raises(release_build.InstallerReleaseBuildError, match="valid installer Python requirement"):
