@@ -17,7 +17,7 @@ import stat
 import sys
 import time
 from urllib.parse import urlsplit
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -1158,6 +1158,8 @@ class ProtectedEnrollment:
     resource_validator_records: tuple[Mapping[str, Any], ...] = ()
     root_journal_root_records: tuple[Mapping[str, Any], ...] = ()
     native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
+    publication_receipt_handle: str | None = None
+    publication_authority_core_sha256: str | None = None
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     remote_observation_records: tuple[Mapping[str, Any], ...] = ()
     native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
@@ -2643,6 +2645,45 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         value, vault=vault, artifact_catalog_path=ARTIFACT_CATALOG_PATH,
         artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
     )
+
+
+def load_published_protected_enrollment(core: Any, *,
+                                        vault: RootCredentialVault | None = None
+                                        ) -> ProtectedEnrollment:
+    """Load enrollment only from the exact current publication-owned core proof.
+
+    The legacy loader above remains fixed to ``/etc/hermes-installer``. This
+    separate path accepts no caller path, mapping, byte string, or duck-typed
+    verifier and reads through the publisher's retained member descriptor.
+    """
+    from .setup_policy_publication import RootPublishedAuthorityCore
+    if type(core) is not RootPublishedAuthorityCore:
+        raise AuthorityDenied("enrollment.source", "current published authority core proof is required")
+    try:
+        core.verify_current()
+        raw = core._read_verified_bytes()
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                           parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+        if (not isinstance(value, dict) or value.get("schema") != core.authority_schema
+                or hashlib.sha256(raw).hexdigest() != core.sha256
+                or len(raw) != core.size_bytes):
+            raise ValueError("published core metadata differs")
+        enrollment = _parse_protected_enrollment_document(
+            value, vault=vault or RootCredentialVault(expected_uid=0),
+            artifact_catalog_path=ARTIFACT_CATALOG_PATH,
+            artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
+        )
+        core.verify_current()
+        return dataclass_replace(
+            enrollment,
+            publication_receipt_handle=core.publication_receipt_handle,
+            publication_authority_core_sha256=core.sha256,
+        )
+    except AuthorityDenied:
+        raise
+    except Exception:
+        raise AuthorityDenied(
+            "enrollment.source", "published authority core is stale or malformed") from None
 
 
 def _parse_protected_enrollment_document(
