@@ -11,6 +11,8 @@ import secrets
 import time
 import ast
 import hashlib
+import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -63,6 +65,10 @@ class RootPreparedNativeTargetSelection:
     permission_observation_handle: str | None
     backend_generation: str
     configuration_sha256: str
+    # Present only when the root TTY target-config producer retained the exact
+    # v142 scope payload. Hashes of arbitrary/config files are not substitutes.
+    scope_payload: bytes | None
+    scope_payload_sha256: str | None
     issued_monotonic: float
     expires_monotonic: float
     revocation_epoch: int
@@ -71,6 +77,10 @@ class RootPreparedNativeTargetSelection:
     def __post_init__(self) -> None:
         if self._seal is not _TARGET_SEAL:
             raise TypeError("native target selections are issued by the root target registry")
+        if (self.scope_payload is None) != (self.scope_payload_sha256 is None):
+            raise TypeError("public web scope payload and digest must be retained together")
+        if self.scope_payload is not None:
+            _validate_scope_payload(self, self.scope_payload, self.scope_payload_sha256)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,17 +151,17 @@ class RootNativeComponentTargetRegistry:
 
     def __init__(self, selected_installation_binding: Any,
                  root_principal_selection_registry: Any, root_journal: Path,
-                 authority_service: Any) -> None:
+                 ) -> None:
         from .bootstrap_runtime_factory import RootSelectedInstallationBinding
 
         if (type(selected_installation_binding) is not RootSelectedInstallationBinding
                 or not isinstance(root_journal, Path) or not root_journal.is_absolute()
-                or root_principal_selection_registry is None or authority_service is None):
-            raise ValueError("native target registry requires root installation, principal, journal and authority services")
+                or root_principal_selection_registry is None
+                or not callable(getattr(selected_installation_binding, "resolve_current_setup_choice", None))):
+            raise ValueError("native target registry requires root installation, signed setup-choice and principal services")
         self._binding = selected_installation_binding
         self._principal_registry = root_principal_selection_registry
         self._journal = root_journal
-        self._authority = authority_service
         self._seal = secrets.token_bytes(32)
         self._policy_selections: dict[str, Any] = {}
         self._targets: dict[str, RootPreparedNativeTargetSelection] = {}
@@ -161,10 +171,10 @@ class RootNativeComponentTargetRegistry:
     @classmethod
     def from_root_setup(cls, selected_installation_binding: Any,
                         root_principal_selection_registry: Any,
-                        root_journal: Path, authority_service: Any
+                        root_journal: Path
                         ) -> "RootNativeComponentTargetRegistry":
         return cls(selected_installation_binding, root_principal_selection_registry,
-                   root_journal, authority_service)
+                   root_journal)
 
     def bind_policy_selection(self, selection: Any) -> None:
         """Retain the actual policy-registry selection before resolving targets."""
@@ -392,6 +402,16 @@ class RootNativeComponentTargetRegistry:
             raise NativeComponentTargetDenied("native target has no retained root policy selection")
         return self.resolve_current_target(target_selection_handle, selection.selection_handle)
 
+    def resolve_current_scope_payload(self, target_selection_handle: str) -> bytes:
+        """Return exact canonical v142 configuration after revalidating its roots."""
+        target = self.resolve_current_target_handle(target_selection_handle)
+        if target.scope_payload is None:
+            raise NativeComponentTargetPending(
+                target.component_id, ("root-tty-public-web-scope-configuration",),
+            )
+        _validate_scope_payload(target, target.scope_payload, target.scope_payload_sha256)
+        return target.scope_payload
+
     def _resolve_policy_selection(self, selection_handle: str) -> Any:
         if not isinstance(selection_handle, str) or not selection_handle:
             raise NativeComponentTargetDenied("native policy selection handle is malformed")
@@ -403,12 +423,32 @@ class RootNativeComponentTargetRegistry:
 
     def _assert_binding_matches_selection(self, selection: Any) -> None:
         try:
+            durable_handle = getattr(selection, "setup_choice_selection_handle", None)
+            choice_epoch = getattr(selection, "choice_epoch", None)
+            choice_digest = getattr(selection, "choice_payload_sha256", None)
+            if (not isinstance(durable_handle, str) or not durable_handle
+                    or type(choice_epoch) is not int or choice_epoch < 0
+                    or not isinstance(choice_digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", choice_digest)):
+                raise ValueError
+            choice = self._binding.resolve_current_setup_choice(
+                durable_handle, "native-policy-preparation",
+            )
+            if (choice.selection_handle != durable_handle
+                    or choice.purpose != "native-policy-preparation"
+                    or choice.choice_epoch != choice_epoch
+                    or choice.choice_payload_sha256 != choice_digest
+                    or choice.revocation_epoch != selection.revocation_epoch
+                    or choice.principal_selection_handle != selection.principal_selection_handle
+                    or choice.namespace_selection_handle != selection.namespace_selection_handle
+                    or choice.prepared_generation != selection.prepared_generation_id):
+                raise ValueError
             authorization = self._binding.verify_current_setup_controller()
             current = self._binding.resolve_current_setup_identity()
             principal = current.principal
             namespace = current.namespace
         except Exception:
-            raise NativeComponentTargetDenied("current root setup identity or controller proof is unavailable") from None
+            raise NativeComponentTargetDenied("signed setup choice, root identity or controller proof is unavailable") from None
         if (selection.setup_session_id != authorization.setup_session_id
                 or selection.transaction_handle != authorization.transaction_handle
                 or selection.plan_sha256 != authorization.plan_digest
@@ -431,6 +471,59 @@ __all__ = [
 
 
 def _canonical_target_source(value: Any) -> bytes:
-    import json
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                        ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _validate_scope_payload(target: RootPreparedNativeTargetSelection,
+                            raw: bytes, digest: str | None) -> None:
+    """Validate the exact canonical first-ten-field v142 scope payload."""
+    if (not isinstance(raw, bytes) or len(raw) > 256 * 1024
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or hashlib.sha256(raw).hexdigest() != digest):
+        raise TypeError("public scope payload bytes or digest are invalid")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+        required = {
+            "enrollment_id", "target_id", "generation", "principal_id", "profile_id",
+            "recipient", "targets", "request_bytes_limit", "response_bytes_limit",
+            "deadline_seconds",
+        }
+        if not isinstance(value, dict) or set(value) != required or _canonical_target_source(value) != raw:
+            raise ValueError
+        if (value["target_id"] != target.target_id
+                or value["profile_id"] != target.profile_id
+                or value["generation"] != target.backend_generation
+                or value["recipient"] != target.recipient):
+            raise ValueError
+        if (not isinstance(value["targets"], list) or not 1 <= len(value["targets"]) <= 32
+                or type(value["request_bytes_limit"]) is not int
+                or not 1 <= value["request_bytes_limit"] <= 262144
+                or type(value["response_bytes_limit"]) is not int
+                or not 1 <= value["response_bytes_limit"] <= 2097152
+                or type(value["deadline_seconds"]) not in (int, float)
+                or not 0 < value["deadline_seconds"] <= 30):
+            raise ValueError
+        from ..protected_enrollment import RootSelectedPublicWebScope
+        # Reuse the production parser's exact hostname/path/query validation.
+        receipt_fields = {
+            "enrollment_id": value["enrollment_id"], "target_id": value["target_id"],
+            "generation": value["generation"], "principal_id": value["principal_id"],
+            "profile_id": value["profile_id"], "recipient": value["recipient"],
+            "targets": value["targets"], "request_bytes_limit": value["request_bytes_limit"],
+            "response_bytes_limit": value["response_bytes_limit"],
+            "deadline_seconds": value["deadline_seconds"],
+            "target_selection_handle": target.selection_handle,
+            "configuration_observation_handle": target.configuration_observation_handle,
+            "configuration_sha256": target.configuration_sha256,
+            "target_contract_artifact_id": target.target_contract_artifact_id,
+            "target_contract_sha256": target.target_contract_sha256,
+            "target_contract_source_receipt_handle": target.target_contract_source_receipt_handle,
+        }
+        parsed = RootSelectedPublicWebScope.from_protected_record(
+            receipt_fields, service_generation_digest="0" * 64,
+        )
+        if parsed.scope_payload_sha256 != digest:
+            raise ValueError
+    except Exception:
+        raise TypeError("public scope payload is not a canonical, bounded selected scope") from None
