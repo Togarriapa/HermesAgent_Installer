@@ -1465,12 +1465,14 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             raise AuthorityDenied("enrollment.generation", "selected application memory owner generation is invalid")
         lifetime, memory_bytes, workers = (selected["max_lifetime_seconds"], selected["max_memory_bytes"],
                                            selected["max_workers"])
-        if (type(lifetime) is not int or not 1 <= lifetime <= 600
-                or type(memory_bytes) is not int or not 1 <= memory_bytes <= 1 << 40
-                or type(workers) is not int or not 1 <= workers <= 64):
+        # Serialization bounds are not authorization. The effective limit is
+        # intersected with the selected service profile at resolution time.
+        if (type(lifetime) is not int or not 1 <= lifetime <= (1 << 63) - 1
+                or type(memory_bytes) is not int or not 1 <= memory_bytes <= (1 << 63) - 1
+                or type(workers) is not int or workers != 1):
             raise AuthorityDenied("enrollment.generation", "selected application runtime bounds are invalid")
         budget = selected["metered_budget_usd"]
-        if type(budget) not in {int, float} or not 0 <= budget <= 1_000_000:
+        if type(budget) not in {int, float} or budget != 0:
             raise AuthorityDenied("enrollment.generation", "selected application metered budget is invalid")
         if type(selected["enabled"]) is not bool:
             raise AuthorityDenied("enrollment.generation", "selected application enabled state is not boolean")

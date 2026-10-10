@@ -298,7 +298,8 @@ def test_selected_application_runtime_record_joins_recipe_roots_and_artifacts_bu
         }), build_store=None, service_connector=None,
         process_profiles={"profile-a": SimpleNamespace(
             enrollment_id="service-a", generation="profile-generation-a",
-            owner_uid=1001, owner_gid=1001)},
+            owner_uid=1001, owner_gid=1001, max_lifetime_seconds=90,
+            memory_max_bytes=2 * 1024 * 1024)},
         selected_application_runtime_records=(row,),
     )
     selected = binding.resolve_selected_application_runtime_record("application-a", profile_id="profile-a")

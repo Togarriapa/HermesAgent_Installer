@@ -23,6 +23,7 @@ from .client import (
     MAX_RESULT_BYTES, MAX_SCHEMA_BYTES, MAX_TOOLS, SUPPORTED_PROTOCOL_VERSIONS,
     MCPError, _selection_bound, _validate_schema, _validate_value,
 )
+from .privacy import scrub_mcp_result
 
 MAX_BROKER_REQUEST = 1_048_576
 MAX_PAGES = 32
@@ -249,6 +250,15 @@ class _Handler:
             result = response.get("result")
             if method == "tools/list":
                 result = self._accept_tool_page(state_key, result)
+            elif method == "tools/call":
+                # Result provenance is issued by AuthorityService over the
+                # bytes returned below. Scrub here, before that observer sees
+                # the payload, so the source receipt digest names exactly the
+                # data later exposed to the native model.
+                try:
+                    result = scrub_mcp_result(service.service_id)(result)
+                except Exception:
+                    raise MCPBrokerError("mcp.privacy", "MCP result failed reviewed privacy filtering") from None
             body = canonical_bytes({"jsonrpc": "2.0", "id": envelope["request_id"], "result": result})
         if len(body) > MAX_RESULT_BYTES * 4:
             raise MCPBrokerError("mcp.bounds", "MCP response exceeds its bound")

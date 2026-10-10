@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from hermes_installer.authority.task_native_observation import (
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.registry.resource_jobs import (
     ResourceJobDenied, RootTaskInitialInputReceipt, RootTaskNativeExecutionReceipt,
+    RootTaskStdinWriteReceipt,
 )
 
 
@@ -102,6 +104,48 @@ def test_initial_input_event_joins_parent_closure_not_source_lineage_hash():
     assert not RootTaskNativeObservationRegistry._matches_initial_input_event(run, receipt, event)
 
 
+def test_stdin_write_receipt_requires_actual_complete_write_drain_and_eof():
+    values = dict(
+        schema=1, receipt_handle="r" * 40, task_handle="t" * 40,
+        process_id="p" * 40, process_generation="profile-generation-a",
+        initial_input_receipt_handle="i" * 40, stdin_sha256="a" * 64,
+        stdin_size_bytes=3, sequence=0, write_complete=True, drained=True,
+        stdin_closed=True, service_generation_digest="b" * 64,
+        issued_monotonic=5.0, expires_monotonic=20.0,
+    )
+    assert RootTaskStdinWriteReceipt(**values).sequence == 0
+    with pytest.raises(ResourceJobDenied):
+        RootTaskStdinWriteReceipt(**{**values, "stdin_closed": False})
+    with pytest.raises(ResourceJobDenied):
+        RootTaskStdinWriteReceipt(**{**values, "sequence": 1})
+
+
+def test_stdin_write_receipt_must_join_exact_initial_input_and_terminal():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    task = SimpleNamespace(process_generation="profile-generation-a", stdin_sha256="a" * 64,
+                           stdin_size_bytes=3)
+    handle = SimpleNamespace(handle_id="t" * 40, process_id="p" * 40,
+                             stdin_write_receipt_handle="w" * 40)
+    initial = SimpleNamespace(receipt_handle="i" * 40, issued_monotonic=4.0,
+                              expires_monotonic=20.0)
+    run = SimpleNamespace(admitted_task=task, initial_input_receipt=initial,
+                          task_handle=handle, service_generation_digest="b" * 64,
+                          deadline=20.0)
+    terminal = SimpleNamespace(stdin_write_receipt_handle="w" * 40, finished_monotonic=6.0)
+    write = RootTaskStdinWriteReceipt(
+        schema=1, receipt_handle="w" * 40, task_handle=handle.handle_id,
+        process_id=handle.process_id, process_generation=task.process_generation,
+        initial_input_receipt_handle=initial.receipt_handle, stdin_sha256=task.stdin_sha256,
+        stdin_size_bytes=task.stdin_size_bytes, sequence=0, write_complete=True,
+        drained=True, stdin_closed=True, service_generation_digest="b" * 64,
+        issued_monotonic=5.0, expires_monotonic=20.0,
+    )
+    registry._validate_stdin_write_receipt(run, terminal, write.receipt_handle, write, 6.0)
+    wrong_input = replace(write, initial_input_receipt_handle="j" * 40)
+    with pytest.raises(AuthorityDenied):
+        registry._validate_stdin_write_receipt(run, terminal, write.receipt_handle, wrong_input, 6.0)
+
+
 def test_issued_receipt_is_identity_bound_and_one_use():
     registry = _registry({})
     value = _dto()
@@ -155,6 +199,25 @@ def test_cancel_task_input_stops_watcher_and_rejects_replay():
     assert task_handle.handle_id not in registry._runs
     with pytest.raises(AuthorityDenied):
         registry.cancel_task_input(task_handle, receipt)
+
+
+def test_cancel_running_task_cleans_selection_failure_before_input_receipt():
+    registry = _registry({})
+    handle_args = dict(handle_id="u" * 40, generation="profile-generation-a")
+    if "process_id" in ManagedTaskHandle.__dataclass_fields__:
+        handle_args["process_id"] = "process-b"
+    task_handle = ManagedTaskHandle(**handle_args)
+    stop = threading.Event()
+    watcher = threading.Thread(target=stop.wait)
+    run = SimpleNamespace(task_handle=task_handle, deadline=20.0, stop=stop, watcher=watcher)
+    registry._runs[task_handle.handle_id] = run
+    watcher.start()
+
+    registry.cancel_running_task(task_handle)
+    assert not watcher.is_alive()
+    assert task_handle.handle_id not in registry._runs
+    with pytest.raises(AuthorityDenied):
+        registry.cancel_running_task(task_handle)
 
 
 def test_model_receipt_requires_complete_task_source_ancestry():

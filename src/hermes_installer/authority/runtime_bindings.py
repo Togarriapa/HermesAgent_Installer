@@ -356,6 +356,11 @@ class RootRuntimeBindings:
                 or managed.owner_uid != service.service_uid or managed.owner_gid != service.service_gid
                 or service.roots.work_id != selected.record["work_root_id"]
                 or service.roots.data_id != selected.record["data_root_id"]
+                or selected.record["max_lifetime_seconds"] > managed.max_lifetime_seconds
+                or managed.memory_max_bytes is None
+                or selected.record["max_memory_bytes"] > managed.memory_max_bytes
+                or selected.record["max_workers"] != 1
+                or selected.record["metered_budget_usd"] != 0
                 or recipe.process_start_target != selected.record["process_start_target"]
                 or start.target != selected.record["process_start_target"]):
             raise EnrollmentDenied("selected application does not match its active service roots and recipe")
