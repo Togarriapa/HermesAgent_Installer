@@ -208,3 +208,15 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T147.2 app source/build/probe: Review exact per-project offline backend/source-wheel stage and genuine observed wheel receipt; full installed env/probe requires project plus complete103 closure where selected, no dependency-only success.
 
 - [ ] SK-T148.1 uv probe/application build: Exact nonreceipt container provenance and production PM/runtime/project proof separation.
+
+- [ ] SK-T150.1 toolchain producer/artifact broker: Implement finite selected-plan-bound64MiB source observer/held FD and actual exact catalog/plan source rows; require current explicit package acquisition choice and exactNode/Bunpolicy.
+
+- [ ] SK-T150.2 toolchain registry/application build: Use genuine observer result instead of disconnected HTTP/CAS path; source/member/plan mismatch negatives and actual isolated executable/version/notice observation.
+
+- [ ] SK-T151.1 host enrollment/factory/active compiler: Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins.
+
+- [ ] SK-T151.2 models/private providers/runtime composer: Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute.
+
+- [ ] SK-T152.1 app build/source broker: Actual separate reviewed backend table source/member observation, finite artifact/license/CAS receipt and complete current backend closure.
+
+- [ ] SK-T152.2 factory/application selection/build/probe: Final backend handle join, isolated actual project wheel frontend/backend/no-network source hook execution and genuine wheel output/install/probe; extra build requirements/source/license/currentness failures deny.
