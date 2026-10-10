@@ -590,7 +590,8 @@ class AuthorityService:
             if not isinstance(claims, Mapping) or set(claims) != spec[2]:
                 raise AuthorityDenied("application.package_observation", "package observation claims differ from v136 schema")
             receipt = replace(observation, signature=self._sign_root_selected(spec[1], claims))
-            registry.retain_authority_signed_observation(kind, receipt)
+            if registry.retain_authority_signed_observation(kind, receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package receipt was not retained")
             return receipt
         except AuthorityDenied:
             raise
