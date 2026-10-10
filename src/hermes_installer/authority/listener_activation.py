@@ -1119,6 +1119,29 @@ class RootSetupHealthIntentJournal:
             fcntl.flock(lockfd, fcntl.LOCK_UN)
             os.close(lockfd)
 
+    def mark_cancelled(self, accepted: RootAcceptedHealthIntent) -> None:
+        """Persist a terminal non-success state after a failed one-use run."""
+        if (type(accepted) is not RootAcceptedHealthIntent or accepted._journal is not self
+                or self.receiver is None or self.active_receipt is None):
+            raise ListenerActivationUnavailable("health cancellation lacks the daemon's exact accepted intent")
+        current = self.resolve_current_accepted_intent_for_handle(
+            accepted.intent_handle, self.receiver, self.active_receipt,
+        )
+        if current.intent_sha256 != accepted.intent_sha256:
+            raise ListenerActivationUnavailable("health intent changed before cancellation")
+        lockfd = self._lock()
+        try:
+            value, _old_digest, identity = self._read()
+            if (value.get("state") not in {"accepted", "started"}
+                    or value.get("intent_sha256") != accepted.intent_sha256):
+                raise ListenerActivationUnavailable("health intent cannot be cancelled from its current state")
+            value["state"] = "cancelled"
+            self._replace(value, identity)
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+        self.resolve_current_intent_state(accepted.intent_handle)
+
     def commit_completion(self, intent_handle: str, intent_sha256: str,
                           completion_body: Mapping[str, Any], *,
                           health_receipt_body: Mapping[str, Any],
@@ -2178,9 +2201,24 @@ class RootAuthorityListenerActivationSupervisor:
                 raise ListenerActivationUnavailable("daemon did not accept the exact health intent")
             # A health run may take up to the fixed 300-second recipe limit.
             # The 30-second intent is consumed at acceptance, never extended.
-            completed, fds = _recv_packet(self._health_connection,
-                                          expected_peer=expected, expected_fd_count=0,
-                                          timeout=300.0)
+            try:
+                completed, fds = _recv_packet(self._health_connection,
+                                              expected_peer=expected, expected_fd_count=0,
+                                              timeout=300.0)
+            except (TimeoutError, ConnectionError):
+                # The daemon may have durably committed the completion before
+                # its reply was lost. Reopen that exact CAS only while the
+                # same supervised daemon/source selection remains current.
+                self.verify_active_current(receipt)
+                self.verify_current_selection(selection)
+                completion_handle, digest, witness = health.resolve_current_completed_for_intent(
+                    intent.intent_handle)
+                if (witness.get("intent_sha256") != intent.intent_sha256
+                        or _digest(dict(witness)) != digest):
+                    raise ListenerActivationUnavailable(
+                        "recovered health completion differs from the durable intent") from None
+                health.resolve_current_completed_health_proof(intent.intent_handle, completion_handle)
+                return completion_handle, digest
             if (fds or completed.get("operation") != "health-completed"
                     or completed.get("intent_handle") != intent.intent_handle):
                 raise ListenerActivationUnavailable("daemon returned no closed completion reference")
@@ -2793,7 +2831,7 @@ class RootAuthorityListenerActivationReceiver:
         journal.receiver, journal.active_receipt = self, receipt
         self._health_intent_journal = journal
 
-    def receive_health_intent(self, journal: RootSetupHealthIntentJournal
+    def receive_health_intent(self, journal: RootSetupHealthIntentJournal, *, timeout: float = 3.0
                               ) -> RootAcceptedHealthIntent:
         """Accept one current setup intent over the retained authenticated channel."""
         receipt = self.current_active_receipt()
@@ -2809,7 +2847,7 @@ class RootAuthorityListenerActivationReceiver:
             raise ListenerActivationUnavailable("health request came from a different setup actor")
         self.observe_active_current(receipt)
         request, descriptors = _recv_packet(connection, expected_peer=expected_peer,
-                                            expected_fd_count=0)
+                                            expected_fd_count=0, timeout=timeout)
         if descriptors or request.get("operation") != "health-request":
             raise ListenerActivationUnavailable("health channel did not carry a fixed request")
         accepted = journal.accept(request["intent_handle"], request["intent_sha256"],
@@ -2843,6 +2881,32 @@ class RootAuthorityListenerActivationReceiver:
                                   "completion_handle": completion_handle,
                                   "completion_sha256": digest})
         return completion_handle, digest
+
+    def abort_health_exchange(self) -> None:
+        """Close only the setup control channel after a fail-closed health stop.
+
+        This is transport cleanup, not a health result or journal transition.
+        The protected intent remains accepted/started as written, so callers
+        cannot turn a failed or interrupted run into a second execution.
+        """
+        receipt = self.current_active_receipt()
+        journal = self._health_intent_journal
+        connection = self._health_connection
+        if (journal is None or journal.receiver is not self
+                or journal.active_receipt is not receipt or connection is None):
+            raise ListenerActivationUnavailable("current health exchange is unavailable")
+        record = self._read_current_adopted_record()
+        expected_peer = self._verify_setup_peer(record)
+        self.observe_active_current(receipt)
+        if _read_peer_cred(connection) != expected_peer:
+            raise ListenerActivationUnavailable("health setup peer changed before transport abort")
+        self._health_connection = None
+        try:
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        finally:
+            connection.close()
 
     def _read_current_adopted_record(self) -> Mapping[str, Any]:
         root_fd = activation_fd = -1

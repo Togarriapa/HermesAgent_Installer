@@ -500,6 +500,15 @@ def main_adopt(activation_id: str) -> int:
     # first post-capture worker request.
     from .native_worker_launch import preload_native_worker_launch_closure
     preload_native_worker_launch_closure()
+    # The daemon health source/material and completion writers are part of the
+    # installed actor's finite import closure.  Load them before the verifier
+    # snapshots module origins below.
+    from . import native_health_daemon
+    from .functional_health_receipt_consumer import RootDaemonFunctionalHealthReceiptConsumer
+    from .native_health_observer import (
+        RootDaemonCommittedHealthEnrollmentRegistry,
+        RootNativeHealthStartAuthority,
+    )
     service, enrollment = build_enrolled_authority_service()
     runtime = getattr(service, "root_authority_runtime", None)
     process_manager = getattr(runtime, "process_manager", None)
@@ -538,6 +547,7 @@ def main_adopt(activation_id: str) -> int:
         receiver.attach_health_intent_journal(health_journal)
         service.root_authority_listener_activation_receiver = receiver
         service.root_setup_health_intent_journal = health_journal
+        native_worker_launch_bound = False
         if process_manager is not None:
             # This owner binds fresh active PM/source projections and the
             # receiver's retained adopted FD. Failure leaves the native worker
@@ -546,7 +556,52 @@ def main_adopt(activation_id: str) -> int:
             try:
                 process_manager.bind_native_worker_launch_owner(
                     runtime, receiver, active_listener)
+                native_worker_launch_bound = True
             except NativeHermesWorkerLaunchUnavailable:
+                pass
+        health_consumer = None
+        if runtime is not None and process_manager is not None and native_worker_launch_bound:
+            try:
+                commit_registry = RootDaemonCommittedHealthEnrollmentRegistry.from_root_runtime(runtime)
+                material_registry = native_health_daemon.RootDaemonNativeHealthMaterialRegistry.from_root_runtime(
+                    runtime, commit_registry,
+                )
+                run_registry = native_health_daemon.RootDaemonNativeHealthRunRegistry.from_root_runtime(
+                    runtime, material_registry,
+                )
+                start_authority = RootNativeHealthStartAuthority.from_root_daemon_runtime(
+                    runtime, commit_registry, material_registry, run_registry,
+                )
+                health_consumer = RootDaemonFunctionalHealthReceiptConsumer.from_root_runtime(
+                    runtime, commit_registry, material_registry, start_authority,
+                    run_registry.observer, run_registry,
+                )
+                service.root_functional_health_receipt_consumer = health_consumer
+                service.root_daemon_native_health_run_registry = run_registry
+            except Exception:
+                # Health is an independently gated capability.  The adopted
+                # listener may still serve ordinary authority RPCs, but its
+                # setup health channel is closed below unless the full typed
+                # source/controller/event owners compose successfully.
+                health_consumer = None
+        if health_consumer is not None:
+            try:
+                _dispatch_one_functional_health_intent(
+                    receiver, health_journal, health_consumer,
+                    service.root_daemon_native_health_run_registry,
+                )
+            except Exception:
+                # Closing the private setup channel reports unavailable to the
+                # original setup actor.  The durable intent remains accepted
+                # or started and cannot be replayed as a second health run.
+                try:
+                    receiver.abort_health_exchange()
+                except Exception:
+                    pass
+        else:
+            try:
+                receiver.abort_health_exchange()
+            except Exception:
                 pass
         socket_path = listener.getsockname()
         if (not isinstance(socket_path, str)
@@ -561,6 +616,7 @@ def main_adopt(activation_id: str) -> int:
                 listener.close()
             except OSError:
                 pass
+
             # Remove only the exact socket leaf named by the adopted journal;
             # a pathname replacement is preserved for recovery/inspection.
             try:
@@ -596,3 +652,56 @@ def main_adopt(activation_id: str) -> int:
         actor.close()
         held_release.close()
     return 0
+
+
+def _dispatch_one_functional_health_intent(receiver: Any, journal: Any,
+                                           consumer: Any, run_registry: Any) -> None:
+    """Consume one authenticated setup intent through the actual daemon owners."""
+    from .functional_health_receipt_consumer import RootDaemonFunctionalHealthReceiptConsumer
+    from .listener_activation import (
+        RootAcceptedHealthIntent, RootAuthorityListenerActivationReceiver,
+        RootSetupHealthIntentJournal,
+    )
+    from .native_health_daemon import RootDaemonNativeHealthRunRegistry
+    if (type(journal) is not RootSetupHealthIntentJournal
+            or type(receiver) is not RootAuthorityListenerActivationReceiver
+            or type(consumer) is not RootDaemonFunctionalHealthReceiptConsumer
+            or type(run_registry) is not RootDaemonNativeHealthRunRegistry
+            or journal.receiver is not receiver
+            or getattr(consumer, "receiver", None) is not receiver
+            or getattr(consumer, "intent_journal", None) is not journal
+            or getattr(consumer, "run_registry", None) is not run_registry):
+        raise AuthorityDenied("authority.health", "current typed daemon health owners are unavailable")
+    accepted = None
+    control = None
+    try:
+        accepted = receiver.receive_health_intent(journal, timeout=300.0)
+        if (type(accepted) is not RootAcceptedHealthIntent or accepted._journal is not journal
+                or accepted.activation_id != receiver.activation_id):
+            raise AuthorityDenied("authority.health", "daemon accepted no current setup health intent")
+        admission = consumer.admit_daemon_selected_health(accepted.intent_handle)
+        control = run_registry.start_selected_health(admission.admission_handle)
+        health_receipt_handle = run_registry.run_selected_health(control.control_handle)
+        completion_handle, _completion_sha256 = consumer.record_daemon_functional_health(
+            accepted.intent_handle, health_receipt_handle,
+        )
+        journal.resolve_current_completed_health_proof(accepted.intent_handle, completion_handle)
+        receiver.send_health_completion(accepted, completion_handle)
+    except Exception:
+        # A post-start failure cancels the exact retained observation where
+        # possible, then durably closes the intent.  A crash between these
+        # steps still leaves `started`, which the journal refuses to replay.
+        if control is not None:
+            try:
+                observation = run_registry.manager.resolve_selected_health_observation_handle(
+                    control.control_handle,
+                )
+                run_registry.observer.cancel_selected_health(observation)
+            except Exception:
+                pass
+        if accepted is not None:
+            try:
+                journal.mark_cancelled(accepted)
+            except Exception:
+                pass
+        raise
