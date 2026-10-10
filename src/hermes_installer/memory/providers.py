@@ -40,6 +40,9 @@ class ProviderStatus:
     available: bool
     detail: str
     service_revision: str | None = None
+    service_live: bool = False
+    service_ready: bool = False
+    functional_memory_verified: bool = False
 
 
 class BrokerMemoryProvider:
@@ -90,10 +93,26 @@ class BrokerMemoryProvider:
     def doctor(self, context: Any) -> ProviderStatus:
         result = self._call("doctor", "memory-retrieval", {"schema": 1},
                             (context,), "memory-retrieval")
-        healthy = result.get("healthy") is True
+        state = result.get("service_status")
+        if state not in {"ready", "live_unqualified", "not_ready"}:
+            raise MemoryProviderError("memory broker omitted the typed live/readiness state")
+        if result.get("functional_memory_verified") is not False:
+            raise MemoryProviderError("service doctor cannot claim functional memory verification")
         revision = result.get("revision")
-        return ProviderStatus(self.name, healthy, "ready" if healthy else "service unhealthy",
-                              revision if isinstance(revision, str) else None)
+        ready = state == "ready"
+        live = state in {"ready", "live_unqualified"}
+        detail = {"ready": "subsystem readiness checks passed; functional retrieval remains unverified",
+                  "live_unqualified": "service process is live; subsystem readiness is unverified",
+                  "not_ready": "service readiness checks failed"}[state]
+        return ProviderStatus(
+            # `available` means usable memory, not merely a responsive service
+            # or passing subsystem probes. Functional activation needs the
+            # separate source-bound extraction/retrieval proof path.
+            self.name, False, detail,
+            revision if isinstance(revision, str) else None,
+            service_live=live, service_ready=ready,
+            functional_memory_verified=False,
+        )
 
     def capture(self, record: MemoryRecord, *, context: Any = None) -> None:
         if context is None:
