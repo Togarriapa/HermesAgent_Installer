@@ -8,9 +8,11 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 
 if TYPE_CHECKING:
@@ -801,6 +803,106 @@ class DurableMemoryQueue:
                 db.close()
 
 
+_PROFILED_MEMORY_QUEUE_SEAL = object()
+
+
+class ProfiledMemoryJobResolver:
+    """Root-sealed facade for profile-local durable memory queues.
+
+    The root runtime is the only constructor. AuthorityService can require
+    this exact type to resolve an opaque active-job handle without accepting
+    arbitrary callbacks, profile paths, or worker-supplied identity claims.
+    """
+
+    def __init__(self, queues: Mapping[str, DurableMemoryQueue], *, _seal: object):
+        if (_seal is not _PROFILED_MEMORY_QUEUE_SEAL or not queues
+                or any(not isinstance(profile, str) or not profile
+                       or type(queue) is not DurableMemoryQueue
+                       for profile, queue in queues.items())):
+            raise TypeError("a root-selected immutable profile queue map is required")
+        self._queues = MappingProxyType(dict(queues))
+        self._profiles = tuple(sorted(self._queues))
+        self._claim_cursor = 0
+        self._claim_lock = threading.Lock()
+
+    @property
+    def profiles(self) -> tuple[str, ...]:
+        return self._profiles
+
+    def enqueue(self, *, target: MemoryTarget, context: HostContext,
+                body: Mapping[str, Any]) -> str:
+        child = self._queues.get(target.profile_id)
+        if child is None:
+            raise BrokerUnavailable("profile memory queue is unavailable")
+        return child.enqueue(target=target, context=context, body=body)
+
+    def enqueue_completed_turn(self, *, target: MemoryTarget, context: HostContext,
+                               completed_turn: Any, transcript: bytes, consent: Any) -> str:
+        child = self._queues.get(target.profile_id)
+        if child is None:
+            raise BrokerUnavailable("profile memory queue is unavailable")
+        return child.enqueue_completed_turn(
+            target=target, context=context, completed_turn=completed_turn,
+            transcript=transcript, consent=consent)
+
+    def result(self, context: HostContext, receipt: str) -> Mapping[str, Any]:
+        child = self._queues.get(context.profile_id)
+        if child is None:
+            raise BrokerUnavailable("profile memory queue is unavailable")
+        return child.result(context, receipt)
+
+    def consent_active(self, consent_id: str) -> bool:
+        return any(child.consent_active(consent_id) for child in self._queues.values())
+
+    def resolve_active_job(self, job_handle: str, *, now: float | None = None) -> MemoryJobAuthorityRecord:
+        matches = []
+        for child in self._queues.values():
+            try:
+                matches.append(child.resolve_active_job(job_handle, now=now))
+            except BrokerDenied:
+                continue
+        if len(matches) != 1:
+            raise BrokerDenied("root memory job is absent or ambiguous across profile queues")
+        return matches[0]
+
+    def is_current(self, record: MemoryJobAuthorityRecord, *, now: float | None = None) -> bool:
+        if type(record) is not MemoryJobAuthorityRecord:
+            return False
+        child = self._queues.get(record.profile_id)
+        return child is not None and child.is_current(record, now=now)
+
+    def claim(self, lease_seconds: int = 60) -> dict[str, Any] | None:
+        # Each SQLite queue claims atomically. Round-robin across profiles
+        # prevents a busy profile from starving another profile's work.
+        with self._claim_lock:
+            start = self._claim_cursor
+            for offset in range(len(self._profiles)):
+                index = (start + offset) % len(self._profiles)
+                job = self._queues[self._profiles[index]].claim(lease_seconds)
+                if job is not None:
+                    self._claim_cursor = (index + 1) % len(self._profiles)
+                    return job
+        return None
+
+    def finish(self, job: Mapping[str, Any], result: Mapping[str, Any] | None,
+               error_code: str | None = None) -> None:
+        profile = job.get("profile_id")
+        child = self._queues.get(profile) if isinstance(profile, str) else None
+        if child is None:
+            raise BrokerDenied("claimed memory job is not bound to a root profile queue")
+        child.finish(job, result, error_code)
+
+    def revoke_owner(self, profile_id: str, provider_id: str, owner_generation: int,
+                     *, reason: str = "owner_changed") -> int:
+        child = self._queues.get(profile_id)
+        return 0 if child is None else child.revoke_owner(
+            profile_id, provider_id, owner_generation, reason=reason)
+
+    def revoke_profile(self, profile_id: str, *, reason: str = "capture_disabled") -> int:
+        child = self._queues.get(profile_id)
+        return 0 if child is None else child.revoke_profile(profile_id, reason=reason)
+
+
 def _result(raw: bytes) -> dict[str, Any]:
     if not isinstance(raw, bytes) or len(raw) > MAX_RESPONSE:
         raise BrokerUnavailable("memory response exceeds limit")
@@ -1299,57 +1401,11 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     consent_ready = callable(consent_issuer) and callable(effect_runner)
     queue = None
     if consent_ready:
-        class ProfiledQueue:
-            def __init__(self):
-                self.queues = {profile: DurableMemoryQueue(
-                    state_directories[profile], owner_state=owner_state,
-                    consent_issuer=consent_issuer)
-                    for profile in state_directories}
-            def enqueue(self, *, target: MemoryTarget, context: HostContext,
-                        body: Mapping[str, Any]) -> str:
-                child = self.queues.get(target.profile_id)
-                if child is None: raise BrokerUnavailable("profile queue is unavailable")
-                return child.enqueue(target=target, context=context, body=body)
-            def enqueue_completed_turn(self, *, target: MemoryTarget, context: HostContext,
-                                       completed_turn: Any, transcript: bytes,
-                                       consent: Any) -> str:
-                child = self.queues.get(target.profile_id)
-                if child is None: raise BrokerUnavailable("profile queue is unavailable")
-                return child.enqueue_completed_turn(
-                    target=target, context=context, completed_turn=completed_turn,
-                    transcript=transcript, consent=consent)
-            def result(self, context: HostContext, receipt: str) -> Mapping[str, Any]:
-                child = self.queues.get(context.profile_id)
-                if child is None: raise BrokerUnavailable("profile queue is unavailable")
-                return child.result(context, receipt)
-            def consent_active(self, consent_id: str) -> bool:
-                return any(child.consent_active(consent_id) for child in self.queues.values())
-            def resolve_active_job(self, job_handle: str, *, now: float | None = None) -> MemoryJobAuthorityRecord:
-                # Job IDs are random, but still reject ambiguous matches if
-                # storage corruption or an impossible collision is observed.
-                matches = []
-                for child in self.queues.values():
-                    try:
-                        matches.append(child.resolve_active_job(job_handle, now=now))
-                    except BrokerDenied:
-                        continue
-                if len(matches) != 1:
-                    raise BrokerDenied("root memory job is absent or ambiguous across profile queues")
-                return matches[0]
-            def is_current(self, record: MemoryJobAuthorityRecord, *, now: float | None = None) -> bool:
-                if type(record) is not MemoryJobAuthorityRecord:
-                    return False
-                child = self.queues.get(record.profile_id)
-                return child is not None and child.is_current(record, now=now)
-            def revoke_owner(self, profile: str, provider: str, generation: int,
-                             *, reason: str = "owner_changed") -> int:
-                child = self.queues.get(profile)
-                return 0 if child is None else child.revoke_owner(
-                    profile, provider, generation, reason=reason)
-            def revoke_profile(self, profile: str, *, reason: str = "capture_disabled") -> int:
-                child = self.queues.get(profile)
-                return 0 if child is None else child.revoke_profile(profile, reason=reason)
-        queue = ProfiledQueue()
+        children = {profile: DurableMemoryQueue(
+            state_directories[profile], owner_state=owner_state,
+            consent_issuer=consent_issuer)
+            for profile in state_directories}
+        queue = ProfiledMemoryJobResolver(children, _seal=_PROFILED_MEMORY_QUEUE_SEAL)
     consent_active = queue.consent_active if queue is not None else (lambda _consent_id: False)
     private_engines, private_engine_unavailable = _build_private_engine_registry(
         targets, private_engine_resolver, expected_active_generation_digest,
