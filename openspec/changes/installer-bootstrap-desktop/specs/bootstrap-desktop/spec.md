@@ -594,3 +594,17 @@ The installer SHALL bind the two reviewed worker source members with source-modu
 #### Scenario: Prepared worker source is available before worker launch
 - **WHEN** a verified held release includes the exact source-module bytes
 - **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created

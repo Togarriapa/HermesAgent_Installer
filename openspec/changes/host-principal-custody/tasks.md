@@ -279,3 +279,15 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T154.1 Broker/release/factory/source observer: exact final source/installed descriptors and separate current source-membership/root-import/worker-origin proofs.
 
 - [ ] HI-T156.1 Consent/publicTTY/host authority: actual runtime rootTTY revocation observation, finite signer transition and durable current epoch verification.
+
+- [ ] HI-T158.1 source observer/native observer/registration/factory: Publish held capture profile members; actual selected schema/result validator FKs and finite source/action rows; root effect/provider issuer then exact peer presentation delivery. Negative raw worker capture/malformed/stale/private ancestry tests.
+
+- [ ] HI-T158.2 host authority/consent: Exact finite revocation signature domain and closed canonical typed envelope, current row verification; no arbitrary signer.
+
+- [ ] HI-T159.1 factory/entrypoint/startup/custody/health observer: Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement.
+
+- [ ] HI-T159.2 native fixture/observer/registration source owners: Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests.
+
+- [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
+
+- [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.
