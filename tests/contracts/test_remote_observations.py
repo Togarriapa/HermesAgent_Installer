@@ -13,6 +13,7 @@ from pathlib import Path
 from hermes_installer.authority.remote_observations import (
     GatewayBoundaryHTTPFact,
     GatewayBoundaryObservation,
+    NativeWindowInputObservation,
     NativeWindowObservation,
     RemoteObservationUnavailable,
     SelectedGatewayBoundary,
@@ -132,6 +133,52 @@ class RemoteObservationContracts(unittest.TestCase):
                                        websocket_observation_id="w" * 24))
         self.assertFalse(receipt.verify(self.signer, now=105.0, selected=selected,
                                         websocket_observation_id="x" * 24))
+
+    def test_input_receipt_distinguishes_complete_and_partial_measured_delivery(self):
+        selected = SelectedNativeWindow(
+            remote_enrollment_id="remote-1", native_profile_id="desktop-profile",
+            native_generation="native-4", native_uid=1000, native_cgroup_id="cg-1",
+            allowed_executable_sha256s=("a" * 64,),
+            display_server_profile_id="xpra-profile", display_server_generation="x1",
+            display_name=":100", xauthority_path=Path("/private/authority"),
+            xauthority_device=1, xauthority_inode=2, xauthority_uid=0,
+            xauthority_receipt_handle="receipt_handle_1234567890")
+        assertions = (
+            "remote_desktop.native_input.current_selected_xres_window",
+            "remote_desktop.native_input.focus_observed_at_each_f24_boundary",
+            "remote_desktop.native_input.f24_event_delivery_measured",
+            "remote_desktop.native_input.focus_restore_observed_and_identity_revalidated")
+
+        def signed(*, outcome, press, release, focus_stable):
+            unsigned = NativeWindowInputObservation(
+                remote_enrollment_id="remote-1", websocket_observation_id="w" * 24,
+                native_profile_id="desktop-profile", native_generation="native-4",
+                native_pid=442, native_pid_start_ticks=991,
+                display_profile_id="xpra-profile", display_generation="x1",
+                display_name=":100", xauthority_receipt_handle="receipt_handle_1234567890",
+                window_id=0x200041, keycode=194,
+                delivered_keypress_count=press, delivered_keyrelease_count=release,
+                delivered_event_types=((2, 3) if press == 1 and release == 1 else (2,)),
+                focus_stable=focus_stable, focus_restored=focus_stable, outcome=outcome,
+                focus_observation_handle="f" * 64, event_observation_handle="e" * 64,
+                issued_monotonic=100.0, expires_monotonic=105.0,
+                assertion_ids=assertions, signature=b"")
+            return NativeWindowInputObservation(**{
+                name: getattr(unsigned, name)
+                for name in unsigned.__dataclass_fields__ if name != "signature"
+            }, signature=self.signer.sign(unsigned.payload()))
+
+        complete = signed(outcome="complete", press=1, release=1, focus_stable=True)
+        partial = signed(outcome="partial", press=1, release=0, focus_stable=False)
+        self.assertTrue(complete.verify(self.signer, now=101.0, selected=selected,
+                                        websocket_observation_id="w" * 24))
+        self.assertTrue(partial.verify(self.signer, now=101.0, selected=selected,
+                                       websocket_observation_id="w" * 24))
+        self.assertFalse(NativeWindowInputObservation(**{
+            name: getattr(partial, name)
+            for name in partial.__dataclass_fields__ if name != "outcome"
+        }, outcome="complete").verify(self.signer, now=101.0, selected=selected,
+                                       websocket_observation_id="w" * 24))
 
     def test_ledger_capability_is_selected_and_short_lived(self):
         from types import SimpleNamespace
