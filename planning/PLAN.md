@@ -123,3 +123,6 @@ Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-f
 
 
 Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
+
+
+Existing HI160/197 exact remote TTY choice/3role source/build/compiler inputs: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; all OPEN.
