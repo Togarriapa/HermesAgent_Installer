@@ -745,3 +745,10 @@ The installer SHALL authorize source-established owner overlay methods through s
 #### Scenario: Local registration has no selected view receipt
 - **WHEN** source inventory names a local method without a current owned view/target/schema/source join
 - **THEN** it remains precisely pending and never becomes an executable backend action
+
+### Requirement: Fixture resource materialization v173
+The installer SHALL derive owned fixture Resources rows from actual source-bound fixture materialization and discovery.
+
+#### Scenario: Production materialization has different identities
+- **WHEN** a production receipt cannot join the generated fixture namespace and profile
+- **THEN** it SHALL NOT be relabeled, and fixture compilation waits for its own actual materialization receipt

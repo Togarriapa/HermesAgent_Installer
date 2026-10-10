@@ -159,3 +159,5 @@ Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
 
 Owner overlay operations v172: `plans/amendments/2026-10-10-owner-overlay-operations-v172.md`; separate genuine4local operation rows from61backend actions, preserve42source roster/fullscope and precise pending states.
+
+Fixture resource materialization v173: `plans/amendments/2026-10-10-fixture-resource-materialization-v173.md`; actual separately generated fixture source/materialization/discovery, never production-row relabeling.

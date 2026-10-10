@@ -249,3 +249,5 @@ Native output role correction v170: `plans/amendments/2026-10-10-native-output-r
 MCP discovery capture v171: `plans/amendments/2026-10-10-mcp-discovery-capture-v171.md`; genuine retained tools/list witness distinct selected tools/call result schema.
 
 Owner overlay operations v172: `plans/amendments/2026-10-10-owner-overlay-operations-v172.md`; separate genuine4local operation rows from61backend actions, preserve42source roster/fullscope and precise pending states.
+
+Fixture resource materialization v173: `plans/amendments/2026-10-10-fixture-resource-materialization-v173.md`; actual separately generated fixture source/materialization/discovery, never production-row relabeling.
