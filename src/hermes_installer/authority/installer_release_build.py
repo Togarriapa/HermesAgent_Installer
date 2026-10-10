@@ -2203,6 +2203,7 @@ class RootInstallerUpdateTransitionRegistry:
         predecessor.verify_current()
         held = _resolve_verified_deployment_release(predecessor.verified_release_receipt_handle, consume=False)
         held.verify_current()
+        from .installed_stage_publisher import _read_record
         raw, info = _read_record(Path("/var/lib/hermes-installer/deployments/current.json"), 0)
         if (hashlib.sha256(raw).hexdigest() != predecessor.deployment_receipt_sha256
                 or (info.st_dev, info.st_ino) != (predecessor.deployment_receipt_device,
@@ -2247,6 +2248,176 @@ class RootInstallerUpdateTransitionRegistry:
         if self.candidate_selection_registry is not None:
             raise TypeError("installed update recovery cannot reuse a source-stage TTY registry")
         return _consume_current_installed_update_entry()
+
+    def discover_recoverable_installed_update(
+        self, current_candidate_git_sha: str,
+    ) -> RootAdmittedInstallerUpdate | None:
+        """Observe one exact publisher transaction for the current installed candidate."""
+        _require_linux_root()
+        if self.candidate_selection_registry is None:
+            raise TypeError("cold update recovery requires a fresh root TTY selection registry")
+        _validate_git_sha(current_candidate_git_sha)
+        from .installed_stage_publisher import (
+            _UPDATE_TRANSACTION_ROOT, _read_update_transaction, _replace_update_transaction,
+            _read_record, _verify_update_transaction_root,
+            _verify_published_update_transaction,
+        )
+
+        _verify_update_transaction_root(_UPDATE_TRANSACTION_ROOT, 0, allow_fixture=False)
+        current_raw, current_info = _read_record(Path("/var/lib/hermes-installer/deployments/current.json"), 0)
+        observed_pointer_identity = (current_info.st_dev, current_info.st_ino)
+        current_value = json.loads(current_raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+        if current_value.get("candidate_git_sha") != current_candidate_git_sha:
+            return None
+        lock_fd = _open_update_publication_lock()
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current_raw, current_info = _read_record(
+                Path("/var/lib/hermes-installer/deployments/current.json"), 0)
+            if (current_raw != _canonical_json(current_value)
+                    or (current_info.st_dev, current_info.st_ino) != observed_pointer_identity):
+                raise BootstrapEnrollmentPending("installed update pointer changed during recovery discovery")
+            root_fd = os.open(_UPDATE_TRANSACTION_ROOT,
+                              os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                with os.scandir(root_fd) as entries:
+                    names = sorted(item.name for item in entries if item.name.endswith(".json"))
+            finally:
+                os.close(root_fd)
+            if len(names) > 512:
+                raise BootstrapEnrollmentPending("installed update journal exceeds its fixed recovery scan bound")
+            matches: list[tuple[str, dict[str, Any], bytes]] = []
+            for name in names:
+                if not re.fullmatch(r"[A-Za-z0-9_-]{43}\.json", name):
+                    continue
+                handle = name[:-5]
+                try:
+                    value, raw = _read_update_transaction(_UPDATE_TRANSACTION_ROOT, handle, 0)
+                except (OSError, BootstrapEnrollmentError):
+                    raise BootstrapEnrollmentPending(
+                        "installed update recovery journal contains an unreadable owned record") from None
+                if (value.get("candidate_git_sha") != current_candidate_git_sha
+                        or value.get("state") not in {"publication-prepared", "pointer-published"}):
+                    continue
+                candidate_raw = base64.b64decode(value.get("candidate_pointer_b64", ""), validate=True)
+                if (candidate_raw != current_raw
+                        or hashlib.sha256(candidate_raw).hexdigest()
+                        != value.get("candidate_pointer_sha256")):
+                    continue
+                matches.append((handle, value, raw))
+            if len(matches) > 1:
+                raise BootstrapEnrollmentPending(
+                    "multiple installed update transactions match the current deployment pointer")
+            if not matches:
+                return None
+            handle, transaction, transaction_raw = matches[0]
+            # Validate both complete candidate and retained predecessor closures.
+            verified = _verify_published_update_transaction(handle)
+            if verified != transaction:
+                raise BootstrapEnrollmentPending("installed update journal changed during recovery discovery")
+            if transaction.get("state") == "publication-prepared":
+                transaction["state"] = "pointer-published"
+                transaction["candidate_pointer_device"] = current_info.st_dev
+                transaction["candidate_pointer_inode"] = current_info.st_ino
+                _replace_update_transaction(
+                    _UPDATE_TRANSACTION_ROOT, handle, transaction_raw, transaction, 0)
+            transition_snapshot = {
+                "schema": 1,
+                "update_transaction_handle": handle,
+                "candidate_git_sha": current_candidate_git_sha,
+                "selection_choice_sha256": transaction["selection_choice_sha256"],
+                "lifecycle_action": "update",
+                "pointer": transaction["old_pointer"],
+                "release": transaction["old_release"],
+            }
+            return _update_transition_from_snapshot(transition_snapshot, verify_current=False)
+        finally:
+            os.close(lock_fd)
+
+    def adopt_recoverable_installed_update(
+        self, selection: object, transition: RootAdmittedInstallerUpdate,
+    ) -> dict[str, Any]:
+        """Bind a cold recovered pointer to fresh same-candidate and same-prior TTY proofs."""
+        _require_linux_root()
+        try:
+            from hermes_installer.root_setup import (
+                RootBootstrapCandidateSelectionRegistry,
+                VerifiedRootBootstrapCandidateSelection,
+            )
+        except ImportError:
+            raise BootstrapEnrollmentPending("root TTY candidate selection is unavailable") from None
+        if (not isinstance(self.candidate_selection_registry, RootBootstrapCandidateSelectionRegistry)
+                or not isinstance(selection, VerifiedRootBootstrapCandidateSelection)
+                or type(transition) is not RootAdmittedInstallerUpdate
+                or transition._seal is not _UPDATE_TRANSITION_SEAL
+                or selection.lifecycle_action != "update"
+                or selection.candidate_git_sha != transition.candidate_git_sha):
+            raise BootstrapEnrollmentPending("cold update recovery requires its exact current root TTY selection")
+        proof_row = self.candidate_selection_registry._selection_proofs.get(id(selection))
+        if proof_row is None or proof_row[0] is not selection:
+            raise BootstrapEnrollmentPending("cold update recovery selection is foreign or already consumed")
+        _verify_root_tty_lineage(proof_row[1])
+        original = transition.snapshot()
+        expected_prior = original["pointer"]["candidate_git_sha"]
+        entered_prior = input(
+            f"Re-enter exact installed predecessor SHA {expected_prior} to resume this update: "
+        ).strip()
+        if entered_prior != expected_prior:
+            self.candidate_selection_registry.consume_verified_selection(selection).close()
+            raise BootstrapEnrollmentPending("cold update predecessor confirmation did not match")
+        fresh_selection = self.candidate_selection_registry.reconfirm_for_handoff(selection)
+        selected_snapshot = None
+        try:
+            if (fresh_selection.candidate_git_sha != transition.candidate_git_sha
+                    or fresh_selection.choice_sha256 != transition.selection_choice_sha256):
+                raise BootstrapEnrollmentPending("cold update candidate confirmation changed")
+            selected_snapshot = self.candidate_selection_registry.consume_verified_selection(fresh_selection)
+            values = _candidate_snapshot_fields(selected_snapshot)
+            _verify_current_selection_snapshot(values, {
+                "candidate_git_sha": transition.candidate_git_sha,
+                "lifecycle_action": "update",
+                "original_pid": values["controller_pid"],
+                "original_start_ticks": values["controller_start_ticks"],
+                "expires_monotonic": values["expires_monotonic"],
+            })
+            from .installed_stage_publisher import (
+                _UPDATE_TRANSACTION_ROOT, _read_update_transaction, _replace_update_transaction,
+                _verify_published_update_transaction,
+            )
+            tx_lock = _open_update_publication_lock()
+            try:
+                fcntl.flock(tx_lock, fcntl.LOCK_EX)
+                current, raw = _read_update_transaction(
+                    _UPDATE_TRANSACTION_ROOT, transition.update_transaction_handle, 0)
+                verified = _verify_published_update_transaction(transition.update_transaction_handle)
+                if (current != verified or current.get("state") != "pointer-published"
+                        or current.get("candidate_git_sha") != transition.candidate_git_sha
+                        or current.get("selection_choice_sha256") != transition.selection_choice_sha256
+                        or current.get("old_pointer") != original["pointer"]
+                        or current.get("old_release") != original["release"]):
+                    raise BootstrapEnrollmentPending(
+                        "installed update transaction changed before fresh recovery adoption")
+                adoption = {
+                    "schema": 1,
+                    "transaction_sha256": hashlib.sha256(raw).hexdigest(),
+                    "candidate_git_sha": transition.candidate_git_sha,
+                    "predecessor_git_sha": expected_prior,
+                    "selection_choice_sha256": fresh_selection.choice_sha256,
+                    "selection_snapshot": values,
+                    "prior_confirmation_sha256": hashlib.sha256(
+                        (expected_prior + "\0" + hashlib.sha256(raw).hexdigest()).encode("ascii")).hexdigest(),
+                    "adopted_monotonic": time.monotonic(),
+                }
+                current["recovery_adoption"] = adoption
+                _replace_update_transaction(
+                    _UPDATE_TRANSACTION_ROOT, transition.update_transaction_handle, raw, current, 0)
+            finally:
+                os.close(tx_lock)
+            entry = _create_recovered_installed_update_entry(transition, values, adoption)
+            return entry
+        finally:
+            if selected_snapshot is not None:
+                selected_snapshot.close()
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -3351,26 +3522,28 @@ def _bootstrap_after_reexec() -> Any:
         build_handle, update_transition=handoff.update_transition,
         controller_snapshot=handoff.selection_snapshot if handoff.update_transition is not None else None)
     try:
-        installed.verify_current()
-        launcher_rows = [row for row in installed.files
-                         if row.relative_path == STAGED_LAUNCHER_PATH and "launcher" in row.roles]
-        if (installed.release_commit != handoff.candidate_git_sha or len(launcher_rows) != 1
-                or not launcher_rows[0].mode & 0o111):
-            raise InstallerReleaseBuildError("installed release does not contain the selected executable launcher")
-        launcher = installed.release_root / STAGED_LAUNCHER_PATH
-        launcher_fd = installed.open_file("installer-root-setup-launcher-v1")
         try:
-            info = os.fstat(launcher_fd)
-            digest, _ = _hash_fd(launcher_fd, MAX_SOURCE_FILE_BYTES)
-            path_info = os.stat(launcher, follow_symlinks=False)
-            if (digest != launcher_rows[0].sha256 or info.st_dev != launcher_rows[0].device
-                    or info.st_ino != launcher_rows[0].inode or path_info.st_dev != info.st_dev
-                    or path_info.st_ino != info.st_ino or not stat.S_ISREG(path_info.st_mode)):
-                raise InstallerReleaseBuildError("installed launcher changed after fixed-path publication")
-        finally:
-            os.close(launcher_fd)
-        if handoff.update_transition is not None:
+            installed.verify_current()
+            launcher_rows = [row for row in installed.files
+                             if row.relative_path == STAGED_LAUNCHER_PATH and "launcher" in row.roles]
+            if (installed.release_commit != handoff.candidate_git_sha or len(launcher_rows) != 1
+                    or not launcher_rows[0].mode & 0o111):
+                raise InstallerReleaseBuildError(
+                    "installed release does not contain the selected executable launcher")
+            launcher = installed.release_root / STAGED_LAUNCHER_PATH
+            launcher_fd = installed.open_file("installer-root-setup-launcher-v1")
             try:
+                info = os.fstat(launcher_fd)
+                digest, _ = _hash_fd(launcher_fd, MAX_SOURCE_FILE_BYTES)
+                path_info = os.stat(launcher, follow_symlinks=False)
+                if (digest != launcher_rows[0].sha256 or info.st_dev != launcher_rows[0].device
+                        or info.st_ino != launcher_rows[0].inode or path_info.st_dev != info.st_dev
+                        or path_info.st_ino != info.st_ino or not stat.S_ISREG(path_info.st_mode)):
+                    raise InstallerReleaseBuildError(
+                        "installed launcher changed after fixed-path publication")
+            finally:
+                os.close(launcher_fd)
+            if handoff.update_transition is not None:
                 handoff_registry.create_installed_update_entry(
                     handoff.update_transition, handoff.selection_snapshot)
                 installed.close()
@@ -3381,22 +3554,21 @@ def _bootstrap_after_reexec() -> Any:
                         pass
                 os.execve(launcher, [str(launcher), "update"],
                           {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
-            except BaseException:
-                try:
-                    os.close(3)
-                except OSError:
-                    pass
-                restored = publisher.rollback_installed_stage(handoff.update_transition)
-                restored.close()
-                raise BootstrapEnrollmentPending(
-                    "installed update entry failed and the exact predecessor was restored") from None
-        else:
-            try:
+            else:
                 os.execve(launcher, [str(launcher), handoff.lifecycle_action],
                           {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
-            except OSError:
+        except BaseException:
+            if handoff.update_transition is None:
                 raise BootstrapEnrollmentPending(
                     "the verified installed launcher could not start; retry its fixed lifecycle action") from None
+            try:
+                os.close(3)
+            except OSError:
+                pass
+            restored = publisher.rollback_installed_stage(handoff.update_transition)
+            restored.close()
+            raise BootstrapEnrollmentPending(
+                "installed update entry failed and the exact predecessor was restored") from None
         raise BootstrapEnrollmentPending("installed lifecycle launcher exec returned unexpectedly")
     finally:
         installed.close()
@@ -3896,6 +4068,68 @@ def _update_transition_from_snapshot(snapshot: Mapping[str, Any], *, verify_curr
     )
 
 
+def _open_update_publication_lock() -> int:
+    from .installed_stage_publisher import DEPLOYMENT_RECEIPT_PATH, _open_lock
+    return _open_lock(DEPLOYMENT_RECEIPT_PATH.parent / ".publication.lock", 0)
+
+
+def _create_recovered_installed_update_entry(
+    transition: RootAdmittedInstallerUpdate,
+    selection_values: Mapping[str, Any],
+    adoption: Mapping[str, Any],
+) -> dict[str, Any]:
+    from .installed_stage_publisher import _verify_published_update_transaction
+    transaction = _verify_published_update_transaction(transition.update_transaction_handle)
+    if (transaction.get("recovery_adoption") != dict(adoption)
+            or transaction.get("candidate_git_sha") != transition.candidate_git_sha):
+        raise BootstrapEnrollmentPending("recovered update adoption changed before one-use entry issuance")
+    handle, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    message = _canonical_json({"schema": 1, "handoff_handle": handle, "nonce": nonce})
+    memfd = os.memfd_create("hermes-recovered-update-entry", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+    installed_fd3 = False
+    try:
+        _write_all(memfd, message)
+        os.fsync(memfd)
+        constants = _memfd_seal_constants()
+        seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                 | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+        fcntl.fcntl(memfd, constants["F_ADD_SEALS"], seals)
+        info = os.fstat(memfd)
+        now = time.monotonic()
+        record = {
+            "schema": 1,
+            "purpose": "installed_update_entry",
+            "state": "pending",
+            "handoff_handle": handle,
+            "nonce": nonce,
+            "memfd_device": info.st_dev,
+            "memfd_inode": info.st_ino,
+            "memfd_sha256": hashlib.sha256(message).hexdigest(),
+            "update_transaction_handle": transition.update_transaction_handle,
+            "candidate_git_sha": transition.candidate_git_sha,
+            "candidate_selection_sha256": transition.selection_choice_sha256,
+            "recovery_adoption_sha256": hashlib.sha256(
+                _canonical_json(dict(adoption))).hexdigest(),
+            "lifecycle_action": "update",
+            "selection_snapshot": dict(selection_values),
+            "update_transition": transition.snapshot(),
+            "original_pid": os.getpid(),
+            "original_start_ticks": _process_start_ticks(os.getpid()),
+            "original_uid": os.geteuid(),
+            "boot_id": _current_boot_id(),
+            "issued_monotonic": now,
+            "expires_monotonic": min(float(selection_values["expires_monotonic"]),
+                                       now + BOOTSTRAP_RUNTIME_TTL_SECONDS),
+        }
+        _write_handoff_record(handle, record)
+        _install_bootstrap_transition_fd3(memfd)
+        installed_fd3 = memfd == 3
+        return record
+    finally:
+        if not installed_fd3:
+            os.close(memfd)
+
+
 def _consume_current_installed_update_entry() -> RootAdmittedInstallerUpdate:
     _require_linux_root()
     fd = -1
@@ -3943,6 +4177,19 @@ def _consume_current_installed_update_entry() -> RootAdmittedInstallerUpdate:
     if (transaction.get("candidate_git_sha") != transition.candidate_git_sha
             or transaction.get("selection_choice_sha256") != transition.selection_choice_sha256):
         raise BootstrapEnrollmentPending("installed update transaction no longer matches its admitted subject")
+    adoption_digest = record.get("recovery_adoption_sha256")
+    adoption = transaction.get("recovery_adoption")
+    if adoption_digest is None and adoption is not None:
+        raise BootstrapEnrollmentPending("installed update entry predates the current recovery adoption")
+    if adoption_digest is not None:
+        if (not isinstance(adoption, dict)
+                or hashlib.sha256(_canonical_json(adoption)).hexdigest() != adoption_digest
+                or adoption.get("candidate_git_sha") != transition.candidate_git_sha
+                or adoption.get("selection_choice_sha256") != transition.selection_choice_sha256
+                or adoption.get("selection_snapshot") != selection
+                or adoption.get("predecessor_git_sha")
+                != transition.snapshot()["pointer"]["candidate_git_sha"]):
+            raise BootstrapEnrollmentPending("fresh update recovery adoption no longer matches its one-use entry")
     _transition_installed_update_entry_record(handle, record)
     os.close(3)
     _mark_runtime_update_pending(transition.update_transaction_handle)

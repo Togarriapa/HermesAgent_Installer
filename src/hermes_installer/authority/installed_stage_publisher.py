@@ -103,6 +103,10 @@ class RootInstalledStagePublisher:
         return installed
 
     def rollback_installed_stage(self, update_transition: Any) -> Any:
+        return self.rollback_owned_update(update_transition)
+
+    @classmethod
+    def rollback_owned_update(cls, update_transition: Any) -> Any:
         from .installer_release_build import RootAdmittedInstallerUpdate
         if (type(update_transition) is not RootAdmittedInstallerUpdate
                 or update_transition._seal is None):
@@ -787,15 +791,18 @@ def _rollback_update_transaction(root: Path, handle: str, receipt_path: Path, ui
         candidate = DeploymentPredecessor("present", parent.st_dev, parent.st_ino,
                                           _sha(current_raw), current_info.st_dev, current_info.st_ino,
                                           candidate_record["candidate_git_sha"])
-        current_release = InstalledRootReleaseVerifier.verify_installed_release()
-        try:
-            if (current_release.release_commit != transaction.get("candidate_git_sha")
-                    or current_release.closure_manifest_sha256
-                    != transaction.get("candidate_closure_manifest_sha256")):
-                raise BootstrapEnrollmentPending("candidate closure changed before conditional rollback")
-            current_release.verify_current()
-        finally:
-            current_release.close()
+        # The candidate may be the object that failed post-CAS verification.
+        # Do not require its closure to be healthy before restoring the old
+        # release; the exact protected transaction bytes plus current pointer
+        # CAS identify only this publisher's write. Validate the pointer's
+        # immutable transaction fields, then independently verify the old
+        # release closure below before replacement.
+        if (not isinstance(candidate_record, dict)
+                or candidate_record.get("candidate_git_sha") != transaction.get("candidate_git_sha")
+                or candidate_record.get("release_root") != transaction.get("candidate_release_root")
+                or candidate_record.get("closure_manifest_sha256")
+                != transaction.get("candidate_closure_manifest_sha256")):
+            raise BootstrapEnrollmentPending("candidate pointer no longer matches its owned update transaction")
         old_pointer = transaction.get("old_pointer")
         old_release_projection = transaction.get("old_release")
         if not isinstance(old_pointer, dict) or not isinstance(old_release_projection, dict):
@@ -846,13 +853,15 @@ def _verify_published_update_transaction(handle: str) -> dict[str, Any]:
     transaction, _ = _read_update_transaction(_UPDATE_TRANSACTION_ROOT, handle, 0)
     if (transaction.get("schema") != 1
             or transaction.get("update_transaction_handle") != handle
-            or transaction.get("state") not in {"pointer-published", "runtime-update-pending"}):
+            or transaction.get("state") not in {
+                "publication-prepared", "pointer-published", "runtime-update-pending"}):
         raise BootstrapEnrollmentPending("installed update transaction is not in a published phase")
     candidate_raw = base64.b64decode(transaction.get("candidate_pointer_b64", ""), validate=True)
     current_raw, current_info = _read_record(DEPLOYMENT_RECEIPT_PATH, 0)
     if (current_raw != candidate_raw
             or _sha(current_raw) != transaction.get("candidate_pointer_sha256")
-            or (current_info.st_dev, current_info.st_ino)
+            or transaction.get("candidate_pointer_device") is not None
+            and (current_info.st_dev, current_info.st_ino)
             != (transaction.get("candidate_pointer_device"), transaction.get("candidate_pointer_inode"))):
         raise BootstrapEnrollmentPending("installed candidate pointer changed after update publication")
     installed = InstalledRootReleaseVerifier.verify_installed_release()

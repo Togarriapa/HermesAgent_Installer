@@ -15,6 +15,7 @@ from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentE
 from hermes_installer.authority.installed_stage_publisher import (
     _build_rows, _canonical, _ensure_release_store_children, _open_owned_directory_chain,
     _publish_retained_build, _recover_staging_journals, _sha,
+    _rollback_update_transaction, _write_update_transaction,
 )
 from hermes_installer.authority import installer_release_build as release_build
 from hermes_installer.authority.installer_release import REVIEWED_SOURCE_ARTIFACTS, REVIEWED_SOURCE_MODULES
@@ -233,6 +234,36 @@ class InstalledStagePublicationTests(unittest.TestCase):
                     (tx_root / (snapshot["update_transaction_handle"] + ".json")).read_bytes())
                 self.assertEqual(transaction["state"], "publication-prepared")
             self.assertEqual(record_path.read_bytes(), old_raw)
+
+    def test_update_rollback_never_overwrites_a_concurrent_pointer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            deploy = root / "deployments"
+            deploy.mkdir(mode=0o700)
+            transactions = root / "transactions"
+            transactions.mkdir(mode=0o700)
+            handle = "n" * 43
+            candidate_raw = _canonical({"candidate_git_sha": "a" * 40, "owned": True})
+            newer_raw = _canonical({"candidate_git_sha": "b" * 40, "foreign": True})
+            current = deploy / "current.json"
+            current.write_bytes(newer_raw)
+            os.chmod(current, 0o600)
+            transaction = {
+                "schema": 1,
+                "state": "pointer-published",
+                "update_transaction_handle": handle,
+                "candidate_git_sha": "a" * 40,
+                "candidate_pointer_b64": __import__("base64").b64encode(candidate_raw).decode("ascii"),
+                "candidate_pointer_sha256": _sha(candidate_raw),
+                "candidate_release_root": str(root / "releases" / ("a" * 40)),
+                "candidate_closure_manifest_sha256": "c" * 64,
+                "old_pointer": {},
+                "old_release": {},
+            }
+            _write_update_transaction(transactions, handle, transaction, os.getuid())
+            with self.assertRaisesRegex(BootstrapEnrollmentPending, "newer or foreign"):
+                _rollback_update_transaction(transactions, handle, current, os.getuid())
+            self.assertEqual(current.read_bytes(), newer_raw)
 
     def test_fixed_release_store_directory_conflicts_are_preserved_and_denied(self):
         with tempfile.TemporaryDirectory() as temp:
