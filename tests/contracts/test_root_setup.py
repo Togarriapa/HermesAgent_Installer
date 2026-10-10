@@ -801,6 +801,9 @@ class RootSetupBoundaryTests(unittest.TestCase):
         source_update.assert_called_once_with()
         self.assertEqual(code, 4)
         self.assertIn("source bridge reached", output.getvalue())
+        self.assertIn("Resume with: Rerun the reviewed source launcher with source-update.",
+                      output.getvalue())
+        self.assertNotIn("hermes-installer-root-setup update", output.getvalue())
 
         with self.assertRaises(SystemExit) as extra:
             main(["source-update", "--candidate", "a" * 40])

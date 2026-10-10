@@ -1005,8 +1005,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("use exactly: source-update")
         result = run_source_bootstrap_update()
         print(result.message, file=sys.stderr)
-        if result.state is RootSetupState.PENDING and result.resume_command:
-            print(f"Resume with: {result.resume_command}", file=sys.stderr)
+        if result.state is RootSetupState.PENDING:
+            print("Resume with: Rerun the reviewed source launcher with source-update.", file=sys.stderr)
         return result.exit_code
     if arguments and arguments[0] == "authority-daemon-adopt":
         if (len(arguments) != 3 or arguments[1] != "--activation-id"
