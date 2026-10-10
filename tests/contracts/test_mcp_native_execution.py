@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
+from unittest.mock import patch
 
 from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
 from hermes_installer.authority.native_runtime_observer import (
@@ -76,6 +77,7 @@ class _FixtureServer:
                     result = {"tools": [{
                         "name": "get_metadata", "description": "Read selected Figma file",
                         "inputSchema": ARGUMENT_SCHEMA,
+                        "outputSchema": RESULT_SCHEMA,
                         "annotations": {"readOnlyHint": True, "destructiveHint": False},
                     }]}
                 elif method == "tools/call":
@@ -260,7 +262,6 @@ class NativeMCPExecutionTests(unittest.TestCase):
             service_generation_digest="c" * 64,
         )
         self_authority = self.authority
-        from unittest.mock import patch
         self.identity_patch = patch.object(
             AuthorityService, "_native_process_identity",
             staticmethod(lambda _pid, _uid: "native-process-fixture"),
@@ -418,7 +419,9 @@ class NativeMCPExecutionTests(unittest.TestCase):
             enrollment_catalog=enrollment, build_catalog=None, device_catalog=None,
             process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
             build_store=None, service_connector=None,
-            native_schema_artifact_records=tuple(schema_records),
+            # Dynamic discovery is rooted in the actual selected tools/list
+            # response and must not depend on a catalog child row existing.
+            native_schema_artifact_records=(),
         )
         self.discovery_registry = MCPDiscoveryObservationRegistry(
             service=self.authority, invocation_registry=None,
@@ -426,6 +429,44 @@ class NativeMCPExecutionTests(unittest.TestCase):
             protected_services={"figma": protected_service},
             current_mcp_generations={"figma": "service-gen-a"},
         )
+        # Root Linux authority tests exercise the protected artifact CAS and
+        # derivation journal. This loopback contract fixture exercises the
+        # typed issuer callsite while retaining/revalidating the real HTTP
+        # response and grants through AuthorityService.
+        from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
+        self.issuer = object.__new__(RootSchemaDerivationReceiptRegistry)
+        self.issuer.mcp_discovery_registry = self.discovery_registry
+
+        def observe_fixture(registry, observation):
+            retained = registry.mcp_discovery_registry.resolve_schema_observation({
+                "schema": 1, "artifact_id": observation.artifact_id,
+                "artifact_sha256": observation.artifact_sha256,
+                "size_bytes": observation.size_bytes, "schema_kind": observation.schema_kind,
+                "package_id": observation.package_id,
+                "package_generation": observation.package_generation,
+                "adapter_id": observation.adapter_id, "action_id": observation.action_id,
+                "source_kind": "mcp-tools-list",
+                "parent_receipt_handles": list(observation.parent_receipt_handles),
+                "source_observation_handle": observation.source_observation_handle,
+                "source_member_path": None,
+                "service_generation_digest": observation.service_generation_digest,
+            })
+            if retained != observation:
+                raise AssertionError("fixture issuer did not re-resolve the root witness")
+            return retained
+
+        def mint_fixture(_registry, observation):
+            return hashlib.sha256((observation.source_observation_handle + ":receipt").encode()).hexdigest()
+
+        self.issuer_patches = [
+            patch.object(RootSchemaDerivationReceiptRegistry, "observe_mcp_tools_list", observe_fixture,
+                         create=True),
+            patch.object(RootSchemaDerivationReceiptRegistry, "mint_schema_artifact", mint_fixture,
+                         create=True),
+        ]
+        for issuer_patch in self.issuer_patches:
+            issuer_patch.start()
+        self.discovery_registry.attach_schema_derivation_registry(self.issuer)
         with self.assertRaises(TypeError):
             NativeMCPDispatcher(
                 self.authority, registration_index=self.registration_index,
@@ -455,6 +496,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
         self.authority.attach_native_mcp_dispatcher(self.dispatcher)
 
     def tearDown(self):
+        for issuer_patch in self.issuer_patches:
+            issuer_patch.stop()
         self.identity_patch.stop()
         self.discovery_registry.close()
         self.invocation_registry.close()
@@ -477,8 +520,23 @@ class NativeMCPExecutionTests(unittest.TestCase):
         self.assertEqual(len(self.source_observers.captured), 2)
         self.assertEqual(self.source_observers.captured[-1], body)
         self.assertIn(b'"tools"', self.source_observers.captured[0])
-        self.assertEqual(len(self.discovery_registry._records), 1)
-        retained = next(iter(self.discovery_registry._records.values())).observation
+        self.assertEqual(len(self.discovery_registry._records), 2)
+        retained_record = next(record for record in self.discovery_registry._records.values()
+                               if record.observation.schema_kind == "arguments")
+        retained = retained_record.observation
+        result_record = next(record for record in self.discovery_registry._records.values()
+                             if record.observation.schema_kind == "result")
+        self.assertEqual(result_record.observation.schema_bytes, json.dumps(
+            RESULT_SCHEMA, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode())
+        for proof in (retained, result_record.observation):
+            digest = hashlib.sha256(proof.schema_bytes).hexdigest()
+            self.assertEqual(proof.artifact_id, f"native-mcp-schema:{digest}")
+            self.assertEqual(proof.artifact_sha256, digest)
+        self.assertTrue(retained_record.derivation_receipt_handle)
+        self.assertTrue(result_record.derivation_receipt_handle)
+        self.assertNotEqual(retained_record.derivation_receipt_handle,
+                            result_record.derivation_receipt_handle)
         from hermes_installer.authority.mcp_discovery_registry import MCPDiscoveryUnavailable
         observed = self.discovery_registry.resolve_schema_observation({
             "schema": 1,
@@ -497,9 +555,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
             "service_generation_digest": retained.service_generation_digest,
         })
         self.assertEqual(observed.schema_bytes, json.dumps(
-            ARGUMENT_SCHEMA, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            ARGUMENT_SCHEMA, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
         ).encode())
-        retained_record = next(iter(self.discovery_registry._records.values()))
         capture_args = {
             "invocation": retained_record.invocation,
             "peer_uid": retained_record.peer_uid, "peer_pid": retained_record.peer_pid,
@@ -513,6 +570,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
             "context": retained_record.context,
             "authorization": retained_record.authorization,
             "parent_receipt_handles": retained.parent_receipt_handles,
+            "schema_kind": "arguments",
         }
         with self.assertRaises(MCPDiscoveryUnavailable):
             self.discovery_registry.capture_tools_list(**capture_args)
