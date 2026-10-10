@@ -34,6 +34,11 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
+from .application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
+from .application_effect_source_catalog import (
+    APPLICATION_EFFECT_SOURCE_CATALOG_PATH, APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
+    APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
+)
 
 
 SOURCE_ORIGIN = "https://github.com/Togarriapa/HermesAgent_Installer.git"
@@ -89,6 +94,38 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py",
      "src/hermes_installer/native_boundary.py",
      "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
+    ("installer-application-effect-graphify-entrypoint-v1",
+     "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",
+     "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",
+     "db0e49e0878f0406d9dba29c9f9860bee2bc7260e59c9ac7e20ecf88b5a03378", 153, "source-module"),
+    ("installer-application-effect-graphify-helper-v1",
+     "src/hermes_installer/components/probes/graphify_fixture/helper.py",
+     "src/hermes_installer/components/probes/graphify_fixture/helper.py",
+     "acc16fab89297ad11006519103d1033d611b1315529b5614098a3d60c80c2f74", 155, "source-module"),
+    ("installer-application-effect-graphify-result-validator-v1",
+     "src/hermes_installer/components/probes/graphify_result.py",
+     "src/hermes_installer/components/probes/graphify_result.py",
+     "f3f0b44d9d9d707daceee4d563be1d028080ec661c11a29e85e1f38cda0901e9", 6481, "source-module"),
+    ("installer-application-effect-browser-use-probe-v1",
+     "src/hermes_installer/components/browser_use_qualification_probe.py",
+     "src/hermes_installer/components/browser_use_qualification_probe.py",
+     "2f939a6cd82f73f4e7474ed7f0c412e9a22fb65df01e7765c1a87cf675a52e58", 4404, "source-module"),
+    ("installer-application-effect-browser-use-result-validator-v1",
+     "src/hermes_installer/components/browser_use.py",
+     "src/hermes_installer/components/browser_use.py",
+     "2e27c93d701de22792fae24ddb097d3d0dd7424dd5a25ce510ee75fecc90740f", 6531, "source-module"),
+    ("installer-application-effect-scrapegraph-probe-v1",
+     "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",
+     "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",
+     "30974c44d2bd9e60847bcad6ba3849cf8b2a262f8c08f79b832a9bba723ed6ab", 5446, "source-module"),
+    ("installer-application-effect-scrapegraph-result-validator-v1",
+     "src/hermes_installer/components/scrapegraph_ai.py",
+     "src/hermes_installer/components/scrapegraph_ai.py",
+     "e2ac08afa32b9940705403eb9e2af35b08e21cc6f61ed6731438a6c1c1c98dcb", 11891, "source-module"),
+    ("installer-application-effect-hyperframes-probe-v1",
+     "src/hermes_installer/components/probes/hyperframes_probe.py",
+     "src/hermes_installer/components/probes/hyperframes_probe.py",
+     "f4a63a90b4467ae2db4fcdf7d874bc8f6b75e6b1f02910e326e75fcb49d498aa", 12692, "source-module"),
     ("hermes_installer.authority.native_source_definitions",
      "src/hermes_installer/authority/native_source_definitions.py",
      "lib/python/hermes_installer/authority/native_source_definitions.py",
@@ -124,9 +161,9 @@ BOOTSTRAP_PYYAML_BYTES = 766_454
 BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-arm64"
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
-RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
-                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
-                           "runtime-member"})
+RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "source-module",
+                           "application-effect-fixture", "template", "plan", "artifact-catalog",
+                           "bootstrap-policy", "baseline", "amendment", "runtime-member"})
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
 STAGED_LAUNCHER_SOURCE = "scripts/hermes-installer-root-setup"
 STAGED_LAUNCHER_PATH = "bin/hermes-installer-root-setup"
@@ -2614,6 +2651,11 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("fixed installed template differs from its reviewed bytes")
             self._copy_source(source, output_fd, source_path, target, (role,))
             staged.append(self._last_output_row)
+        # The v175 descriptor selects the exact setup-only effect source rows.
+        effect_catalog = source_files.get(APPLICATION_EFFECT_SOURCE_CATALOG_PATH)
+        if (effect_catalog is None or effect_catalog.sha256 != APPLICATION_EFFECT_SOURCE_CATALOG_SHA256
+                or effect_catalog.size_bytes != APPLICATION_EFFECT_SOURCE_CATALOG_SIZE):
+            raise InstallerReleaseBuildError("application effect source descriptor differs from its fixed pin")
         # Include exact full frozen baseline and selected amendment bytes under stable roots.
         for row in source.files:
             if row.relative_path.startswith(BASELINE_DIRECTORY + "/"):
@@ -2652,6 +2694,18 @@ class RootInstalledReleaseBuilder:
                 self._copy_source(source, output_fd, source_rel, target, (role,))
                 staged.append(self._last_output_row)
                 staged_paths.add(target)
+        for artifact_id, source_rel, role, expected_digest, expected_size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+            if role != "application-effect-fixture":
+                continue
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError(
+                    f"application effect fixture {artifact_id} differs from its reviewed pin")
+            if source_rel not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, source_rel, (role,))
+                staged.append(self._last_output_row)
+                staged_paths.add(source_rel)
         return staged
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
