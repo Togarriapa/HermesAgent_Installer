@@ -124,6 +124,8 @@ def test_v63_prepared_authority_binds_actual_key_and_exact_dormant_snapshot():
         "resource_body_recipes", "resource_scope_bindings", "resource_validators", "root_journal_roots",
         "resource_controller_roles", "native_mcp_tool_bindings", "remote_observation_enrollments",
         "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
+        "remote_startup_enrollments", "private_loopback_networks",
+        "selected_resource_executions", "selected_application_runtimes",
         "generation_digest",
     }
 

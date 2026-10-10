@@ -67,9 +67,8 @@ class Adapter:
     def register(self, ctx, runtime_context):
         ctx.register_tool(
             name="installer_native_fixture", toolset="hermes-installer",
-            schema={"name": "installer_native_fixture", "description": "Protected installer action",
-                    "parameters": {"type": "object", "properties": {"key": {"type": "string"}},
-                                   "required": ["key"], "additionalProperties": False}},
+            schema={"type": "object", "properties": {"key": {"type": "string"}},
+                    "required": ["key"], "additionalProperties": False},
             handler=lambda args: runtime_context.plugin_effects.invoke(
                 "native-fixture", "lookup", args),
             description="Protected installer action",

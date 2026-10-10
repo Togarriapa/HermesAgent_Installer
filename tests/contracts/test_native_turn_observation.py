@@ -10,10 +10,13 @@ from unittest.mock import patch
 from hermes_installer.authority.native_turn_observation import (
     RootNativeTurnObservationRegistry,
     RootProviderResponseObservation,
+    RootTurnTranscriptEvent,
     _Turn,
+    build_root_turn_transcript,
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.authority.types import canonical_digest
+from hermes_installer.authority.types import RootCompletedNativeTurnPresentation
 
 
 def _handle(char: str) -> str:
@@ -57,6 +60,37 @@ def _response(*, source_handles: tuple[str, ...], pending=()) -> RootProviderRes
 
 
 class NativeTurnObservationContracts(unittest.TestCase):
+    def test_root_transcript_is_canonical_ordered_event_serialization(self):
+        events = (
+            RootTurnTranscriptEvent("input", _handle("i"), "task-input", b"user bytes"),
+            RootTurnTranscriptEvent("request", _handle("q"), "native-request", b'{"model":"x"}'),
+        )
+        payload = build_root_turn_transcript(events)
+        decoded = __import__("json").loads(payload)
+        self.assertEqual(decoded["schema"], 1)
+        self.assertEqual(decoded["format"], "root-observed-turn-events-v1")
+        self.assertEqual([row["sequence"] for row in decoded["events"]], [0, 1])
+        self.assertEqual(decoded["events"][0]["payload_b64"], "dXNlciBieXRlcw==")
+        self.assertEqual(decoded["events"][1]["payload_sha256"], hashlib.sha256(b'{"model":"x"}').hexdigest())
+        with self.assertRaises(AuthorityDenied):
+            build_root_turn_transcript((RootTurnTranscriptEvent(
+                "worker-claim", _handle("w"), "task-input", b"user bytes"),))
+
+    def test_registry_defaults_to_fixed_root_transcript_builder(self):
+        source = SimpleNamespace(resolve_delivered_source_receipt=lambda *_a, **_k: None)
+        input_observer = SimpleNamespace(resolve_event_for_source_handle=lambda *_a, **_k: None)
+        custody = SimpleNamespace(resolve_managed_task_process_handle=lambda *_a: None)
+        selected = SimpleNamespace(
+            resolve_current_execution=lambda *_a: None,
+            resolve_selection_handle=lambda *_a: None,
+        )
+        registry = RootNativeTurnObservationRegistry(
+            service=object(), selected_execution_registry=selected,
+            input_observer=input_observer, source_observers=source,
+            process_custody=custody, response_resolver=lambda _handle: None,
+        )
+        self.assertIs(registry.transcript_builder, build_root_turn_transcript)
+
     def _registry(self, response, *, pending=()):
         registry = object.__new__(RootNativeTurnObservationRegistry)
         registry.monotonic = lambda: 10.0
@@ -66,7 +100,7 @@ class NativeTurnObservationContracts(unittest.TestCase):
         }
         registry._begun_inputs = {_handle("i"): 80.0}
         registry._completed = {}
-        registry._used_final_responses = set()
+        registry._used_final_responses = {}
         registry._lock = threading.RLock()
         registry._closed = False
         registry.response_resolver = lambda handle: response
@@ -126,6 +160,36 @@ class NativeTurnObservationContracts(unittest.TestCase):
         response = _response(source_handles=(_handle("i"), _handle("s")))
         with self.assertRaises(ValueError):
             replace(response, final_response_delivery_handle=_handle("f"))
+
+    def test_authority_service_dispatches_only_the_typed_root_finish_presentation(self):
+        from hermes_installer.authority.service import AuthorityService
+
+        service = object.__new__(AuthorityService)
+        service.monotonic = lambda: 10.0
+        service.native_turn_observation_registry = None
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry.service = service
+        presentation = RootCompletedNativeTurnPresentation(
+            schema=1, receipt_handle=_handle("p"), turn_handle=_handle("t"),
+            state="completed", expires_monotonic=70.0,
+        )
+        calls = []
+        registry.finish_selected_native_turn = lambda *args: (calls.append(args) or presentation)
+        service.attach_native_turn_observation_registry(registry)
+        payload = {
+            "schema": 1, "turn_handle": _handle("t"),
+            "final_response_delivery_handle": _handle("f"),
+        }
+        result = service._dispatch_native_turn_finish(
+            2001, 733, 901, payload, cancelled=lambda: False,
+        )
+        self.assertEqual(result["receipt_handle"], _handle("p"))
+        self.assertEqual(calls, [(2001, 733, 901, _handle("t"), _handle("f"))])
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch_native_turn_finish(
+                2001, 733, 901, {**payload, "worker_claim": "completed"},
+                cancelled=lambda: False,
+            )
 
     def test_foreign_response_cannot_attach_to_turn(self):
         response = replace(_response(source_handles=(_handle("i"), _handle("s"))),
@@ -217,6 +281,63 @@ class NativeTurnObservationContracts(unittest.TestCase):
             )
         self.assertEqual(registry._turns[_handle("t")].request_retry_index_by_handle[_handle("z")], 2)
         self.assertEqual(registry._turns[_handle("t")].request_observations[_handle("z")][1], request_body)
+
+    def test_request_broker_attachment_is_typed_same_service_and_one_time(self):
+        from hermes_installer.authority.native_bridge import NativeBridgeBroker
+
+        service = object()
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry.service = service
+        registry.native_bridge_broker = None
+        registry._lock = threading.RLock()
+        broker = object.__new__(NativeBridgeBroker)
+        broker.service = service
+        broker.resolve_native_request_observation = lambda *_args, **_kwargs: None
+        broker.request_bytes = lambda *_args: b""
+        registry.attach_native_request_broker(broker)
+        self.assertIs(registry.native_bridge_broker, broker)
+        with self.assertRaises(AuthorityDenied):
+            registry.attach_native_request_broker(broker)
+
+        wrong_service = object.__new__(NativeBridgeBroker)
+        wrong_service.service = object()
+        wrong_service.resolve_native_request_observation = broker.resolve_native_request_observation
+        wrong_service.request_bytes = broker.request_bytes
+        other = object.__new__(RootNativeTurnObservationRegistry)
+        other.service = service
+        other.native_bridge_broker = None
+        other._lock = threading.RLock()
+        with self.assertRaises(AuthorityDenied):
+            other.attach_native_request_broker(wrong_service)
+
+    def test_close_zeroizes_completed_transcript_and_denies_new_turns(self):
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry._lock = threading.RLock()
+        registry._closed = False
+        registry._turns = {_handle("t"): object()}
+        registry._by_source = {_handle("i"): {_handle("t")}}
+        registry._begun_inputs = {_handle("i"): 50.0}
+        registry._used_final_responses = {_handle("f"): 50.0}
+        registry._persisting_completed = set()
+        payload = bytearray(b"private captured transcript")
+        registry._completed = {_handle("p"): (object(), payload)}
+        registry.close()
+        self.assertTrue(registry._closed)
+        self.assertEqual(bytes(payload), b"\0" * len(payload))
+        self.assertFalse(registry._completed)
+        self.assertFalse(registry._turns)
+        self.assertFalse(registry._by_source)
+        with self.assertRaises(AuthorityDenied):
+            registry.begin_selected_turn(_handle("s"), _handle("i"))
+
+    def test_close_refuses_while_durable_capture_is_in_progress(self):
+        registry = object.__new__(RootNativeTurnObservationRegistry)
+        registry._lock = threading.RLock()
+        registry._closed = False
+        registry._persisting_completed = {_handle("p")}
+        with self.assertRaises(AuthorityDenied):
+            registry.close()
+        self.assertFalse(registry._closed)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
+import subprocess
+import tarfile
 import time
 from pathlib import Path
 
@@ -33,7 +36,7 @@ def _sealed_distribution(tmp_path):
         source_catalog_sha256="f" * 64,
         files=(release_build.DistributionFile(
             "module.py", hashlib.sha256(body).hexdigest(), len(body), 0o600,
-            info.st_dev, info.st_ino),),
+            info.st_dev, info.st_ino, info.st_ctime_ns),),
         root_fd=fd,
         expected_uid=os.geteuid(),
         handle="h" * 43,
@@ -53,6 +56,73 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
             receipt.verify_current()
     finally:
         receipt.close()
+
+
+@pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
+def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    body = b"candidate source blob\n" * 32
+    blob = subprocess.run(["/usr/bin/git", "-C", str(repository), "hash-object", "-w", "--stdin"],
+                          input=body, stdout=subprocess.PIPE, check=True).stdout.decode("ascii").strip()
+    # Repeated IDs are valid cat-file requests and drive both pipes beyond
+    # their usual capacity while keeping the test's Git object store tiny.
+    result = tuple(release_build.RootInstallerDistributionRegistry._git_batch(repository, [blob] * 2048))
+    assert len(result) == 2048
+    assert all(item == body for item in result)
+
+
+@pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
+def test_source_export_replaces_git_checkout_with_exact_blob_tree(tmp_path):
+    repository = tmp_path / "checkout"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    (repository / "module.py").write_bytes(b"candidate module\n")
+    (repository / "nested").mkdir()
+    (repository / "nested" / "data.json").write_bytes(b'{"schema":1}\n')
+    subprocess.run(["/usr/bin/git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["/usr/bin/git", "-C", str(repository), "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "fixture"], check=True)
+
+    rows = release_build.RootInstallerDistributionRegistry._export_commit(repository, "HEAD")
+
+    assert {path for path, _, _ in rows} == {"module.py", "nested/data.json"}
+    assert not (repository / ".git").exists()
+    assert (repository / "module.py").read_bytes() == b"candidate module\n"
+    assert (repository / "nested" / "data.json").read_bytes() == b'{"schema":1}\n'
+    assert not list(repository.parent.glob(".stage-source-*"))
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="fixed deployment-parent custody requires Linux root")
+def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp_path):
+    parent = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        app = release_build._ensure_owned_directory_child(parent, "hermes-installer")
+        try:
+            deployments = release_build._ensure_owned_directory_child(app, "deployments")
+            try:
+                assert os.stat("hermes-installer", dir_fd=parent, follow_symlinks=False).st_mode & 0o777 == 0o700
+                assert os.stat("deployments", dir_fd=app, follow_symlinks=False).st_mode & 0o777 == 0o700
+            finally:
+                os.close(deployments)
+        finally:
+            os.close(app)
+    finally:
+        os.close(parent)
+
+    conflict_parent = tmp_path / "conflict"
+    conflict_parent.mkdir(mode=0o700)
+    conflict = conflict_parent / "deployments"
+    conflict.mkdir(mode=0o755)
+    conflict_fd = os.open(conflict_parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._ensure_owned_directory_child(conflict_fd, "deployments")
+        assert os.stat(conflict, follow_symlinks=False).st_mode & 0o777 == 0o755
+    finally:
+        os.close(conflict_fd)
 
 
 def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
@@ -130,10 +200,90 @@ def test_runtime_dependency_receipt_requires_exact_locked_version():
 
 def test_runtime_lock_requires_version_and_hash_pins():
     lock = Path(__file__).parents[2] / release_build.RUNTIME_REQUIREMENTS_PATH
-    parsed = release_build._locked_package_versions(lock.read_bytes())
+    lock_bytes = lock.read_bytes()
+    parsed = release_build._locked_package_versions(lock_bytes)
     assert parsed["pyyaml"] == frozenset({"6.0.3"})
+    # Hash-locked requirements intentionally do not name a platform wheel;
+    # the provisioner selects the reviewed wheel by its exact digest.
+    assert release_build._lock_contains_exact_pyyaml(lock_bytes)
+    without_reviewed_wheel = lock_bytes.replace(
+        f"    --hash=sha256:{release_build.BOOTSTRAP_PYYAML_SHA256} \\\n".encode(), b"")
+    assert not release_build._lock_contains_exact_pyyaml(without_reviewed_wheel)
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
+
+
+def _runtime_archive(entries):
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for name, kind, value in entries:
+            member = tarfile.TarInfo(name)
+            if kind == "file":
+                body = value
+                member.type = tarfile.REGTYPE
+                member.mode = 0o755
+                member.size = len(body)
+                archive.addfile(member, io.BytesIO(body))
+            else:
+                member.type = tarfile.SYMTYPE
+                member.mode = 0o777
+                member.linkname = value
+                archive.addfile(member)
+    return output.getvalue()
+
+
+def _extract_fixture_runtime(monkeypatch, archive_bytes, destination):
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(archive_bytes))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256",
+                        hashlib.sha256(archive_bytes).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_EXPANDED", 1024 * 1024)
+    release_build._extract_verified_runtime_archive(archive_bytes, destination)
+
+
+def test_runtime_archive_accepts_normalized_internal_parent_symlink(monkeypatch, tmp_path):
+    archive = _runtime_archive([
+        ("python/lib/target", "file", b"runtime member"),
+        ("python/lib/alias", "symlink", "../lib/target"),
+    ])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    _extract_fixture_runtime(monkeypatch, archive, destination)
+    assert (destination / "lib/target").read_bytes() == b"runtime member"
+    assert (destination / "lib/alias").is_symlink()
+    assert (destination / "lib/alias").resolve() == (destination / "lib/target")
+
+
+@pytest.mark.parametrize("target", [
+    "../../outside", "/usr/bin/python", ".././target", "../target//file", "..\\outside",
+])
+def test_runtime_archive_rejects_escaping_or_nonportable_symlink_targets(monkeypatch, tmp_path, target):
+    archive = _runtime_archive([("python/lib/escape", "symlink", target)])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        _extract_fixture_runtime(monkeypatch, archive, destination)
+
+
+def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
+    archive = _runtime_archive([("python/lib/cycle", "symlink", "cycle")])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="broken or cyclic"):
+        _extract_fixture_runtime(monkeypatch, archive, destination)
+
+
+def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_path):
+    root = tmp_path / "python"
+    (root / "bin").mkdir(parents=True)
+    os.symlink("../lib/target", root / "bin/alias")
+    rows = release_build._runtime_archive_rows(root)
+    assert rows == [("bin/alias", hashlib.sha256(b"../lib/target").hexdigest(),
+                     len(b"../lib/target"), 0o777, "../lib/target")]
+
+    (root / "bin/alias").unlink()
+    os.symlink("../../outside", root / "bin/alias")
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="escapes its fixed prefix"):
+        release_build._runtime_archive_rows(root)
 
 
 def test_wheel_record_rejects_digest_and_unlisted_member_changes():
@@ -142,18 +292,91 @@ def test_wheel_record_rejects_digest_and_unlisted_member_changes():
     body = b"package bytes"
     record = "yaml/__init__.py,sha256={},{}\n".format(
         base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("="), len(body))
-    record += "PyYAML-6.0.3.dist-info/RECORD,,\n"
-    rows = {"yaml/__init__.py": body, "PyYAML-6.0.3.dist-info/RECORD": record.encode()}
-    release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+    record += "pyyaml-6.0.3.dist-info/RECORD,,\n"
+    rows = {"yaml/__init__.py": body, "pyyaml-6.0.3.dist-info/RECORD": record.encode()}
+    release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
 
     rows["yaml/__init__.py"] = b"changed"
     with pytest.raises(release_build.InstallerReleaseBuildError):
-        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
-
+        release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
     rows["yaml/__init__.py"] = body
     rows["yaml/unlisted.py"] = b"extra"
     with pytest.raises(release_build.InstallerReleaseBuildError):
-        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+        release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
+
+
+def _fixture_pyyaml_wheel(files, *, symlink_member=None):
+    import base64
+    import csv
+    import io
+    import stat
+    import zipfile
+
+    members = dict(files)
+    record_name = "pyyaml-6.0.3.dist-info/RECORD"
+    output = io.BytesIO()
+    rows = []
+    for name, body in members.items():
+        rows.append((name, "sha256=" + base64.urlsafe_b64encode(
+            hashlib.sha256(body).digest()).decode().rstrip("="), str(len(body))))
+    rows.append((record_name, "", ""))
+    record = io.StringIO(newline="")
+    csv.writer(record, lineterminator="\n").writerows(rows)
+    members[record_name] = record.getvalue().encode()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, body in members.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = ((stat.S_IFLNK | 0o777) if name == symlink_member
+                                  else (stat.S_IFREG | 0o644)) << 16
+            archive.writestr(info, body)
+    return output.getvalue()
+
+
+def test_materialize_pinned_wheel_accepts_only_the_closed_pyyaml_package_set(monkeypatch, tmp_path):
+    import zipfile
+
+    files = {
+        "_yaml/__init__.py": b"# native extension package\n",
+        "yaml/__init__.py": b"__version__ = '6.0.3'\n",
+        "yaml/_yaml.cpython-314-aarch64-linux-gnu.so": b"fixture extension bytes",
+        "pyyaml-6.0.3.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nTag: cp314-cp314-manylinux_2_28_aarch64\n"),
+        "pyyaml-6.0.3.dist-info/METADATA": b"Name: PyYAML\nVersion: 6.0.3\n",
+    }
+    wheel = _fixture_pyyaml_wheel(files)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(wheel).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(wheel))
+    target = tmp_path / "site-packages"
+    target.mkdir()
+    release_build._materialize_pyyaml_wheel(wheel, target)
+    assert (target / "_yaml/__init__.py").read_bytes() == files["_yaml/__init__.py"]
+    assert (target / "yaml/_yaml.cpython-314-aarch64-linux-gnu.so").read_bytes() == files[
+        "yaml/_yaml.cpython-314-aarch64-linux-gnu.so"]
+
+    malicious = _fixture_pyyaml_wheel({**files, "unreviewed/__init__.py": b"no"})
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(malicious).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(malicious))
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="unreviewed package path"):
+        release_build._materialize_pyyaml_wheel(malicious, tmp_path / "other")
+
+    linked = _fixture_pyyaml_wheel(files, symlink_member="_yaml/__init__.py")
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(linked).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(linked))
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="link or special"):
+        release_build._materialize_pyyaml_wheel(linked, tmp_path / "linked")
+
+    for escaped_name in ("_yaml/../evil.py", "../evil.py", "/yaml/evil.py", "yaml\\evil.py"):
+        escaped = _fixture_pyyaml_wheel({**files, escaped_name: b"escape"})
+        monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(escaped).hexdigest())
+        monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(escaped))
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._materialize_pyyaml_wheel(escaped, tmp_path / ("escape-" + str(len(escaped_name))))
+
+    malformed = b"not a zip archive"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(malformed).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(malformed))
+    with pytest.raises(zipfile.BadZipFile):
+        release_build._materialize_pyyaml_wheel(malformed, tmp_path / "malformed")
 
 
 def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
@@ -162,7 +385,7 @@ def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
 
     class Response:
         status = 200
-        headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+        headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
 
         def __enter__(self):
             return self
@@ -181,6 +404,187 @@ def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._download_pinned(release_build.BOOTSTRAP_PYYAML_URL, "0" * 64,
                                        len(payload), 1024)
+
+
+def test_runtime_download_follows_only_one_exact_public_asset_redirect(monkeypatch):
+    payload = b"pinned runtime bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    url = release_build.BOOTSTRAP_RUNTIME_ARCHIVE_URL
+    location = "https://release-assets.githubusercontent.com/release/asset?sig=fixture-secret"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256", digest)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_DOWNLOAD", len(payload))
+    requests = []
+
+    class Response:
+        status = 200
+        headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
+
+        def __init__(self):
+            self.offset = 0
+            self.closed = False
+
+        def geturl(self):
+            return location
+
+        def read(self, count=-1):
+            if count < 0:
+                count = len(payload)
+            result = payload[self.offset:self.offset + count]
+            self.offset += len(result)
+            return result
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            assert timeout == 30
+            if len(requests) == 1:
+                from email.message import Message
+                headers = Message()
+                headers["Location"] = location
+                raise release_build.urllib.error.HTTPError(
+                    url, 302, "Found", headers, io.BytesIO())
+            return response
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    assert release_build._download_pinned(
+        url, digest, len(payload), len(payload)) == payload
+    assert len(requests) == 2
+    assert requests[0].full_url == url
+    assert requests[1].full_url == location
+    for request in requests:
+        assert request.get_header("Authorization") is None
+        assert request.get_header("Cookie") is None
+        assert request.get_header("Proxy-authorization") is None
+        assert request.get_header("Referer") is None
+    assert response.closed
+
+
+@pytest.mark.parametrize("location", [
+    None,
+    "https://release-assets.githubusercontent.com.evil.invalid/file?sig=x",
+    "https://release-assets.githubusercontent.com./file?sig=x",
+    "https://user@release-assets.githubusercontent.com/file?sig=x",
+    "http://release-assets.githubusercontent.com/file?sig=x",
+    "https://release-assets.githubusercontent.com:444/file?sig=x",
+    "https://release-assets.githubusercontent.com/file#fragment",
+    "https://reléase-assets.githubusercontent.com/file?sig=x",
+    "//release-assets.githubusercontent.com/file?sig=x",
+    "https://release-assets.githubusercontent.com/" + "x" * 8200,
+])
+def test_runtime_redirect_rejects_unreviewed_locations(location):
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._validate_runtime_asset_redirect(location)
+
+
+def test_runtime_download_rejects_a_second_redirect_and_hash_mismatch(monkeypatch):
+    payload = b"wrong bytes"
+    digest = hashlib.sha256(b"expected bytes").hexdigest()
+    url = release_build.BOOTSTRAP_RUNTIME_ARCHIVE_URL
+    location = "https://release-assets.githubusercontent.com/release/asset?sig=fixture-secret"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256", digest)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_DOWNLOAD", len(payload))
+
+    class Opener:
+        def open(self, request, timeout):
+            from email.message import Message
+            headers = Message()
+            headers["Location"] = location
+            raise release_build.urllib.error.HTTPError(
+                request.full_url, 302, "Found", headers, io.BytesIO())
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(url, digest, len(payload), len(payload))
+
+    class OneRedirectThenWrongBody:
+        calls = 0
+
+        def open(self, request, timeout):
+            from email.message import Message
+            self.calls += 1
+            if self.calls == 1:
+                headers = Message()
+                headers["Location"] = location
+                raise release_build.urllib.error.HTTPError(
+                    request.full_url, 302, "Found", headers, io.BytesIO())
+
+            class Response:
+                status = 200
+                headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
+
+                def __init__(self):
+                    self.offset = 0
+
+                def geturl(self):
+                    return location
+
+                def read(self, count=-1):
+                    if count < 0:
+                        count = len(payload)
+                    result = payload[self.offset:self.offset + count]
+                    self.offset += len(result)
+                    return result
+
+                def close(self):
+                    return None
+
+            return Response()
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: OneRedirectThenWrongBody())
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="bytes do not match"):
+        release_build._download_pinned(url, digest, len(payload), len(payload))
+
+
+def test_pyyaml_download_keeps_no_redirect_policy(monkeypatch):
+    calls = []
+
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request.full_url)
+            from email.message import Message
+            headers = Message()
+            headers["Location"] = "https://release-assets.githubusercontent.com/unreviewed"
+            raise release_build.urllib.error.HTTPError(
+                request.full_url, 302, "Found", headers, io.BytesIO())
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(
+            release_build.BOOTSTRAP_PYYAML_URL,
+            release_build.BOOTSTRAP_PYYAML_SHA256,
+            release_build.BOOTSTRAP_PYYAML_BYTES,
+            1_048_576,
+        )
+    assert calls == [release_build.BOOTSTRAP_PYYAML_URL]
+
+
+def test_declared_content_length_is_optional_but_must_be_unambiguous_and_exact():
+    from email.message import Message
+
+    headers = Message()
+    assert release_build._declared_content_length(headers, 12) is None
+    headers["Content-Length"] = "12"
+    assert release_build._declared_content_length(headers, 12) is True
+    headers["Content-Length"] = "13"
+    assert release_build._declared_content_length(headers, 12) is False
+    headers = Message()
+    headers["Content-Length"] = "12"
+    headers["Content-Length"] = "12"
+    assert release_build._declared_content_length(headers, 12) is False
+    headers = Message()
+    headers["Content-Length"] = "12, 12"
+    assert release_build._declared_content_length(headers, 12) is False
 
 
 def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
@@ -251,6 +655,7 @@ def test_runtime_handoff_cannot_be_constructed_without_registry_seal():
 
 def test_deployment_predecessor_absence_is_a_sealed_typed_observation(monkeypatch):
     monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_ensure_fixed_deployment_parent", lambda: None)
     monkeypatch.setattr(release_build, "_read_deployment_predecessor", lambda: release_build.DeploymentPredecessor(
         "absent", 17, 23))
     proof = release_build.observe_deployment_predecessor()
@@ -277,6 +682,7 @@ def test_deployment_predecessor_present_invalid_release_fails_closed(monkeypatch
             raise ValueError("corrupt receipt")
 
     monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_ensure_fixed_deployment_parent", lambda: None)
     monkeypatch.setattr(release_build, "_read_deployment_predecessor", lambda: release_build.DeploymentPredecessor(
         "present", 17, 23, "a" * 64, 29, 31, "b" * 40))
     module = types.ModuleType("hermes_installer.authority.installer_release")

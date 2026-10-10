@@ -279,3 +279,12 @@ The installer SHALL bind original local-audio-assist capture to the exact protec
 
 - **WHEN** the selected endpoint tuple changes, consent is revoked or expires, capture overruns or the stream cannot open under the actual selected controller
 - **THEN** capture fails, retained PCM is zeroed, and no source event or permission claim is promoted from worker input or synthetic streams
+
+### Requirement: Genuine retained event peer-bound channel delivery
+
+The installer SHALL queue v129 genuine issued source/context handles bound to the exact retained event and current selected native peer, preserving distinct original source identity.
+
+#### Scenario: Random syntactically valid source handle
+
+- **WHEN** publish lacks actual source and native context store membership
+- **THEN** no channel event delivery is queued and no provenance is inferred from generated strings
