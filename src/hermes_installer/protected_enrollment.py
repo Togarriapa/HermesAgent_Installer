@@ -666,8 +666,8 @@ class ProtectedEnrollmentCatalog:
             if key in public_scope_rows:
                 raise EnrollmentDenied("public web scope enrollment is duplicated")
             public_scope_rows[key] = scope
-        if tuple(scope.enrollment_id for scope in public_scope_rows.values()) != tuple(
-                sorted(scope.enrollment_id for scope in public_scope_rows.values())):
+        ordered_scope_ids = tuple(scope.enrollment_id for scope in public_scope_rows.values())
+        if ordered_scope_ids != tuple(sorted(set(ordered_scope_ids))):
             raise EnrollmentDenied("public web scope rows must be sorted by enrollment ID")
         if scope_ids_in_issuers != {scope.enrollment_id for scope in public_scope_rows.values()}:
             raise EnrollmentDenied("public web scope source issuer references do not resolve exactly")

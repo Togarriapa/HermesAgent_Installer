@@ -806,6 +806,8 @@ def test_public_web_scope_parser_binds_canonical_payload_and_rejects_unsafe_targ
         {**raw, "targets": [{**raw["targets"][0], "hostname": "127.0.0.1"}]},
         {**raw, "targets": [{**raw["targets"][0], "hostname": "docs.example.org."}]},
         {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/../private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/%2e%2e/private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs", "/api"]}]},
         {**raw, "targets": [{**raw["targets"][0], "query_keys": ["access_token"]}]},
         {**raw, "deadline_seconds": True},
         {**raw, "response_bytes_limit": 2_097_153},
@@ -887,6 +889,12 @@ def test_public_web_scope_catalog_joins_exact_action_issuer_and_process_epoch(mo
                                    "capture-v1", (), "other-generation", "observer-a",
                                    ("authenticated-input",), (), ("web-scope-a",)),
             ], public_web_scopes=[raw_scope],
+        )
+    with pytest.raises(EnrollmentDenied, match="sorted by enrollment ID"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): profile}, digest="c" * 64,
+            native_packages=[package], source_issuers=[issuer],
+            public_web_scopes=[raw_scope, {**raw_scope, "generation": "process-g2"}],
         )
 
 
