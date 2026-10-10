@@ -429,3 +429,5 @@ Successful task completion SHALL bind actual native execution receipts and disti
 #### Scenario: Native or credential mapping absence
 - **WHEN** the current exact native or scoped credential join is missing
 - **THEN** no successful task capsule or authenticated webhook event is fabricated.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
