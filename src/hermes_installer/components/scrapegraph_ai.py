@@ -230,7 +230,7 @@ def verify_scrapegraph_ai_fixture_result(result: object) -> dict[str, object]:
         "telemetry_enabled": False,
         "metered_cost_usd": 0,
     }
-    if (not isinstance(proof, dict) or set(proof) != set(expected)
+    if (not isinstance(proof, dict) or set(proof) != (set(expected) | {"upstream_source"})
             or any(type(proof[k]) is not type(value) or proof[k] != value
                    for k, value in expected.items())):
         raise ScrapeGraphFixtureError("ScrapeGraphAI proof does not establish the required local graph effects")
