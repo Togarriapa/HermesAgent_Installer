@@ -19,25 +19,6 @@ from hermes_installer.authority.types import AuthorityDenied
 
 
 class ProtectedEnrollmentContracts(unittest.TestCase):
-    def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
-        row = {
-            "schema": 1, "receipt_handle": "a" * 64,
-            "key_id": "authority-key-" + "b" * 32,
-            "algorithm": "HMAC-SHA256", "key_device": 1, "key_inode": 2,
-            "key_uid": 0, "key_mode": 0o600,
-            "release_receipt_handle": "c" * 64,
-            "initial_compilation_session_handle": "d" * 64,
-            "issued_monotonic": 10.0, "expires_monotonic": 40.0,
-        }
-        self.assertEqual(_validate_root_key_selection(row), row)
-        for invalid in (
-            {**row, "key_id": "caller-key"},
-            {**row, "key_uid": True},
-            {**row, "expires_monotonic": float("inf")},
-            {**row, "unreviewed": "field"},
-        ):
-            with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
-                _validate_root_key_selection(invalid)
     def test_composio_channel_enrollment_is_exact_and_bounded(self):
         row = {
             "id": "channel-enrollment", "channel_resource_id": "resource-a",
@@ -121,6 +102,26 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
+
+    def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
+        row = {
+            "schema": 1, "receipt_handle": "a" * 64,
+            "key_id": "authority-key-" + "b" * 32,
+            "algorithm": "HMAC-SHA256", "key_device": 1, "key_inode": 2,
+            "key_uid": 0, "key_mode": 0o600,
+            "release_receipt_handle": "c" * 64,
+            "initial_compilation_session_handle": "d" * 64,
+            "issued_monotonic": 10.0, "expires_monotonic": 40.0,
+        }
+        self.assertEqual(_validate_root_key_selection(row), row)
+        for invalid in (
+            {**row, "key_id": "caller-key"},
+            {**row, "key_uid": True},
+            {**row, "expires_monotonic": float("inf")},
+            {**row, "unreviewed": "field"},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
+                _validate_root_key_selection(invalid)
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{

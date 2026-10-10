@@ -382,7 +382,14 @@ def _record_public_dict(row: EvidenceRecord, *, trusted: bool) -> dict[str, Any]
     data["evidence_class"] = row.evidence_class.value
     data["state"] = row.state.value
     data["trusted"] = trusted
-    return _redact_secrets(data)
+    # Assertion names are installer-owned schema identifiers, not credential
+    # values. Preserve the tri-state map exactly: generic key-name redaction
+    # would turn (for example) `credential_scope_verified: null` into a string
+    # and destroy the distinction between unobserved and observed outcomes.
+    assertions = dict(row.assertions)
+    public = _redact_secrets(data)
+    public["assertions"] = assertions
+    return public
 
 
 def _target_requirements_met(acceptance_id: str, rows: list[EvidenceRecord]) -> bool:
@@ -417,7 +424,17 @@ def _safe_text(value: str) -> str:
 
 def _redact_secrets(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(k): ("[REDACTED]" if re.search(r"secret|token|credential|password|api[_-]?key", str(k), re.I) else _redact_secrets(v)) for k, v in value.items()}
+        return {
+            str(k): (
+                dict(v)
+                if str(k) == "assertions" and isinstance(v, dict)
+                and all(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9_]{1,127}", name)
+                         and (outcome is None or isinstance(outcome, bool)) for name, outcome in v.items())
+                else "[REDACTED]" if re.search(r"secret|token|credential|password|api[_-]?key", str(k), re.I)
+                else _redact_secrets(v)
+            )
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_redact_secrets(v) for v in value]
     if isinstance(value, str):

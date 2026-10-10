@@ -1,0 +1,110 @@
+{
+  "owner_module": "hermes_installer.authority.host_tool_observation",
+  "owner": "luna_private_loopback_network",
+  "registry": "HostToolObservationRegistry",
+  "constructor": "from_root_runtime(verified_installer_release, selected_host_tool_variant_catalog, root_journal)",
+  "observe": "observe_selected_nft_tool(selected_network_binding) -> opaque observation_handle",
+  "resolve": "resolve_selected_nft_tool(observation_handle, selected_network_binding) -> RootResolvedHostTool",
+  "revalidate": "revalidate_current(observation_handle, selected_network_binding) -> same VerifiedHostToolPackageObservation",
+  "observation_fields": [
+    "schema",
+    "observation_handle",
+    "variant_id",
+    "distribution",
+    "release",
+    "architecture",
+    "package_name",
+    "version",
+    "package_sha256",
+    "executable_artifact_id",
+    "executable_sha256",
+    "dependency_closure_sha256",
+    "network_id",
+    "network_generation",
+    "enclosing_service_generation_digest",
+    "variant_catalog_sha256",
+    "installer_release_receipt_handle",
+    "dpkg_status_sha256",
+    "signed_index_records",
+    "package_records",
+    "held_file_records",
+    "issued_monotonic",
+    "expires_monotonic",
+    "authority_epoch"
+  ],
+  "signed_index_record_fields": [
+    "origin",
+    "suite",
+    "inrelease_sha256",
+    "signer_fingerprint",
+    "keyring_sha256",
+    "packages_relative_path",
+    "packages_sha256",
+    "valid_until"
+  ],
+  "package_record_fields": [
+    "package_name",
+    "version",
+    "architecture",
+    "package_relative_path",
+    "package_sha256",
+    "package_size_bytes",
+    "index_record_sha256",
+    "installed_status_sha256"
+  ],
+  "held_file_record_fields": [
+    "package_name",
+    "member_path",
+    "sha256",
+    "size_bytes",
+    "device",
+    "inode",
+    "uid",
+    "gid",
+    "mode"
+  ],
+  "private_state": "Registry retains original nofollow file descriptors for nft, dynamic loader and complete actual ELF dependency closure, keyring/status/index witnesses and membership seal. DTO has no caller path/FD/signature authority; lookup checks exact registry identity. Returned RootResolvedHostTool duplicates executable FD; consumer owns duplicate, registry owns originals. package_set_receipt_handle is this opaque observation handle, never Coral PackageSetInstallReceipt. RootResolvedHostTool existing private path/fd/dev/inode fields retained; production verify_current delegates to registry all-file revalidation. Restart invalidates live handles; audit persistence is not bearer authority.",
+  "trust": "Match actual /etc/os-release and installed dpkg package/architecture to exactly one closed variant. Debian VERSION_ID major13 plus trixie, Ubuntu24.04 plus noble. Read-only authenticated official index/cache chain InRelease signature -> Packages SHA -> exact deb SHA -> extracted executable/dependency member bytes -> actual root-owned installed bytes. No dpkg MD5-only, ldd execution, caller receipts/paths/mirrors/version, insecure apt flags/key import, package installation/upgrade/replacement. Dependencies include interpreter/loader and transitive ELF closure, each exact installed version authenticated by signed package evidence; absent evidence unavailable. Existing host distro keyring is a pre-existing OS trust anchor, not trust derived from caller source.",
+  "origins": {
+    "ubuntu": [
+      "https://archive.ubuntu.com/ubuntu",
+      "https://ports.ubuntu.com/ubuntu-ports",
+      "https://security.ubuntu.com/ubuntu"
+    ],
+    "debian": [
+      "https://deb.debian.org/debian",
+      "https://security.debian.org/debian-security"
+    ]
+  },
+  "archive_signers": {
+    "ubuntu": [
+      "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+    ],
+    "debian": [
+      "04B54C3CDCA79751B16BC6B5225629DF75B188BD",
+      "5E04A1E3223A19A20706E20F9904613D4CCE68C6",
+      "41587F7DB8C774BCCF131416762F67A0B2C39DE4"
+    ]
+  },
+  "currentness": "Lease <=30seconds and selected network/controller lease. Revalidate all held and current fixed-path inodes/hashes/root ownership/no group-world write, installed versions/status, keyring/signature metadata validity and exact selected variant/network/service generation before every nft check/apply/readback and network launch. No lease extension from copied DTO. Changed dependency/status/keyring or expired metadata denies. Download/cache observation bounded to selected exact packages only, no global apt update authority.",
+  "limits": {
+    "max_packages": 128,
+    "max_dependency_files": 4096,
+    "max_single_package_bytes": 134217728,
+    "max_total_package_bytes": 536870912,
+    "max_metadata_bytes": 67108864,
+    "max_lease_seconds": 30
+  },
+  "variant_artifact": {
+    "path": "plans/amendments/2026-10-10-host-tool-observation-v105/nft-tool-variants-v2.json",
+    "artifact_id": "installer-private-loopback-nft-tool-variants-v2",
+    "sha256": "cff8290d93cd03a7ccf383e48f8867ae9c144d22c8763f5d32b72b4547217b51",
+    "size_bytes": 3491
+  },
+  "proof_limit": "Measured archived package/source/executable is not installed host, running systemd/kernel feature, namespace/firewall functionality or acceptance proof. Actual host dependency observation and existing positive/negative kernel probes remain mandatory.",
+  "sources": [
+    "https://documentation.ubuntu.com/security/software-integrity/archive-verification/",
+    "https://manpages.debian.org/trixie/apt/apt-secure.8.en.html",
+    "https://ftp-master.debian.org/keys.html"
+  ]
+}

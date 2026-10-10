@@ -40,6 +40,18 @@ class RootNativeInputSelection:
     compiled_closure_sha256: str
     expires_monotonic: float
     invocation_id: str
+    # Root-selected current profile preference. A null value means no private
+    # provider egress consent; this is never supplied by the worker.
+    private_consent_selection_handle: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.private_consent_selection_handle is not None
+                and (not isinstance(self.private_consent_selection_handle, str)
+                     or len(self.private_consent_selection_handle) < 32
+                     or len(self.private_consent_selection_handle) > 128
+                     or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                            for char in self.private_consent_selection_handle))):
+            raise ValueError("private consent selection handle is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +70,16 @@ class RootNativeInputEvent:
     observed_monotonic: float
     expires_monotonic: float
     native_loader_ready_event_id: str | None = None
+    private_consent_selection_handle: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.private_consent_selection_handle is not None
+                and (not isinstance(self.private_consent_selection_handle, str)
+                     or len(self.private_consent_selection_handle) < 32
+                     or len(self.private_consent_selection_handle) > 128
+                     or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                            for char in self.private_consent_selection_handle))):
+            raise ValueError("private consent selection handle is malformed")
 
 
 class RootNativeInputObserver:
@@ -226,6 +248,8 @@ class RootNativeInputObserver:
                     observed_monotonic=now,
                     expires_monotonic=min(lease, receipt.monotonic_expires_at),
                     native_loader_ready_event_id=target_proof.loader_ready_event_id,
+                    private_consent_selection_handle=(
+                        selected_execution.private_consent_selection_handle),
                 )
                 with self._lock:
                     if event_id in self._events:
@@ -268,6 +292,18 @@ class RootNativeInputObserver:
         if receipt.source_receipt_handle != receipt.producer_context_delivery_handle:
             raise AuthorityDenied("native.input.delivery", "source and delivery handles differ")
         return receipt
+
+    def resolve_event_for_source_handle(self, source_receipt_handle: str) -> RootNativeInputEvent:
+        """Resolve one immutable root event without consuming its payload."""
+        if not isinstance(source_receipt_handle, str) or not source_receipt_handle:
+            raise AuthorityDenied("native.input.event", "source receipt handle is malformed")
+        with self._lock:
+            matches = [event for event in self._events.values()
+                       if event.source_receipt_handle == source_receipt_handle
+                       and event.expires_monotonic > self.monotonic()]
+        if len(matches) != 1:
+            raise AuthorityDenied("native.input.event", "source handle has no unique retained input event")
+        return matches[0]
 
     def discard_task_input_observation(self, *, source_receipt_handle: str,
                                       receipt_handle: str | None = None) -> None:
@@ -438,6 +474,7 @@ class RootNativeInputObserver:
                 observed_monotonic=now,
                 expires_monotonic=min(selected.expires_monotonic, receipt.monotonic_expires_at),
                 native_loader_ready_event_id=getattr(proof, "loader_ready_event_id", None),
+                private_consent_selection_handle=selected.private_consent_selection_handle,
             )
             with self._lock:
                 if any(item.input_event_id == event.input_event_id for item in self._events.values()):

@@ -307,6 +307,12 @@ def test_selected_application_runtime_record_joins_recipe_roots_and_artifacts_bu
     assert selected.application_id == "application-a"
     assert selected.service_generation_digest == digest
     assert not hasattr(selected, "effective_spec")
+    # The protected row is only a selector. Even an otherwise valid enabled
+    # row cannot become an executable DTO until current source and runtime
+    # receipts are resolved from retained root registries.
+    row["enabled"] = True
+    with pytest.raises(EnrollmentDenied, match="receipt registries are unavailable"):
+        binding.resolve_selected_application_runtime("application-a", "profile-a")
     with pytest.raises(EnrollmentDenied, match="absent or ambiguous"):
         binding.resolve_selected_application_runtime_record("application-a", profile_id="other-profile")
 
