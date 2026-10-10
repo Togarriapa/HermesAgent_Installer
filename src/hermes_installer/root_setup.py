@@ -418,6 +418,16 @@ def run_root_setup_action(
     except (OSError, RuntimeError, ValueError, InstallerReleaseBuildError) as exc:
         return _result(selected_action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
 
+    # Import the one reviewed setup composition graph before observing this
+    # process. The actor snapshot deliberately rejects every later installer
+    # module load, including legitimate fixed modules; importing arbitrary
+    # modules here would weaken that boundary, so keep this finite import at
+    # the installed-release handoff only.
+    from .authority.bootstrap_runtime_factory import (
+        RootBootstrapRuntimeFactory,
+        RootInitialSetupAggregate,
+    )
+
     try:
         release, actor = InstalledRootReleaseVerifier.from_current_root_process()
     except BootstrapEnrollmentPending as exc:
@@ -425,10 +435,6 @@ def run_root_setup_action(
     except (OSError, RuntimeError) as exc:
         return _result(selected_action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
 
-    from .authority.bootstrap_runtime_factory import (
-        RootBootstrapRuntimeFactory,
-        RootInitialSetupAggregate,
-    )
     factory: RootBootstrapRuntimeFactory | None = None
     initial_aggregate: RootInitialSetupAggregate | None = None
     session = None

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import tempfile
+import sys
+from types import ModuleType
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -64,6 +67,68 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                 actor.verify_current(LiveRelease())
         finally:
             actor.close()
+
+    def test_actor_still_rejects_late_module_injection_and_origin_substitution(self):
+        pid = os.getpid()
+        executable = Path(sys.executable).resolve()
+        tracked = []
+        for name, module in tuple(sys.modules.items()):
+            if name == "hermes_installer" or name.startswith("hermes_installer."):
+                origin = getattr(getattr(module, "__spec__", None), "origin", None)
+                if origin is not None:
+                    tracked.append((name, origin, 0, 0, "0" * 64))
+        pidfd, pidfd_writer = os.pipe()
+        actor = RootActorObservation(
+            _SEAL, pid=pid, uid=0, gid=0, start_time=123,
+            launcher=(str(executable), 0, 0, "0" * 64),
+            interpreter=(str(executable), 0, 0, "0" * 64),
+            module_origins=tuple(tracked), namespace_inodes=(),
+            isolated_import_facts=(), pidfd=pidfd)
+
+        class LiveRelease:
+            def verify_current(self):
+                return None
+
+        original_resolve = Path.resolve
+
+        def resolve_process_executable(path, **kwargs):
+            if str(path) == f"/proc/{pid}/exe":
+                return executable
+            return original_resolve(path, **kwargs)
+
+        try:
+            with patch("hermes_installer.authority.installer_release.os.getuid", return_value=0), \
+                 patch("hermes_installer.authority.installer_release.os.geteuid", return_value=0), \
+                 patch("hermes_installer.authority.installer_release.os.getgid", return_value=0), \
+                 patch("hermes_installer.authority.installer_release._process_start_time", return_value=123), \
+                 patch("hermes_installer.authority.installer_release._namespace_inodes", return_value=()), \
+                 patch("hermes_installer.authority.installer_release._isolated_import_facts", return_value=()), \
+                 patch("hermes_installer.authority.installer_release._verify_actor_path"), \
+                 patch.object(Path, "resolve", resolve_process_executable):
+                actor.verify_current(LiveRelease())
+
+                injected_name = "hermes_installer.unreviewed_injected_for_test"
+                injected = ModuleType(injected_name)
+                injected.__spec__ = importlib.util.spec_from_loader(injected_name, loader=None,
+                                                                     origin="/tmp/unreviewed.py")
+                sys.modules[injected_name] = injected
+                try:
+                    with self.assertRaisesRegex(InstallerReleaseError, "unreviewed Hermes installer module"):
+                        actor.verify_current(LiveRelease())
+                finally:
+                    del sys.modules[injected_name]
+
+                module = sys.modules["hermes_installer.authority.installer_release"]
+                prior_origin = module.__spec__.origin
+                module.__spec__.origin = "/tmp/substituted-installer-release.py"
+                try:
+                    with self.assertRaises(InstallerReleaseError):
+                        actor.verify_current(LiveRelease())
+                finally:
+                    module.__spec__.origin = prior_origin
+        finally:
+            actor.close()
+            os.close(pidfd_writer)
 
     def test_relative_paths_reject_traversal_and_platform_separators(self):
         for path in ("../etc/passwd", "a/../../x", "a\\b", "/absolute", "", "a//b"):

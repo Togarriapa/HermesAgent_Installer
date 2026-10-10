@@ -3,8 +3,10 @@ from __future__ import annotations
 import builtins
 import contextlib
 import io
+import importlib
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -25,6 +27,92 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_reviewed_runtime_factory_is_imported_before_actor_observation(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
+
+        module_name = "hermes_installer.authority.bootstrap_runtime_factory"
+        prior_module = sys.modules.pop(module_name, None)
+        authority_package = importlib.import_module("hermes_installer.authority")
+        prior_attribute = getattr(authority_package, "bootstrap_runtime_factory", None)
+        if hasattr(authority_package, "bootstrap_runtime_factory"):
+            delattr(authority_package, "bootstrap_runtime_factory")
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "held-release",
+            "verify_current": lambda self: None,
+        })()
+        held = type("Held", (), {"close": lambda self: None})()
+        observed: list[object] = []
+
+        def observe_after_composition_import() -> object:
+            module = sys.modules.get(module_name)
+            self.assertIsNotNone(module)
+            self.assertEqual(Path(module.__spec__.origin).resolve(),
+                             (Path(__file__).parents[2] / "src/hermes_installer/authority/bootstrap_runtime_factory.py").resolve())
+            self.assertTrue(callable(module.RootBootstrapRuntimeFactory))
+            observed.append(module)
+            raise BootstrapEnrollmentPending("stop after ordering assertion")
+
+        try:
+            with patch.object(root_setup, "_require_root_linux"), \
+                 patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                       return_value=predecessor), \
+                 patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                       return_value=held), \
+                 patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                       side_effect=observe_after_composition_import):
+                result = run_root_setup_action("install")
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(result.state, RootSetupState.PENDING)
+        finally:
+            sys.modules.pop(module_name, None)
+            if prior_module is not None:
+                sys.modules[module_name] = prior_module
+            if prior_attribute is not None:
+                authority_package.bootstrap_runtime_factory = prior_attribute
+            elif hasattr(authority_package, "bootstrap_runtime_factory"):
+                delattr(authority_package, "bootstrap_runtime_factory")
+
+    def test_qualification_composition_imports_precede_actor_observation(self) -> None:
+        from hermes_installer.authority.installer_release import InstalledRootReleaseVerifier
+
+        module_name = "hermes_installer.authority.installed_qualification"
+        prior_module = sys.modules.pop(module_name, None)
+        authority_package = importlib.import_module("hermes_installer.authority")
+        prior_attribute = getattr(authority_package, "installed_qualification", None)
+        if hasattr(authority_package, "installed_qualification"):
+            delattr(authority_package, "installed_qualification")
+        observed: list[object] = []
+
+        def observe_after_finite_imports() -> object:
+            module = sys.modules.get(module_name)
+            self.assertIsNotNone(module)
+            for name in (
+                "hermes_installer.authority.qualification_resource_cron_recipe",
+                "hermes_installer.authority.qualification_resource_cron_schema",
+                "hermes_installer.authority.root_controller_custody",
+                "hermes_installer.managed_process_custodian",
+                "hermes_installer.protected_enrollment",
+            ):
+                self.assertIn(name, sys.modules)
+            observed.append(module)
+            raise RuntimeError("stop after ordering assertion")
+
+        try:
+            with patch.object(root_setup, "_require_root_linux"), \
+                 patch.object(InstalledRootReleaseVerifier, "from_current_root_process",
+                       side_effect=observe_after_finite_imports):
+                result = root_setup._run_installed_qualification("resource-cron-task-v1")
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(result, 4)
+        finally:
+            sys.modules.pop(module_name, None)
+            if prior_module is not None:
+                sys.modules[module_name] = prior_module
+            if prior_attribute is not None:
+                authority_package.installed_qualification = prior_attribute
+            elif hasattr(authority_package, "installed_qualification"):
+                delattr(authority_package, "installed_qualification")
+
     def test_installed_launcher_disables_runtime_bytecode_writes(self) -> None:
         source = Path(__file__).parents[2] / "scripts/hermes-installer-root-setup"
         with tempfile.TemporaryDirectory() as temporary:
