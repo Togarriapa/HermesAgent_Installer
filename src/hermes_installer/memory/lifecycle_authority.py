@@ -212,11 +212,19 @@ class RootVerifiedMemoryLifecycleAdmission:
         if (not isinstance(self.admission_handle, str) or not _OPAQUE.fullmatch(self.admission_handle)
                 or not _DIGEST.fullmatch(self.service_generation_digest)
                 or not _DIGEST.fullmatch(self.source_closure_sha256)
+                or not all(isinstance(value, str) and value for value in (
+                    self.service_enrollment_id, self.generation, self.profile_id,
+                    self.principal_id, self.namespace_identity, self.consent_id,
+                    self.consent_revision, self.sensitivity))
+                or type(self.subject_uid) is not int or self.subject_uid <= 0
+                or type(self.subject_gid) is not int or self.subject_gid < 0
                 or self.role not in set(_ROLE.values())
                 or type(self.memory_owner_generation) is not int or self.memory_owner_generation < 1
                 or not self.consent_id or not self.consent_revision
                 or not isinstance(self.source_receipt_handles, tuple) or not self.source_receipt_handles
+                or any(not isinstance(item, str) or not item for item in self.source_receipt_handles)
                 or len(set(self.source_receipt_handles)) != len(self.source_receipt_handles)
+                or not isinstance(self.action_bindings, Mapping)
                 or set(self.action_bindings) - _ACTIONS
                 or not {"start", "status", "stop"}.issubset(self.action_bindings)
                 or any(type(binding) is not MemorySelectedLifecycleActionBinding
@@ -238,8 +246,40 @@ class RootVerifiedMemoryLifecycleAdmission:
                 or isinstance(self.expires_monotonic, bool)
                 or type(self.expires_monotonic) not in (int, float)
                 or self.expires_monotonic <= self.issued_monotonic
-                or self.original_deadline < self.expires_monotonic):
+                or isinstance(self.original_deadline, bool)
+                or type(self.original_deadline) not in (int, float)
+                or self.original_deadline < self.expires_monotonic
+                or self.original_deadline - self.issued_monotonic > 600):
             raise MemoryLifecycleDenied("root-verified memory lifecycle admission is malformed")
+        expected_operations = {
+            "start": ("process.start", "hermes-profile-invoke"),
+            "status": ("process.status", "hermes-process-control"),
+            "stop": ("process.stop", "hermes-process-control"),
+        }
+        life = self._enrollment.lifecycle_binding
+        if life is None:
+            raise MemoryLifecycleDenied("selected memory service has no source-backed start recipe")
+        for action, binding in self.action_bindings.items():
+            expected_operation, expected_capability = expected_operations[action]
+            operation_binding = binding.process_operation
+            if (binding.operation != expected_operation
+                    or binding.capability != expected_capability
+                    or binding.service_enrollment_id != self.service_enrollment_id
+                    or binding.generation != self.generation
+                    or binding.profile_id != self.profile_id
+                    or binding.principal_id != self.principal_id
+                    or binding.namespace_identity != self.namespace_identity
+                    or binding.subject_uid != self.subject_uid
+                    or binding.subject_gid != self.subject_gid
+                    or binding.source_closure_sha256 != self.source_closure_sha256
+                    or binding.source_receipt_handles != self.source_receipt_handles
+                    or getattr(operation_binding, "operation", None) != expected_operation
+                    or getattr(operation_binding, "target_id", None) != binding.target
+                    or getattr(operation_binding, "enrollment_id", None) != self.service_enrollment_id
+                    or getattr(operation_binding, "generation", None) != self.generation):
+                raise MemoryLifecycleDenied("lifecycle action binding differs from sealed admission")
+        if self.action_bindings["start"].operation_id != life.start_operation_id:
+            raise MemoryLifecycleDenied("sealed memory start action differs from its fixed recipe")
         object.__setattr__(self, "action_bindings", MappingProxyType(dict(self.action_bindings)))
 
     @classmethod
