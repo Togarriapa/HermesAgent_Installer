@@ -40,6 +40,12 @@ class RootPrivateLoopbackGateChannel:
     socket_inode: int
     _closed: bool = False
     _accepted: socket.socket | None = field(default=None, repr=False)
+    _peer_credentials: tuple[int, int, int] | None = field(default=None, repr=False)
+    _initial_frame: Mapping[str, Any] | None = field(default=None, repr=False)
+    _contract_sha256: str | None = field(default=None, repr=False)
+    _namespace_frame: Mapping[str, Any] | None = field(default=None, repr=False)
+    _namespace_gate_sha256: str | None = field(default=None, repr=False)
+    _phase: str = "created"
 
     @property
     def systemd_open_file_property(self) -> str:
@@ -80,10 +86,83 @@ class RootPrivateLoopbackGateChannel:
             if creds != (pid, uid, gid):
                 raise ValueError("per-frame credentials differ from connected helper")
             self._accepted = connected
+            self._peer_credentials = (pid, uid, gid)
+            self._initial_frame = frame
+            self._contract_sha256 = frame.get("launch_contract_sha256")
+            self._phase = "awaiting-namespace"
             return connected, frame, _digest(frame)
         except BaseException:
             connected.close()
             raise AuthorityDenied("native_worker.gate", "gate helper peer or initial frame is invalid") from None
+
+    def _receive_helper_frame(self, *, ceiling: int = _MAX_FRAME) -> Mapping[str, Any]:
+        channel = self._accepted
+        expected = self._peer_credentials
+        if channel is None or expected is None or self._closed:
+            raise AuthorityDenied("native_worker.gate", "authenticated helper channel is unavailable")
+        try:
+            frame, credentials = _receive_frame_with_credentials(channel, ceiling)
+            if credentials != expected:
+                raise ValueError("per-message helper credentials changed")
+            return frame
+        except Exception:
+            raise AuthorityDenied("native_worker.gate", "helper frame credentials or schema are invalid") from None
+
+    def _send_manager_frame(self, frame: Mapping[str, Any], *, ceiling: int = _MAX_FRAME) -> str:
+        channel = self._accepted
+        if channel is None or self._closed:
+            raise AuthorityDenied("native_worker.gate", "authenticated helper channel is unavailable")
+        try:
+            return send_frame(channel, frame, ceiling=ceiling)
+        except Exception:
+            raise AuthorityDenied("native_worker.gate", "manager gate frame could not be sent") from None
+
+    def send_namespace_observation(self, frame: Mapping[str, Any]) -> str:
+        initial = self._initial_frame
+        if (self._phase != "awaiting-namespace" or initial is None
+                or not isinstance(frame, Mapping)
+                or frame.get("schema") != 2
+                or frame.get("operation") != "observe-selected-namespace"
+                or frame.get("nonce") != self.nonce
+                or frame.get("launch_contract_sha256") != self._contract_sha256
+                or frame.get("pid") != initial.get("pid")
+                or frame.get("start_ticks") != initial.get("start_ticks")):
+            raise AuthorityDenied("native_worker.gate", "namespace observation is not bound to initial helper identity")
+        digest = self._send_manager_frame(frame)
+        self._namespace_frame = dict(frame)
+        self._phase = "awaiting-probes"
+        return digest
+
+    def receive_and_validate_gate_result(self, *, expected_identity: Mapping[str, Any],
+                                         allowed_bind: bool,
+                                         allowed_connect: bool) -> str:
+        if self._phase != "awaiting-probes" or self._namespace_frame is None:
+            raise AuthorityDenied("native_worker.gate", "namespace observation was not sent exactly once")
+        result = self._receive_helper_frame(ceiling=_MAX_RESULT)
+        digest = validate_gate_result(
+            result, nonce=self.nonce, contract_sha256=str(self._contract_sha256),
+            expected_identity=expected_identity, gate_frame=self._namespace_frame,
+            allowed_bind=allowed_bind, allowed_connect=allowed_connect)
+        self._namespace_gate_sha256 = digest
+        self._phase = "ready"
+        return digest
+
+    def send_application_release(self, *, service_generation_digest: str,
+                                 projection_handle: str) -> str:
+        if (self._phase != "ready" or self._namespace_frame is None
+                or self._namespace_gate_sha256 is None):
+            raise AuthorityDenied("native_worker.gate", "helper has not produced a current ready result")
+        gate = self._namespace_frame
+        frame = application_release_frame(
+            nonce=self.nonce, contract_sha256=str(self._contract_sha256),
+            namespace_gate_sha256=self._namespace_gate_sha256,
+            service_generation_digest=service_generation_digest,
+            projection_handle=projection_handle,
+            pid=int(gate["pid"]), start_ticks=int(gate["start_ticks"]),
+            unit_invocation_id=str(gate["unit_invocation_id"]))
+        digest = self._send_manager_frame(frame, ceiling=_MAX_RESULT)
+        self._phase = "released"
+        return digest
 
     def close(self) -> None:
         if self._closed:
@@ -254,15 +333,23 @@ def receive_frame(channel: socket.socket, *, ceiling: int = _MAX_FRAME) -> Mappi
 
 
 def _receive_frame_with_credentials(channel: socket.socket, ceiling: int) -> tuple[Mapping[str, Any], tuple[int, int, int]]:
-    header, ancillary, _flags, _addr = channel.recvmsg(_HEADER.size, socket.CMSG_SPACE(_CREDENTIALS.size))
-    if len(header) != _HEADER.size:
-        raise ValueError("truncated frame header")
+    header = bytearray()
     credentials = None
-    for level, kind, data in ancillary:
-        if level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS and len(data) == _CREDENTIALS.size:
+    while len(header) < _HEADER.size:
+        block, ancillary, flags, _addr = channel.recvmsg(
+            _HEADER.size - len(header), socket.CMSG_SPACE(_CREDENTIALS.size))
+        if not block:
+            raise ValueError("truncated frame header")
+        if flags & (getattr(socket, "MSG_CTRUNC", 0) | getattr(socket, "MSG_TRUNC", 0)):
+            raise ValueError("truncated helper frame or ancillary data")
+        header.extend(block)
+        for level, kind, data in ancillary:
+            if (level != socket.SOL_SOCKET or kind != socket.SCM_CREDENTIALS
+                    or len(data) != _CREDENTIALS.size):
+                raise ValueError("unexpected helper ancillary data")
             current = _CREDENTIALS.unpack(data)
             if credentials is not None and credentials != current:
-                raise ValueError("duplicate differing frame credentials")
+                raise ValueError("per-frame helper credentials changed")
             credentials = current
     if credentials is None:
         raise ValueError("kernel did not attach per-message credentials")
@@ -308,6 +395,20 @@ def _canonical(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _process_capability_identity(pid: int) -> dict[str, int]:
+    try:
+        rows = {}
+        for line in Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key in {"CapEff", "CapPrm", "CapBnd", "CapAmb", "CapInh"}:
+                rows[key] = int(value.strip(), 16)
+        if set(rows) != {"CapEff", "CapPrm", "CapBnd", "CapAmb", "CapInh"}:
+            raise ValueError("process capability set is incomplete")
+        return rows
+    except (OSError, UnicodeError, ValueError):
+        raise AuthorityDenied("native_worker.gate", "kernel capability observation is unavailable") from None
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -2,16 +2,29 @@
 from __future__ import annotations
 
 import hashlib
+import functools
 import json
 import os
 import secrets
 import stat
+import threading
 import time
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
 from .types import AuthorityDenied
+
+
+def _registry_locked(method):
+    @functools.wraps(method)
+    def invoke(self, *args, **kwargs):
+        lock = getattr(self, "_lock", None)
+        if lock is None:
+            return method(self, *args, **kwargs)
+        with lock:
+            return method(self, *args, **kwargs)
+    return invoke
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -96,6 +109,7 @@ class RootActiveNetworkGenerationOwner:
         self._choices = choice_registry
         self._issuer_token = object()
         self._projections: dict[str, RootActiveNetworkGenerationProjection] = {}
+        self._lock = threading.RLock()
         self._closed = False
         self._instance_epoch = secrets.token_hex(24)
 
@@ -103,9 +117,13 @@ class RootActiveNetworkGenerationOwner:
     def from_root_runtime(cls, runtime: Any) -> "RootActiveNetworkGenerationOwner":
         return cls(runtime, _seal=_OWNER_SEAL)
 
+    @_registry_locked
     def resolve_selected_worker(self, network_id: str, profile_id: str
                                 ) -> RootActiveNetworkGenerationProjection:
         self._require_live()
+        self._prune_projections()
+        if len(self._projections) >= _MAX_ACTIVE_PROJECTIONS:
+            raise AuthorityDenied("network_generation.capacity", "too many outstanding active projections")
         try:
             projection = self._resolve(network_id, profile_id)
         except AuthorityDenied:
@@ -115,12 +133,16 @@ class RootActiveNetworkGenerationOwner:
         self._projections[projection.projection_handle] = projection
         return projection
 
+    @_registry_locked
     def verify_current(self, projection: RootActiveNetworkGenerationProjection
                        ) -> RootActiveNetworkGenerationProjection:
         self._require_live()
         if (type(projection) is not RootActiveNetworkGenerationProjection
                 or projection._issuer is not self._issuer_token
-                or self._projections.get(projection.projection_handle) is not projection):
+                or self._projections.get(projection.projection_handle) is not projection
+                or projection.expires_monotonic <= time.monotonic()):
+            if type(projection) is RootActiveNetworkGenerationProjection:
+                self.retire_selected_worker_projection(projection)
             raise AuthorityDenied("network_generation.handle", "projection is not a current owner-issued member")
         current = self._resolve(projection.network_id, projection.process_profile_id)
         if not _same_projection_inputs(current, projection):
@@ -128,9 +150,29 @@ class RootActiveNetworkGenerationOwner:
             raise AuthorityDenied("network_generation.stale", "selected worker generation changed")
         return projection
 
+    @_registry_locked
+    def retire_selected_worker_projection(
+            self, projection: RootActiveNetworkGenerationProjection) -> None:
+        """Retire only this owner's exact issued projection, never its publisher."""
+        with self._lock:
+            if (type(projection) is RootActiveNetworkGenerationProjection
+                    and projection._issuer is self._issuer_token
+                    and self._projections.get(projection.projection_handle) is projection):
+                self._projections.pop(projection.projection_handle, None)
+
+    def _prune_projections(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            expired = [handle for handle, projection in self._projections.items()
+                       if projection.expires_monotonic <= now]
+            for handle in expired:
+                self._projections.pop(handle, None)
+
+    @_registry_locked
     def close(self) -> None:
         self._closed = True
-        self._projections.clear()
+        with self._lock:
+            self._projections.clear()
 
     def _require_live(self) -> None:
         if self._closed:
@@ -361,3 +403,4 @@ def _same_projection_inputs(left: RootActiveNetworkGenerationProjection,
 
 
 _OWNER_SEAL = object()
+_MAX_ACTIVE_PROJECTIONS = 16

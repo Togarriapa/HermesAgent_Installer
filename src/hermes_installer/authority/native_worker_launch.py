@@ -8,14 +8,27 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import functools
 import os
 import stat
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .types import AuthorityDenied
+
+
+def _owner_locked(method):
+    @functools.wraps(method)
+    def invoke(self, *args, **kwargs):
+        lock = getattr(self, "_lock", None)
+        if lock is None:
+            return method(self, *args, **kwargs)
+        with lock:
+            return method(self, *args, **kwargs)
+    return invoke
 
 
 class NativeHermesWorkerLaunchUnavailable(AuthorityDenied):
@@ -30,6 +43,7 @@ class RootNativeHermesWorkerSelection:
     network_id: str
     profile_id: str
     selection_handle: str
+    expires_monotonic: float
     _network_projection: Any = field(repr=False, compare=False)
     _issuer: object = field(repr=False, compare=False)
 
@@ -129,6 +143,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
         self._selections: dict[str, RootNativeHermesWorkerSelection] = {}
         self._proofs: dict[str, RootVerifiedNativeHermesWorkerLaunch] = {}
         self._gate_member_fds: tuple[int, int] | None = None
+        self._lock = threading.RLock()
         self._closed = False
         manager._native_worker_launch_owner = self
 
@@ -139,6 +154,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
         return cls(runtime, listener_receiver, listener_receipt,
                    pm_executable_resolver, _seal=_LAUNCH_SEAL)
 
+    @_owner_locked
     def select_worker(self, network_id: str, profile_id: str) -> RootNativeHermesWorkerSelection:
         self._require_live()
         self._prune_expired()
@@ -155,6 +171,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
                 raise ValueError("selected active row has no finite Hermes module mode")
             selection = RootNativeHermesWorkerSelection(
                 network_id, profile_id, hashlib.sha256(os.urandom(32)).hexdigest(),
+                min(projection.expires_monotonic, time.monotonic() + _MAX_TTL),
                 projection, self._issuer)
             self._selections[selection.selection_handle] = selection
             return selection
@@ -162,6 +179,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
             raise NativeHermesWorkerLaunchUnavailable(
                 "selected active Hermes worker generation is unavailable") from None
 
+    @_owner_locked
     def select_unique_worker_for_profile(self, profile_id: str) -> RootNativeHermesWorkerSelection:
         """Resolve the one protected active network row joined to a profile.
 
@@ -186,6 +204,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
                 "active catalog row does not select the native worker network")
         return self.select_worker(row["network_id"], profile_id)
 
+    @_owner_locked
     def resolve_gate_runtime(self) -> tuple[Path, Path, str, str]:
         """Hold the exact reviewed helper and isolated installer interpreter.
 
@@ -275,6 +294,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
                 except OSError:
                     pass
 
+    @_owner_locked
     def resolve_selected_native_worker_launch(
             self, selection: RootNativeHermesWorkerSelection
             ) -> RootVerifiedNativeHermesWorkerLaunch:
@@ -382,6 +402,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
             raise NativeHermesWorkerLaunchUnavailable(
                 "current active source, PM closure, and adopted authority listener do not prove this launch") from None
 
+    @_owner_locked
     def verify_current_native_worker_launch(
             self, proof: RootVerifiedNativeHermesWorkerLaunch
             ) -> RootVerifiedNativeHermesWorkerLaunch:
@@ -422,6 +443,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
             current.close()
             self._proofs.pop(current.launch_handle, None)
 
+    @_owner_locked
     def close(self) -> None:
         self._closed = True
         self._close_gate_member_fds()
@@ -431,23 +453,55 @@ class RootActiveNativeHermesWorkerLaunchOwner:
         self._selections.clear()
         self.runtime_registry.close()
 
+    @_owner_locked
     def _release_proof(self, proof: RootVerifiedNativeHermesWorkerLaunch) -> None:
         if (type(proof) is RootVerifiedNativeHermesWorkerLaunch
                 and proof._issuer is self._issuer
-                and self._proofs.get(proof.launch_handle) is proof):
+            and self._proofs.get(proof.launch_handle) is proof):
             self._proofs.pop(proof.launch_handle, None)
+            self._prune_selections()
 
+    @_owner_locked
     def _prune_expired(self) -> None:
         expired = [proof for proof in self._proofs.values()
                    if proof.expires_monotonic <= time.monotonic()]
         for proof in expired:
             proof.close()
+        self._prune_selections()
 
+    @_owner_locked
+    def _prune_selections(self) -> None:
+        now = time.monotonic()
+        for handle, selection in tuple(self._selections.items()):
+            # A selected handle must survive the brief caller-to-proof gap.
+            # It is bounded by its own short projection expiry and explicit
+            # lifecycle release after the process-start attempt.
+            if selection.expires_monotonic > now:
+                continue
+            self._selections.pop(handle, None)
+            retire = getattr(self.network_owner, "retire_selected_worker_projection", None)
+            if callable(retire):
+                retire(selection._network_projection)
+
+    @_owner_locked
+    def release_selection(self, selection: RootNativeHermesWorkerSelection) -> None:
+        """Retire a completed no-proof selection and its network projection."""
+        if (type(selection) is not RootNativeHermesWorkerSelection
+                or selection._issuer is not self._issuer
+                or self._selections.get(selection.selection_handle) is not selection
+                or any(proof._selection is selection for proof in self._proofs.values())):
+            raise NativeHermesWorkerLaunchUnavailable(
+                "selection is foreign or still retained by a live launch proof")
+        self._selections.pop(selection.selection_handle, None)
+        self.network_owner.retire_selected_worker_projection(selection._network_projection)
+
+    @_owner_locked
     def _require_selection(self, selection: Any) -> None:
         self._require_live()
         if (type(selection) is not RootNativeHermesWorkerSelection
                 or selection._issuer is not self._issuer
                 or self._selections.get(selection.selection_handle) is not selection
+                or selection.expires_monotonic <= time.monotonic()
                 or selection.network_id != selection._network_projection.network_id
                 or selection.profile_id != selection._network_projection.process_profile_id):
             raise NativeHermesWorkerLaunchUnavailable("worker selection is not an owner-issued active member")
@@ -463,6 +517,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
 _LAUNCH_SEAL = object()
 _MAX_LAUNCH_PROOFS = 4
 _MAX_WORKER_SELECTIONS = 4
+_MAX_TTL = 30.0
 
 
 def preload_native_worker_launch_closure() -> None:
