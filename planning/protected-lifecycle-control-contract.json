@@ -2073,5 +2073,116 @@
       }
     ],
     "acceptance": "No fixture run or Pi acceptance implied; all AC open and baseline unchanged."
+  },
+  "runtime_role_publication_join_v165": {
+    "schema": 1,
+    "requirements": [
+      "HI-T72",
+      "HI-T84",
+      "HI-T159",
+      "BD-F03",
+      "LC-F03"
+    ],
+    "why": "Static RootArtifactReceiptRegistry lookup cannot resolve actual generated native output CAS or observed PM environment. Active publication and runnable commitment must share exact typed source closure, not convert outputs to unrelated static artifact receipts or perform a second independent authority CAS. Runtime health needs fresh current committed observation after setup ends.",
+    "role_projection": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "class": "RootRunnableRoleProjectionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,pm_runtime_receipt_registry,native_materialization_receipt_registry,active_policy_compiler,root_journal)",
+      "method": "resolve_selected_runnable_roles(pm_runtime_receipt_handle,native_output_claim_handle)->RootSelectedRunnableRoleClosure",
+      "fields": [
+        "schema",
+        "role_closure_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_digest",
+        "prepared_generation_id",
+        "pm_runtime_receipt_handle",
+        "native_output_claim_handle",
+        "role_rows",
+        "role_closure_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "role_row_fields": [
+        "role",
+        "receipt_kind",
+        "receipt_handle",
+        "artifact_id",
+        "sha256",
+        "size_bytes",
+        "output_kind",
+        "source_receipt_handles"
+      ],
+      "joins": "PM role resolves actual RootPMRuntimeReceiptRegistry.resolve_runtime for current transaction/prepared/source/lock/executable/tree proof. Five native roles resolve current genuine reserved RootNativeOutputClaim and RuntimeArtifactReceipt records from RootMaterializationReceiptRegistry, selected assembly/definitions/compiler/member source proof and exact CAS bytes. Reuse its existing reservation/current reopen/idempotent finalization path. Never consume resolve_for_activation twice, translate into RootRuntimeArtifactReceipt or static ArtifactReceiptRegistry handle, infer output IDs or weaken source/member guards. Retain typed producer identity/CAS store internally.",
+      "mapping": "official-pm-runtime from genuine observed PM runtime; native-compiled-closure, native-entrypoint-manifest, native-action-resolver, native-candidate-index, native-overlay-archive from corresponding same-generation five output roles. Render exact v72 selected_receipts role bindings from actual observations before active compile. Validate output_kind and cross-object/member/closure/source/process-role/schema joins; prepared empty rules are not authority and never treated as active allowlist. No arbitrary role/artifact caller selector.",
+      "digest": "SHA256 canonical UTF8 sorted compact JSON array role_rows sorted by role; duplicate/missing roles deny. Actual artifact IDs remain producer CAS identities, with exact approved typed receipt kind rather than static catalog aliases."
+    },
+    "publication": {
+      "method": "RootSelectedInstallationBinding.activate_selected_runnable(role_closure_handle,compiled_active_policy_handle)->VerifiedCommittedEnrollment",
+      "order": "Resolve current identity/namespace/setup choices/source/PM/native role closure; strict compile active generation from these SAME genuine inputs; reserve exact claim and publish via existing atomic active pointer CAS; retain actual transaction/provision/enrollment committed receipt and role closure; finalize native reservation idempotently. This is one activation/publication transaction, not publish followed by separate activate_runnable replacement. Legacy static-only activate_runnable cannot consume generated roles until it delegates this typed projection. Ordinary enablement withheld health-pending; actual committed active generation precedes health. On post-CAS failure retain truthful active-committed recovery state, never release reservation as though publication failed.",
+      "recovery": "Restart reopens root-owned immutable publication/claim/role descriptor and current CAS/source generation using existing durable native recovery contract; no old FD/seal/expired lease reconstruction from caller metadata. Fresh actor/source/identity proof required; historical descriptors are not effect leases."
+    },
+    "runtime_commit": {
+      "owner_module": "hermes_installer.authority.bootstrap_enrollment",
+      "class": "RootCommittedEnrollmentRegistry",
+      "constructor": "from_root_runtime(active_bindings,verified_release,current_installed_actor_verifier,authority_service,current_publication_resolver,root_journal)",
+      "method": "resolve_current_committed_enrollment(committed_receipt_handle)->RootCurrentCommittedEnrollment",
+      "fields": [
+        "schema",
+        "observation_handle",
+        "committed_receipt_handle",
+        "transaction_handle",
+        "provision_receipt_handle",
+        "generation_id",
+        "generation_digest",
+        "publication_receipt_handle",
+        "publication_descriptor_sha256",
+        "role_closure_sha256",
+        "service_generation_digest",
+        "release_deployment_receipt_sha256",
+        "actor_observation_sha256",
+        "key_id",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "semantics": "Reopen genuine root-owned committed transaction/provision rows and publication descriptor/current active CAS; exact transaction/generation/source/runtime/native role closure must agree with current bindings and installed actor/release/key. Original EnrollmentReceipt is unsigned historical transaction data in actual code, not an invented signed authority object. Verify actual stored signatures where they exist; sign this NEW closed current observation through finite AuthorityService facade domain hermes-installer.current-committed-enrollment.v1. Original expiry is never changed or reused as runtime lease. Fresh <=30s observation bounded current actor/source/consent/policy leases. Changed generation, rollback, revoked source/key, missing transaction/role/member proof deny. Runtime constructor has no expired RootBootstrapSession dependency.",
+      "health": "First live activation may use unchanged RootSetupSessionStore.verify_committed_receipt(receipt,authorization). Later health admission consumes RootCurrentCommittedEnrollment and independently current role/source/fixture/controller/consent/process selection, rather than renewing old receipt/session. Health grant and process deadlines retain original semantics; ordinary service enablement requires genuine passed health."
+    },
+    "tasks": [
+      {
+        "id": "HI-T165.1",
+        "owner": "factory/native output owner/active compiler/publisher",
+        "work": "Implement typed PM/native runnable role projection and one atomic committed activation/publication with durable truthful recovery, cross-CAS/source mismatch and duplicate consumption tests."
+      },
+      {
+        "id": "HI-T165.2",
+        "owner": "bootstrap enrollment/host authority/startup health",
+        "work": "Implement fresh current committed enrollment resolver from genuine durable root journal/current CAS and finite signer; stale setup receipt never grants runtime health."
+      }
+    ],
+    "acceptance": "No installation/runtime/health acceptance inferred. All AC remain open; baseline unchanged."
+  },
+  "qualification_key_signer_v166": {
+    "schema": 1,
+    "requirements": [
+      "HI-T162",
+      "HI-T164"
+    ],
+    "why": "Fixture envelope must be signed before enrollment/service exists; constructing a fake minimal service would be circular. The genuinely observed held fixture key can expose a restricted source-owned envelope signer before actual service adoption.",
+    "owner_module": "hermes_installer.authority.installed_qualification",
+    "class": "RootQualificationEnrollmentSigner",
+    "producer": "RootQualificationAuthorityKeyRegistry.resolve_enrollment_signer(key_observation)->RootQualificationEnrollmentSigner",
+    "method": "sign_qualification_enrollment(publication_fields,authority_sha256,catalog_sha256,generation_sha256)->str",
+    "verify": "verify_qualification_enrollment(envelope)->bool",
+    "semantics": "Registry retains genuine held key observation/current source-root/controller lease. Signer checks actual registry membership, exact v164 closed publication fields/current namespace/key/source/controller and hashes before signing exactly v164 canonical envelope preimage at hermes-installer.qualification-enrollment.v1. No arbitrary bytes/domain, caller key, fake minimal AuthorityService, production key copy or other-purpose signing. Returned string uses the existing authority signature codec; envelope.signature holds it. Verify performs same current key/source/namespace checks, not caller bool proof. Publisher retains signer capability internally and must reopen/recheck authority/catalog/generation bytes before signing; hash syntax alone never establishes provenance.",
+    "adoption": "After verified publication, AuthorityService.from_root_qualification adopts the SAME actual key observation/custody capability via restricted fixture runtime registry. No second key or new trust root. Source-owned signer facade reuses existing authority signature primitive/domain handling without requiring an already instantiated service. Supersedes v162 wording requiring actual service before envelope publication.",
+    "tasks": [
+      {
+        "id": "HI-T166.1",
+        "owner": "fixture key/publisher/host authority/enrollment",
+        "work": "Implement restricted prepublication envelope signer and postpublication same-key AuthorityService adoption; reject unrelated fields/domains/namespace, expired key/source lease and arbitrary hash claims."
+      }
+    ],
+    "acceptance": "No operational acceptance implied; all AC open; baseline unchanged."
   }
 }

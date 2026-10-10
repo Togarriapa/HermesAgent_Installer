@@ -189,3 +189,7 @@ Qualification root adapter v162: `plans/amendments/2026-10-10-qualification-root
 Health input source delivery v163: `plans/amendments/2026-10-10-health-input-source-delivery-v163.md`; root-resolved PRIVATE fixture context, actual observer/source membership and distinct write/EOF/one-use take; no task-origin substitution.
 
 Qualification envelope v164: `plans/amendments/2026-10-10-qualification-envelope-v164.md`; exact scoped envelope/generation/pointer/session bytes verified through held run-root FD and unchanged strict core validators.
+
+Runtime role publication join v165: `plans/amendments/2026-10-10-runtime-role-publication-join-v165.md`; typed PM/native CAS closure and single strict atomic activation, fresh runtime committed observation independent expired setup.
+
+Qualification key signer v166: `plans/amendments/2026-10-10-qualification-key-signer-v166.md`; genuine held key signs only exact fixture enrollment envelope before service adoption.
