@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
 from hermes_installer.components.plugin_channel_provenance import (
-    AudioIngressSelection, ChannelIngressDenied, HttpIngressSelection,
+    AudioIngressSelection, ChannelIngressDenied, HttpIngressSelection, ObservedChannelIngress,
     _canonical_body,
 )
 from .types import SourceReceipt
@@ -173,12 +173,29 @@ class RootSelectedHttpIngressObserver:
         return proof.body
 
     def consume(self, proof: object) -> None:
+        if type(proof) is ObservedChannelIngress:
+            proof = proof.proof
         if isinstance(proof, _HttpProof):
             self._proofs.pop(proof.proof_handle, None)
             self._resolved_receipt_proofs.discard(proof.proof_handle)
 
     def consume_source_receipts(self, proof: object) -> tuple[SourceReceipt, ...]:
         """Consume the retained transport proof; initial ingress has no parent receipt."""
+        if type(proof) is ObservedChannelIngress:
+            observation = proof
+            proof = observation.proof
+            claims = self.validate_http_observation(self.selection, proof,
+                                                    now_monotonic=self.monotonic())
+            try:
+                event = json.loads(observation.payload)
+            except Exception:
+                raise ChannelIngressDenied("HTTP source event payload is malformed") from None
+            expected = {"text": claims["text"], "session_id": claims["session_id"],
+                        "request_id": claims["request_id"], "subject_id": claims["subject_id"],
+                        "raw_body_sha256": claims["body_sha256"],
+                        "raw_body_size_bytes": claims["raw_body_size_bytes"]}
+            if event != expected:
+                raise ChannelIngressDenied("HTTP source event payload differs from retained request")
         if not isinstance(proof, _HttpProof) or proof.proof_handle in self._resolved_receipt_proofs:
             raise ChannelIngressDenied("HTTP source proof is unavailable or was already consumed")
         self.validate_http_observation(self.selection, proof, now_monotonic=self.monotonic())
@@ -290,12 +307,30 @@ class RootSelectedAudioIngressObserver:
                 "issued_monotonic": proof.issued_monotonic, "expires_monotonic": proof.expires_monotonic}
 
     def consume(self, proof: object) -> None:
+        if type(proof) is ObservedChannelIngress:
+            proof = proof.proof
         if isinstance(proof, _AudioProof):
             self._proofs.pop(proof.proof_handle, None)
             self._resolved_receipt_proofs.discard(proof.proof_handle)
 
     def consume_source_receipts(self, proof: object) -> tuple[SourceReceipt, ...]:
         """Consume actual root-retained device/consent proofs; no synthetic parents."""
+        if type(proof) is ObservedChannelIngress:
+            observation = proof
+            proof = observation.proof
+            claims = self.validate_audio_observation(self.selection, proof,
+                                                     now_monotonic=self.monotonic())
+            try:
+                event = json.loads(observation.payload)
+            except Exception:
+                raise ChannelIngressDenied("audio source event payload is malformed") from None
+            expected = {"session_id": claims["session_handle"], "capture_id": claims["capture_id"],
+                        "audio_artifact_receipt_handle": claims["audio_artifact_receipt_handle"],
+                        "audio_sha256": claims["audio_sha256"], "audio_size_bytes": claims["size_bytes"],
+                        "format": "pcm-s16le-mono", "sample_rate_hz": 16000,
+                        "duration_milliseconds": claims["duration_milliseconds"]}
+            if event != expected:
+                raise ChannelIngressDenied("audio source event payload differs from retained capture")
         if not isinstance(proof, _AudioProof) or proof.proof_handle in self._resolved_receipt_proofs:
             raise ChannelIngressDenied("audio source proof is unavailable or was already consumed")
         self.validate_audio_observation(self.selection, proof, now_monotonic=self.monotonic())

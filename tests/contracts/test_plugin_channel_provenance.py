@@ -274,7 +274,7 @@ def test_concrete_root_http_observer_binds_listener_jwt_current_session_and_body
         "request_id":"request-id-001", "subject_id":"e"*64,
         "raw_body_sha256":hashlib.sha256(body).hexdigest(), "raw_body_size_bytes":len(body)}
     assert producer.validate_claims(ingress.proof)
-    assert observer.consume_source_receipts(ingress.proof) == ()
+    assert observer.consume_source_receipts(ingress) == ()
     observer.consume(ingress.proof)
     assert not producer.validate_claims(ingress.proof)
 
@@ -305,6 +305,6 @@ def test_concrete_root_audio_observer_requires_current_device_consent_receipt():
     ingress = producer.observe(root_capture)
     assert json.loads(ingress.payload)["audio_artifact_receipt_handle"] == "artifact-receipt-001"
     assert producer.validate_claims(ingress.proof)
-    assert root.consume_source_receipts(ingress.proof) == ()
+    assert root.consume_source_receipts(ingress) == ()
     root.consume(ingress.proof)
     assert not producer.validate_claims(ingress.proof)

@@ -244,7 +244,7 @@ class AuthenticatedHttpIngressProducer(_Producer):
                       "raw_body_sha256": digest, "raw_body_size_bytes": len(body)}
         del self._pending[id(raw_observation)]
         event_id = secrets.token_urlsafe(32)
-        replay = hashlib.sha256(_canonical_json({"selection_id": self.selection.id,
+        replay = hashlib.sha256(_canonical_json({
             "session_id": claims["session_id"], "request_id": claims["request_id"],
             "body_sha256": digest})).hexdigest()
         return {"raw_observation_handle": secrets.token_urlsafe(32), "raw_payload": body,
@@ -373,7 +373,7 @@ class SelectedAudioIngressProducer(_Producer):
             raise ChannelIngressDenied("audio event differs from its root capture receipt")
         del self._pending[id(raw_observation)]
         event_id = secrets.token_urlsafe(32)
-        replay = hashlib.sha256(_canonical_json({"selection_id": self.selection.id,
+        replay = hashlib.sha256(_canonical_json({
             "session_id": claims["session_handle"], "capture_id": claims["capture_id"],
             "audio_sha256": claims["audio_sha256"]})).hexdigest()
         return {"raw_observation_handle": secrets.token_urlsafe(32),
