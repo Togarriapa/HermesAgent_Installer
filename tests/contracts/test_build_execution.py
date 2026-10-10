@@ -45,9 +45,10 @@ def _test_builder_uid() -> int:
 def _owned_output_root(path: Path) -> Path:
     path.mkdir(mode=0o700, exist_ok=True)
     owner_uid = _test_builder_uid()
-    owner_gid = pwd.getpwuid(owner_uid).pw_gid
-    if (path.stat().st_uid, path.stat().st_gid) != (owner_uid, owner_gid):
-        os.chown(path, owner_uid, owner_gid)
+    # The fixture's selected build service uses the current test GID. Model
+    # that exact root-owned service join instead of relying on /tmp's GID.
+    if path.stat().st_uid != owner_uid or path.stat().st_gid != os.getgid():
+        os.chown(path, owner_uid, os.getgid())
     path.chmod(0o700)
     return path
 def constraints():
