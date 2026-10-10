@@ -1134,12 +1134,42 @@
       "native_mcp_tool_bindings": "tuple exact native MCP binding rows; actual authenticated tools/list or packaged schema receipts required",
       "closure_members": "tuple {relative_path:str,sha256:hex64,size_bytes:int,mode:420|493,artifact_receipt_handle:str}; root resolves actual retained bytes, no request path",
       "boundary_overlay_receipt_handle": "actual source-pinned reviewed overlay member receipt",
-      "effect_selection_receipt_handles": "tuple actual selected root effect enrollment/credential/consent proofs; compilation does not grant effects"
+      "effect_selection_receipt_handles": "tuple actual selected root effect enrollment/credential/consent proofs; compilation does not grant effects",
+      "registration_records": "tuple RootNativeRegistrationProjection from native-package-binding-contract.native_registration_projection; actual source registration/schema/handler/finite selector rows, distinct effect-action catalog",
+      "candidate_records": "tuple one per actual registration, same index schema and source projection digest; all18 coverage retained with precise prerequisite state"
     },
     "generation_preimage": "Canonical UTF8 JSON sorted keys compact separators ensure_ascii=false no newline of {schema:1,package_id,service_profile_id,resource_profile_id,resources_revision,resources_content_digest,selected_closure_digest,definitions_sha256,compiler_module_closure_sha256,pm_runtime_receipt_handle}. All values root resolved current receipt fields. SHA256 is native_package_generation. Process/service/prepared/resource generation domains remain separately named.",
     "compiler_origin": "Installed release module role resolves lib/python/hermes_installer/authority/native_materialization.py plus complete imported registry/native_install and selected component/schema/overlay module closure. Actual current root actor module origins and bytes checked against installed deployment receipt, never source archive SHA as executable proof.",
     "publication": "Prepared snapshot may retain native_packages=[] throughout compilation. The sealed selection authorizes only root owned bounded source-to-output compilation. Five exact output_cas_selection roles bind same selection/transaction/package generation. Active compiler consumes actual output receipts and atomically publishes native_packages/adapters/schema/issuer/MCP rows in active service_generations; only then launch/mount/dispatch authority can exist. No active package is required to authorize its own initial assembly.",
-    "evidence": "Prepared-to-five-output compilation with native_packages empty; wrong compiler origin, missing source/schema/PM proof, altered staged definition/generation, caller rows, stale/replayed selection and dispatch-before-activation denied. All acceptance remains pending."
+    "evidence": "Prepared-to-five-output compilation with native_packages empty; wrong compiler origin, missing source/schema/PM proof, altered staged definition/generation, caller rows, stale/replayed selection and dispatch-before-activation denied. All acceptance remains pending.",
+    "resource_profile_selection": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "owner": "existing sealed RootSelectedInstallationBinding, same prepared setup session; not an independent worker registry",
+      "observe": "RootBootstrapSession.observe_selected_resource_profile()->opaque resource_profile_selection_receipt_handle. AFTER prepared enrollment, root obtains actual packaged Resources source receipt via mint_packaged_resources_source and reads exact verified profile declarations from its full source manifest; current actual root TTY selects a profile from that finite verified list. It may adopt an existing current receipt during same session resume after full source/owner/journal revalidation. No service-profile default/equality, arbitrary request ID or YAML authority.",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "resources_source_receipt_handle",
+        "resources_source_artifact_id",
+        "resources_source_sha256",
+        "resources_revision",
+        "profile_id",
+        "profile_member_path",
+        "profile_member_sha256",
+        "choice_observation_id",
+        "issued_monotonic",
+        "expires_monotonic",
+        "signature"
+      ],
+      "types": "schema1; opaque sealed root lookup; source artifact/revision exact selected Resources source, member path is root-derived actual source manifest member, SHA actual member. profile_id exact declaration identity, <=256 ASCII. Actual root TTY choice observation/session/transaction/source/preparedgeneration. Lease min(current source/session/actor proofs,now+30s) refreshed only by actual session currentness and retained choice revalidation, not old bearer replay. Choice does not grant capability/effect/account authority.",
+      "resolve": "RootSelectedInstallationBinding.resolve_selected_resource_profile(receipt_handle)->RootSelectedResourceProfile (exact above). authorize_native_materialization now resolves this receipt from same session selected installation state; resource_profile_id legacy argument is checked against retained receipt.profile_id only, not accepted as authority. service_profile_id remains fixed actual service enrollment, may differ. NativeMaterializationSelection/assembly generation binds actual source profile receipt/member digest and separate service profile. Current stage0 choices/publication handoff may retain opaque resource selection handle only when already legitimately issued; absent stage0 is normal and selection occurs postprepared, no first-stage cycle.",
+      "evidence": "Real distinct Resources profile/service profile positive; caller unknown ID, altered manifest/receipt/profile, stale session/source and cross transaction denied. Frozen prepared native_packages[] preserved until actual assembly/activation."
+    }
   },
   "bootstrap_action_handoff_clarification": {
     "schema": 1,
@@ -1157,5 +1187,27 @@
   "xpra_output_store_clarification": {
     "identity": "Reuse actual ContentAddressedBuildStore BuildOutput artifact_id for deterministic non-executable archive: build-output:<actual archive SHA256>:file:d. Only the exact ID returned by root typed held output observation is acceptable, never synthesizing a trusted row from a digest string.",
     "resolve": "RootXpraOverlayReceiptRegistry resolves the actual BuildOutput through existing protected store, reopens stable root held bytes and verifies SHA/size/type/source transformation. Root active publication copies the verified derived artifact row into selected artifact catalog; source and transformed tree hashes remain distinct from tar SHA. Missing actual source/output observation prevents activation, never a fabricated static catalog hash."
+  },
+  "reviewed_native_capability_selection": {
+    "artifact_id": "installer-reviewed-native-capability-map-v1",
+    "source_path": "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json",
+    "installed_path": "templates/reviewed-native-capability-map-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+    "size_bytes": 2026,
+    "API": "RootSetupPrincipalSelectionRegistry.resolve_reviewed_capability_selection(current_identity_receipt_handle,selected_effect_policy_receipt_handle)->RootReviewedCapabilitySelection root-private. Verifies actual installed source artifact and selected current identity/System group IDs, then exact finite source projection above; no caller capability tuple. Root prepared policy has empty tuple, not active worker authority.",
+    "selection_fields": "principal_id,profile_id,namespace_id,capabilities,identity_receipt_handle,effect_policy_receipt_handle,map_artifact_id,map_sha256,issued_monotonic,expires_monotonic; sealed root only. Active principal binding uses actual selected dedicated NSS UID and exact namespace/profile tuple; must recheck actual current Authentik policy before protected writes.",
+    "release_role": "Release builder includes exact new template artifact bytes/role in verified module/template closure. Deployed plan may reference this policy as separately selected release template; original v81 five-artifact list stays immutable and does not become an unexplained sixth item. Root registry resolves it by explicit artifact ID+SHA in verified installed release, never ambient path."
+  },
+  "official_pm_runtime_store_selection": {
+    "root_id": "installer-official-pm-runtime-store-v1",
+    "journal_root_id": "installer-authority-journal-v1",
+    "relative_path": "pm-runtimes",
+    "owner_uid": 0,
+    "owner_gid": 0,
+    "mode": 448,
+    "resolve": "RootBootstrapSession resolves actual selected held root_journal_roots installer-authority-journal-v1 row (root0/0700/no-follow/dev/inode), securely creates/holds fixed child pm-runtimes, passes its private Path to RootPMRuntimeProvisioner and SAME RootPMRuntimeReceiptRegistry only. No user runtime_root/argv/env/path. Existing provisioner root generation child pm-<root random32hex> and receipts storage remain bounded current transaction; stage source/officialPM tool/env actual receipts re-opened/currentness checked. Artifact input store remains separate bootstrap-artifacts selection; service HERMES_HOME remains selected service_parent_root/home, not this provisioning scratch. Official committed PM venv executable resolved from actual receipt, never system Python or guessed source venv."
   }
 }
