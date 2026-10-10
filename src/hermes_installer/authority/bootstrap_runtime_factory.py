@@ -5851,7 +5851,7 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending(
                 "native source definition adapter requires current empty prepared custody")
         relative_path = "src/hermes_installer/authority/native_source_definitions.py"
-        digest = "5f2ccd9ab571c8d04961caa04aacfa4e07d26c4ec8b6cb03e6db46008a3a664f"
+        digest = "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7"
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
