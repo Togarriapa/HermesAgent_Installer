@@ -101,7 +101,9 @@ def _runtime(path):
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=object(), vault=object(), boot_epoch="fixture-boot",
         backend_enrollments={}, body_recipes={}, scope_bindings={}, validators={},
-        source_observer_unavailable_reason=None, job_enrollments={},
+        source_observer_unavailable_reason=None,
+        resource_task_unavailable_reason="fixture has no enrolled resource-task runtime",
+        job_enrollments={},
         memory_runtime=None, job_authority=None, build_execution_service=None,
     )
 

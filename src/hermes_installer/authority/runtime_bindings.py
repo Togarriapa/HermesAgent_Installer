@@ -1509,43 +1509,62 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
     parent_kind_candidates: dict[str, set[str]] = {}
     for selected_join in catalog.source_observer_joins.values():
         selected_issuer = selected_join.issuer
-        selected_kind_value = selected_kind(selected_issuer.issuer_channel_id, selected_join.adapter)
-        if selected_kind_value is not None:
-            parent_kind_candidates.setdefault(selected_issuer.issuer_channel_id, set()).add(selected_kind_value)
+        for selected_action in getattr(selected_join, "actions", {}).values():
+            selected_kind_value = selected_kind(selected_issuer.issuer_channel_id, selected_action)
+            if selected_kind_value is not None:
+                parent_kind_candidates.setdefault(selected_issuer.issuer_channel_id, set()).add(selected_kind_value)
     result: dict[str, Any] = {}
     for observer_id, join in catalog.source_observer_joins.items():
-        issuer, package, adapter = join.issuer, join.package, join.adapter
+        issuer, package = join.issuer, join.package
+        process_role = getattr(join, "process_role", None)
+        action_map = getattr(join, "actions", {})
+        if process_role is None or not isinstance(action_map, Mapping):
+            # Legacy packages can still be inspected, but their action adapter
+            # is never accepted as a process-role artifact. Source observation
+            # stays unavailable until the exact v123 role FK is present.
+            continue
         service = catalog.resolve_profile_generation(package.profile_id, package.profile_generation)
-        artifact = artifact_catalog.artifacts.get(adapter.adapter_artifact_id)
-        if artifact is None or artifact.sha256 != adapter.adapter_sha256:
-            raise EnrollmentDenied("native source observer role is absent from protected artifact catalog")
-        source_kind = selected_kind(issuer.issuer_channel_id, adapter)
-        if source_kind is None:
-            raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
+        artifact = artifact_catalog.artifacts.get(process_role.role_artifact_id)
+        if artifact is None or artifact.sha256 != process_role.role_sha256:
+            raise EnrollmentDenied("native process role is absent from protected artifact catalog")
         parent_kinds = set()
         for parent in issuer.allowed_parent_channels:
             candidates = parent_kind_candidates.get(parent, set())
             if len(candidates) != 1:
                 raise EnrollmentDenied("source observer parent channel has no fixed source kind mapping")
             parent_kinds.update(candidates)
-        for action_id in issuer.source_action_ids:
-            record = {
-                "observer_enrollment_id": observer_id, "source_kind": source_kind,
-                "origin_id": observer_id, "profile_id": service.profile_id,
-                "principal_id": service.principal_id, "namespace_id": service.namespace_identity,
-                "enrollment_id": service.enrollment_id, "generation": issuer.generation,
-                "native_package_generation": package.generation,
-                "producer_uid": service.service_uid,
-                "producer_executable_sha256": service.executable_sha256,
-                "package_id": package.package_id, "package_sha256": package.compiled_closure_sha256,
-                "role_id": adapter.adapter_id, "role_artifact_id": adapter.adapter_artifact_id,
-                "role_sha256": adapter.adapter_sha256, "channel_id": issuer.issuer_channel_id,
-                "capture_schema_id": issuer.capture_schema_id, "source_action_id": action_id,
-                "target_id": adapter.target_id, "recipient": adapter.recipient,
-                "private_provider_route_ids": list(issuer.private_provider_route_ids),
-                "allowed_parent_source_kinds": sorted(parent_kinds),
-            }
-            if observer_id in result:
-                raise EnrollmentDenied("source observer enrollment expands ambiguously")
-            result[observer_id] = SourceObserverEnrollment.from_protected_record(record)
+        actions = [action for action in action_map.values()
+                   if action.action_id in issuer.source_action_ids
+                   and action.action_binding_id in process_role.action_binding_ids]
+        if len(actions) != 1:
+            raise EnrollmentDenied("source observer does not select one exact process-role action binding")
+        action = actions[0]
+        source_kind = selected_kind(issuer.issuer_channel_id, action)
+        if source_kind is None:
+            raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
+        record = {
+            "observer_enrollment_id": observer_id, "source_kind": source_kind,
+            "origin_id": observer_id, "profile_id": service.profile_id,
+            "principal_id": service.principal_id, "namespace_id": service.namespace_identity,
+            "enrollment_id": service.enrollment_id, "generation": issuer.generation,
+            "native_package_generation": package.generation,
+            "producer_uid": service.service_uid,
+            "producer_executable_sha256": service.executable_sha256,
+            "package_id": package.package_id, "package_sha256": package.compiled_closure_sha256,
+            "role_id": process_role.role_id, "role_artifact_id": process_role.role_artifact_id,
+            "role_sha256": process_role.role_sha256, "channel_id": issuer.issuer_channel_id,
+            "capture_schema_id": issuer.capture_schema_id, "source_action_id": action.action_id,
+            "source_action_binding_id": action.action_binding_id,
+            "role_source_receipt_handle": process_role.role_source_receipt_handle,
+            "role_module_name": process_role.module_name,
+            "role_closure_member_path": process_role.closure_member_path,
+            "role_source_revision": process_role.role_source_revision,
+            "role_source_tree_sha256": process_role.role_source_tree_sha256,
+            "target_id": action.target_id, "recipient": action.recipient,
+            "private_provider_route_ids": list(issuer.private_provider_route_ids),
+            "allowed_parent_source_kinds": sorted(parent_kinds),
+        }
+        if observer_id in result:
+            raise EnrollmentDenied("source observer enrollment expands ambiguously")
+        result[observer_id] = SourceObserverEnrollment.from_protected_record(record)
     return MappingProxyType(result)

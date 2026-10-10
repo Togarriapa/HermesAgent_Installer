@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -133,3 +134,153 @@ def test_runtime_lock_requires_version_and_hash_pins():
     assert parsed["pyyaml"] == frozenset({"6.0.3"})
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
+
+
+def test_wheel_record_rejects_digest_and_unlisted_member_changes():
+    import base64
+
+    body = b"package bytes"
+    record = "yaml/__init__.py,sha256={},{}\n".format(
+        base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("="), len(body))
+    record += "PyYAML-6.0.3.dist-info/RECORD,,\n"
+    rows = {"yaml/__init__.py": body, "PyYAML-6.0.3.dist-info/RECORD": record.encode()}
+    release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+
+    rows["yaml/__init__.py"] = b"changed"
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+
+    rows["yaml/__init__.py"] = body
+    rows["yaml/unlisted.py"] = b"extra"
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+
+
+def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_URL", "https://files.pythonhosted.org/test.whl")
+    payload = b"fixture payload"
+
+    class Response:
+        status = 200
+        headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def geturl(self):
+            return release_build.BOOTSTRAP_PYYAML_URL
+
+        def read(self, maximum=-1):
+            return payload if maximum < 0 or maximum >= len(payload) else payload[:maximum]
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: type("Opener", (), {"open": lambda self, request, timeout: Response()})())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(release_build.BOOTSTRAP_PYYAML_URL, "0" * 64,
+                                       len(payload), 1024)
+
+
+def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
+    if not hasattr(os, "memfd_create"):
+        pytest.skip("sealed memfd is a Linux kernel facility")
+    descriptor = os.memfd_create("handoff-test", os.MFD_ALLOW_SEALING)
+    try:
+        body = release_build._canonical_json({
+            "schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43,
+        })
+        os.write(descriptor, body)
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._decode_sealed_handoff_descriptor(descriptor)
+        seals = (release_build.fcntl.F_SEAL_WRITE | release_build.fcntl.F_SEAL_GROW
+                 | release_build.fcntl.F_SEAL_SHRINK | release_build.fcntl.F_SEAL_SEAL)
+        release_build.fcntl.fcntl(descriptor, release_build.fcntl.F_ADD_SEALS, seals)
+        parsed, info, observed = release_build._decode_sealed_handoff_descriptor(descriptor)
+        assert observed == body and info.st_size == len(body)
+        assert parsed == {"schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43}
+    finally:
+        os.close(descriptor)
+
+
+def test_bootstrap_transition_descriptor_rejects_duplicate_and_extra_identity_fields():
+    if not hasattr(os, "memfd_create"):
+        pytest.skip("sealed memfd is a Linux kernel facility")
+
+    def sealed(body: bytes) -> int:
+        descriptor = os.memfd_create("handoff-negative-test", os.MFD_ALLOW_SEALING)
+        os.write(descriptor, body)
+        seals = (release_build.fcntl.F_SEAL_WRITE | release_build.fcntl.F_SEAL_GROW
+                 | release_build.fcntl.F_SEAL_SHRINK | release_build.fcntl.F_SEAL_SEAL)
+        release_build.fcntl.fcntl(descriptor, release_build.fcntl.F_ADD_SEALS, seals)
+        return descriptor
+
+    duplicate = sealed(b'{"schema":1,"schema":1,"handoff_handle":"' + b"h" * 43
+                       + b'","nonce":"' + b"n" * 43 + b'"}')
+    try:
+        with pytest.raises(ValueError, match="duplicate key"):
+            release_build._decode_sealed_handoff_descriptor(duplicate)
+    finally:
+        os.close(duplicate)
+
+    extra = sealed(release_build._canonical_json({
+        "schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43,
+        "candidate_git_sha": "a" * 40,
+    }))
+    try:
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._decode_sealed_handoff_descriptor(extra)
+    finally:
+        os.close(extra)
+
+
+def test_fixed_reexec_driver_is_static_and_has_no_caller_identity_channel():
+    source = release_build._fixed_reexec_entry_code()
+    compile(source, "<fixed-reexec-entry>", "exec")
+    assert "os.read(3, 4097)" in source
+    assert "F_GET_SEALS" in source and "O_NOFOLLOW" in source
+    assert "sys.argv" not in source and "os.environ" not in source
+    assert "candidate_git_sha" not in source.split("transport =", 1)[0]
+
+
+def test_runtime_handoff_cannot_be_constructed_without_registry_seal():
+    with pytest.raises(TypeError, match="only be issued"):
+        release_build.RootBootstrapRuntimeHandoff(object(), schema=1)
+
+
+def test_deployment_predecessor_absence_is_a_sealed_typed_observation(monkeypatch):
+    monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_read_deployment_predecessor", lambda: release_build.DeploymentPredecessor(
+        "absent", 17, 23))
+    proof = release_build.observe_deployment_predecessor()
+    assert (proof.schema, proof.state, proof.parent_device, proof.parent_inode) == (1, "absent", 17, 23)
+    assert proof.candidate_git_sha is None
+    assert proof.deployment_receipt_sha256 is None
+    assert proof.deployment_receipt_device is None and proof.deployment_receipt_inode is None
+    assert proof.verified_release_receipt_handle is None
+    with pytest.raises(TypeError, match="root-minted"):
+        release_build.VerifiedDeploymentPredecessor(
+            object(), state="absent", parent_device=17, parent_inode=23,
+            candidate_git_sha=None, deployment_receipt_sha256=None,
+            deployment_receipt_device=None, deployment_receipt_inode=None,
+            verified_release_receipt_handle=None, issued_monotonic=time.monotonic())
+
+
+def test_deployment_predecessor_present_invalid_release_fails_closed(monkeypatch):
+    import sys
+    import types
+
+    class InvalidVerifier:
+        @staticmethod
+        def verify_installed_release():
+            raise ValueError("corrupt receipt")
+
+    monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_read_deployment_predecessor", lambda: release_build.DeploymentPredecessor(
+        "present", 17, 23, "a" * 64, 29, 31, "b" * 40))
+    module = types.ModuleType("hermes_installer.authority.installer_release")
+    module.InstalledRootReleaseVerifier = InvalidVerifier
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="not a verified"):
+        release_build.observe_deployment_predecessor()
