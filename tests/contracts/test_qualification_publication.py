@@ -12,7 +12,7 @@ from hermes_installer.authority.qualification_publication import (
 def test_qualification_cleanup_manifest_rejects_unsealed_construction() -> None:
     with pytest.raises(TypeError, match="publisher-issued"):
         RootQualificationOwnedPublication(
-            "a" * 32, (1, 2), "0" * 64, "k" * 32, "e" * 32, (), None,
+            "a" * 32, (1, 2), "0" * 64, "k" * 32, (), None,
         )
 
 
