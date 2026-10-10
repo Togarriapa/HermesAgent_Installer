@@ -1446,6 +1446,9 @@ class RootNativeAssemblyDefinitions:
     result_schema_receipts: tuple["RootNativeRegistrationSchemaReceipt", ...]
     release_module_receipts: tuple[RootReleaseModuleReceipt, ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    # Local ResourceOverlayStore calls are published on their own protected
+    # lane. They are not PluginActionSchema actions or adapter action IDs.
+    owner_overlay_operation_records: tuple[Mapping[str, Any], ...]
     _registry_seal: object = field(repr=False, compare=False)
 
 
@@ -7200,7 +7203,11 @@ class RootBootstrapSession:
             freeze(records.process_role_records), overlay, release.release_commit, tuple(closure),
             records.native_schema_bytes, records.effect_policy_receipt_handles,
             freeze(records.action_records), freeze(records.workflow_records),
-            composition.result_schema_receipts, sources, (), self._factory._native_assembly_seal)
+            composition.result_schema_receipts, sources, (),
+            tuple(freeze(row) for row in sorted(
+                composition.operation_bundle.operation_records,
+                key=lambda row: row["registration_id"])),
+            self._factory._native_assembly_seal)
         # Strict projection resolves only this retained, sealed current source graph.
         self._native_assembly_definitions[selection.selection_handle] = definitions
         self._native_assembly_member_owners[selection.selection_handle] = owners
@@ -7216,7 +7223,8 @@ class RootBootstrapSession:
         row_fields = ("adapter_records", "dependency_records", "source_issuer_records",
                       "native_schema_records", "action_registration_records", "registration_records",
                       "candidate_records", "process_role_records", "effect_selection_receipt_handles",
-                      "action_records", "workflow_records", "native_mcp_tool_bindings")
+                      "action_records", "workflow_records", "native_mcp_tool_bindings",
+                      "owner_overlay_operation_records")
         body = {name: _plain_json(getattr(definitions, name)) for name in row_fields}
         body.update({
             "source_context": _plain_json(self._native_assembly_definition_contexts[definitions.selection_handle]),
@@ -7240,6 +7248,8 @@ class RootBootstrapSession:
     def _resolve_native_assembly_definitions(self, selection_handle: str) -> RootNativeAssemblyDefinitions:
         selection = self._resolve_current_native_bootstrap_assembly(selection_handle)
         records = self.resolve_current_prepared_native_policy_records(selection.native_policy_preparation_handle)
+        composition = self._native_policy_preparation_registry._selected_source_compositions.get(
+            records.records_handle)
         definitions = self._native_assembly_definitions.get(selection_handle)
         if (type(definitions) is not RootNativeAssemblyDefinitions
                 or definitions._registry_seal is not self._factory._native_assembly_seal
@@ -7252,6 +7262,10 @@ class RootBootstrapSession:
                 or definitions.native_schema_records != records.native_schema_records
                 or definitions.native_schema_bytes != records.native_schema_bytes
                 or definitions.effect_selection_receipt_handles != records.effect_policy_receipt_handles
+                or tuple(_plain_json(row) for row in definitions.owner_overlay_operation_records)
+                   != tuple(_plain_json(row) for row in sorted(
+                       composition.operation_bundle.operation_records,
+                       key=lambda row: row["registration_id"]))
                 or definitions.definitions_sha256 != selection.definitions_sha256
                 or self._native_definition_digest(definitions) != definitions.definitions_sha256):
             raise BootstrapEnrollmentPending("native retained definitions changed or belong to another selection")
