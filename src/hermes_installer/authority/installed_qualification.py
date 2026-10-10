@@ -12,7 +12,7 @@ import os
 import secrets
 import stat
 import time
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -20,6 +20,8 @@ from typing import Literal
 _SUITES = frozenset({"resource-cron-task-v1", "display-xauthority-v1"})
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
+_SELECTION_SEAL = object()
+_RESULT_SEAL = object()
 _TASK_RECIPE_ARTIFACT = "installer-module:hermes_installer.authority.qualification_resource_cron_recipe"
 _TASK_SCHEMA_ARTIFACT = "installer-module:hermes_installer.authority.qualification_resource_cron_schema"
 _TASK_RECIPE_PATH = "lib/python/hermes_installer/authority/qualification_resource_cron_recipe.py"
@@ -49,8 +51,11 @@ class RootOwnedQualificationFixtureSelection:
     fixture_payload_sha256: str
     issued_monotonic: float
     expires_monotonic: float
+    _seal: InitVar[object] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _seal: object) -> None:
+        if _seal is not _SELECTION_SEAL:
+            raise TypeError("fixture selections can only be minted by their owning registry")
         if self.schema != 1 or self.suite_id not in _SUITES:
             raise ValueError("qualification selection schema or suite is not supported")
         if not _HANDLE.fullmatch(self.selection_handle):
@@ -370,6 +375,7 @@ class RootOwnedQualificationFixtureRegistry:
                 fixture_profile_id=profile_id, fixture_principal_id=principal_id,
                 fixture_payload_sha256=hashlib.sha256(payload).hexdigest(),
                 issued_monotonic=time.monotonic(), expires_monotonic=time.monotonic() + 300.0,
+                _seal=_SELECTION_SEAL,
             )
             lease = RootOwnedQualificationFixtureLease(
                 selection, self.release, self.actor, self.catalog, unit_id, pin, identity,
@@ -487,8 +493,11 @@ class RootInstalledQualificationResult:
     cleanup_receipt_handle: str | None
     evidence_sha256: str | None
     status: Literal["passed", "failed", "incomplete"]
+    _seal: InitVar[object] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _seal: object) -> None:
+        if _seal is not _RESULT_SEAL:
+            raise TypeError("qualification results can only be returned by the installed registry")
         if self.schema != 1 or self.suite_id not in _SUITES:
             raise ValueError("qualification result schema or suite is not supported")
         if self.status not in {"passed", "failed", "incomplete"}:
@@ -558,7 +567,7 @@ def run_selected_installed_qualification(suite_id: str) -> RootInstalledQualific
                 release_deployment_receipt_sha256=release.deployment_receipt_sha256,
                 controller_observation_handle=None, parent_receipt_handles=(),
                 terminal_receipt_handle=None, cleanup_receipt_handle=None,
-                evidence_sha256=None, status="incomplete",
+                evidence_sha256=None, status="incomplete", _seal=_RESULT_SEAL,
             )
         # No v160 RootSetupSessionStore/source-to-fixture publisher is currently
         # composed from active runtime bindings. Do not convert active resources
@@ -569,8 +578,13 @@ def run_selected_installed_qualification(suite_id: str) -> RootInstalledQualific
             release_deployment_receipt_sha256=release.deployment_receipt_sha256,
             controller_observation_handle=None, parent_receipt_handles=(),
             terminal_receipt_handle=None, cleanup_receipt_handle=None,
-            evidence_sha256=None, status="incomplete",
+            evidence_sha256=None, status="incomplete", _seal=_RESULT_SEAL,
         )
     finally:
         actor.close()
         release.close()
+
+
+def _issue_qualification_result(**fields: object) -> RootInstalledQualificationResult:
+    """Internal registry bridge for a result backed by retained receipts."""
+    return RootInstalledQualificationResult(**fields, _seal=_RESULT_SEAL)  # type: ignore[arg-type]
