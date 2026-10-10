@@ -162,3 +162,9 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T130.2: runtime preparation owner implement actual isolated source-backed environment producer and fixed installed Python/Node discriminated probe source/receipt; report unavailable toolchain or recipe exactly rather than RuntimeReview substitution.
 
 - [ ] SK-T130.3: factory/source/probe/custody owner wire genuine held runtime/toolchain/root/controller/namespace receipts before request mint; test missing runtime/probe, active-row fabrication, Python-for-Node, stale consent/controller/environment/fixture and arbitrary dispatch denial. All four real workflows/ARM/AC12 open.
+
+- [ ] SK-T132.1 factory: sealed finite runtime preparation/build subject selection and exact template release pin
+
+- [ ] SK-T132.2 build owner: lock-selected genuine offline package closure and finite managed Python/Bun environment build/archive/preparation receipt; preserve missing integrity/toolchain blockers
+
+- [ ] SK-T132.3 build/execution owners: installed independent Python/Node ABI/origin probes, genuine preparation/probe qualification joins, bound/failure/source mismatch tests and actual isolated platform CI; no active row prerequisite
