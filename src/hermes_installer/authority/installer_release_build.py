@@ -3351,26 +3351,28 @@ def _bootstrap_after_reexec() -> Any:
         build_handle, update_transition=handoff.update_transition,
         controller_snapshot=handoff.selection_snapshot if handoff.update_transition is not None else None)
     try:
-        installed.verify_current()
-        launcher_rows = [row for row in installed.files
-                         if row.relative_path == STAGED_LAUNCHER_PATH and "launcher" in row.roles]
-        if (installed.release_commit != handoff.candidate_git_sha or len(launcher_rows) != 1
-                or not launcher_rows[0].mode & 0o111):
-            raise InstallerReleaseBuildError("installed release does not contain the selected executable launcher")
-        launcher = installed.release_root / STAGED_LAUNCHER_PATH
-        launcher_fd = installed.open_file("installer-root-setup-launcher-v1")
         try:
-            info = os.fstat(launcher_fd)
-            digest, _ = _hash_fd(launcher_fd, MAX_SOURCE_FILE_BYTES)
-            path_info = os.stat(launcher, follow_symlinks=False)
-            if (digest != launcher_rows[0].sha256 or info.st_dev != launcher_rows[0].device
-                    or info.st_ino != launcher_rows[0].inode or path_info.st_dev != info.st_dev
-                    or path_info.st_ino != info.st_ino or not stat.S_ISREG(path_info.st_mode)):
-                raise InstallerReleaseBuildError("installed launcher changed after fixed-path publication")
-        finally:
-            os.close(launcher_fd)
-        if handoff.update_transition is not None:
+            installed.verify_current()
+            launcher_rows = [row for row in installed.files
+                             if row.relative_path == STAGED_LAUNCHER_PATH and "launcher" in row.roles]
+            if (installed.release_commit != handoff.candidate_git_sha or len(launcher_rows) != 1
+                    or not launcher_rows[0].mode & 0o111):
+                raise InstallerReleaseBuildError(
+                    "installed release does not contain the selected executable launcher")
+            launcher = installed.release_root / STAGED_LAUNCHER_PATH
+            launcher_fd = installed.open_file("installer-root-setup-launcher-v1")
             try:
+                info = os.fstat(launcher_fd)
+                digest, _ = _hash_fd(launcher_fd, MAX_SOURCE_FILE_BYTES)
+                path_info = os.stat(launcher, follow_symlinks=False)
+                if (digest != launcher_rows[0].sha256 or info.st_dev != launcher_rows[0].device
+                        or info.st_ino != launcher_rows[0].inode or path_info.st_dev != info.st_dev
+                        or path_info.st_ino != info.st_ino or not stat.S_ISREG(path_info.st_mode)):
+                    raise InstallerReleaseBuildError(
+                        "installed launcher changed after fixed-path publication")
+            finally:
+                os.close(launcher_fd)
+            if handoff.update_transition is not None:
                 handoff_registry.create_installed_update_entry(
                     handoff.update_transition, handoff.selection_snapshot)
                 installed.close()
@@ -3381,22 +3383,21 @@ def _bootstrap_after_reexec() -> Any:
                         pass
                 os.execve(launcher, [str(launcher), "update"],
                           {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
-            except BaseException:
-                try:
-                    os.close(3)
-                except OSError:
-                    pass
-                restored = publisher.rollback_installed_stage(handoff.update_transition)
-                restored.close()
-                raise BootstrapEnrollmentPending(
-                    "installed update entry failed and the exact predecessor was restored") from None
-        else:
-            try:
+            else:
                 os.execve(launcher, [str(launcher), handoff.lifecycle_action],
                           {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
-            except OSError:
+        except BaseException:
+            if handoff.update_transition is None:
                 raise BootstrapEnrollmentPending(
                     "the verified installed launcher could not start; retry its fixed lifecycle action") from None
+            try:
+                os.close(3)
+            except OSError:
+                pass
+            restored = publisher.rollback_installed_stage(handoff.update_transition)
+            restored.close()
+            raise BootstrapEnrollmentPending(
+                "installed update entry failed and the exact predecessor was restored") from None
         raise BootstrapEnrollmentPending("installed lifecycle launcher exec returned unexpectedly")
     finally:
         installed.close()
