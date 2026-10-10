@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
-from .types import AuthorityDenied, HostContext, NativeToolCallBinding, SourceReceipt, canonical_digest
+from .types import (AuthorityDenied, HostContext, NativeToolCallBinding, SourceReceipt,
+                    canonical_bytes, canonical_digest, strict_json_loads)
 
 _MAX_RESULT_BYTES = 1_048_576
 _MAX_PARENT_RECEIPTS = 64
@@ -32,6 +33,29 @@ _MAX_TOOL_ARGUMENT_BYTES = 65_536
 _INVOCATION_LEASE_SECONDS = 30.0
 _MAX_RETAINED_RESPONSE_BYTES = 8 * 1024 * 1024
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _strict_native_json(payload: bytes) -> Any:
+    """Parse bounded native JSON without duplicate keys or non-finite numbers."""
+    if not isinstance(payload, bytes):
+        raise AuthorityDenied("native.json", "native JSON payload is not bytes")
+
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> Any:
+        raise ValueError("non-finite JSON number")
+
+    try:
+        return json.loads(payload.decode("utf-8", errors="strict"),
+                          object_pairs_hook=unique_pairs, parse_constant=reject_constant)
+    except (UnicodeError, ValueError, TypeError):
+        raise AuthorityDenied("native.json", "native JSON payload is malformed") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +176,28 @@ class RootNativeToolEffectInvocation:
                 or not isinstance(self.expires_monotonic, (int, float))
                 or not math.isfinite(self.expires_monotonic)):
             raise ValueError("root native tool invocation record is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class _RetainedMCPDiscoveryRequest:
+    """Root-retained request binding for the one fixed tools/list witness path."""
+
+    invocation: Any
+    service: Any
+    binding: Any
+    observer_id: str
+    context: HostContext
+    authorization: Any
+    peer_uid: int
+    peer_pid: int
+    peer_pidfd: int
+    operation: str
+    target: str
+    request_payload: bytes
+    request_sha256: str
+    parent_handles: tuple[str, ...]
+    selection: Mapping[str, str]
+    expires_monotonic: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -1139,12 +1185,13 @@ class NativeInvocationRegistry:
             with self.service._lock:
                 receipts = [self.service._source_receipt_handles.get(handle)
                             for handle in invocation.receipt_handles]
-            return (bool(receipts) and all(
+            ok_receipts = (bool(receipts) and all(
                 receipt is not None and receipt.profile_id == invocation.profile_id
                 and receipt.process_generation == invocation.generation
                 and receipt.uid == peer_uid and receipt.monotonic_expires_at > self.monotonic()
                 for receipt in receipts
             ))
+            return ok_receipts
         except Exception:
             return False
 
@@ -1169,13 +1216,14 @@ class NativeInvocationRegistry:
         service = self.service
         try:
             binding = service._binding(context.uid)
-            service._verify_context_signature(context)
+            # _perform_effect has already parsed and verified the signed grant,
+            # then reconstructs this root-only context from that grant. That
+            # internal view deliberately carries a sentinel signature; it is
+            # not a second wire context to verify here.
             service._verify_grant_signature(authorization)
             service._assert_current_context(context, binding, context.uid)
             service._assert_grant_current(authorization, binding, context.uid)
-            from .service import _context_digest
-            if (authorization.context_digest != _context_digest(context)
-                    or authorization.source_receipts != context.source_receipts
+            if (authorization.source_receipts != context.source_receipts
                     or authorization.final_payload_digest != context.final_payload_digest
                     or context.final_payload_digest != payload_digest
                     or authorization.request_digest != payload_digest
@@ -1206,19 +1254,29 @@ class NativeInvocationRegistry:
                 or any(receipt_id not in by_id for receipt_id in source_ids)):
             raise AuthorityDenied("native.effect.lineage", "signed source closure is unavailable")
         source_handles = tuple(by_id[receipt_id] for receipt_id in source_ids)
+        runtime_observer = getattr(service, "native_runtime_observer", None)
+        discovery_receipts = getattr(runtime_observer, "_mcp_discovery_receipts", {})
+        if not isinstance(discovery_receipts, Mapping):
+            raise AuthorityDenied("native.effect.lineage", "root MCP discovery ancestry index is unavailable")
         matches: list[_NativeInvocation] = []
         with self._lock:
             self._ensure_open()
             self._prune_locked(self.monotonic())
             for row in self._invocations.values():
                 response = self._responses.get(row.response_handle)
+                if source_handles[:len(row.receipt_handles)] != row.receipt_handles:
+                    continue
+                discovery_handles = source_handles[len(row.receipt_handles):]
+                admitted_discovery_handles = discovery_receipts.get(
+                    row.invocation_handle, set(),
+                )
                 if (row.effect_result_consumed or row.expires_monotonic <= self.monotonic()
                         or response is None
                         or row.operation != operation
                         or row.producer_identity.kernel_uid != context.uid
                         or row.profile_id != context.profile_id
                         or row.generation != context.generation
-                        or row.receipt_handles != source_handles):
+                        or not set(discovery_handles).issubset(admitted_discovery_handles)):
                     continue
                 matches.append(row)
             if len(matches) != 1:
@@ -1291,7 +1349,7 @@ class NativeInvocationRegistry:
             )
 
     def validate_effect_result(self, invocation: RootNativeToolEffectInvocation,
-                               result_payload: bytes) -> None:
+                               result_payload: bytes, *, observer_id: str) -> None:
         """Validate raw result bytes against the current protected action schema.
 
         The callback is re-resolved from the selected root action row. The
@@ -1346,7 +1404,7 @@ class NativeInvocationRegistry:
                 proof = self._loaded_proof(
                     row.observer_id, identity, row.producer_pid, row.producer_pidfd)
                 selected = self.action_resolver(row.bridge, identity, row.tool_name)
-                observer = self.source_observers.observers.get(row.observer_id)
+                observer = self.source_observers.observers.get(observer_id)
                 package, _role = self.source_observers._resolve_package_role(observer)
                 registrations = self._selected_action_registration_ids(
                     observer=observer, package=package, selection=selected)
@@ -1365,6 +1423,10 @@ class NativeInvocationRegistry:
                         row.registration_id, row.operation,
                         row.result_schema_id, row.result_schema_sha256)
                     or not registrations or not set(registrations).issubset(observed)
+                    or observer_id not in self.source_observers.observers
+                    or getattr(observer, "source_kind", None) != "tool-result"
+                    or getattr(observer, "profile_id", None) != row.profile_id
+                    or getattr(observer, "generation", None) != row.generation
                     or getattr(observer, "capture_schema_id", None)
                     != "native-registered-tool-result-v1"):
                 raise AuthorityDenied("native.effect.result", "selected result schema or capture profile changed")
@@ -1959,13 +2021,15 @@ class NativeRuntimeObserver:
     """
 
     def __init__(self, *, source_observers: Any,
-                 effect_observer_ids: Mapping[tuple[str, str, str], str]) -> None:
+                 effect_observer_ids: Mapping[tuple[str, str, str], str],
+                 discovery_observer_ids: Mapping[tuple[str, str, str], str] | None = None) -> None:
         if (not callable(getattr(source_observers, "record_observed_event", None))
                 or not callable(getattr(source_observers, "capture_observed_source", None))
                 or not isinstance(effect_observer_ids, Mapping)
                 or not effect_observer_ids):
             raise NativeRuntimeObserverUnavailable("trusted native observer inputs are incomplete")
         pairs: dict[tuple[str, str, str], str] = {}
+        discovery_pairs: dict[tuple[str, str, str], str] = {}
         enrolled = getattr(source_observers, "observers", None)
         if not isinstance(enrolled, Mapping):
             raise NativeRuntimeObserverUnavailable("root source observer enrollment is unavailable")
@@ -1980,12 +2044,156 @@ class NativeRuntimeObserver:
             if key in pairs:
                 raise NativeRuntimeObserverUnavailable("effect observer mapping is ambiguous")
             pairs[key] = observer_id
+        if discovery_observer_ids is not None:
+            if not isinstance(discovery_observer_ids, Mapping):
+                raise NativeRuntimeObserverUnavailable("MCP discovery observer mapping is malformed")
+            for key, observer_id in discovery_observer_ids.items():
+                if (not isinstance(key, tuple) or len(key) != 3
+                        or any(not isinstance(part, str) or not part for part in key)
+                        or not isinstance(observer_id, str) or observer_id not in enrolled):
+                    raise NativeRuntimeObserverUnavailable("MCP discovery observer mapping is malformed")
+                source = enrolled[observer_id]
+                if (getattr(source, "source_kind", None) != "tool-result"
+                        or getattr(source, "capture_schema_id", None)
+                        != "native-root-mcp-discovery-response-v1"
+                        or getattr(source, "source_action_id", None)
+                        != "root-mcp-tools-list-discovery-v1"):
+                    raise NativeRuntimeObserverUnavailable(
+                        "MCP discovery observer does not match the finite discovery profile",
+                    )
+                if key in discovery_pairs:
+                    raise NativeRuntimeObserverUnavailable("MCP discovery observer mapping is ambiguous")
+                discovery_pairs[key] = observer_id
         self.source_observers = source_observers
         self.effect_observer_ids = pairs
+        self.discovery_observer_ids = discovery_pairs
         self.invocation_registry: Any | None = None
         self.native_turn_observation_registry: Any | None = None
         self._lock = threading.RLock()
+        self._mcp_discovery_requests: dict[tuple[str, int, str], _RetainedMCPDiscoveryRequest] = {}
+        # Only receipts minted by the actual tools/list observer may extend a
+        # selected invocation's original provider-response ancestry.
+        self._mcp_discovery_receipts: dict[str, set[str]] = {}
         self._closed = False
+
+    def register_mcp_discovery_request(
+            self, *, invocation: Any, service: Any, binding: Any,
+            context: HostContext, authorization: Any, operation: str, target: str,
+            request_payload: bytes, peer_uid: int, peer_pid: int, peer_pidfd: int,
+            selection: Mapping[str, str], parent_receipt_handles: tuple[str, ...],
+            cancelled: Callable[[], bool] = lambda: False) -> None:
+        """Retain the actual root-created tools/list request before effect dispatch.
+
+        A purpose string by itself cannot select this path: the canonical method,
+        selected MCP invocation, signed request context/grant and live loaded
+        source role must all join before the request is retained.
+        """
+        from ..mcp.broker import mcp_intent
+        from ..mcp.broker import ProtectedMCPService
+        from ..mcp.native_dispatch import NativeMCPToolBinding
+        from .types import EffectAuthorization
+
+        if (type(invocation) is not RootNativeMCPInvocation
+                or type(service) is not ProtectedMCPService
+                or type(binding) is not NativeMCPToolBinding
+                or type(context) is not HostContext
+                or type(authorization) is not EffectAuthorization
+                or operation != "mcp.request" or target != f"mcp:{service.service_id}:http"
+                or not isinstance(request_payload, bytes) or not 1 <= len(request_payload) <= _MAX_RESULT_BYTES
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not isinstance(selection, Mapping)
+                or not isinstance(parent_receipt_handles, tuple)
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("mcp.discovery.request", "root selected discovery request is malformed")
+        envelope = _strict_native_json(request_payload)
+        expected_selection = {field: resource for field, resource in binding.scope_bindings}
+        if (not isinstance(envelope, Mapping) or canonical_bytes(envelope) != request_payload
+                or set(envelope) != {"schema", "service_id", "request_id", "method", "selection", "params"}
+                or envelope.get("schema") != 1 or envelope.get("service_id") != service.service_id
+                or envelope.get("method") != "tools/list"
+                or not isinstance(envelope.get("request_id"), str)
+                or not 1 <= len(envelope["request_id"]) <= 128
+                or dict(selection) != expected_selection or envelope.get("selection") != expected_selection
+                or not isinstance(envelope.get("params"), Mapping)
+                or (set(envelope["params"]) - {"cursor"})
+                or ("cursor" in envelope["params"] and
+                    (not isinstance(envelope["params"]["cursor"], str)
+                     or not 1 <= len(envelope["params"]["cursor"]) <= 1024))):
+            raise AuthorityDenied("mcp.discovery.request", "actual tools/list request does not match its selected binding")
+        digest = canonical_digest(request_payload)
+        intent = mcp_intent(service.service_id, service.channel, envelope["request_id"],
+                            "tools/list", expected_selection, envelope["params"])
+        expected_intent = canonical_digest({"purpose": "mcp-selected-schema-discovery", "intent": intent})
+        if (context.purpose != "mcp-selected-schema-discovery"
+                or context.intent_id != expected_intent or authorization.intent_id != expected_intent
+                or authorization.request_digest != digest
+                or authorization.final_payload_digest != digest
+                or context.final_payload_digest != digest
+                or authorization.operation != operation or authorization.target != target
+                or authorization.capability != f"mcp:{service.service_id}:read"
+                or authorization.uid != peer_uid or context.uid != peer_uid
+                or authorization.profile_id != invocation.profile_id
+                or context.profile_id != invocation.profile_id
+                or authorization.generation != invocation.generation
+                or context.generation != invocation.generation
+                or authorization.source_receipts != context.source_receipts
+                or tuple(parent_receipt_handles) != invocation.source_receipt_handles):
+            raise AuthorityDenied("mcp.discovery.request", "tools/list context or effect grant is not the selected root request")
+        now = self.source_observers.service.monotonic()
+        observer_id = self.discovery_observer_ids.get((authorization.capability, operation, target))
+        observer = self.source_observers.observers.get(observer_id) if observer_id else None
+        if (observer is None or observer.source_kind != "tool-result"
+                or observer.capture_schema_id != "native-root-mcp-discovery-response-v1"
+                or observer.source_action_id != "root-mcp-tools-list-discovery-v1"
+                or observer.profile_id != invocation.profile_id
+                or observer.generation != invocation.generation
+                or observer.producer_uid != peer_uid
+                or getattr(binding, "native_package_id", None) != observer.package_id
+                or getattr(binding, "native_package_generation", None)
+                   != observer.native_package_generation):
+            raise AuthorityDenied("mcp.discovery.observer", "selected MCP discovery source role is unavailable")
+        if (invocation.adapter_id != binding.handler_artifact_id or invocation.action_id != binding.id
+                or invocation.package_id != observer.package_id
+                or invocation.profile_id != observer.profile_id
+                or invocation.generation != observer.generation):
+            raise AuthorityDenied("mcp.discovery.binding", "selected MCP action and discovery source role differ")
+        service_authority = self.source_observers.service
+        invocation_registry = getattr(service_authority, "native_invocation_registry", None)
+        if (invocation_registry is None
+                or not callable(getattr(invocation_registry, "is_current_native_mcp_invocation", None))
+                or invocation_registry.is_current_native_mcp_invocation(
+                    invocation, peer_uid, peer_pid, peer_pidfd) is not True):
+            raise AuthorityDenied("mcp.discovery.invocation", "selected root MCP invocation is not current")
+        service_authority._verify_context_signature(context)
+        service_authority._verify_grant_signature(authorization)
+        service_authority._assert_current_context(context, service_authority._binding(peer_uid), peer_uid,
+                                                  peer_pid=peer_pid)
+        service_authority._assert_grant_current(authorization, service_authority._binding(peer_uid), peer_uid)
+        identity = self.source_observers._resolve(observer, peer_pid, peer_pidfd)
+        package, _role = self.source_observers._resolve_package_role(observer)
+        proof = self.source_observers._resolve_loaded_package_proof(
+            identity, observer, package, now, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        observed = getattr(proof, "observed_registration_ids", ())
+        if (getattr(package, "package_id", None) != invocation.package_id
+                or getattr(package, "generation", None) != binding.native_package_generation
+                or not set(getattr(observer, "source_registration_ids", ())).issubset(set(observed))):
+            raise AuthorityDenied("mcp.discovery.package", "current loaded discovery source role is not proven")
+        if cancelled():
+            raise AuthorityDenied("mcp.discovery.cancelled", "MCP discovery was cancelled before retention")
+        key = (authorization.grant_id, peer_pid, digest)
+        record = _RetainedMCPDiscoveryRequest(
+            invocation, service, binding, observer_id, context, authorization,
+            peer_uid, peer_pid, peer_pidfd, operation, target, bytes(request_payload), digest,
+            tuple(parent_receipt_handles), MappingProxyType(dict(selection)),
+            min(context.monotonic_expires_at, authorization.monotonic_expires_at,
+                now + observer.lease_seconds, invocation.expires_monotonic),
+        )
+        with self._lock:
+            if self._closed or key in self._mcp_discovery_requests:
+                raise AuthorityDenied("mcp.discovery.replay", "tools/list request is already retained or observer is closed")
+            self._mcp_discovery_requests[key] = record
 
     def attach_turn_observation(self, *, invocation_registry: Any,
                                 native_turn_observation_registry: Any) -> None:
@@ -2040,12 +2248,26 @@ class NativeRuntimeObserver:
                 or getattr(authorization, "native_process_identity", None) != context.native_process_identity
                 or getattr(authorization, "source_receipts", None) != context.source_receipts):
             raise AuthorityDenied("source.binding", "result does not match the completed enrolled effect")
+        # tools/list is a bounded discovery witness, not a selected tool call.
+        # Its classification is accepted only when the exact root-retained
+        # canonical request is method=tools/list and its signed purpose/grant,
+        # peer and selected discovery role all match.
+        if context.purpose == "mcp-selected-schema-discovery":
+            return self.observe_mcp_discovery_result(
+                service=service, context=context, authorization=authorization,
+                operation=operation, target=target, request_payload=request_payload,
+                request_sha256=request_sha256, response_status=response_status,
+                result_payload=result_payload, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=cancelled,
+            )
         with self._lock:
-            invocation_registry = self.invocation_registry
             turn_registry = self.native_turn_observation_registry
+        service_authority = getattr(self.source_observers, "service", None)
+        invocation_registry = getattr(
+            service_authority, "native_invocation_registry", self.invocation_registry,
+        )
         invocation = None
         if invocation_registry is not None or turn_registry is not None:
-            from .native_runtime_observer import RootNativeToolEffectInvocation
             if (invocation_registry is None
                     or request_payload is None or request_sha256 is None
                     or hashlib.sha256(request_payload).hexdigest() != request_sha256
@@ -2086,7 +2308,12 @@ class NativeRuntimeObserver:
             raise AuthorityDenied(
                 "native.effect.result", "root selected result-schema validator is unavailable",
             )
-        validate_result(invocation, result_payload)
+        schema_payload = result_payload
+        if invocation.operation == "mcp.request":
+            schema_payload = self._mcp_tool_result_schema_payload(
+                invocation, request_payload, result_payload,
+            )
+        validate_result(invocation, schema_payload, observer_id=observer_id)
         if cancelled():
             raise AuthorityDenied("source.cancelled", "native result delivery was cancelled")
         parent_handles = self._parent_handles(service, context)
@@ -2116,10 +2343,232 @@ class NativeRuntimeObserver:
                 raise AuthorityDenied("native.turn.result", "root result could not join the selected turn") from None
         return str(receipt_handle)
 
+    def _mcp_tool_result_schema_payload(
+            self, invocation: Any, request_payload: bytes | None,
+            result_payload: bytes) -> bytes:
+        """Validate MCP's root protocol envelope, then return exact result JSON.
+
+        The source receipt still captures the unchanged full transport entity.
+        Only the schema validator sees the selected tool's result value.
+        """
+        if not isinstance(request_payload, bytes):
+            raise AuthorityDenied("native.effect.result", "MCP tool request bytes are unavailable")
+        request = _strict_native_json(request_payload)
+        response = _strict_native_json(result_payload)
+        dispatcher = getattr(self.source_observers.service, "native_mcp_dispatcher", None)
+        registration_index = getattr(dispatcher, "_registrations", None)
+        try:
+            binding = registration_index.resolve_action(invocation.action_id)
+            selection = {field: resource for field, resource in binding.scope_bindings}
+            params = request["params"]
+            arguments = canonical_bytes(params["arguments"])
+        except Exception:
+            raise AuthorityDenied("native.effect.result", "selected MCP request binding is unavailable") from None
+        if (not isinstance(request, Mapping) or canonical_bytes(request) != request_payload
+                or set(request) != {"schema", "service_id", "request_id", "method", "selection", "params"}
+                or request.get("schema") != 1 or request.get("method") != "tools/call"
+                or request.get("service_id") != binding.native_server_name
+                or request.get("selection") != selection
+                or not isinstance(request.get("request_id"), str)
+                or not isinstance(params, Mapping)
+                or set(params) != {"name", "arguments"}
+                or params.get("name") != binding.mcp_tool_name
+                or not isinstance(response, Mapping)
+                or canonical_bytes(response) != result_payload
+                or set(response) != {"jsonrpc", "id", "result"}
+                or response.get("jsonrpc") != "2.0"
+                or response.get("id") != request.get("request_id")
+                or not isinstance(response.get("result"), Mapping)
+                or response["result"].get("isError") is True
+                or hashlib.sha256(arguments).hexdigest() != invocation.arguments_sha256):
+            raise AuthorityDenied("native.effect.result", "MCP result is not bound to the selected tools/call")
+        return canonical_bytes(response["result"])
+
+    def observe_mcp_discovery_result(
+            self, *, service: Any, context: HostContext, authorization: Any,
+            operation: str, target: str, request_payload: bytes | None,
+            request_sha256: str | None, response_status: int, result_payload: bytes,
+            peer_pid: int, peer_pidfd: int,
+            cancelled: Callable[[], bool] = lambda: False) -> str:
+        """Capture only a previously retained, exact MCP tools/list exchange.
+
+        The source event is metadata from discovery, never a claim that a
+        selected MCP tool ran. The separate tools/call path continues through
+        ``validate_effect_result`` and the selected result-schema FK.
+        """
+        from .types import EffectAuthorization
+
+        if (service is not self.source_observers.service
+                or type(context) is not HostContext or type(authorization) is not EffectAuthorization
+                or operation != "mcp.request"
+                or request_payload is None or not isinstance(request_payload, bytes)
+                or not isinstance(request_sha256, str)
+                or canonical_digest(request_payload) != request_sha256
+                or not isinstance(result_payload, bytes) or not 1 <= len(result_payload) <= _MAX_RESULT_BYTES
+                or type(response_status) is not int or not 200 <= response_status < 300
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("mcp.discovery.result", "root tools/list result is malformed or expired")
+        request = _strict_native_json(request_payload)
+        if (not isinstance(request, Mapping) or canonical_bytes(request) != request_payload
+                or request.get("method") != "tools/list"):
+            raise AuthorityDenied("mcp.discovery.request", "discovery source is not an actual tools/list request")
+        key = (authorization.grant_id, peer_pid, request_sha256)
+        with self._lock:
+            record = self._mcp_discovery_requests.pop(key, None)
+            closed = self._closed
+        if (closed or record is None
+                or not self._mcp_discovery_context_matches(record, context, authorization)
+                or record.authorization != authorization or record.request_payload != request_payload
+                or record.service.service_id != target.split(":")[1]
+                or record.operation != operation
+                or record.target != target or record.peer_uid != context.uid
+                or record.peer_pid != peer_pid or record.peer_pidfd != peer_pidfd
+                or record.expires_monotonic <= self.source_observers.service.monotonic()
+                or record.invocation.expires_monotonic <= self.source_observers.service.monotonic()
+                or record.request_sha256 != request_sha256):
+            raise AuthorityDenied("mcp.discovery.request", "no current retained root tools/list request matches")
+        with self._lock:
+            invocation_registry = self.invocation_registry
+        service_authority = self.source_observers.service
+        if invocation_registry is None:
+            invocation_registry = getattr(service_authority, "native_invocation_registry", None)
+        current_ok = (invocation_registry.is_current_native_mcp_invocation(
+            record.invocation, record.peer_uid, peer_pid, peer_pidfd)
+            if invocation_registry is not None else False)
+        if not current_ok:
+            raise AuthorityDenied("mcp.discovery.invocation", "selected root MCP invocation changed before result")
+        self._validate_mcp_discovery_response(request, result_payload)
+        observer = self.source_observers.observers.get(record.observer_id)
+        if (observer is None or observer.source_kind != "tool-result"
+                or observer.capture_schema_id != "native-root-mcp-discovery-response-v1"
+                or observer.source_action_id != "root-mcp-tools-list-discovery-v1"
+                or observer.profile_id != context.profile_id
+                or observer.generation != context.generation
+                or observer.producer_uid != context.uid):
+            raise AuthorityDenied("mcp.discovery.observer", "finite root MCP discovery profile changed")
+        service_authority = self.source_observers.service
+        # _perform_effect reconstructs a grant-bound internal context whose
+        # sentinel signature is intentionally not a wire signature. Verify the
+        # exact originally signed context retained at request admission.
+        service_authority._verify_context_signature(record.context)
+        service_authority._verify_grant_signature(authorization)
+        service_authority._assert_current_context(context, service_authority._binding(context.uid),
+                                                  context.uid, peer_pid=peer_pid)
+        service_authority._assert_grant_current(authorization, service_authority._binding(context.uid),
+                                                context.uid)
+        identity = self.source_observers._resolve(observer, peer_pid, peer_pidfd)
+        package, _action = self.source_observers._resolve_package_role(observer)
+        proof = self.source_observers._resolve_loaded_package_proof(
+            identity, observer, package, service_authority.monotonic(),
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        observed = getattr(proof, "observed_registration_ids", ())
+        if (identity != record.invocation.native_process_identity
+                or getattr(package, "package_id", None) != record.invocation.package_id
+                or getattr(package, "generation", None) != record.binding.native_package_generation
+                or getattr(package, "profile_generation", None) != record.invocation.generation
+                or not set(getattr(observer, "source_registration_ids", ())).issubset(set(observed))):
+            raise AuthorityDenied("mcp.discovery.package", "loaded MCP discovery source role is no longer current")
+        if cancelled():
+            raise AuthorityDenied("mcp.discovery.cancelled", "MCP discovery was cancelled before capture")
+        event_id = self.source_observers.record_observed_event(
+            record.observer_id, payload_bytes=result_payload, parent_context=context,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            parent_receipt_handles=record.parent_handles,
+        )
+        if cancelled():
+            raise AuthorityDenied("mcp.discovery.cancelled", "MCP discovery was cancelled before receipt issue")
+        handle = self.source_observers.capture_observed_source(
+            record.observer_id, event_id, result_payload,
+            parent_receipt_handles=record.parent_handles,
+        )
+        if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+            raise AuthorityDenied("mcp.discovery.issuer", "root discovery observer returned no source handle")
+        if cancelled():
+            self.source_observers.revoke_source_handle(handle)
+            raise AuthorityDenied("mcp.discovery.cancelled", "MCP discovery was cancelled before delivery")
+        with self._lock:
+            receipts = self._mcp_discovery_receipts.setdefault(
+                record.invocation.invocation_handle, set(),
+            )
+            if len(receipts) >= 32 or handle in receipts:
+                self.source_observers.revoke_source_handle(handle)
+                raise AuthorityDenied("mcp.discovery.replay", "discovery result receipt exceeded its bound")
+            receipts.add(handle)
+        return handle
+
+    def _mcp_discovery_context_matches(self, record: _RetainedMCPDiscoveryRequest,
+                                       context: HostContext, authorization: Any) -> bool:
+        """Join the retained signed context to the service's grant-derived view."""
+        original = record.context
+        service = self.source_observers.service
+        original_context_digest = canonical_digest({
+            **original.claims(), "signature": original.signature,
+        })
+        if (original_context_digest != authorization.context_digest
+                or original.source_receipts != authorization.source_receipts
+                or context.source_receipts != authorization.source_receipts):
+            return False
+        fields = (
+            ("principal_id", authorization.principal_id),
+            ("profile_id", authorization.profile_id),
+            ("namespace_id", authorization.namespace_id),
+            ("uid", authorization.uid), ("purpose", authorization.purpose),
+            ("intent_id", authorization.intent_id), ("trace_id", authorization.trace_id),
+            ("sensitivity", authorization.sensitivity),
+            ("lineage_hash", authorization.lineage_hash),
+            ("policy_revision", authorization.policy_revision),
+            ("final_payload_digest", authorization.final_payload_digest),
+            ("enrollment_id", authorization.enrollment_id),
+            ("generation", authorization.generation), ("operation", authorization.operation),
+            ("native_process_identity", authorization.native_process_identity),
+        )
+        return all(getattr(original, name, None) == expected
+                   and getattr(context, name, None) == expected for name, expected in fields)
+
+    @staticmethod
+    def _validate_mcp_discovery_response(request: Mapping[str, Any], raw: bytes) -> None:
+        if len(raw) > _MAX_RESULT_BYTES:
+            raise AuthorityDenied("mcp.discovery.bounds", "MCP discovery response exceeds its finite profile")
+        response = _strict_native_json(raw)
+        request_id = request.get("request_id")
+        if (not isinstance(response, Mapping) or canonical_bytes(response) != raw
+                or set(response) != {"jsonrpc", "id", "result"}
+                or response.get("jsonrpc") != "2.0" or response.get("id") != request_id
+                or not isinstance(response.get("result"), Mapping)
+                or set(response["result"]) - {"tools", "nextCursor"}
+                or not isinstance(response["result"].get("tools"), list)
+                or len(response["result"]["tools"]) > 256):
+            raise AuthorityDenied("mcp.discovery.response", "MCP discovery response envelope is invalid")
+        tools = response["result"]["tools"]
+        seen: set[str] = set()
+        from ..mcp.native_schema_catalog import _validate_schema
+        for row in tools:
+            if (not isinstance(row, Mapping)
+                    or set(row) - {"name", "inputSchema", "outputSchema", "annotations"}
+                    or not isinstance(row.get("name"), str) or not 1 <= len(row["name"]) <= 128
+                    or row["name"] in seen or not isinstance(row.get("inputSchema"), Mapping)
+                    or not isinstance(row.get("annotations", {}), Mapping)
+                    or len(canonical_bytes(dict(row))) > 262_144):
+                raise AuthorityDenied("mcp.discovery.schema", "MCP discovery tool metadata is malformed")
+            seen.add(row["name"])
+            try:
+                _validate_schema(row["inputSchema"], nodes=[0])
+                if "outputSchema" in row:
+                    _validate_schema(row["outputSchema"], nodes=[0])
+            except Exception:
+                raise AuthorityDenied("mcp.discovery.schema", "MCP discovery schema is unsupported") from None
+        cursor = response["result"].get("nextCursor")
+        if cursor is not None and (not isinstance(cursor, str) or not 1 <= len(cursor) <= 1024):
+            raise AuthorityDenied("mcp.discovery.cursor", "MCP discovery cursor is invalid")
+
     def close(self) -> None:
         """Stop new observations when the selected package generation is retired."""
         with self._lock:
             self._closed = True
+            self._mcp_discovery_requests.clear()
+            self._mcp_discovery_receipts.clear()
 
     def _parent_handles(self, service: Any, context: HostContext) -> tuple[str, ...]:
         with self._lock:

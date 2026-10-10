@@ -257,7 +257,7 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         invocation_registry.service = service
         invocation_registry.source_observers = source_observers
         invocation_registry.resolve_invocation_for_effect = lambda *args: invocation
-        def validate_effect_result(current, raw):
+        def validate_effect_result(current, raw, *, observer_id=None):
             if current is not invocation or raw != b"exact result":
                 raise AuthorityDenied("fixture", "invalid result")
         invocation_registry.validate_effect_result = validate_effect_result
@@ -309,7 +309,7 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         invocation_registry = SimpleNamespace(
             service=service, source_observers=source_observers,
             resolve_invocation_for_effect=lambda *_args: invocation,
-            validate_effect_result=lambda *_args: (_ for _ in ()).throw(
+            validate_effect_result=lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AuthorityDenied("native.effect.result", "selected schema rejected bytes")),
         )
         from hermes_installer.authority.native_turn_observation import RootNativeTurnObservationRegistry
