@@ -205,6 +205,7 @@ def _selection(process_id="owned-process"):
         observer_role_action_bindings=(("hermes-main", "loader-role", _ROLE, "action.input"),),
         process_roles=(NativeProcessRoleSelection(
             role_id="hermes-main", role_artifact_id="loader-role", role_sha256=_ROLE,
+            profile_generation="generation-1", native_package_generation="package-generation-1",
             role_source_receipt_handle="source-receipt-role", module_name="hermes.plugins.runtime",
             closure_member_path="hermes/plugins/runtime.py", role_source_revision="rev-role-1",
             role_source_tree_sha256="f" * 64,

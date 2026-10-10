@@ -89,6 +89,10 @@ class NativeLoaderSelection:
                 or tuple(sorted(item.role_id for item in self.process_roles))
                     != tuple(item.role_id for item in self.process_roles)):
             raise ValueError("selected process roles must be a bounded sorted tuple")
+        if any(item.profile_generation != self.generation
+               or item.native_package_generation != self.package_generation
+               for item in self.process_roles):
+            raise ValueError("selected process role generations differ from the active process/package pair")
         selected_role_ids = {item.role_id for item in self.process_roles}
         if any(role_id not in selected_role_ids or action_id not in self.registered_action_ids
                for role_id, _artifact_id, _sha256, action_id in bindings):
@@ -102,6 +106,8 @@ class NativeProcessRoleSelection:
     role_id: str
     role_artifact_id: str
     role_sha256: str
+    profile_generation: str
+    native_package_generation: str
     role_source_receipt_handle: str
     module_name: str
     closure_member_path: str
@@ -111,7 +117,8 @@ class NativeProcessRoleSelection:
     action_binding_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        for name in ("role_id", "role_artifact_id", "role_source_receipt_handle"):
+        for name in ("role_id", "role_artifact_id", "profile_generation",
+                     "native_package_generation", "role_source_receipt_handle"):
             _identifier(getattr(self, name), name)
         for name in ("role_sha256", "role_source_tree_sha256"):
             _digest(getattr(self, name), name)
@@ -527,7 +534,8 @@ def active_native_catalog_resolver(bindings: Any, *,
             previous_role = selected_roles.get(role.role_id)
             selected_role = NativeProcessRoleSelection(
                 role_id=role.role_id, role_artifact_id=role.role_artifact_id,
-                role_sha256=role.role_sha256,
+                role_sha256=role.role_sha256, profile_generation=role.profile_generation,
+                native_package_generation=role.native_package_generation,
                 role_source_receipt_handle=role.role_source_receipt_handle,
                 module_name=role.module_name, closure_member_path=role.closure_member_path,
                 role_source_revision=role.role_source_revision,
