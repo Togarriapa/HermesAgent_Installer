@@ -47,6 +47,18 @@ _MAX_CLOSURE_BYTES = 4 * 1024 * 1024 * 1024
 _MAX_PLUGIN_RESULT_BYTES = 2 * 1024 * 1024
 _MAX_PLUGIN_RESULT_NODES = 50_000
 _MAX_PLUGIN_RESULT_DEPTH = 64
+_MAX_BACKEND_RESULT_NODES = 65_536
+_MAX_BACKEND_RESULT_DEPTH = 32
+_MAX_BACKEND_RESULT_BYTES = 2 * 1024 * 1024
+_BOUNDED_BACKEND_RESULT_SCHEMA_ID = "installer-native-bounded-backend-result-v1"
+_BOUNDED_BACKEND_RESULT_SCHEMA_SHA256 = "8ef1ffe2ca1c26f2bb82fd9178b4cd223bbee4b3b7c1a8d784f850e289026cb4"
+_BOUNDED_BACKEND_RESULT_SCHEMA_SIZE = 235
+_BOUNDED_BACKEND_REGISTRATIONS = frozenset({
+    ("financial-execution-gateway:tool:financial_execute_one_order",
+     "financial_execute_one_order"),
+    ("agent-live-wallet:tool:agent_live_wallet_action", "agent_live_wallet_action"),
+    ("agent-sandbox-wallet:tool:agent_sandbox_wallet_action", "agent_sandbox_wallet_action"),
+})
 _UNSAFE_PLUGIN_RESULT = (
     '{"error":"Native plugin result could not be represented safely.",'
     '"error_type":"native_plugin_result_contract"}'
@@ -92,6 +104,13 @@ class SelectedNativeCandidate:
     observer_enrollment_ids: tuple[str, ...]
     native_server_name: str
     description: str
+    registration_id: str = ""
+    toolset: str = ""
+    family: str = ""
+    handler_kind: str = ""
+    result_schema_id: str | None = None
+    selector_fields: tuple[str, ...] = ()
+    action_bindings: tuple[MappingProxyType, ...] = ()
 
     @property
     def is_native_mcp(self) -> bool:
@@ -363,6 +382,106 @@ def _plugin_tool_result(value: Any) -> Any:
         return _UNSAFE_PLUGIN_RESULT
 
 
+def _validate_backend_result_tree(value: Any) -> None:
+    """Validate one raw backend object without trusting its fields.
+
+    This intentionally accepts only already-decoded JSON objects or arrays.
+    It never parses a backend string as JSON, so duplicate-key source text and
+    scalar coercions cannot be hidden by this boundary.
+    """
+    if type(value) not in {dict, list}:
+        raise ValueError("backend result must be a JSON object or array")
+    pending: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    active: set[int] = set()
+    nodes = 0
+    estimated_serialized_bytes = 0
+
+    def add_size(size: int) -> None:
+        nonlocal estimated_serialized_bytes
+        estimated_serialized_bytes += size
+        if estimated_serialized_bytes > _MAX_BACKEND_RESULT_BYTES:
+            raise ValueError("backend result exceeds its serialized byte bound")
+
+    def validate_string(text: str) -> None:
+        raw = text.encode("utf-8", errors="strict")
+        if len(raw) > _MAX_BACKEND_RESULT_BYTES:
+            raise ValueError("backend result string exceeds its byte bound")
+        # Account for JSON quoting and escaping before the final whole-value
+        # serialization, so a large tree cannot allocate an oversized buffer.
+        add_size(len(json.dumps(text, ensure_ascii=False, separators=(",", ":"))
+                    .encode("utf-8")))
+
+    while pending:
+        item, depth, exiting = pending.pop()
+        if exiting:
+            active.remove(id(item))
+            continue
+        nodes += 1
+        if nodes > _MAX_BACKEND_RESULT_NODES or depth > _MAX_BACKEND_RESULT_DEPTH:
+            raise ValueError("backend result exceeds its structural bound")
+        kind = type(item)
+        if item is None or kind in {bool, int}:
+            if kind is int and item.bit_length() > _MAX_BACKEND_RESULT_BYTES * 4:
+                raise ValueError("backend result integer exceeds its byte bound")
+            add_size(5 if item is None else 6 if kind is bool else max(1, item.bit_length() // 3))
+            continue
+        if kind is float:
+            if not math.isfinite(item):
+                raise ValueError("backend result contains a nonfinite number")
+            add_size(32)
+            continue
+        if kind is str:
+            validate_string(item)
+            continue
+        if kind in {dict, list}:
+            if len(item) + nodes > _MAX_BACKEND_RESULT_NODES:
+                raise ValueError("backend result exceeds its node bound")
+            identity = id(item)
+            if identity in active:
+                raise ValueError("backend result contains a cycle")
+            active.add(identity)
+            pending.append((item, depth, True))
+            add_size(2 + max(0, len(item) - 1)
+                     + (len(item) if kind is dict else 0))
+            children = list(item.items()) if kind is dict else [(None, child) for child in item]
+            for key, child in reversed(children):
+                if kind is dict:
+                    if type(key) is not str:
+                        raise ValueError("backend result object key is not text")
+                    validate_string(key)
+                pending.append((child, depth + 1, False))
+            continue
+        raise ValueError("backend result contains a non-JSON value")
+
+
+def _bounded_backend_tool_result(value: Any, candidate: SelectedNativeCandidate) -> Any:
+    """Serialize one selected backend result under the exact v113 envelope."""
+    expected_schema = {
+        "additionalProperties": False,
+        "properties": {
+            "result": {"oneOf": [{"type": "object"}, {"type": "array"}]},
+            "result_trust": {"const": "untrusted-backend-data"},
+            "schema": {"const": 1},
+        },
+        "required": ["schema", "result_trust", "result"],
+        "type": "object",
+    }
+    if ((candidate.registration_id, candidate.native_tool_name) not in _BOUNDED_BACKEND_REGISTRATIONS
+            or candidate.result_schema_id != _BOUNDED_BACKEND_RESULT_SCHEMA_ID
+            or _canonical(_thaw_frozen_json(candidate.result_schema)) != _canonical(expected_schema)):
+        return _UNSAFE_PLUGIN_RESULT
+    try:
+        _validate_backend_result_tree(value)
+        wrapped = {"schema": 1, "result_trust": "untrusted-backend-data", "result": value}
+        encoded = json.dumps(wrapped, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(encoded) > _MAX_BACKEND_RESULT_BYTES:
+            return _UNSAFE_PLUGIN_RESULT
+        return encoded.decode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return _UNSAFE_PLUGIN_RESULT
+
+
 class _NativePluginContextResultAdapter:
     """Preserve PluginContext APIs while enforcing Hermes' supported tool result types."""
 
@@ -398,14 +517,18 @@ class _NativePluginContextResultAdapter:
         }
         if (candidate is None or candidate.is_native_mcp or candidate.adapter_id != adapter_id
                 or candidate.native_server_name != "hermes-installer"
-                or toolset != "hermes-installer" or description != candidate.description
+                or toolset != (candidate.toolset or "hermes-installer")
+                or description != candidate.description
                 or not isinstance(schema, dict) or expected_schema is None
                 or _canonical(schema) != _canonical(expected_schema)):
             raise NativePluginLoadUnavailable("native PluginContext tool differs from the selected candidate index")
+        is_bounded_backend = (candidate.registration_id, candidate.native_tool_name) in _BOUNDED_BACKEND_REGISTRATIONS
         if is_async:
             @functools.wraps(handler)
             async def bounded_handler(*args: Any, **kwargs: Any) -> Any:
-                return _plugin_tool_result(await handler(*args, **kwargs))
+                result = await handler(*args, **kwargs)
+                return (_bounded_backend_tool_result(result, candidate) if is_bounded_backend
+                        else _plugin_tool_result(result))
         else:
             @functools.wraps(handler)
             def bounded_handler(*args: Any, **kwargs: Any) -> Any:
@@ -415,7 +538,8 @@ class _NativePluginContextResultAdapter:
                     if callable(close):
                         close()
                     return _UNSAFE_PLUGIN_RESULT
-                return _plugin_tool_result(result)
+                return (_bounded_backend_tool_result(result, candidate) if is_bounded_backend
+                        else _plugin_tool_result(result))
 
         context = object.__getattribute__(self, "_NativePluginContextResultAdapter__context")
         registration = context.register_tool(
@@ -536,7 +660,10 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
                                   manifest: MappingProxyType) -> tuple[SelectedNativeCandidate, ...]:
     doc = _json_document(raw, maximum=_MAX_NATIVE_CANDIDATE_INDEX_BYTES,
                          label="root-selected native candidate index")
-    expected_doc_fields = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
+    expected_doc_fields = {
+        "schema", "package_id", "profile_id", "generation", "resolver_sha256",
+        "candidates", "registration_projection_sha256", "registrations",
+    }
     if set(doc) != expected_doc_fields or _canonical(doc) != raw:
         raise NativePluginLoadUnavailable("root-selected native candidate index is not canonical or strict")
     if (type(doc["schema"]) is not int or doc["schema"] != 1
@@ -545,38 +672,125 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
             or doc["generation"] != selected.generation
             or doc["resolver_sha256"] != selected.resolver_digest):
         raise NativePluginLoadUnavailable("native candidate index differs from the selected package")
-    rows = doc["candidates"]
+    rows, registrations = doc["candidates"], doc["registrations"]
+    if (not isinstance(rows, list) or not 1 <= len(rows) <= _MAX_NATIVE_CANDIDATES
+            or not isinstance(registrations, list) or len(registrations) != len(rows)
+            or not 1 <= len(registrations) <= _MAX_NATIVE_CANDIDATES):
+        raise NativePluginLoadUnavailable("native registration projection exceeds its row bound")
+    projection_digest = doc["registration_projection_sha256"]
+    if (not isinstance(projection_digest, str) or not _SHA256.fullmatch(projection_digest)
+            or hashlib.sha256(_canonical(registrations)).hexdigest() != projection_digest):
+        raise NativePluginLoadUnavailable("native registration projection digest differs")
+
+    registration_fields = {
+        "registration_id", "native_tool_name", "native_server_name", "toolset", "family",
+        "adapter_id", "argument_schema_id", "result_schema_id", "native_schema_sha256",
+        "registration_source_artifact_id", "registration_source_sha256",
+        "registration_source_receipt_handle", "handler_kind", "handler_id",
+        "selector_fields", "action_bindings", "observer_enrollment_ids", "generation",
+    }
+    binding_fields = {"selector_values", "action_binding_id", "argument_projection", "workflow_id"}
     expected_row_fields = {
         "native_tool_name", "adapter_id", "action_id", "argument_schema", "result_schema",
         "native_schema_sha256", "observer_enrollment_ids", "native_server_name", "description",
+        "registration_id", "toolset", "family", "handler_kind",
     }
-    if not isinstance(rows, list) or not 1 <= len(rows) <= _MAX_NATIVE_CANDIDATES:
-        raise NativePluginLoadUnavailable("native candidate index exceeds its row bound")
-    result: list[SelectedNativeCandidate] = []
+    registrations_by_id: dict[str, Mapping[str, Any]] = {}
     names: set[str] = set()
-    actions: set[tuple[str, str]] = set()
     manifest_adapters = {row["adapter_id"]: set(row["action_ids"]) for row in manifest["adapters"]}
+    closure_files = {row["relative_path"]: row for row in manifest["closure_files"]}
+    for registration in registrations:
+        if not isinstance(registration, dict) or set(registration) != registration_fields:
+            raise NativePluginLoadUnavailable("native registration row has unknown or missing fields")
+        reg_id, name, adapter_id = (registration["registration_id"], registration["native_tool_name"],
+                                    registration["adapter_id"])
+        if (not isinstance(reg_id, str) or not _ID.fullmatch(reg_id)
+                or not isinstance(name, str) or not _ID.fullmatch(name) or name in names
+                or not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id)
+                or reg_id != f"{adapter_id}:tool:{name}" or reg_id in registrations_by_id):
+            raise NativePluginLoadUnavailable("native registration identity is malformed or duplicated")
+        for key in ("native_server_name", "toolset", "family", "handler_id",
+                    "argument_schema_id", "result_schema_id", "registration_source_artifact_id",
+                    "registration_source_receipt_handle"):
+            if not isinstance(registration[key], str) or not _ID.fullmatch(registration[key]):
+                raise NativePluginLoadUnavailable("native registration metadata or schema identity is malformed")
+        for key in ("native_schema_sha256", "registration_source_sha256"):
+            if not isinstance(registration[key], str) or not _SHA256.fullmatch(registration[key]):
+                raise NativePluginLoadUnavailable("native registration source digest is malformed")
+        if registration["generation"] != selected.generation:
+            raise NativePluginLoadUnavailable("native registration generation differs from the selected package")
+        if (reg_id, name) in _BOUNDED_BACKEND_REGISTRATIONS:
+            schema_member = closure_files.get(
+                f"catalog/schemas/{_BOUNDED_BACKEND_RESULT_SCHEMA_ID}.json")
+            if (registration["result_schema_id"] != _BOUNDED_BACKEND_RESULT_SCHEMA_ID
+                    or schema_member is None
+                    or schema_member["sha256"] != _BOUNDED_BACKEND_RESULT_SCHEMA_SHA256
+                    or schema_member["size_bytes"] != _BOUNDED_BACKEND_RESULT_SCHEMA_SIZE):
+                raise NativePluginLoadUnavailable("backend result schema is not the exact pinned v113 artifact")
+        if registration["registration_source_sha256"] not in {
+                row["sha256"] for row in manifest["closure_files"]}:
+            raise NativePluginLoadUnavailable("native registration source is not pinned by the selected closure")
+        kind = registration["handler_kind"]
+        if kind not in {"effect-action", "finite-selector", "finite-workflow",
+                        "public-registry-read", "owner-overlay", "mcp-dispatch"}:
+            raise NativePluginLoadUnavailable("native registration handler kind is unsupported")
+        if ((kind == "mcp-dispatch") != (adapter_id == _NATIVE_MCP_ADAPTER_ID)
+                or (adapter_id == _NATIVE_MCP_ADAPTER_ID and registration["native_server_name"] == "hermes-installer")
+                or (adapter_id != _NATIVE_MCP_ADAPTER_ID and registration["native_server_name"] != "hermes-installer")):
+            raise NativePluginLoadUnavailable("native registration owner differs from its handler family")
+        selector_fields = registration["selector_fields"]
+        bindings = registration["action_bindings"]
+        if (not isinstance(selector_fields, list) or len(selector_fields) > 128
+                or len(set(selector_fields)) != len(selector_fields)
+                or any(not isinstance(field, str) or not _ID.fullmatch(field) for field in selector_fields)
+                or not isinstance(bindings, list) or not 1 <= len(bindings) <= 128):
+            raise NativePluginLoadUnavailable("native registration selector projection is malformed")
+        for binding in bindings:
+            if not isinstance(binding, dict) or set(binding) != binding_fields:
+                raise NativePluginLoadUnavailable("native registration action binding is malformed")
+            action_binding_id = binding["action_binding_id"]
+            if action_binding_id is not None:
+                if (not isinstance(action_binding_id, str) or not action_binding_id.startswith(f"{adapter_id}:action:")):
+                    raise NativePluginLoadUnavailable("native registration action binding identity is malformed")
+                child_action = action_binding_id.split(":action:", 1)[1]
+                if (not _ID.fullmatch(child_action) or child_action not in manifest_adapters.get(adapter_id, set())
+                        or selected.resolve(adapter_id, child_action) is None):
+                    raise NativePluginLoadUnavailable("native registration child action is not selected")
+            selector_values = binding["selector_values"]
+            projection = binding["argument_projection"]
+            workflow_id = binding["workflow_id"]
+            if (not isinstance(selector_values, dict) or set(selector_values) != set(selector_fields)
+                    or any(not isinstance(key, str) or not isinstance(value, str)
+                           for key, value in selector_values.items())
+                    or not isinstance(projection, list) or len(projection) > 128
+                    or (workflow_id is not None and
+                        (not isinstance(workflow_id, str) or not _ID.fullmatch(workflow_id)))):
+                raise NativePluginLoadUnavailable("native registration binding fields are malformed")
+            for item in projection:
+                if (not isinstance(item, dict) or set(item) != {"name", "source_field"}
+                        or not isinstance(item["name"], str) or not _ID.fullmatch(item["name"])
+                        or not isinstance(item["source_field"], str) or not _ID.fullmatch(item["source_field"])):
+                    raise NativePluginLoadUnavailable("native registration argument projection is malformed")
+        names.add(name)
+        registrations_by_id[reg_id] = registration
+
+    result: list[SelectedNativeCandidate] = []
+    candidate_registration_ids: set[str] = set()
     for row in rows:
         if not isinstance(row, dict) or set(row) != expected_row_fields:
             raise NativePluginLoadUnavailable("native candidate row has unknown or missing fields")
         name, adapter_id, action_id = row["native_tool_name"], row["adapter_id"], row["action_id"]
-        if (not isinstance(name, str) or not _ID.fullmatch(name) or name in names
+        reg_id = row["registration_id"]
+        registration = registrations_by_id.get(reg_id) if isinstance(reg_id, str) else None
+        if (registration is None or reg_id in candidate_registration_ids
+                or not isinstance(name, str) or not _ID.fullmatch(name)
                 or not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id)
-                or not isinstance(action_id, str) or not _ID.fullmatch(action_id)
-                or (adapter_id, action_id) in actions):
+                or not isinstance(action_id, str) or not _ID.fullmatch(action_id)):
             raise NativePluginLoadUnavailable("native candidate identity is malformed or duplicated")
-        effect = selected.resolve(adapter_id, action_id)
-        if adapter_id == _NATIVE_MCP_ADAPTER_ID:
-            # MCP rows are selected by the root-compiled candidate index and
-            # current protected MCP enrollment. They are deliberately not
-            # NativePluginBinding resolver rows or package entrypoint modules;
-            # the root dispatch RPC re-resolves the action before effect.
-            if effect is not None:
-                raise NativePluginLoadUnavailable("fixed native MCP dispatch cannot be a plugin effect row")
-        elif effect is None:
-            raise NativePluginLoadUnavailable("native candidate is not selected by the root resolver")
-        elif action_id not in manifest_adapters.get(adapter_id, set()):
-            raise NativePluginLoadUnavailable("native candidate action is absent from its pinned adapter")
+        common_fields = ("native_tool_name", "native_server_name", "toolset", "family", "adapter_id",
+                         "native_schema_sha256", "observer_enrollment_ids", "handler_kind")
+        if any(_canonical(row[field]) != _canonical(registration[field]) for field in common_fields):
+            raise NativePluginLoadUnavailable("native candidate differs from its registration projection")
         argument_schema, result_schema = row["argument_schema"], row["result_schema"]
         if not isinstance(argument_schema, dict) or not isinstance(result_schema, dict):
             raise NativePluginLoadUnavailable("native candidate schemas must be JSON objects")
@@ -588,6 +802,20 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
         if (not isinstance(schema_digest, str) or not _SHA256.fullmatch(schema_digest)
                 or hashlib.sha256(_canonical(argument_schema)).hexdigest() != schema_digest):
             raise NativePluginLoadUnavailable("native candidate argument schema digest differs")
+        if schema_digest != registration["native_schema_sha256"]:
+            raise NativePluginLoadUnavailable("native candidate schema differs from its selected registration")
+        handler_kind = registration["handler_kind"]
+        action_bindings = registration["action_bindings"]
+        if handler_kind == "effect-action":
+            binding_id = action_bindings[0]["action_binding_id"] if len(action_bindings) == 1 else None
+            expected_action = (binding_id.split(":action:", 1)[1]
+                               if isinstance(binding_id, str) else None)
+        elif handler_kind == "mcp-dispatch":
+            expected_action = registration["handler_id"]
+        else:
+            expected_action = reg_id
+        if action_id != expected_action:
+            raise NativePluginLoadUnavailable("native candidate action differs from the registration projection")
         observers = row["observer_enrollment_ids"]
         if (not isinstance(observers, list) or not 1 <= len(observers) <= 64
                 or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in observers)
@@ -603,16 +831,29 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
             raise NativePluginLoadUnavailable("native MCP candidate has the installer action owner")
         if adapter_id != _NATIVE_MCP_ADAPTER_ID and server != "hermes-installer":
             raise NativePluginLoadUnavailable("compiled installer action has an unapproved toolset owner")
-        names.add(name)
-        actions.add((adapter_id, action_id))
+        result_schema_id = registration["result_schema_id"]
+        if ((reg_id, name) in _BOUNDED_BACKEND_REGISTRATIONS
+                and (result_schema_id != _BOUNDED_BACKEND_RESULT_SCHEMA_ID
+                     or _canonical(result_schema) != _canonical({
+                         "additionalProperties": False,
+                         "properties": {
+                             "result": {"oneOf": [{"type": "object"}, {"type": "array"}]},
+                             "result_trust": {"const": "untrusted-backend-data"},
+                             "schema": {"const": 1},
+                         },
+                         "required": ["schema", "result_trust", "result"],
+                         "type": "object",
+                     }))):
+            raise NativePluginLoadUnavailable("backend result schema is not the exact v113 bounded envelope")
+        candidate_registration_ids.add(reg_id)
         result.append(SelectedNativeCandidate(
             name, adapter_id, action_id, _freeze_json(argument_schema), _freeze_json(result_schema),
-            schema_digest, tuple(observers), server, description,
+            schema_digest, tuple(observers), server, description, reg_id, row["toolset"], row["family"],
+            handler_kind, result_schema_id, tuple(registration["selector_fields"]),
+            tuple(_freeze_json(item) for item in action_bindings),
         ))
-    selected_pairs = {(effect.adapter_id, effect.action_id) for effect in selected.adapter_rows}
-    candidate_pairs = {pair for pair in actions if pair[0] != _NATIVE_MCP_ADAPTER_ID}
-    if candidate_pairs != selected_pairs:
-        raise NativePluginLoadUnavailable("native candidate index does not cover the exact root-selected actions")
+    if candidate_registration_ids != set(registrations_by_id):
+        raise NativePluginLoadUnavailable("native candidate set does not cover the exact registration projection")
     return tuple(result)
 
 
