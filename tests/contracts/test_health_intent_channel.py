@@ -141,6 +141,17 @@ class HealthIntentChannelSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _validate_health_receipt_evidence(malformed, completion)
 
+        wrong_result = [dict(row) for row in event_proof]
+        result_row = next(row for row in wrong_result if row["event_kind"] == "tool-result")
+        result_row["result_bytes"] = base64.b64encode(b'{"outcome":"failed"}').decode("ascii")
+        malformed = {**evidence, "health_event_proof": wrong_result}
+        with self.assertRaises(ValueError):
+            _validate_health_receipt_evidence(malformed, completion)
+
+        malformed = {**evidence, "health_receipt_body": {**receipt, "status": "failed"}}
+        with self.assertRaises(ValueError):
+            _validate_health_receipt_evidence(malformed, completion)
+
 
 if __name__ == "__main__":
     unittest.main()
