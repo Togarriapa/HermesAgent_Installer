@@ -37,6 +37,42 @@ def test_application_only_mount_ids_do_not_expand_generic_build_grammar():
         _resolve_argv_recipe(recipe, additional_mount_ids=("caller-path",))
 
 
+def test_application_pm_symlink_closure_requires_in_tree_target_members():
+    regular = SimpleNamespace(kind="file", relative_path="lib/python3.14/os.py")
+    safe_link = SimpleNamespace(kind="symlink", relative_path="lib64", link_target="lib")
+    ManagedBuildJobRunner._validate_application_symlink_closure(
+        {regular.relative_path: regular, safe_link.relative_path: safe_link},
+        {safe_link.relative_path: safe_link})
+
+    escaping = SimpleNamespace(kind="symlink", relative_path="lib64", link_target="../../outside")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {regular.relative_path: regular, escaping.relative_path: escaping},
+            {escaping.relative_path: escaping})
+
+    missing = SimpleNamespace(kind="symlink", relative_path="lib64", link_target="missing")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {regular.relative_path: regular, missing.relative_path: missing},
+            {missing.relative_path: missing})
+
+
+def test_application_pm_symlink_closure_rejects_cycles_and_symlink_parents():
+    left = SimpleNamespace(kind="symlink", relative_path="lib/a", link_target="b")
+    right = SimpleNamespace(kind="symlink", relative_path="lib/b", link_target="a")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {left.relative_path: left, right.relative_path: right},
+            {left.relative_path: left, right.relative_path: right})
+
+    parent = SimpleNamespace(kind="symlink", relative_path="lib", link_target="real")
+    child = SimpleNamespace(kind="symlink", relative_path="lib/alias", link_target="target")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {parent.relative_path: parent, child.relative_path: child},
+            {parent.relative_path: parent, child.relative_path: child})
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="root-owned held descriptor staging is required")
 def test_application_held_member_staging_rehashes_and_rejects_mutated_bytes(tmp_path):
     source = tmp_path / "held.whl"
@@ -77,6 +113,41 @@ def test_application_held_member_staging_rehashes_and_rejects_mutated_bytes(tmp_
                 os.close(memfd)
     finally:
         os.close(fd)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() != 0,
+                    reason="root-owned O_PATH symlink receipt staging is Linux-only")
+def test_application_pm_runtime_stages_only_held_in_tree_symlinks(tmp_path):
+    runtime = tmp_path / "runtime"
+    (runtime / "lib" / "python3.14").mkdir(parents=True)
+    body = b"root-held runtime member"
+    member_path = runtime / "lib" / "python3.14" / "os.py"
+    member_path.write_bytes(body)
+    member_path.chmod(0o444)
+    link_path = runtime / "lib64"
+    link_path.symlink_to("lib", target_is_directory=True)
+    member_fd = os.open(member_path, os.O_RDONLY | os.O_NOFOLLOW)
+    link_fd = os.open(link_path, os.O_PATH | os.O_NOFOLLOW)
+    try:
+        if os.fstat(member_fd).st_uid != 0 or os.fstat(link_fd).st_uid != 0:
+            pytest.skip("root-owned runtime members are unavailable")
+        file_member = SimpleNamespace(relative_path="lib/python3.14/os.py", fd=member_fd,
+            sha256=hashlib.sha256(body).hexdigest(), size_bytes=len(body), executable=False,
+            receipt_handle="runtime-file-receipt-" + "f" * 32, kind="file", link_target=None)
+        link_bytes = b"lib"
+        symlink_member = SimpleNamespace(relative_path="lib64", fd=link_fd,
+            sha256=hashlib.sha256(link_bytes).hexdigest(), size_bytes=len(link_bytes), executable=False,
+            receipt_handle="runtime-link-receipt-" + "e" * 32, kind="symlink", link_target="lib")
+        destination = tmp_path / "staged-runtime"
+        rows = ManagedBuildJobRunner._stage_application_held_members(
+            (file_member, symlink_member), destination, allow_symlinks=True)
+        assert (destination / "lib64").is_symlink()
+        assert os.readlink(destination / "lib64") == "lib"
+        assert (destination / "lib64" / "python3.14" / "os.py").read_bytes() == body
+        assert {row.path for row in rows} == {"lib64", "lib/python3.14/os.py"}
+    finally:
+        os.close(member_fd)
+        os.close(link_fd)
 
 
 def _test_temp_parent() -> str:

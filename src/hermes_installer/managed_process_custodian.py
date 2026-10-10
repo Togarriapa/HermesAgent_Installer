@@ -15,10 +15,12 @@ import hmac
 import json
 import math
 import os
+import posixpath
 import pwd
 import re
 import select
 import shutil
+import secrets
 import stat
 import subprocess
 import sys
@@ -5557,6 +5559,57 @@ class _RootPreparedBuildRuntime:
     tasks_max: int
 
 
+@dataclass(frozen=True, slots=True)
+class _RootApplicationBuildInputs:
+    """Private path projection for the shared kernel build executor.
+
+    This is data assembled from the sealed descriptor bundle by the app-only
+    adapter. It is not an authority context or a substitute admission DTO.
+    """
+    target_id: str
+    generation: str
+    service_generation_digest: str
+    build_service_enrollment_id: str
+    build_service_generation: str
+    enrollment_id: str
+    operation_id: str
+    selection_digest: str
+    source_artifact_id: str
+    source_sha256: str
+    source_root: Path
+    source_tree_files: tuple[Any, ...]
+    source_tree_manifest_sha256: str
+    toolchain_artifact_id: str
+    toolchain_sha256: str
+    toolchain_root: Path
+    toolchain_tree_files: tuple[Any, ...]
+    toolchain_tree_manifest_sha256: str
+    builder_artifact_id: str
+    builder_sha256: str
+    builder_executable: Path
+    argv_recipe: tuple[Any, ...]
+    environment: Mapping[str, str]
+    output_specs: Mapping[str, Any]
+    output_root: None
+    output_root_id: str
+    output_owner_uid: int
+    output_owner_gid: int
+    max_lifetime_seconds: int
+    output_root_fd: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ApplicationHeldMember:
+    relative_path: str
+    fd: int
+    sha256: str
+    size_bytes: int
+    executable: bool
+    receipt_handle: str
+    kind: str = "file"
+    link_target: str | None = None
+
+
 class ManagedBuildJobRunner:
     """Run one root-selected build recipe in a private transient systemd unit.
 
@@ -5602,6 +5655,414 @@ class ManagedBuildJobRunner:
         self._records: dict[str, Mapping[str, Any]] = {}
         self._lock = threading.RLock()
         self._setup_build_grant_issuer: Any | None = None
+        self._application_build_grant_issuer: Any | None = None
+
+    def bind_application_build_grant_issuer(self, issuer: Any) -> None:
+        """Bind the one root app-setup admission issuer for the fixed runner."""
+        from hermes_installer.authority.application_build_admission import RootApplicationSetupBuildGrantIssuer
+        if (os.geteuid() != 0 or type(issuer) is not RootApplicationSetupBuildGrantIssuer
+                or not callable(getattr(getattr(issuer, "admission", None), "verify_current", None))):
+            raise ValueError("application setup build grant issuer is unavailable")
+        with self._lock:
+            if self._application_build_grant_issuer not in (None, issuer):
+                raise ValueError("a different root application build issuer is already bound")
+            self._application_build_grant_issuer = issuer
+
+    def run_selected_application_runtime_build(self, inputs: Any, *, selection: Any,
+                                               grant: Any, timeout: float,
+                                               cancelled: Callable[[], bool]):
+        """Run a fixed application environment build from root-held input FDs.
+
+        This app-only route consumes the sealed application setup grant and
+        stages verified descriptors into private root-owned trees. It never
+        accepts a worker effect, host path, caller argv, or generic profile
+        lookup. The shared executor provides the transient-unit/PIDFD/cgroup,
+        namespace, mount, deadline and cleanup proof.
+        """
+        from hermes_installer.authority.application_build_admission import (
+            RootApplicationBuildInputMember, RootApplicationSetupBuildGrant, RootResolvedApplicationBuildInputs,
+            RootSelectedApplicationBuildSelection,
+        )
+        from hermes_installer.authority.build_execution import (
+            BUILD_MOUNT_TARGETS, ManagedBuildResult, _BuildInputTreeFile,
+            managed_process_identity_digest,
+        )
+        from hermes_installer.authority.types import AuthorityDenied
+        from hermes_installer.protected_enrollment import FixedBuildProfile
+
+        with self._lock:
+            issuer = self._application_build_grant_issuer
+        if (os.geteuid() != 0 or not sys.platform.startswith("linux")
+                or issuer is None or type(selection) is not RootSelectedApplicationBuildSelection
+                or type(grant) is not RootApplicationSetupBuildGrant
+                or type(inputs) is not RootResolvedApplicationBuildInputs
+                or inputs._selection is not selection or inputs._registry is not issuer.admission
+                or selection._registry is not issuer.admission
+                or not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                or not 0 < timeout <= 600):
+            raise AuthorityDenied("build.application", "selected application build admission is unavailable")
+
+        registry = issuer.admission
+        profile = selection.build_profile
+        build_service = selection.build_service
+        fixed_profiles = {
+            "application-graphify-runtime-prepare-v1": ("graphify", "qualify-graphify-v1",
+                "application-graphify-runtime-prepare:start"),
+            "application-browser-use-runtime-prepare-v1": ("browser-use", "qualify-browser-use-v1",
+                "application-browser-use-runtime-prepare:start"),
+            "application-scrapegraph-ai-runtime-prepare-v1": ("scrapegraph-ai", "qualify-scrapegraph-v1",
+                "application-scrapegraph-ai-runtime-prepare:start"),
+            "application-hyperframes-runtime-prepare-v1": ("hyperframes", "qualify-hyperframes-v1",
+                "application-hyperframes-runtime-prepare:start"),
+        }
+        finite = fixed_profiles.get(selection.build_profile_id)
+        if (type(profile) is not FixedBuildProfile or finite is None
+                or selection.application_id != finite[0] or selection.workflow_id != finite[1]
+                or selection.target_id != finite[2] or selection.operation_id != selection.build_profile_id
+                or selection.application_id == "hyperframes"
+                or profile.target_id != selection.target_id or profile.generation.startswith("app-setup-") is False
+                or profile.build_service_enrollment_id != selection.build_service_enrollment_id
+                or profile.build_service_generation != selection.build_service_generation
+                or profile.output_root_id != selection.output_root_receipt_handle
+                or profile.output_owner_uid != inputs.output_owner_uid
+                or selection.recipe_sha256 != grant.recipe_sha256
+                or selection.controller_binding_handle != grant.controller_binding_handle):
+            raise AuthorityDenied("build.application_binding", "application selection differs from its finite protected recipe")
+        expected_argv = (
+            {"build_path": {"mount_id": "builder", "relative_path": ""}},
+            {"literal": "-I"},
+            {"build_path": {"mount_id": "toolchain", "relative_path":
+                             "hermes_installer/authority/application_environment_builder.py"}},
+        )
+        if (tuple(profile.argv_recipe) != expected_argv or dict(profile.environment)
+                or set(profile.output_specs) != {"runtime-environment.tar"}
+                or profile.output_specs["runtime-environment.tar"].relative_path != "runtime-environment.tar"
+                or profile.output_specs["runtime-environment.tar"].kind != "file"):
+            raise AuthorityDenied("build.application_recipe", "application build recipe is not the fixed offline driver")
+        if (selection.pm_runtime_closure_sha256 != getattr(selection.pm_projection, "base_closure_sha256", None)
+                or selection.pm_runtime_closure_sha256 != getattr(inputs, "pm_runtime_closure_sha256", None)
+                or not inputs.python_runtime_members
+                or len(inputs.runtime_toolchain_receipt_handles) != 2
+                or inputs.uv_fd is None or inputs.uv_sha256 is None
+                or inputs.uv_size_bytes is None):
+            raise AuthorityDenied("build.application_runtime", "complete current PM runtime closure is unavailable")
+
+        expected_pairs = (
+            (inputs.selection_handle, selection.selection_handle),
+            (inputs.application_id, selection.application_id),
+            (inputs.build_profile_id, selection.build_profile_id),
+            (inputs.runtime_preparation_selection_handle, selection.runtime_preparation_selection_handle),
+            (inputs.plan_sha256, selection.plan_sha256),
+            (inputs.target_id, selection.target_id), (inputs.operation_id, selection.operation_id),
+            (inputs.setup_session_id, selection.setup_session_id),
+            (inputs.transaction_handle, selection.transaction_handle),
+            (inputs.prepared_generation_id, selection.prepared_generation_id),
+            (inputs.prepared_generation_digest, selection.prepared_generation_digest),
+            (inputs.source_receipt_handle, selection.source_receipt_handle),
+            (inputs.source_manifest_sha256, selection.source_manifest_sha256),
+            (inputs.pm_runtime_closure_sha256, selection.pm_runtime_closure_sha256),
+            (inputs.lock_receipt_handle, selection.lock_receipt_handle),
+            (inputs.lock_sha256, selection.lock_sha256),
+            (inputs.package_closure_receipt_handle, selection.package_closure_receipt_handle),
+            (inputs.build_backend_closure_receipt_handle, selection.build_backend_closure_receipt_handle),
+            (inputs.recipe_sha256, selection.recipe_sha256),
+            (inputs.builder_sha256, profile.builder_sha256),
+            (inputs.builder_receipt_handle, selection.pm_runtime.receipt_handle),
+            (inputs.driver_receipt_handle, selection.builder_module_receipt_handle),
+            (inputs.driver_sha256, selection.builder_module_sha256),
+            (inputs.driver_size_bytes, selection.builder_module.size_bytes),
+            (inputs.runtime_toolchain_receipt_handles, selection.runtime_toolchain_receipt_handles),
+            (inputs.uv_source_receipt_handle, selection.pm_uv.source_receipt_handle),
+            (inputs.uv_artifact_id, selection.pm_uv.artifact_id),
+            (inputs.build_service_id, selection.build_service_enrollment_id),
+            (inputs.build_service_selection_handle, selection.build_service_selection_handle),
+            (inputs.build_service_generation, selection.build_service_generation),
+            (inputs.output_root_id, selection.output_root_receipt_handle),
+            (inputs.controller_binding_handle, selection.controller_binding_handle),
+            (inputs.output_owner_uid, build_service.service_uid),
+            (inputs.output_owner_gid, build_service.service_gid),
+        )
+        if any(left != right for left, right in expected_pairs):
+            raise AuthorityDenied("build.application_binding", "held application inputs differ from their sealed selection")
+        python_executable_member = inputs.python_executable_member
+        if (type(python_executable_member) is not RootApplicationBuildInputMember
+                or python_executable_member.relative_path != "bin/python3.14"
+                or python_executable_member.kind != "file" or python_executable_member.link_target is not None
+                or python_executable_member.fd != inputs.builder_fd
+                or python_executable_member.receipt_handle != inputs.builder_receipt_handle
+                or python_executable_member.sha256 != inputs.builder_sha256
+                or python_executable_member.size_bytes != inputs.builder_size_bytes
+                or python_executable_member.executable is not True):
+            raise AuthorityDenied("build.application_runtime", "PM interpreter member differs from its held executable")
+        if (len(inputs.runtime_toolchain_receipt_handles) != 2
+                or inputs.runtime_toolchain_receipt_handles[0] != inputs.builder_receipt_handle
+                or inputs.runtime_toolchain_receipt_handles[1] != selection.pm_uv.receipt_handle):
+            raise AuthorityDenied("build.application_runtime", "PM Python/uv receipts differ from the prepared toolchain")
+        all_members = (inputs.source_members + inputs.package_members + inputs.backend_members
+                       + inputs.python_runtime_members + (inputs.recipe_member,))
+        if any(type(member) is not RootApplicationBuildInputMember for member in all_members):
+            raise AuthorityDenied("build.application_input", "application input includes an unissued member descriptor")
+
+        selection_digest = hashlib.sha256(json.dumps({
+            "selection_handle": selection.selection_handle,
+            "recipe_sha256": selection.recipe_sha256,
+            "grant_id": grant.grant_id,
+            "operation_id": selection.operation_id,
+            "parameters": {},
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        if (grant.selection_handle != selection.selection_handle
+                or grant.target != selection.target_id or grant.operation_id != selection.operation_id
+                or grant.parameters_digest != hashlib.sha256(b"{}").hexdigest()
+                or grant.selection_handle != inputs.selection_handle):
+            raise AuthorityDenied("build.application_grant", "one-use application setup grant does not bind this selection")
+
+        # Check every controller fact from the registry-issued descriptor bundle.
+        controller_fd = -1
+        daemon_fd = -1
+        output_fd = -1
+        staging_root: Path | None = None
+        active_key = (selection.target_id, profile.generation)
+        try:
+            controller_fd = os.dup(inputs.controller_pidfd)
+            if (inputs.controller_pid != os.getpid() or inputs.controller_uid != 0
+                    or self.manager._pidfd_target(controller_fd) != inputs.controller_pid
+                    or _pidfd_exited(controller_fd)
+                    or _pid_identity(inputs.controller_pid)[0] != inputs.controller_start_ticks):
+                raise AuthorityDenied("build.application_controller", "selected setup controller identity is stale")
+            status = Path(f"/proc/{inputs.controller_pid}/status").read_text().splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if (not uids or not gids or any(int(value) != inputs.controller_uid for value in uids)
+                    or any(int(value) != inputs.controller_gid for value in gids)):
+                raise AuthorityDenied("build.application_controller", "selected setup controller credentials changed")
+            if (build_service.verify_current() is not build_service
+                    or profile.build_service_generation != build_service.generation
+                    or profile.service_generation_digest != selection.prepared_generation_digest):
+                raise AuthorityDenied("build.application_service", "prepared application build service is stale")
+            try:
+                account = pwd.getpwuid(inputs.output_owner_uid)
+                groups = os.getgrouplist(account.pw_name, account.pw_gid)
+            except (KeyError, OSError):
+                raise AuthorityDenied("build.application_service", "dedicated application build account is unavailable") from None
+            if (account.pw_gid != inputs.output_owner_gid or set(groups) != {inputs.output_owner_gid}
+                    or inputs.output_owner_uid <= 0):
+                raise AuthorityDenied("build.application_service", "application build service account is not exclusive")
+
+            fresh = registry.verify_current(selection)
+            try:
+                if (type(fresh) is not RootResolvedApplicationBuildInputs
+                        or fresh.selection_handle != selection.selection_handle
+                        or fresh._registry is not registry
+                        or fresh._selection is not selection
+                        or fresh.controller_pid != inputs.controller_pid
+                        or fresh.controller_start_ticks != inputs.controller_start_ticks
+                        or fresh.controller_uid != inputs.controller_uid
+                        or fresh.controller_gid != inputs.controller_gid
+                        or self._application_inputs_fingerprint(fresh)
+                            != self._application_inputs_fingerprint(inputs)):
+                    raise AuthorityDenied("build.application_current", "current application input projection changed")
+            finally:
+                fresh.close()
+
+            # Stage into a unique root-only input root. These files are copied
+            # exclusively from sealed/readonly root-held FDs by digest.
+            parent = Path("/run/hermes-installer/application-build-inputs")
+            self.manager._ensure_root_runtime_directory(parent, 0o700)
+            staging_root = parent / secrets.token_hex(24)
+            staging_root.mkdir(mode=0o700)
+            os.chown(staging_root, 0, 0)
+            os.chmod(staging_root, 0o700)
+            source_root = staging_root / "source"
+            toolchain_root = staging_root / "toolchain"
+            package_root = staging_root / "packages"
+            backend_root = staging_root / "backend"
+            uv_root = staging_root / "uv"
+            recipe_root = staging_root / "recipe"
+            python_root = staging_root / "python-runtime"
+            source_rows = self._stage_application_held_members(inputs.source_members, source_root)
+            package_rows = self._stage_application_held_members(inputs.package_members, package_root)
+            backend_rows = self._stage_application_held_members(inputs.backend_members, backend_root)
+            if not backend_rows and inputs.build_backend_closure_receipt_handle is not None:
+                raise AuthorityDenied("build.application_backend", "selected backend closure has no held members")
+            if not package_rows or not backend_rows:
+                raise AuthorityDenied("build.application_closure", "complete offline app/backend wheels are unavailable")
+            toolchain_root.mkdir(mode=0o700)
+            driver_member = _ApplicationHeldMember(
+                "hermes_installer/authority/application_environment_builder.py", inputs.driver_fd,
+                inputs.driver_sha256, inputs.driver_size_bytes, False, selection.builder_module_receipt_handle)
+            toolchain_rows = self._stage_application_held_members((driver_member,), toolchain_root)
+            uv_member = _ApplicationHeldMember("uv", inputs.uv_fd, inputs.uv_sha256,
+                                               inputs.uv_size_bytes, True, inputs.runtime_toolchain_receipt_handles[1])
+            uv_rows = self._stage_application_held_members((uv_member,), uv_root)
+            if len(uv_rows) != 1 or uv_rows[0].path != "uv":
+                raise AuthorityDenied("build.application_uv", "selected uv executable staging failed")
+            recipe_root.mkdir(mode=0o700)
+            recipe_member = inputs.recipe_member
+            if (recipe_member.relative_path != "application-build-input.json"
+                    or hashlib.sha256(inputs.recipe_config_bytes).hexdigest() != inputs.recipe_config_sha256
+                    or recipe_member.sha256 != inputs.recipe_config_sha256
+                    or recipe_member.size_bytes != len(inputs.recipe_config_bytes)):
+                raise AuthorityDenied("build.application_recipe", "held application build config differs from recipe receipt")
+            try:
+                config = json.loads(inputs.recipe_config_bytes.decode("utf-8"),
+                                    object_pairs_hook=_reject_duplicate_json_keys)
+            except (UnicodeError, ValueError, json.JSONDecodeError):
+                raise AuthorityDenied("build.application_recipe", "held application config is not strict JSON") from None
+            config_fields = {
+                "schema", "application_id", "source_manifest_sha256", "lock_sha256",
+                "package_closure_sha256", "backend_closure_sha256", "packages",
+                "backend_packages", "recipe_sha256", "uv_executable_sha256",
+                "python_executable_sha256", "python_runtime_closure_sha256",
+                "python_runtime_executable_relative_path",
+            }
+            if (not isinstance(config, dict) or set(config) != config_fields
+                    or type(config.get("schema")) is not int or config["schema"] != 1
+                    or config.get("application_id") != selection.application_id
+                    or config.get("source_manifest_sha256") != selection.source_manifest_sha256
+                    or config.get("lock_sha256") != selection.lock_sha256
+                    or config.get("package_closure_sha256") != selection.package_closure.package_closure_sha256
+                    or config.get("backend_closure_sha256") != getattr(selection.backend_closure, "backend_closure_sha256", None)
+                    or config.get("recipe_sha256") != selection.recipe_sha256
+                    or config.get("uv_executable_sha256") != inputs.uv_sha256
+                    or config.get("python_executable_sha256") != inputs.builder_sha256
+                    or config.get("python_runtime_closure_sha256") != selection.pm_runtime_closure_sha256
+                    or config.get("python_runtime_executable_relative_path") != "bin/python3.14"):
+                raise AuthorityDenied("build.application_recipe", "held application config differs from exact selected inputs")
+            self._validate_application_wheel_config(config, inputs.package_members,
+                                                    inputs.backend_members)
+            recipe_rows = self._stage_application_held_members((recipe_member,), recipe_root)
+
+            # PM interpreter is both argv[0] and a receipt-bound runtime member.
+            runtime_members = tuple(inputs.python_runtime_members) + (inputs.python_executable_member,)
+            python_root.mkdir(mode=0o700)
+            python_rows = self._stage_application_held_members(
+                runtime_members, python_root, allow_symlinks=True)
+            if not any(row.path == "bin/python3.14" and row.sha256 == inputs.builder_sha256
+                       for row in python_rows):
+                raise AuthorityDenied("build.application_runtime", "PM base interpreter is absent from staged closure")
+
+            builder_dir = staging_root / "builder"
+            builder_dir.mkdir(mode=0o700)
+            builder_file = builder_dir / "python3.14"
+            self._copy_application_held_file(inputs.builder_fd, inputs.builder_sha256,
+                                              inputs.builder_size_bytes, builder_file, executable=True)
+            output_fd = os.dup(inputs.output_root_fd)
+            output_info = os.fstat(output_fd)
+            output_cap_fd = selection.output_root.open_current()
+            try:
+                output_cap_info = os.fstat(output_cap_fd)
+            finally:
+                os.close(output_cap_fd)
+            if ((output_info.st_dev, output_info.st_ino) != (output_cap_info.st_dev, output_cap_info.st_ino)
+                    or not stat.S_ISDIR(output_info.st_mode) or output_info.st_uid != inputs.output_owner_uid
+                    or output_info.st_gid != inputs.output_owner_gid or stat.S_IMODE(output_info.st_mode) != 0o700
+                    or os.listdir(output_fd)):
+                raise AuthorityDenied("build.application_output", "held application output root is stale or nonempty")
+
+            internal_inputs = _RootApplicationBuildInputs(
+                target_id=selection.target_id, generation=profile.generation,
+                service_generation_digest=profile.service_generation_digest,
+                build_service_enrollment_id=selection.build_service_enrollment_id,
+                build_service_generation=selection.build_service_generation,
+                enrollment_id=selection.setup_session_id, operation_id=selection.operation_id,
+                selection_digest=selection_digest, source_artifact_id=profile.source_artifact_id,
+                source_sha256=profile.source_sha256, source_root=source_root,
+                source_tree_files=source_rows,
+                source_tree_manifest_sha256=self._application_tree_manifest(source_rows),
+                toolchain_artifact_id=profile.toolchain_artifact_id,
+                toolchain_sha256=profile.toolchain_sha256, toolchain_root=toolchain_root,
+                toolchain_tree_files=toolchain_rows,
+                toolchain_tree_manifest_sha256=self._application_tree_manifest(toolchain_rows),
+                builder_artifact_id=profile.builder_artifact_id,
+                builder_sha256=profile.builder_sha256, builder_executable=builder_file,
+                argv_recipe=profile.argv_recipe, environment=profile.environment,
+                output_specs=profile.output_specs, output_root=None,
+                output_root_id=inputs.output_root_id, output_owner_uid=inputs.output_owner_uid,
+                output_owner_gid=inputs.output_owner_gid,
+                max_lifetime_seconds=profile.max_lifetime_seconds, output_root_fd=output_fd)
+
+            additional_mounts = {
+                "packages": package_root, "backend": backend_root, "uv": uv_root,
+                "recipe": recipe_root, "python-runtime": python_root,
+            }
+            root_profile = _RootPreparedBuildRuntime(
+                profile_id=selection.build_profile_id, owner_uid=inputs.output_owner_uid,
+                owner_gid=inputs.output_owner_gid, service_user=account.pw_name,
+                generation=profile.generation,
+                max_lifetime_seconds=float(profile.max_lifetime_seconds),
+                memory_max_bytes=536_870_912, cpu_quota_percent=100, io_weight=100,
+                tasks_max=64)
+            daemon_fd = os.pidfd_open(os.getpid(), 0)
+
+            def revalidate_app() -> bool:
+                if cancelled() or _pidfd_exited(daemon_fd) or _pidfd_exited(controller_fd):
+                    return False
+                try:
+                    now_inputs = registry.verify_current(selection)
+                    try:
+                        same = (type(now_inputs) is RootResolvedApplicationBuildInputs
+                            and now_inputs._selection is selection
+                            and self._application_inputs_fingerprint(now_inputs)
+                                == self._application_inputs_fingerprint(inputs)
+                            and now_inputs.controller_pidfd >= 0
+                            and self.manager._pidfd_target(now_inputs.controller_pidfd) == inputs.controller_pid
+                            and not _pidfd_exited(now_inputs.controller_pidfd))
+                    finally:
+                        now_inputs.close()
+                    return (same and build_service.verify_current() is build_service
+                            and self.manager._pidfd_target(controller_fd) == inputs.controller_pid
+                            and _pid_identity(inputs.controller_pid)[0] == inputs.controller_start_ticks)
+                except Exception:
+                    return False
+
+            reservation = (selection.target_id, profile.generation)
+            with self._lock:
+                if reservation in self._active or self._MOUNT_RESERVATION in self._active:
+                    raise AuthorityDenied("build.application", "fixed app build mounts are already reserved")
+                self._active.update((reservation, self._MOUNT_RESERVATION))
+            try:
+                consumed = False
+                def launch_admission_current() -> bool:
+                    nonlocal consumed
+                    if not revalidate_app() or issuer.monotonic() >= grant.expires_monotonic:
+                        return False
+                    if not consumed:
+                        try:
+                            issuer.consume(grant, selection)
+                        except Exception:
+                            return False
+                        consumed = True
+                    return (issuer._issued.get(grant.grant_id) is grant
+                            and grant.grant_id in issuer._spent)
+                return self._run_one(
+                    internal_inputs, root_profile, None, None, os.getpid(), daemon_fd,
+                    float(timeout), cancelled, ManagedBuildResult, managed_process_identity_digest,
+                    BUILD_MOUNT_TARGETS,
+                    root_currentness=revalidate_app,
+                    root_selection_digest=selection_digest,
+                    root_effect_check=launch_admission_current,
+                    output_root_fd=output_fd,
+                    additional_readonly_mounts=additional_mounts,
+                    require_root_effect=True)
+            finally:
+                with self._lock:
+                    self._active.discard(reservation)
+                    self._active.discard(self._MOUNT_RESERVATION)
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("build.application", "root application build admission failed closed") from None
+        finally:
+            for fd in (output_fd, controller_fd, daemon_fd):
+                if type(fd) is int and fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+            with contextlib.suppress(Exception):
+                inputs.close()
+            if staging_root is not None:
+                with contextlib.suppress(Exception):
+                    shutil.rmtree(staging_root)
 
     def bind_setup_build_grant_issuer(self, issuer: Any) -> None:
         """Bind the one root setup issuer used by the fixed Xpra build path."""
@@ -7021,14 +7482,67 @@ class ManagedBuildJobRunner:
                 os.close(fd)
 
     @staticmethod
-    def _stage_application_held_members(members: Any, destination: Path) -> tuple[Any, ...]:
-        """Copy a bounded regular-file closure from root-held FDs into a fresh tree.
+    def _application_inputs_fingerprint(inputs: Any) -> tuple[Any, ...]:
+        """Bind every registry projection field/member to retained descriptor identity."""
+        scalar_names = (
+            "selection_handle", "application_id", "build_profile_id", "target_id", "operation_id",
+            "runtime_preparation_selection_handle", "plan_sha256", "setup_session_id",
+            "transaction_handle", "prepared_generation_id", "prepared_generation_digest",
+            "source_receipt_handle", "source_manifest_sha256", "pm_runtime_closure_sha256",
+            "lock_receipt_handle", "lock_sha256", "package_closure_receipt_handle",
+            "build_backend_closure_receipt_handle", "recipe_sha256", "builder_receipt_handle",
+            "builder_sha256", "builder_size_bytes", "driver_receipt_handle", "driver_sha256",
+            "driver_size_bytes", "recipe_config_sha256", "output_root_id", "output_owner_uid",
+            "output_owner_gid", "build_service_id", "build_service_selection_handle",
+            "build_service_generation", "runtime_toolchain_receipt_handles", "controller_binding_handle",
+            "controller_pid", "controller_start_ticks", "controller_uid", "controller_gid",
+            "uv_sha256", "uv_size_bytes",
+            "uv_source_receipt_handle", "uv_artifact_id",
+        )
+        try:
+            scalars = tuple(getattr(inputs, name) for name in scalar_names)
+            scalars += (hashlib.sha256(inputs.recipe_config_bytes).hexdigest(),)
+            descriptor_fields = (
+                ("builder_fd",), ("uv_fd",), ("driver_fd",), ("output_root_fd",),
+                ("controller_pidfd",),
+            )
+            descriptors = []
+            for group in descriptor_fields:
+                fd = getattr(inputs, group[0])
+                if fd is None:
+                    descriptors.append(None)
+                    continue
+                info = os.fstat(fd)
+                descriptors.append((info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                                    info.st_uid, info.st_gid))
+            members = []
+            for group_name in ("source_members", "package_members", "backend_members",
+                               "python_runtime_members", "recipe_member", "python_executable_member"):
+                value = getattr(inputs, group_name)
+                group = value if isinstance(value, (tuple, list)) else (value,)
+                rows = []
+                for item in group:
+                    info = os.fstat(item.fd)
+                    rows.append((item.relative_path, item.sha256, item.size_bytes, item.executable,
+                                 item.receipt_handle, item.kind, item.link_target,
+                                 info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_uid, info.st_gid))
+                members.append((group_name, tuple(rows)))
+            return scalars + (tuple(descriptors), tuple(members))
+        except (AttributeError, OSError, TypeError, ValueError):
+            raise AuthorityDenied("build.application_current", "application descriptor projection is stale") from None
+
+    @staticmethod
+    def _stage_application_held_members(members: Any, destination: Path, *,
+                                        allow_symlinks: bool = False) -> tuple[Any, ...]:
+        """Copy a bounded held-member closure into a fresh private tree.
 
         Entries are internal resolved observations with ``relative_path``,
         ``fd``, ``sha256``, ``size_bytes`` and ``executable`` members. No path
         from an entry is opened; every byte comes from its already-held
-        descriptor and is rehashed while copied. This is used only by the
-        finite application build adapter before it binds app-only trees RO.
+        descriptor and is rehashed while copied. Symlinks are accepted only
+        for the PM-runtime mount, where an O_PATH|O_NOFOLLOW descriptor,
+        exact link text digest, in-tree target closure, and acyclic resolution
+        are all checked before the link is created.
         """
         from hermes_installer.authority.build_execution import _BuildInputTreeFile
 
@@ -7046,6 +7560,7 @@ class ManagedBuildJobRunner:
 
         rows: list[_BuildInputTreeFile] = []
         seen: set[str] = set()
+        entries: dict[str, Any] = {}
         total = 0
         for entry in members:
             relative = getattr(entry, "relative_path", None)
@@ -7059,10 +7574,13 @@ class ManagedBuildJobRunner:
                     or PurePosixPath(relative).as_posix() != relative or relative in seen
                     or type(fd) is not int or fd < 0
                     or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or not isinstance(getattr(entry, "receipt_handle", None), str)
+                    or not 32 <= len(entry.receipt_handle) <= 128
                     or type(size) is not int or not 0 <= size <= 512 * 1024 * 1024
                     or type(executable) is not bool):
                 raise AuthorityDenied("build.application_input", "held application member is malformed")
             seen.add(relative)
+            entries[relative] = entry
             total += size
             if total > 2 * 1024**3:
                 raise AuthorityDenied("build.application_input", "held application input closure exceeds its byte bound")
@@ -7081,7 +7599,21 @@ class ManagedBuildJobRunner:
                     immutable = immutable or sealed
                 except OSError:
                     pass
-            if (not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
+            kind = getattr(entry, "kind", "file")
+            link_target = getattr(entry, "link_target", None)
+            if kind == "symlink":
+                if not allow_symlinks:
+                    raise AuthorityDenied("build.application_input", "symlink is not allowed in this application mount")
+                target_bytes = ManagedBuildJobRunner._read_held_symlink(fd)
+                if (not stat.S_ISLNK(source_info.st_mode) or source_info.st_uid != 0
+                        or source_info.st_size != size or not isinstance(link_target, str)
+                        or target_bytes != link_target.encode("utf-8", "strict")
+                        or hashlib.sha256(target_bytes).hexdigest() != digest
+                        or size != len(target_bytes) or executable):
+                    raise AuthorityDenied("build.application_input", "held PM symlink identity or target digest changed")
+                continue
+            if (kind != "file" or link_target is not None
+                    or not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
                     or not immutable
                     or (source_info.st_nlink != 1 and not (sealed and source_info.st_nlink == 0))
                     or source_info.st_size != size):
@@ -7125,13 +7657,189 @@ class ManagedBuildJobRunner:
             finally:
                 os.close(out)
             rows.append(_BuildInputTreeFile(relative, digest, size, executable))
+        symlink_entries = {name: item for name, item in entries.items()
+                           if getattr(item, "kind", "file") == "symlink"}
+        if symlink_entries:
+            if not allow_symlinks:
+                raise AuthorityDenied("build.application_input", "symlink is not allowed in this application mount")
+            ManagedBuildJobRunner._validate_application_symlink_closure(entries, symlink_entries)
+            for relative, entry in sorted(symlink_entries.items()):
+                target = entry.link_target
+                path = destination.joinpath(*relative.split("/"))
+                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                os.symlink(target, path)
+                rows.append(_BuildInputTreeFile(relative, entry.sha256, entry.size_bytes,
+                                                False, kind="symlink", link_target=target))
         # Reject file/directory aliasing (for example a member named `a` plus
         # another member `a/b`) before the staged tree can be mounted.
         for name in seen:
             parts = name.split("/")
             if any("/".join(parts[:index]) in seen for index in range(1, len(parts))):
                 raise AuthorityDenied("build.application_input", "application member tree has a path collision")
-        return tuple(rows)
+        return tuple(sorted(rows, key=lambda row: row.path))
+
+    @staticmethod
+    def _read_held_symlink(fd: int) -> bytes:
+        """Read link text from an O_PATH symlink FD using readlinkat(AT_EMPTY_PATH)."""
+        if not sys.platform.startswith("linux"):
+            raise AuthorityDenied("build.application_input", "held symlink verification requires Linux")
+        libc = ctypes.CDLL(None, use_errno=True)
+        readlinkat = libc.readlinkat
+        readlinkat.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t)
+        readlinkat.restype = ctypes.c_ssize_t
+        buffer = ctypes.create_string_buffer(4097)
+        size = readlinkat(fd, b"", buffer, 4096)
+        if size < 0 or size > 4095:
+            raise AuthorityDenied("build.application_input", "held symlink text could not be verified")
+        return bytes(buffer.raw[:size])
+
+    @staticmethod
+    def _validate_application_symlink_closure(entries: Mapping[str, Any],
+                                               symlinks: Mapping[str, Any]) -> None:
+        """Require every PM symlink to resolve through the staged manifest in-root."""
+        names = set(entries)
+        for name in symlinks:
+            parts = name.split("/")
+            if any("/".join(parts[:index]) in symlinks for index in range(1, len(parts))):
+                raise AuthorityDenied("build.application_input", "PM symlink has a symlink parent path")
+        for link_path, entry in symlinks.items():
+            target = getattr(entry, "link_target", None)
+            if (not isinstance(target, str) or not target or target.startswith("/")
+                    or "\\" in target or "\x00" in target or len(target.encode("utf-8")) > 4095):
+                raise AuthorityDenied("build.application_input", "PM symlink target is not a bounded relative path")
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(link_path), target))
+            if resolved in {"", ".", ".."} or resolved.startswith("../"):
+                raise AuthorityDenied("build.application_input", "PM symlink escapes the held runtime root")
+            pending = resolved.split("/")
+            visited: set[str] = set()
+            hops = 0
+            while True:
+                prefix = ""
+                replaced = False
+                for index, component in enumerate(pending):
+                    prefix = component if not prefix else prefix + "/" + component
+                    target_entry = symlinks.get(prefix)
+                    if target_entry is None:
+                        continue
+                    if prefix in visited:
+                        raise AuthorityDenied("build.application_input", "PM symlink closure contains a cycle")
+                    visited.add(prefix)
+                    hops += 1
+                    if hops > 40:
+                        raise AuthorityDenied("build.application_input", "PM symlink closure exceeds its resolution bound")
+                    tail = pending[index + 1:]
+                    replacement = posixpath.normpath(posixpath.join(posixpath.dirname(prefix),
+                                                                      target_entry.link_target))
+                    candidate = posixpath.normpath(posixpath.join(replacement, *tail)) if tail else replacement
+                    if candidate in {"", ".", ".."} or candidate.startswith("../"):
+                        raise AuthorityDenied("build.application_input", "PM symlink chain escapes the held runtime root")
+                    pending = candidate.split("/")
+                    replaced = True
+                    break
+                if replaced:
+                    continue
+                final = "/".join(pending)
+                # Directory rows are implicit in a regular-file projection.
+                if final not in names and not any(name.startswith(final.rstrip("/") + "/") for name in names):
+                    raise AuthorityDenied("build.application_input", "PM symlink target has no receipt-bound member")
+                break
+
+    @staticmethod
+    def _copy_application_held_file(fd: int, digest: str, size: int, destination: Path, *,
+                                    executable: bool) -> None:
+        if (type(fd) is not int or fd < 0 or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(size) is not int or size <= 0):
+            raise AuthorityDenied("build.application_input", "held executable is malformed")
+        info = os.fstat(fd)
+        sealed = False
+        if hasattr(fcntl, "F_GET_SEALS"):
+            with contextlib.suppress(OSError):
+                seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+                sealed = seals & (fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                                  | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE) == (
+                                      fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                                      | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_size != size
+                or (info.st_mode & 0o222 and not sealed)
+                or (info.st_nlink != 1 and not (sealed and info.st_nlink == 0))):
+            raise AuthorityDenied("build.application_input", "held executable is not immutable root data")
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        out = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                      | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o700)
+        hasher = hashlib.sha256()
+        offset = 0
+        try:
+            while offset < size:
+                block = os.pread(fd, min(128 * 1024, size - offset), offset)
+                if not block:
+                    raise AuthorityDenied("build.application_input", "held executable ended early")
+                hasher.update(block)
+                view = memoryview(block)
+                while view:
+                    written = os.write(out, view)
+                    if written <= 0:
+                        raise AuthorityDenied("build.application_input", "executable staging write stalled")
+                    view = view[written:]
+                offset += len(block)
+            if os.pread(fd, 1, size) or hasher.hexdigest() != digest:
+                raise AuthorityDenied("build.application_input", "held executable bytes differ from selected digest")
+            os.fchown(out, 0, 0)
+            os.fchmod(out, 0o555 if executable else 0o444)
+        finally:
+            os.close(out)
+
+    @staticmethod
+    def _application_tree_manifest(rows: tuple[Any, ...]) -> str:
+        serialized = []
+        for row in sorted(rows, key=lambda value: value.path):
+            serialized.append({"path": row.path, "sha256": row.sha256,
+                               "size_bytes": row.size_bytes, "executable": row.executable})
+        return hashlib.sha256(json.dumps(serialized, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _validate_application_wheel_config(config: Mapping[str, Any], packages: Any,
+                                           backend: Any) -> None:
+        """Join driver wheel pins to the exact held artifact member rows."""
+        def check(key: str, prefix: str, members: Any) -> None:
+            rows = config.get(key)
+            if (not isinstance(rows, list) or not rows or len(rows) > 8192
+                    or not isinstance(members, (tuple, list)) or len(rows) != len(members)):
+                raise AuthorityDenied("build.application_recipe", "offline wheel configuration is incomplete")
+            by_name = {}
+            for member in members:
+                relative = getattr(member, "relative_path", None)
+                if (not isinstance(relative, str) or not relative.startswith(prefix + "/")
+                        or relative.count("/") != 1):
+                    raise AuthorityDenied("build.application_recipe", "wheel member path is outside its fixed closure")
+                name = relative.split("/", 1)[1]
+                if name in by_name:
+                    raise AuthorityDenied("build.application_recipe", "wheel closure contains a duplicate filename")
+                by_name[name] = member
+            seen: set[str] = set()
+            for row in rows:
+                if (not isinstance(row, dict)
+                        or set(row) != {"name", "version", "filename", "sha256", "size_bytes"}
+                        or not isinstance(row.get("name"), str) or not row["name"]
+                        or not isinstance(row.get("version"), str) or not row["version"]
+                        or not isinstance(row.get("filename"), str)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,199}\.whl", row["filename"])
+                        or not isinstance(row.get("sha256"), str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+                        or type(row.get("size_bytes")) is not int or row["size_bytes"] <= 0
+                        or row["filename"] in seen):
+                    raise AuthorityDenied("build.application_recipe", "offline wheel pin is malformed or duplicated")
+                seen.add(row["filename"])
+                member = by_name.get(row["filename"])
+                if (member is None or member.sha256 != row["sha256"]
+                        or member.size_bytes != row["size_bytes"]):
+                    raise AuthorityDenied("build.application_recipe", "offline wheel pin differs from held bytes")
+            if seen != set(by_name):
+                raise AuthorityDenied("build.application_recipe", "offline wheel pin set differs from held artifacts")
+
+        check("packages", "package", packages)
+        check("backend_packages", "backend", backend)
 
     @staticmethod
     def _protect_build_mount(path: Path, *, readonly: bool) -> None:
