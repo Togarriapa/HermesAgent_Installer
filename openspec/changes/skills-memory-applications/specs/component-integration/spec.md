@@ -703,3 +703,12 @@ The installer SHALL record v124 actual protected root TTY service-enable configu
 
 - **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
 - **THEN** memory service startup is unavailable and no service authorization is inferred
+
+### Requirement: Actual observed private endpoint and separate model deployments
+
+The installer SHALL require v125 actual root-held endpoint/model/runtime/source-load/current process evidence for private memory route selection, separately for GLM5.2 extraction and embedding.
+
+#### Scenario: Model-list alias without verified source loading
+
+- **WHEN** an endpoint lists a model alias but no exact verified installed model/runtime/config/current load proof exists
+- **THEN** no deployment receipt is minted and private memory remains unavailable with the missing prerequisite stated
