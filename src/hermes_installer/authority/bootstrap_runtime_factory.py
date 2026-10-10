@@ -165,6 +165,31 @@ class RootRuntimeArtifactReceipt:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootReleaseModuleReceipt:
+    """Live source identity for one module held by the installed release.
+
+    This receipt is intentionally distinct from a downloaded component/source
+    receipt. It proves only the immutable installer module bytes and remains
+    usable only while the issuing root setup session and release actor live.
+    """
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    release_commit: str
+    deployment_receipt_sha256: str
+    source_receipt_handle: str
+    _session_id: str = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+
+    def read_current(self) -> bytes:
+        """Read the exact installed module through the held release FD."""
+        return self._session._read_release_member_receipt(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootSelectedInstallationBinding:
     """Opaque session binding; never exposes service or journal paths."""
 
@@ -226,6 +251,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
         return self._session._resolve_native_assembly_member(
             selection_handle, artifact_receipt_handle)
+
+    def resolve_release_member_receipt(self, selection_handle: str,
+                                      artifact_id: str) -> RootReleaseModuleReceipt:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("release member binding is not owned by this setup session")
+        return self._session._resolve_release_member_receipt(selection_handle, artifact_id)
 
     def verify_native_publication_receipt(self, reservation: Any, publication_receipt: Any) -> bool:
         """Re-resolve the durable active CAS before native output receipts are spent."""
@@ -517,6 +548,7 @@ class RootNativeAssemblyDefinitions:
     boundary_overlay_source_commit: str
     effect_selection_receipt_handles: tuple[str, ...]
     _registry_seal: object = field(repr=False, compare=False)
+    release_module_receipts: tuple[RootReleaseModuleReceipt, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -2930,6 +2962,7 @@ class RootBootstrapRuntimeFactory:
         self._catalog = catalog
         self._receipt_registry = receipt_registry
         self._seal = secrets.token_hex(32)
+        self._native_assembly_seal = object()
         self._sessions: dict[str, RootBootstrapSession] = {}
 
     @classmethod
@@ -3105,6 +3138,8 @@ class RootBootstrapSession:
         self._verified_resources: dict[str, tuple[Any, Any]] = {}
         self._native_materializer: Any | None = None
         self._native_materialization_receipts: dict[str, Any] = {}
+        self._native_assembly_selections: dict[str, RootNativeBootstrapAssemblySelection] = {}
+        self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._source_provisioner = self._make_source_provisioner()
         self._selected_installation = RootSelectedInstallationBinding(self, seal)
         self._client = factory.session_store.bootstrap_client(
@@ -3676,6 +3711,117 @@ class RootBootstrapSession:
             hermes_source_tree=self._source_handoff.source.tree_path,
         )
 
+    def _resolve_release_member_receipt(
+            self, selection_handle: str, artifact_id: str) -> RootReleaseModuleReceipt:
+        """Issue a receipt for an actual loaded module in the held release.
+
+        The caller supplies only the opaque assembly handle and release artifact
+        ID. Membership is joined to the current PIDFD-bound actor import origins;
+        arbitrary files from the release tree cannot be presented as loaded
+        registration code.
+        """
+        self._check_live()
+        if (not isinstance(selection_handle, str) or not _ID.fullmatch(selection_handle)
+                or not isinstance(artifact_id, str) or not _ID.fullmatch(artifact_id)):
+            raise BootstrapEnrollmentPending("release member selection identifiers are malformed")
+        selection = self._native_assembly_selections.get(selection_handle)
+        if (not isinstance(selection, RootNativeBootstrapAssemblySelection)
+                or selection.selection_handle != selection_handle
+                or selection.setup_session_id != self._handle.session_id
+                or selection.transaction_handle != self._authorization.transaction_handle
+                or self._last_receipt is None
+                or selection.prepared_generation_id != self._last_receipt.generation_id
+                or selection.protected_enrollment_digest != self._last_receipt.generation_digest
+                or selection.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("release member requires a current root-selected assembly")
+        self._revalidate_native_assembly_selection(selection)
+        release = self._factory._release
+        actor = self._factory._actor
+        actor.verify_current(release)
+        matches = [row for row in release.files if row.artifact_id == artifact_id]
+        if len(matches) != 1 or "module" not in matches[0].roles:
+            raise BootstrapEnrollmentPending("release member is not one unique installed module")
+        descriptor = matches[0]
+        origin_matches = [row for row in actor.module_origins
+                          if row[1] == str(release.release_root / descriptor.relative_path)
+                          and row[4] == descriptor.sha256]
+        if len(origin_matches) != 1:
+            raise BootstrapEnrollmentPending("release module is not in the current actor's verified import closure")
+        receipt_handle = secrets.token_urlsafe(36)
+        receipt = RootReleaseModuleReceipt(
+            artifact_id=descriptor.artifact_id, relative_path=descriptor.relative_path,
+            sha256=descriptor.sha256, size_bytes=descriptor.size_bytes,
+            release_commit=release.release_commit,
+            deployment_receipt_sha256=release.deployment_receipt_sha256,
+            source_receipt_handle=receipt_handle, _session_id=self._handle.session_id,
+            _session_seal=self._seal, _session=self,
+        )
+        self._release_member_receipts[receipt_handle] = receipt
+        return receipt
+
+    def _read_release_member_receipt(self, receipt: RootReleaseModuleReceipt) -> bytes:
+        self._check_live()
+        if (not isinstance(receipt, RootReleaseModuleReceipt)
+                or receipt._session is not self
+                or receipt._session_id != self._handle.session_id
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or self._release_member_receipts.get(receipt.source_receipt_handle) is not receipt):
+            raise BootstrapEnrollmentPending("release member receipt is not retained by this live setup session")
+        selection = next((item for item in self._native_assembly_selections.values()
+                          if item.setup_session_id == receipt._session_id
+                          and item.expires_monotonic > time.monotonic()), None)
+        if selection is None:
+            raise BootstrapEnrollmentPending("release member receipt has no current native assembly selection")
+        self._revalidate_native_assembly_selection(selection)
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
+        if (row is None or "module" not in row.roles
+                or row.relative_path != receipt.relative_path
+                or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
+                or release.release_commit != receipt.release_commit
+                or release.deployment_receipt_sha256 != receipt.deployment_receipt_sha256):
+            raise BootstrapEnrollmentPending("release member differs from its root-issued receipt")
+        if not any(origin[1] == str(release.release_root / row.relative_path)
+                   and origin[4] == row.sha256 for origin in actor.module_origins):
+            raise BootstrapEnrollmentPending("release member left the current actor's imported module closure")
+        fd = release.open_file(receipt.artifact_id)
+        try:
+            content = bytearray()
+            while len(content) <= receipt.size_bytes:
+                block = os.read(fd, min(64 * 1024, receipt.size_bytes + 1 - len(content)))
+                if not block:
+                    break
+                content.extend(block)
+        finally:
+            os.close(fd)
+        if len(content) != receipt.size_bytes or hashlib.sha256(content).hexdigest() != receipt.sha256:
+            raise BootstrapEnrollmentPending("release module bytes changed after receipt issuance")
+        actor.verify_current(release)
+        return bytes(content)
+
+    def _revalidate_native_assembly_selection(
+            self, selection: RootNativeBootstrapAssemblySelection) -> None:
+        """Revalidate a retained selection; no caller-created DTO can pass."""
+        if (not isinstance(selection, RootNativeBootstrapAssemblySelection)
+                or self._native_assembly_selections.get(selection.selection_handle) is not selection
+                or selection._registry_seal is not self._factory._native_assembly_seal
+                or selection.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("native assembly selection is stale or unrecognized")
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared"
+                or selection.setup_session_id != self._handle.session_id
+                or selection.transaction_handle != self._authorization.transaction_handle
+                or selection.plan_digest != self._authorization.plan_digest
+                or selection.prepared_generation_id != prepared.generation_id
+                or selection.protected_enrollment_digest != prepared.generation_digest
+                or selection.service_generation != prepared.generation_id):
+            raise BootstrapEnrollmentPending("native assembly selection no longer matches prepared setup custody")
+        raise BootstrapEnrollmentPending(
+            "native assembly source, runtime, materialization and protected definition joins are not yet available")
+
     def record_functional_health(self, _active_receipt: EnrollmentReceipt, _health_receipt: Any) -> None:
         self._check_live()
         raise BootstrapEnrollmentPending("functional health requires the root-native health observer receipt consumer")
@@ -3753,7 +3899,7 @@ __all__ = [
     "RootBootstrapRuntimeFactory", "RootBootstrapSession",
     "RootInitialCompilationRegistry", "RootInitialCompilationSession",
     "RootInitialPublicationHandoff", "RootInitialSetupAggregate",
-    "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember",
+    "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember", "RootReleaseModuleReceipt",
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",
     "RootSetupChoices", "RootSetupPolicyGenerationPublisher",
     "RootSetupPrincipalSelectionRegistry", "RootFirstStagePolicyCompiler",

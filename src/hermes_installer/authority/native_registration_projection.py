@@ -44,6 +44,203 @@ class CapturedHermesRegistration:
     native_schema_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class NativeRegistrationActionBinding:
+    """One source-declared finite route from a registered tool to an action."""
+
+    selector_values: Mapping[str, str]
+    action_id: str
+    argument_projection: tuple[tuple[str, str], ...]
+    workflow_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedNativeRegistrationDefinition:
+    """Source-reviewed routing facts for one actual Hermes registration.
+
+    These definitions are deliberately separate from source capture and from
+    executable projection rows.  They contain no receipts or readiness flags;
+    the root factory must join current source, schema, and observer proofs.
+    """
+
+    adapter_id: str
+    native_tool_name: str
+    family: str
+    handler_kind: str
+    selector_fields: tuple[str, ...]
+    action_bindings: tuple[NativeRegistrationActionBinding, ...]
+
+
+class NativeRegistrationDefinitionDenied(ValueError):
+    """Actual captured registrations do not match the reviewed finite map."""
+
+
+def reviewed_native_registration_definitions(
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[ReviewedNativeRegistrationDefinition, ...]:
+    """Resolve the exact 42-tool source map from current register_tool calls.
+
+    This is source evidence only.  It does not issue result schemas, source
+    receipts, observer enrollments, or effect authority.
+    """
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    if not isinstance(captured, tuple) or len(captured) != 42:
+        raise NativeRegistrationDefinitionDenied("all 42 reviewed Hermes registrations are required")
+
+    def direct(adapter: str, tool: str, action: str, fields: tuple[str, ...],
+               *, kind: str = "effect-action"):
+        return ReviewedNativeRegistrationDefinition(
+            adapter, tool, adapter, kind, (),
+            (NativeRegistrationActionBinding({}, action, tuple((field, field) for field in fields)),),
+        )
+
+    definitions: dict[str, ReviewedNativeRegistrationDefinition] = {}
+    direct_rows = (
+        ("github", "github_repository", "repo.get", ("repository",)),
+        ("github", "github_list_issues", "issues.list", ("repository",)),
+        ("github", "github_read_file", "content.get", ("path", "repository")),
+        ("github", "github_write_file", "content.put", ("content", "message", "path", "repository", "sha")),
+        ("github", "github_create_issue", "issue.create", ("body", "repository", "title")),
+        ("composio", "composio_read", "invoke.read", ("arguments", "tool_slug")),
+        ("composio", "composio_write", "invoke.write", ("arguments", "tool_slug")),
+        ("codex", "codex_run", "run", ("prompt", "workspace_id")),
+        ("ebook-toolchain", "ebook_toolchain_build", "run", ("format", "recipe_id", "source_id", "title")),
+        ("ebook-toolchain", "ebook_toolchain_inspect", "inspect", ("recipe_id", "source_id")),
+        ("ebook-toolchain", "ebook_toolchain_validate", "validate", ("recipe_id", "source_id")),
+        ("kobo-bridge", "kobo_bridge_deliver", "deliver", ("enrollment_id", "export_id")),
+        ("kobo-bridge", "kobo_bridge_read_export", "read", ("book_id", "enrollment_id")),
+        ("authentik-authorization", "authentik_current_principal", "resolve-session-principal-to-user", ()),
+        ("authentik-authorization", "authentik_active_user_identity", "read-active-user-identity", ()),
+        ("authentik-authorization", "authentik_effective_groups", "read-user-effective-groups", ()),
+        ("authentik-authorization", "authentik_verify_system_membership", "verify-effective-System-membership", ()),
+        ("authentik-authorization", "authentik_system_alarm_recipients", "list-current-effective-System-members-for-alarm-delivery", ()),
+        ("cloudflare-homelab", "cloudflare_homelab_read_dns", "read-approved-dns-records", ("hostname",)),
+        ("cloudflare-homelab", "cloudflare_homelab_read_tunnel", "read-approved-tunnel-state", ("tunnel",)),
+        ("cloudflare-homelab", "cloudflare_homelab_read_tunnel_configuration", "read-approved-tunnel-configuration", ("tunnel",)),
+        ("cloudflare-homelab", "cloudflare_homelab_read_tunnel_connectors", "read-approved-tunnel-connectors", ("tunnel",)),
+        ("cloudflare-homelab", "cloudflare_homelab_update_dns", "update-approved-dns-record", ("content", "hostname", "proxied", "ttl")),
+        ("cloudflare-homelab", "cloudflare_homelab_update_tunnel", "update-approved-tunnel-configuration", ("hostname", "tunnel")),
+        ("mcp-registry", "mcp_registry_discover", "discover-servers", ("cursor", "latest_only", "limit", "search")),
+        ("mcp-registry", "mcp_registry_inspect", "inspect-server-metadata", ("server_name", "version")),
+        ("agent37-discovery", "agent37_discover_skills", "discover-skill-candidates", ("cursor", "limit", "minimum_stars", "owner", "recently_updated", "repo", "search", "sort")),
+        ("agent37-discovery", "agent37_inspect_skill", "inspect-public-metadata", ("skill_id",)),
+        ("resource-overlay-store", "resource_overlay_read", "read", ("record_id",)),
+        ("resource-overlay-store", "resource_overlay_write", "write", ("expected_revision", "record_id", "value_base64")),
+        ("resource-overlay-store", "resource_overlay_history", "history", ("record_id",)),
+        ("resource-overlay-store", "resource_overlay_delete", "delete", ("expected_revision", "record_id")),
+        ("web", "web_retrieve", "retrieve", ("url",)),
+    )
+    # The repeated GitHub row above is avoided below by keyed registration
+    # definitions; the capture itself remains the authority for name coverage.
+    for adapter, tool, action, fields in direct_rows:
+        if tool in definitions:
+            continue
+        kind = ("public-registry-read" if adapter in {"mcp-registry", "agent37-discovery"}
+                else "owner-overlay" if adapter == "resource-overlay-store" else "effect-action")
+        if kind in {"public-registry-read", "owner-overlay"}:
+            # The lexical action is the actual registered tool identity. Its
+            # existing source handler owns the internal public/overlay route.
+            action = f"{adapter}:tool:{tool}"
+        definitions[tool] = direct(adapter, tool, action, fields, kind=kind)
+
+    def finite(adapter: str, tool: str, family: str, kind: str, selector_fields: tuple[str, ...],
+               rows: tuple[tuple[Mapping[str, str], str, tuple[tuple[str, str], ...]], ...]):
+        definitions[tool] = ReviewedNativeRegistrationDefinition(
+            adapter, tool, family, kind, selector_fields,
+            tuple(NativeRegistrationActionBinding(dict(selector), action, projection)
+                  for selector, action, projection in rows),
+        )
+
+    # Epic operation dispatch is explicit in LocalKanbanPlugin.invoke.
+    epic_fields = {
+        "create": ("epic-kanban", (("epic_id", "epic_id"), ("title", "title"))),
+        "read": ("epic-kanban", (("board_id", "board_id"),)),
+        "add_item": ("epic-kanban", (("board_id", "board_id"), ("description", "description"), ("item_type", "item_type"), ("title", "title"))),
+        "move_item": ("epic-kanban", (("board_id", "board_id"), ("item_id", "item_id"), ("state", "state"))),
+        "delete_accepted": ("epic-kanban", (("accepted_lifecycle_attestation_id", "accepted_lifecycle_attestation_id"), ("board_id", "board_id"))),
+    }
+    finite("epic-kanban", "epic_board", "epic-kanban", "finite-selector", ("operation",),
+           tuple(({"operation": op}, action, projection) for op, (action, projection) in epic_fields.items()))
+
+    # Financial data valid provider/operation pairs come from the exact source
+    # scope table; invalid Cartesian combinations are intentionally absent.
+    from hermes_installer.components.plugin_finance import _DATA_SCOPES
+    finite("financial-data-hub", "financial_data_read", "financial-data-hub", "finite-selector",
+           ("provider", "operation"), tuple(
+               ({"provider": provider.value, "operation": operation.value}, "read",
+                (("filters", "filters"), ("operation", "operation"), ("provider", "provider")))
+               for provider, operations in sorted(_DATA_SCOPES.items(), key=lambda item: item[0].value)
+               for operation in sorted(operations, key=lambda item: item.value)))
+
+    from hermes_installer.components.plugin_finance import _EXECUTION_OPERATIONS, _LIVE_READS, _SANDBOX_READS
+    finite("financial-execution-gateway", "financial_execute_one_order", "financial-execution-gateway",
+           "finite-selector", ("provider", "operation"), tuple(
+               ({"provider": provider, "operation": operation}, "execute",
+                (("action", "action"), ("operation", "operation"), ("provider", "provider")))
+               for provider, operations in sorted(_EXECUTION_OPERATIONS.items())
+               for operation in sorted(operations)))
+    finite("agent-live-wallet", "agent_live_wallet_action", "agent-live-wallet", "finite-selector",
+           ("operation",), tuple(
+               ({"operation": operation}, "read" if operation in _LIVE_READS else "execute",
+                (("action", "action"), ("network", "network"), ("operation", "operation")))
+               for operation in ("construct", "simulate", "estimate-fee", "inspect", "sign", "broadcast")))
+    finite("agent-sandbox-wallet", "agent_sandbox_wallet_action", "agent-sandbox-wallet", "finite-selector",
+           ("operation",), tuple(
+               ({"operation": operation}, "read" if operation in _SANDBOX_READS else "execute",
+                (("action", "action"), ("network", "network"), ("operation", "operation")))
+               for operation in ("read-balance", "simulate", "inspect-receipt", "create-account", "reset-account",
+                                 "sign-test-transaction", "send-test-asset", "deploy-test-contract", "reviewed-testnet-dapp")))
+
+    from hermes_installer.components.plugin_homelab import _READ_QUERIES, _WRITE_ACTIONS
+    finite("homelab-ops-broker", "homelab_ops_inspect", "homelab-ops-broker", "finite-selector",
+           ("query",), tuple(({"query": value}, value, (("host", "host"), ("query", "query")))
+                              for value in sorted(_READ_QUERIES)))
+    finite("homelab-ops-broker", "homelab_ops_run", "homelab-ops-broker", "finite-selector",
+           ("action",), tuple(({"action": value}, value, (("action", "action"), ("host", "host")))
+                              for value in sorted(_WRITE_ACTIONS)))
+
+    # These actual handlers invoke the fixed selected voice actions and return
+    # source receipt/workflow records. The protected workflow identity is
+    # joined later from the selected workflow catalog.
+    for tool, action in (("voice_transcribe", "voice_transcribe"), ("voice_speak", "voice_speak")):
+        definitions[tool] = ReviewedNativeRegistrationDefinition(
+            "voice-pipeline", tool, "voice-pipeline", "finite-workflow", (),
+            (NativeRegistrationActionBinding({}, action, (), None),),
+        )
+
+    captured_by_name = {row.native_tool_name: row for row in captured}
+    if len(captured_by_name) != 42 or set(captured_by_name) != set(definitions):
+        missing = sorted(set(captured_by_name) ^ set(definitions))
+        raise NativeRegistrationDefinitionDenied(
+            "reviewed source map does not cover the actual Hermes registration set: " + ", ".join(missing)
+        )
+    output = []
+    for name, definition in definitions.items():
+        source = captured_by_name[name]
+        if source.adapter_id != definition.adapter_id:
+            raise NativeRegistrationDefinitionDenied("captured registration adapter differs from its reviewed definition")
+        properties = source.argument_schema.get("properties", {})
+        if not isinstance(properties, Mapping):
+            raise NativeRegistrationDefinitionDenied("captured registration argument properties are malformed")
+        if any(field not in properties for field in definition.selector_fields):
+            raise NativeRegistrationDefinitionDenied("reviewed selector field is absent from the actual source schema")
+        for binding in definition.action_bindings:
+            if any(field not in properties for _target, field in binding.argument_projection):
+                raise NativeRegistrationDefinitionDenied("reviewed argument projection is absent from the actual source schema")
+            for field, value in binding.selector_values.items():
+                enum = properties.get(field, {}).get("enum") if isinstance(properties.get(field), Mapping) else None
+                if not isinstance(enum, (tuple, list)) or value not in enum:
+                    raise NativeRegistrationDefinitionDenied("reviewed selector literal is absent from the actual source enum")
+        if definition.selector_fields:
+            if any(not set(definition.selector_fields).issubset(binding.selector_values)
+                   for binding in definition.action_bindings):
+                raise NativeRegistrationDefinitionDenied("finite source selector coverage is incomplete")
+            if len({tuple(sorted(binding.selector_values.items())) for binding in definition.action_bindings}) != len(definition.action_bindings):
+                raise NativeRegistrationDefinitionDenied("finite source selector contains duplicate branches")
+        output.append(definition)
+    return tuple(sorted(output, key=lambda row: row.native_tool_name))
+
+
 class _NoEffects:
     def invoke(self, *_args: Any, **_kwargs: Any) -> Any:
         raise NativeRegistrationCaptureDenied("registration capture attempted an effect")
