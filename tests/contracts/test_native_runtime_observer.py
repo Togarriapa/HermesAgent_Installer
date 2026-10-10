@@ -313,19 +313,13 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             producer_pid=123, producer_pidfd=456, gateway_identity=gateway,
             gateway_pid=124, gateway_pidfd=457, observer_id="observer",
             package_id="package", profile_id="profile-a", generation="generation-a",
-            native_package_generation="package-generation-a",
             loaded_package_proof="proof", expires_monotonic=20.0, calls={},
-            request_context=SimpleNamespace(), authorization=SimpleNamespace(retry_index=0),
-            target="provider://fixed", recipient="provider:fixed", request_digest="a" * 64,
-            retry_index=0, response_status=200, response_headers={}, response_bytes=body,
-            response_receipt_handle="s" * 43,
         )
         registry._responses = {response.handle: response}
         registry._deliveries = {response.delivery_handle: response}
         registry._calls = {}
         registry._invocations = {}
         registry._issued_handles = {response.handle, response.delivery_handle}
-        registry._retained_response_bytes = len(body)
         registry.process_resolver = lambda pid, _fd, **_kwargs: producer if pid == 123 else gateway
         registry._loaded_proof = lambda *_args: "proof"
 
@@ -424,8 +418,7 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         digest = hashlib.sha256(args).hexdigest()
         action = NativeActionSelection("package-a", "profile-a", "generation-a",
                                        "hermes-installer.native-mcp-dispatch.v1",
-                                       "mcp-row-a", "plugin.weather.lookup",
-                                       lambda value: value == args)
+                                       "mcp-row-a", lambda value: value == args)
         registry = object.__new__(NativeInvocationRegistry)
         registry.service = service
         registry.source_observers = source_observers
@@ -451,9 +444,8 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             adapter_id="hermes-installer.native-mcp-dispatch.v1", action_id="mcp-row-a",
             tool_name="weather.lookup", arguments_sha256=digest,
             parent_closure_digest="d" * 64, receipt_handles=("receipt-handle",),
-            canonical_arguments=args, observer_id="observer-id", loaded_package_proof=proof,
+            observer_id="observer-id", loaded_package_proof=proof,
             expires_monotonic=25.0, service_generation_digest="c" * 64,
-            operation="plugin.weather.lookup",
         )
         registry._invocations = {invocation.invocation_handle: invocation}
         registry._mcp_dispatches = {}

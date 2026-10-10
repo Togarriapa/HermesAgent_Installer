@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+import copy
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from hermes_installer.protected_enrollment import (
     EnrollmentDenied,
     FixedBuildProfile,
     OperationParameterSchema,
+    NativePackageBinding,
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
@@ -135,6 +137,149 @@ def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_sep
         ProtectedEnrollmentCatalog(
             {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
             selected_application_runtimes=[row, {**row, "profile_id": "profile-b"}],
+        )
+
+
+def _private_endpoint_row(**overrides):
+    row = {
+        "binding_id": "endpoint-selection-a", "profile_id": "profile-a",
+        "namespace_id": "namespace-a", "principal_id": "principal-a",
+        "service_enrollment_id": "service-a", "service_generation": "memory-gen-a",
+        "process_profile_id": "server-profile-a", "process_profile_generation": "process-gen-a",
+        "endpoint_target_id": "memory-openviking:profile-a", "connector_route_ids": ["memory-search-v1"],
+        "recipient_id": "recipient-a", "credential_reference_id": "credential-a",
+        "server_config_artifact_id": "server-config-a", "server_config_sha256": "a" * 64,
+        "runtime_artifact_ids": ["server-runtime-a"], "network_binding_handle": "network-receipt-a",
+    }
+    row.update(overrides)
+    return row
+
+
+def _private_model_row(**overrides):
+    row = {
+        "binding_id": "model-selection-a", "endpoint_binding_id": "endpoint-selection-a",
+        "served_model_id": "private-model-a", "source_model_id": "source-model-a",
+        "source_revision": "revision-a", "license_artifact_id": "license-a",
+        "license_sha256": "b" * 64, "model_artifact_id": "model-a",
+        "model_artifact_sha256": "c" * 64, "model_tree_manifest_sha256": "d" * 64,
+        "runtime_artifact_id": "model-runtime-a", "runtime_artifact_sha256": "e" * 64,
+        "load_config_artifact_id": "load-config-a", "load_config_sha256": "f" * 64,
+        "capability": "extraction-text", "dimensions": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_private_memory_selection_dtos_are_exact_immutable_and_dimension_typed():
+    from hermes_installer.protected_enrollment import (
+        RootSelectedPrivateMemoryEndpointBinding, RootSelectedPrivateMemoryModelBinding,
+    )
+    endpoint = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+        _private_endpoint_row(), service_generation_digest="9" * 64,
+    )
+    assert endpoint.connector_route_ids == ("memory-search-v1",)
+    assert endpoint.service_generation_digest == "9" * 64
+    assert "service_generation_digest" not in _private_endpoint_row()
+    model = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+        _private_model_row(), service_generation_digest="9" * 64,
+    )
+    assert model.dimensions is None and model.capability == "extraction-text"
+    embedding = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+        _private_model_row(capability="embedding", dimensions=768), service_generation_digest="9" * 64,
+    )
+    assert embedding.dimensions == 768
+    bad_rows = [
+        _private_endpoint_row(service_generation_digest="9" * 64),
+        _private_endpoint_row(connector_route_ids=["memory-search-v1", "memory-search-v1"]),
+        _private_endpoint_row(server_config_sha256="not-a-digest"),
+    ]
+    for row in bad_rows:
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                row, service_generation_digest="9" * 64,
+            )
+    for override in ({"capability": "extraction-text", "dimensions": 768},
+                     {"capability": "embedding", "dimensions": None},
+                     {"capability": "embedding", "dimensions": 8193}):
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                _private_model_row(**override), service_generation_digest="9" * 64,
+            )
+
+
+def test_private_memory_catalog_getters_rejoin_exact_service_routes_and_endpoint(monkeypatch):
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="memory-gen-a", profile_id="profile-a",
+        principal_id="principal-a", namespace_identity="namespace-a",
+    )
+    process = SimpleNamespace(
+        enrollment_id="server-enrollment-a", generation="process-gen-a",
+        profile_id="server-profile-a", principal_id="principal-a",
+        namespace_identity="namespace-a",
+    )
+    memory = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="memory-gen-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
+        target_id="memory-openviking:profile-a", auth_reference_id="credential-a",
+        fixed_route_map={"memory-search-v1": object()},
+    )
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_: profile)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_profile_generation", lambda self, *_: process)
+    resolved_routes = []
+    monkeypatch.setattr(
+        ProtectedEnrollmentCatalog, "resolve_connector_route",
+        lambda self, _enrollment, _generation, _target, route: resolved_routes.append(route) or object(),
+    )
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+        memory_enrollments={("service-a", "memory-gen-a"): memory},
+        private_memory_endpoint_selections=[_private_endpoint_row()],
+        private_memory_model_selections=[_private_model_row()],
+    )
+    endpoint = catalog.resolve_private_memory_endpoint_binding("endpoint-selection-a")
+    model = catalog.resolve_private_memory_model_binding("model-selection-a", "endpoint-selection-a")
+    assert endpoint.service_generation_digest == catalog.digest
+    assert model.endpoint_binding_id == endpoint.binding_id
+    assert resolved_routes == ["memory-search-v1", "memory-search-v1", "memory-search-v1"]
+    with pytest.raises(EnrollmentDenied, match="another endpoint"):
+        catalog.resolve_private_memory_model_binding("model-selection-a", "other-endpoint")
+    with pytest.raises(EnrollmentDenied, match="absent or stale"):
+        catalog.resolve_private_memory_model_binding("unknown-model")
+
+
+def test_private_memory_catalog_denies_stale_process_join_and_unknown_model_endpoint(monkeypatch):
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="memory-gen-a", profile_id="profile-a",
+        principal_id="principal-a", namespace_identity="namespace-a",
+    )
+    process = SimpleNamespace(
+        enrollment_id="server-enrollment-a", generation="process-gen-wrong",
+        profile_id="server-profile-a", principal_id="principal-a",
+        namespace_identity="namespace-a",
+    )
+    memory = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="memory-gen-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
+        target_id="memory-openviking:profile-a", auth_reference_id="credential-a",
+        fixed_route_map={"memory-search-v1": object()},
+    )
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_: profile)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_profile_generation", lambda self, *_: process)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_connector_route", lambda self, *_: object())
+    with pytest.raises(EnrollmentDenied, match="stale or incomplete"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+            memory_enrollments={("service-a", "memory-gen-a"): memory},
+            private_memory_endpoint_selections=[_private_endpoint_row()],
+        )
+
+    process.generation = "process-gen-a"
+    with pytest.raises(EnrollmentDenied, match="foreign key"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+            memory_enrollments={("service-a", "memory-gen-a"): memory},
+            private_memory_endpoint_selections=[_private_endpoint_row()],
+            private_memory_model_selections=[_private_model_row(endpoint_binding_id="other-endpoint")],
         )
 
 
@@ -362,7 +507,7 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
             "recipient": "example-recipient", "generation": "native-gen-1",
             "observer_enrollment_ids": [],
         }],
-        "registration_records": [], "workflow_records": [],
+        "registration_records": [], "workflow_records": [], "process_role_records": [],
     }
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
                                          native_packages=[record])
@@ -416,27 +561,50 @@ def test_native_observer_reference_joins_exact_active_issuer_role():
             "recipient": "example-recipient", "generation": "native-gen-1",
             "observer_enrollment_ids": ["observer-one"],
         }],
-        "registration_records": [], "workflow_records": [],
+        "registration_records": [], "workflow_records": [], "process_role_records": [{
+            "role_id": "result-role", "package_id": "desktop-native",
+            "native_package_generation": "native-gen-1", "profile_id": profile.profile_id,
+            "profile_generation": profile.generation, "role_artifact_id": "process-result-role",
+            "role_sha256": "1" * 64, "role_source_receipt_handle": "role-source-receipt",
+            "module_name": "hermes_installer.adapters.result_role",
+            "closure_member_path": "hermes_installer/adapters/result_role.py",
+            "role_source_revision": "rev-1", "role_source_tree_sha256": "2" * 64,
+            "observer_enrollment_ids": ["observer-one"], "registration_ids": [],
+            "action_binding_ids": ["adapter-one:action:read"], "workflow_ids": [],
+        }],
     }
     issuer = SourceIssuerRecord(
-        "tool-result", profile.profile_id, "adapter-one-artifact", "0" * 64,
-        "read-result-v1", (), profile.generation, "observer-one", ("registered-tool-result",),
+        "tool-result", profile.profile_id, "process-result-role", "1" * 64,
+        "read-result-v1", (), profile.generation, "observer-one", ("read",),
     )
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
                                          native_packages=[package], source_issuers=[issuer])
-    # The source issuer's process-role artifact is distinct from the action
-    # artifact; metadata alone must not create a loaded observer role join.
-    assert catalog.source_observer_joins == {}
+    catalog.resolve = lambda *_args: profile
+    role = catalog.resolve_selected_native_process_role("desktop-native", "native-gen-1", "result-role")
+    assert role.role_artifact_id == "process-result-role"
+    join = catalog.source_observer_joins["observer-one"]
+    assert join.process_role == role
+    assert join.actions["adapter-one:action:read"].adapter_artifact_id == "adapter-one-artifact"
 
-    assert ProtectedEnrollmentCatalog(
-        {("install-1", "gen-1"): profile}, digest="0" * 64,
-        native_packages=[package], source_issuers=[
-            SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
-                               "read-result-v1", (), profile.generation, "observer-one",
-                               ("registered-tool-result",))
-        ],
-    ).source_observer_joins == {}
-    with pytest.raises(EnrollmentDenied, match="process profile generation"):
+    for mutate, message in (
+        (lambda row: row.__setitem__("closure_member_path", "../outside.py"), "normalized and relative"),
+        (lambda row: row.__setitem__("profile_generation", "stale-process-generation"), "another package or profile generation"),
+        (lambda row: row.__setitem__("role_sha256", "not-a-digest"), "digest"),
+    ):
+        invalid = copy.deepcopy(package)
+        mutate(invalid["process_role_records"][0])
+        with pytest.raises(EnrollmentDenied, match=message):
+            NativePackageBinding.from_protected_record(invalid)
+
+    with pytest.raises(EnrollmentDenied, match="exact active source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("install-1", "gen-1"): profile}, digest="0" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
+                                   "read-result-v1", (), profile.generation, "observer-one", ("read",))
+            ],
+        )
+    with pytest.raises(EnrollmentDenied, match="exact active source issuer"):
         ProtectedEnrollmentCatalog(
             {("install-1", "gen-1"): profile}, digest="0" * 64,
             native_packages=[package], source_issuers=[
@@ -489,7 +657,7 @@ def test_v113_native_package_keeps_effect_actions_separate_from_registered_tools
         "resolver_sha256": "8" * 64, "service_package_root_id": "root-a",
         "service_mount_id": "mount-a", "adapter_records": [],
         "action_records": actions, "registration_records": [registration],
-        "workflow_records": [],
+        "workflow_records": [], "process_role_records": [],
     })
     assert set(package.action_records) == {"adapter:action:read", "adapter:action:write"}
     assert package.registration_records["adapter:tool:query"].action_bindings[0].action_binding_id == "adapter:action:read"
@@ -509,6 +677,7 @@ def test_v113_native_package_keeps_effect_actions_separate_from_registered_tools
         "resolver_sha256": "8" * 64, "service_package_root_id": "root-a",
         "service_mount_id": "mount-a", "adapter_records": [],
         "action_records": actions, "registration_records": [bad], "workflow_records": [],
+        "process_role_records": [],
     }
     with pytest.raises(EnrollmentDenied, match="action binding is absent"):
         NativePackageBinding.from_protected_record(malformed)
@@ -552,7 +721,7 @@ def test_v113_native_workflow_refs_are_ordered_and_owned_by_the_registration():
         "entrypoint_sha256": "8" * 64, "resolver_artifact_id": "resolver",
         "resolver_sha256": "9" * 64, "service_package_root_id": "root",
         "service_mount_id": "mount", "adapter_records": [], "action_records": [action],
-        "registration_records": [registration], "workflow_records": [workflow],
+        "registration_records": [registration], "workflow_records": [workflow], "process_role_records": [],
     }
     parsed = NativePackageBinding.from_protected_record(row)
     assert parsed.workflow_records["workflow-1"].step_action_binding_ids == ("adapter:action:step",)

@@ -74,6 +74,15 @@ class SourceObserverEnrollment:
     # These are only candidate routes; current consent and route policy are
     # rechecked by the root issuer before any ceiling is minted.
     private_provider_route_ids: tuple[str, ...] = ()
+    # v123 keeps the package process role distinct from the action binding.
+    # These fields are populated from the protected role/action foreign keys;
+    # legacy/manual rows may omit them but cannot resolve against a v123 package.
+    source_action_binding_id: str | None = None
+    role_source_receipt_handle: str | None = None
+    role_module_name: str | None = None
+    role_closure_member_path: str | None = None
+    role_source_revision: str | None = None
+    role_source_tree_sha256: str | None = None
 
     @classmethod
     def from_protected_record(cls, record: Mapping[str, Any]) -> "SourceObserverEnrollment":
@@ -86,7 +95,10 @@ class SourceObserverEnrollment:
             "allowed_parent_source_kinds",
         }
         optional = {"max_event_bytes", "lease_seconds", "native_package_generation",
-                    "private_provider_route_ids"}
+                    "private_provider_route_ids", "source_action_binding_id",
+                    "role_source_receipt_handle", "role_module_name",
+                    "role_closure_member_path", "role_source_revision",
+                    "role_source_tree_sha256"}
         if (not isinstance(record, Mapping) or set(record) - (required | optional)
                 or required - set(record) or not isinstance(record["allowed_parent_source_kinds"], list)
                 or len(record["allowed_parent_source_kinds"]) > len(_ALLOWED_SOURCE_KINDS)
@@ -152,6 +164,18 @@ class SourceObserverEnrollment:
                      or any(ord(char) < 0x21 or char in "\\\x7f"
                              for char in self.native_package_generation))):
             raise ValueError("native package generation is invalid")
+        if self.source_action_binding_id is not None:
+            _identifier(self.source_action_binding_id, "source_action_binding_id")
+        for name in ("role_source_receipt_handle", "role_module_name",
+                     "role_closure_member_path", "role_source_revision"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value or len(value) > 512
+                                      or any(ord(char) < 0x20 for char in value)):
+                raise ValueError(f"{name} is invalid")
+        if (self.role_source_tree_sha256 is not None
+                and (not isinstance(self.role_source_tree_sha256, str)
+                     or not re.fullmatch(r"[0-9a-f]{64}", self.role_source_tree_sha256))):
+            raise ValueError("role_source_tree_sha256 is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1536,35 +1560,60 @@ class SourceObserverRegistry:
         return identity
 
     def _resolve_package_role(self, observer: SourceObserverEnrollment) -> tuple[Any, Any]:
-        """Join the fixed observer row to the currently selected protected package."""
+        """Resolve the independent process role and its exact action binding.
+
+        A process-role artifact proves which module the producer is allowed to
+        load. The action record separately supplies operation, target, schema,
+        and recipient. Adapter artifacts are never promoted to process roles.
+        """
         package_generation = observer.native_package_generation or observer.generation
         try:
             package = self.package_resolver(observer.package_id, package_generation)
         except Exception:
             raise AuthorityDenied("source.package", "selected native package is unavailable") from None
-        adapter_records = getattr(package, "adapter_records", {}) if package is not None else {}
-        adapter = adapter_records.get(observer.role_id)
-        role_candidates = []
-        if (package is not None
-                and getattr(package, "entrypoint_artifact_id", None) == observer.role_artifact_id):
-            role_candidates.append(getattr(package, "entrypoint_sha256", None))
-        if package is not None:
-            role_candidates.extend(
-                getattr(item, "adapter_sha256", None)
-                for item in adapter_records.values()
-                if getattr(item, "adapter_artifact_id", None) == observer.role_artifact_id
-            )
+        roles = getattr(package, "process_role_records", {}) if package is not None else {}
+        role = roles.get(observer.role_id) if isinstance(roles, Mapping) else None
+        action_records = getattr(package, "action_records", {}) if package is not None else {}
+        action_candidates = [
+            item for item in action_records.values()
+            if getattr(item, "action_id", None) == observer.source_action_id
+            and observer.observer_enrollment_id in getattr(item, "observer_enrollment_ids", ())
+            and getattr(item, "action_binding_id", None)
+                in getattr(role, "action_binding_ids", ())
+            and (observer.source_action_binding_id is None
+                 or getattr(item, "action_binding_id", None) == observer.source_action_binding_id)
+        ] if role is not None and isinstance(action_records, Mapping) else []
+        action = action_candidates[0] if len(action_candidates) == 1 else None
         if (package is None
                 or getattr(package, "package_id", None) != observer.package_id
                 or getattr(package, "profile_id", None) != observer.profile_id
                 or getattr(package, "generation", None) != package_generation
                 or getattr(package, "compiled_closure_sha256", None) != observer.package_sha256
-                or len(role_candidates) != 1 or role_candidates[0] != observer.role_sha256
-                or adapter is None
-                or getattr(adapter, "adapter_id", None) != observer.role_id
-                or getattr(adapter, "target_id", None) != observer.target_id
-                or getattr(adapter, "recipient", None) != observer.recipient
-                or getattr(adapter, "generation", None) != package_generation):
+                or role is None
+                or getattr(role, "package_id", None) != observer.package_id
+                or getattr(role, "native_package_generation", None) != package_generation
+                or getattr(role, "profile_id", None) != observer.profile_id
+                or getattr(role, "profile_generation", None) != observer.generation
+                or getattr(role, "role_artifact_id", None) != observer.role_artifact_id
+                or getattr(role, "role_sha256", None) != observer.role_sha256
+                or observer.observer_enrollment_id not in getattr(role, "observer_enrollment_ids", ())
+                or (observer.role_source_receipt_handle is not None
+                    and getattr(role, "role_source_receipt_handle", None)
+                        != observer.role_source_receipt_handle)
+                or (observer.role_module_name is not None
+                    and getattr(role, "module_name", None) != observer.role_module_name)
+                or (observer.role_closure_member_path is not None
+                    and getattr(role, "closure_member_path", None)
+                        != observer.role_closure_member_path)
+                or (observer.role_source_revision is not None
+                    and getattr(role, "role_source_revision", None) != observer.role_source_revision)
+                or (observer.role_source_tree_sha256 is not None
+                    and getattr(role, "role_source_tree_sha256", None)
+                        != observer.role_source_tree_sha256)
+                or action is None
+                or getattr(action, "target_id", None) != observer.target_id
+                or getattr(action, "recipient", None) != observer.recipient
+                or getattr(action, "generation", None) != package_generation):
             raise AuthorityDenied("source.package", "selected package role or protected route binding is incomplete")
         package_fields = (
             "source_revision", "source_tree_sha256", "compiled_closure_artifact_id",
@@ -1577,13 +1626,13 @@ class SourceObserverRegistry:
         )
         if (any(not isinstance(getattr(package, name, None), str) or not getattr(package, name)
                 for name in package_fields)
-                or any(not isinstance(getattr(adapter, name, None), str) or not getattr(adapter, name)
+                or any(not isinstance(getattr(action, name, None), str) or not getattr(action, name)
                        for name in adapter_fields)
                 or any(len(getattr(package, name)) != 64
                        or any(char not in "0123456789abcdef" for char in getattr(package, name))
                        for name in ("source_tree_sha256", "entrypoint_sha256", "resolver_sha256"))):
             raise AuthorityDenied("source.package", "selected package closure or adapter record is incomplete")
-        return package, adapter
+        return package, action
 
     def _resolve_loaded_package_proof(self, identity: Any,
                                       observer: SourceObserverEnrollment,
@@ -2229,7 +2278,7 @@ class NativeInitialInputDelivery:
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        result = {
+        wire = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -2238,8 +2287,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            result["turn_handle"] = self.turn_handle
-        return result
+            wire["turn_handle"] = self.turn_handle
+        return wire
 
 
 @dataclass(slots=True)
