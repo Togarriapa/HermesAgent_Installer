@@ -113,6 +113,29 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "records are unavailable"):
             session.resolve_current_prepared_native_policy_records("selection")
 
+    def test_runtime_receipt_generation_is_derived_from_current_prepared_authorization(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="tx-current")
+        session._resolve_current_prepared_enrollment = lambda: SimpleNamespace(
+            state="prepared", enrollment_ids=(), transaction_handle="tx-current")
+        receipt = SimpleNamespace(generation="tx-current")
+        calls = []
+        session.resolve_runtime_receipt = lambda role, handle, generation: (
+            calls.append((role, handle, generation)) or receipt)
+        session._policy = SimpleNamespace(receipt_binding_rules=[
+            {"receipt_role": "official-pm-runtime", "required_phase": "runnable"}])
+        session._factory = SimpleNamespace(
+            _actor=SimpleNamespace(verify_current=lambda _release: None),
+            _release=SimpleNamespace(verify_current=lambda: None))
+        assert session._resolve_current_runtime_receipt("official-pm-runtime", "opaque-cas-handle") is receipt
+        assert calls == [("official-pm-runtime", "opaque-cas-handle", "tx-current")]
+
+        session._policy.receipt_binding_rules[0]["required_phase"] = "prepared-source"
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "current runnable role"):
+            session._resolve_current_runtime_receipt("official-pm-runtime", "opaque-cas-handle")
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 

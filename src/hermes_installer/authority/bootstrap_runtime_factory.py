@@ -511,6 +511,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("active enrollment is not owned by this setup session")
         return self._session._resolve_current_active_enrollment()
 
+    def resolve_current_runtime_receipt(self, role: str, receipt_handle: str) -> "RootRuntimeArtifactReceipt":
+        """Resolve a runnable role only from this session's allowlisted CAS receipts."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("runtime receipt is not owned by this setup session")
+        return self._session._resolve_current_runtime_receipt(role, receipt_handle)
+
     def resolve_current_prepared_enrollment(self) -> EnrollmentReceipt:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("prepared enrollment is not owned by this setup session")
@@ -6160,6 +6166,25 @@ class RootBootstrapSession:
         receipt = RootRuntimeArtifactReceipt(role, artifact_id, digest, generation, receipt_handle,
                                              resolved.size_bytes, self._factory._seal)
         self._runtime_receipts[role] = receipt
+        return receipt
+
+    def _resolve_current_runtime_receipt(
+            self, role: str, receipt_handle: str) -> RootRuntimeArtifactReceipt:
+        """Derive generation from current root authorization, never from the caller."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._resolve_current_prepared_enrollment()
+        if prepared.state != "prepared" or prepared.enrollment_ids:
+            raise BootstrapEnrollmentPending("runnable receipt selection requires current prepared custody")
+        receipt = self.resolve_runtime_receipt(
+            role, receipt_handle, self._authorization.transaction_handle)
+        rule = next((row for row in self._policy.receipt_binding_rules
+                     if row.get("receipt_role") == role), None)
+        if (rule is None or rule.get("required_phase") != "runnable"
+                or receipt.generation != prepared.transaction_handle):
+            raise BootstrapEnrollmentPending("runtime receipt is not bound to the current runnable role")
+        self._factory._actor.verify_current(self._factory._release)
+        self._factory._release.verify_current()
         return receipt
 
     def activate_runnable(self, receipts: Mapping[str, RootRuntimeArtifactReceipt]) -> EnrollmentReceipt:
