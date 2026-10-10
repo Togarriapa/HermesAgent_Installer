@@ -388,22 +388,25 @@ class RootApplicationQualificationContextProducer:
                  runtime_probe_authority: Any, fixture_server: RootOwnedApplicationFixtureServer,
                  service: Any, controller_bindings: Any):
         required = (
-            (setup_runtime_factory, "resolve_live_session"),
+            (setup_runtime_factory, "resolve_live_session_id"),
             (source_preparation_registry, "prepare_selected_source"),
             (source_preparation_registry, "resolve_application_lock_for_prepared_source"),
             (source_preparation_registry, "record_prepared_verified_generation"),
             (source_preparation_registry, "resolve_prepared_source"),
-            (runtime_preparation_resolver, "resolve_application_runtime_preparation"),
-            (runtime_preparation_resolver, "resolve_application_runtime_preparation_selection"),
-            (runtime_preparation_resolver, "resolve_application_runtime_probe_step"),
-            (runtime_probe_authority, "run_selected_runtime_probe"),
-            (runtime_probe_authority, "resolve_application_runtime_probe"),
             (controller_bindings, "resolve_application_controller_binding"),
             (controller_bindings, "verify_application_controller_binding"),
         )
         if (fixture_server is None or service is None
-                or any(not callable(getattr(owner, name, None)) for owner, name in required)):
-            raise ValueError("pre-active application qualification producer dependencies are incomplete")
+                or any(not callable(getattr(owner, name, None)) for owner, name in required)
+                or (runtime_preparation_resolver is not None and any(
+                    not callable(getattr(runtime_preparation_resolver, name, None))
+                    for name in ("resolve_application_runtime_preparation",
+                                 "resolve_application_runtime_preparation_selection",
+                                 "resolve_application_runtime_probe_step")))
+                or (runtime_probe_authority is not None and any(
+                    not callable(getattr(runtime_probe_authority, name, None))
+                    for name in ("run_selected_runtime_probe", "resolve_application_runtime_probe")))):
+            raise ValueError("pre-active application qualification producer dependencies are invalid")
         self.setup_factory = setup_runtime_factory
         self.source_preparations = source_preparation_registry
         self.source_receipts = component_source_receipt_registry
@@ -496,6 +499,8 @@ class RootApplicationQualificationContextProducer:
         except Exception:
             raise AuthorityDenied("application.source", "pinned source or lock phase is unavailable") from None
         self._phase_consent(binding, choice, self._PHASES[1])
+        if self.runtime_preparations is None or self.probes is None:
+            raise AuthorityDenied("application.runtime", "locked isolated runtime builder or reviewed probe artifact is unavailable")
         try:
             preparation = self.runtime_preparations.resolve_application_runtime_preparation(
                 app_id, source.receipt_handle, lock.receipt_handle)
