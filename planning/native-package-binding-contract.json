@@ -1070,5 +1070,98 @@
   "native_schema_catalog_identity_v114": {
     "map_path": "plans/amendments/2026-10-10-native-schema-catalog-identities-v114/native-local-schema-artifact-map-v2.json",
     "semantics": "Exact static ArtifactCatalog grammar [A-Za-z0-9_.-] does not admit colon. These eight literal schema/artifact IDs supersede impossible v112 colon IDs; actual source schema bytes/path/SHA/size unchanged. Do not widen staticcatalog/rootreceipt grammar or mintaliases. Logical registration/action IDs remain protected schema domain, not ArtifactCatalog IDs."
+  },
+  "financial_web_results_v120": {
+    "schema": 1,
+    "id": "native-financial-web-results-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T11"
+    ],
+    "schema_artifacts": [
+      {
+        "tool_name": "financial_data_read",
+        "schema_id": "installer-native-result-financial_data_read-v1",
+        "artifact_id": "installer-native-result-financial_data_read-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/financial_data_read.result.schema.json",
+        "sha256": "6902fd82075320bad86cd622d6304ffd248ec236b70ea4a27c44071c843fbf03",
+        "size_bytes": 935
+      },
+      {
+        "tool_name": "web_retrieve",
+        "schema_id": "installer-native-result-web_retrieve-v1",
+        "artifact_id": "installer-native-result-web_retrieve-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/web_retrieve.result.schema.json",
+        "sha256": "dea89695c5206d563b2f0cd199490042af85612981fd504086e16a92ab767e13",
+        "size_bytes": 1315
+      }
+    ],
+    "source_pins": {
+      "plugin_finance.py": "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73",
+      "plugin_local_voice_web.py": "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
+    },
+    "financial": "Exact source-normalized observations, <=1000 rows/64 scalar keys each. Enforce total canonical UTF8 result <=2097152, finite numbers, <=2048 UTF8 bytes per data string/control denial, source provider-operation pair and current selected alias. Strip source credential/account identifiers as existing normalizer; no new effect/account authority. Numeric/time/schema fields do not prove current bank/trade state.",
+    "web": "Closed source-established outer return key set preserved. Existing source only checks receipt object; implementation must now populate/resolve the exact selected root artifact receipt fields, rather than promote backend-provided dictionary. Require current root registry membership, actual captured content artifact SHA/size/media/profile/owner/operation/source ancestry and expiry; response bytes and redirects remain untrusted/authority none. maxItems32 is reviewed bounded result ceiling, never authorization to follow32 redirects: actual stricter fetch policy remains controlling.",
+    "bounds": "Canonical bytes <=2MiB, duplicate keys/nonfinite values denied; string UTF8 byte limits enforced independently of JSON Schema maxLength. New finite receipt field ceilings are validator obligations, not inferred source guarantees. Schemas become operational only after actual source artifact observation, component wrapper implementation and protected selected schema/registration joins.",
+    "registration_schema_foreign_keys": "For external registration argument/result native_schema_artifacts row: adapter_id exactly registration.adapter_id, action_id exactly registration.registration_id, id exactly explicit argument_schema_id/result_schema_id and schema_kind corresponding role. Both exact records/proofs mandatory for executable registration. Backend effect action schemas remain separate; identical bytes may share storage but not erase explicit role joins.",
+    "tasks": [
+      "HI-T120.1: registration/component owner apply exact finite financial/web result validators and genuine root artifact receipt resolver; no generic object schema.",
+      "HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.",
+      "HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open."
+    ]
+  },
+  "financial_alias_source_bound_v121": {
+    "schema": 1,
+    "id": "financial-alias-source-bound-v1",
+    "supersedes": "v120 financial account_alias maxLength96 only; immutable v120 retained",
+    "why": "Actual plugin_finance._ID accepts up to128 characters; preserve the entire source-reviewed alias domain, not an unintentional narrower guessed ceiling.",
+    "schema_id": "installer-native-result-financial_data_read-v1",
+    "artifact_id": "installer-native-result-financial_data_read-v1",
+    "path": "plans/amendments/2026-10-10-financial-alias-source-bound-v121/financial_data_read.result.schema.json",
+    "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
+    "size_bytes": 984,
+    "rule": "Exact actual root selected account alias, source regex/max128; all other v120 fields/bounds/proof/task obligations unchanged. Current selected schema artifact pin must resolve this v121 source member, not stale v120 bytes."
+  },
+  "process_role_association_v123": {
+    "schema": 1,
+    "id": "native-process-role-association-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "Actual v113 package parser has multiple action/registration/workflow rows while observer resolver still equates process role with one legacy adapter artifact. Process roles and effects have independent provenance.",
+    "active_key": "native_packages[*].process_role_records",
+    "type": "NativeProcessRoleRecord",
+    "fields": [
+      "role_id",
+      "package_id",
+      "native_package_generation",
+      "profile_id",
+      "profile_generation",
+      "role_artifact_id",
+      "role_sha256",
+      "role_source_receipt_handle",
+      "module_name",
+      "closure_member_path",
+      "role_source_revision",
+      "role_source_tree_sha256",
+      "observer_enrollment_ids",
+      "registration_ids",
+      "action_binding_ids",
+      "workflow_ids"
+    ],
+    "field_rules": "IDs explicit root selected and finite; tuple IDs unique and all foreign keys exact. module_name actual qualified module identity, closure_member_path normalized relative regular-file member of verified compiled closure, no ambient search/import fallback. role_artifact_id/SHA identify actual role module artifact bytes; never action adapter automatically. profile_generation is process generation; native_package_generation independent. No embedding enclosing generation digest in row.",
+    "producer": "Root selected preactive native assembly definitions include process_role_records alongside v113 action/registration/workflow/source-issuer/schema records. Factory/projection owner derives actual role module receipt from RootReleaseModuleReceipt and reviewed pinned native loader/boundary/source role definition; joins exact staged loaded-module member/source/observer/effect selections before assembly. Prepared worker catalogs can remain empty; sealed RootNativeBootstrapAssemblySelection owns these staged definitions. Do not require existing active rows to compile their initial records.",
+    "factory_api": "RootSelectedInstallationBinding.resolve_native_bootstrap_assembly(selection_handle) returns the sealed selected process-role/action/registration/workflow/source-issuer/schema definition closure; actual source/effect/schema receipt registries validate each member. No caller JSON/path or action label derives role identity. Active compiler publishes same validated records with actual output receipt closure.",
+    "observer_join": "SourceObserverEnrollment.role_id resolves package.process_role_records[role_id]. Exact package/profile/process generation/native generation/source role artifact/hash; observer ID belongs to role.observer_enrollment_ids and selected source issuer same observer/package/profile/process generation. observer source_action_id joins exact external registration or reviewed standalone source action, not every action in a family. Target/recipient/action/schema comes from exact observer/source-issuer and selected registration/action effect binding, never process role itself. Legacy adapter_records never used as role resolver.",
+    "current_proof": "Root loaded package proof requires actual current producer PIDFD/start identity/executable/profile generation, held managed mount/source closure, actual loaded module_name/member origin SHA corresponding to this selected role record and fresh authenticated loader event. Root proof receiver retains immutable proof identity. Module receipt/source digest alone does not prove live loading; package process proof alone does not prove imported role.",
+    "runtime_api": "RootRuntimeBindings.resolve_selected_native_process_role(package_id,native_package_generation,role_id)->NativeProcessRoleRecord. SourceObserverRegistry._resolve_package_role returns exact package plus process role; independent effect/action lookup uses role FK sets and observer-specific exact action, not role adapter lookup.",
+    "migration": "Required process_role_records array on new v123 package records. Reject missing/conflicting role artifact/module/profile/observer joins. Old legacy-only packages unavailable for source capture until actual role definition/proof migrated; no invented role IDs or inferred action artifact association.",
+    "tasks": [
+      "HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.",
+      "HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.",
+      "HI-T123.3: source/custody owner independently join actual loaded role/source proof to producer and exact selected action; test wrong role module/adapter/observer and two generations; actual native runtime acceptance open."
+    ]
   }
 }

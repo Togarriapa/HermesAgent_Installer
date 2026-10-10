@@ -671,3 +671,35 @@ The system SHALL use v108 selected owned endpoint/model deployment and private t
 #### Scenario: Only public chat dispatcher exists
 - **WHEN** private endpoint/model or embedding capability proof is absent
 - **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
+
+### Requirement: Preactive application source preparation
+The system SHALL use v117 typed root setup source selections and independently observed full source/lock receipts before active runtime publication without manufacturing a selected active row. Operational application authorization SHALL remain independent.
+
+#### Scenario: Runtime not yet active
+- **WHEN** an actual prepared setup choice selects one fixed source profile
+- **THEN** the source producer verifies/stages its exact pinned source and locks before runtime probing and activation.
+
+### Requirement: Purpose bound qualification consent
+The system SHALL record v117 finite local qualification consent in the same explicit rootTTY workflow choice and resolve current phase snapshots without another routineprompt. It SHALL NOT reuse capture/private-input consent or authorize provider/account effects.
+
+#### Scenario: Qualification attempts provider egress
+- **WHEN** a selected fixture attempts an unrelated endpoint or metered operation
+- **THEN** qualification consent denies that effect.
+
+### Requirement: Current memory service enablement and active prestart closure
+
+The installer SHALL resolve selected memory service lifecycle enablement and actual active prestart artifact closure under v119, independently of capture consent and expired setup authorization.
+
+#### Scenario: Liveness without semantic evidence
+
+- **WHEN** a selected memory process passes only its liveness/status route
+- **THEN** the installer records that exact status and leaves semantic memory functionality pending until actual selected capability operations and private route gates are verified
+
+### Requirement: Actual installer memory service enable configuration
+
+The installer SHALL record v124 actual protected root TTY service-enable configuration and publish its exact verified active service projection separately from capture/provider consent.
+
+#### Scenario: User-mode selection or capture consent alone
+
+- **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
+- **THEN** memory service startup is unavailable and no service authorization is inferred

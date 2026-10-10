@@ -92,3 +92,9 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 Application request source v107: `plans/amendments/2026-10-10-application-request-source-v107.md`; actual finite installer qualification request distinct from absent native application mappings. Existing SK-F03/R0067/R0138/AC12 implementation and acceptance remain open.
 
 Private memory endpoint adapter v108: `plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108.md`; exact distinct private text/embed model/deployment/current consent and bounded protocol producer required. Existing engine lifecycle/semantic memory/acceptance remain open.
+
+Preactive application source and qualification consent v117: `plans/amendments/2026-10-10-preactive-application-source-consent-v117.md`; actual setupsource/lock receipts beforeactive and same explicitchoice finite purposeconsent, operational authorization untouched. Existing application/AC12 gates open.
+
+Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecycle-active-closure-v119.md`; existing lifecycle/capture/semantic acceptance obligations remain open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
