@@ -50,6 +50,8 @@ _EXECUTION_BINDING = {
     "child_capability": "hermes-profile-invoke",
     "task_body_recipe_id": "task-prompt-recipe",
     "task_request_schema_id": "hermes-profile-query-v1",
+    "source_profile_id": "hermes",
+    "home_binding_id": "a" * 64,
 }
 
 

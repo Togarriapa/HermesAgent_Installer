@@ -176,6 +176,7 @@ class VerifiedRootResourceTaskStart:
     context: RootResourceTaskContext
     authorization: RootResourceTaskEffectAuthorization
     selected_profile: Any = field(repr=False, compare=False)
+    selected_home_binding: Any = field(repr=False, compare=False)
     _issuer: Any = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
     _nonce: str = field(repr=False, compare=False)
@@ -213,12 +214,14 @@ class RootResourceTaskAuthority:
     def issue_root_resource_task_start(
         self, child_admission: Any, task_source: Any, task_admission: Any,
         selected_execution: Any, *, task_handle: Any, controller: Any,
+        selected_home_binding: Any,
     ) -> RootResourceTaskStartGrant:
         from hermes_installer.registry.resource_jobs import (
             ResourceChildAdmission, RootAdmittedTask, RootAdmittedTaskSource,
             RootResourceJobAdmissionHandle, RootTaskController,
         )
         from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+        from .native_profile_task_homes import RootSelectedResourceTaskHomeBinding
 
         service = self.service
         if (not isinstance(task_handle, RootResourceJobAdmissionHandle)
@@ -226,7 +229,9 @@ class RootResourceTaskAuthority:
                 or not isinstance(task_admission, RootAdmittedTask)
                 or not isinstance(task_source, RootAdmittedTaskSource)
                 or not isinstance(controller, RootTaskController)
-                or not isinstance(selected_execution, SelectedResourceProfileTask)):
+                or not isinstance(selected_execution, SelectedResourceProfileTask)
+                or type(selected_home_binding) is not RootSelectedResourceTaskHomeBinding
+                or not selected_home_binding.verify_current(selected_execution)):
             raise AuthorityDenied("resource.task_start", "root task selection has an invalid type")
         if (not isinstance(task_source.sensitivity, Sensitivity)
                 or task_source.sensitivity is Sensitivity.PUBLIC
@@ -253,6 +258,8 @@ class RootResourceTaskAuthority:
                     or selected_execution.native_package_generation != task_handle.native_package_generation
                     or selected_execution.task_body_recipe_id != task_handle.task_body_recipe_id
                     or selected_execution.task_request_schema_id != task_handle.task_request_schema_id
+                    or selected_execution.source_profile_id != selected_home_binding.source_profile_id
+                    or selected_execution.home_binding_id != selected_home_binding.home_binding_id
                     or service.monotonic() >= min(task_handle.expires_monotonic, task_admission.deadline_monotonic,
                                                   task_source.expires_monotonic, controller.expires_monotonic)):
                 raise AuthorityDenied("resource.task_start", "retained child, controller or selected execution changed")
@@ -273,7 +280,8 @@ class RootResourceTaskAuthority:
                     or getattr(protected_operation, "generation", None) != profile.generation
                     or getattr(protected_operation, "enrollment_id", None) != profile.enrollment_id):
                 raise AuthorityDenied("resource.task_start", "selected process profile is no longer current")
-            payload = self.selection_payload(task_handle, task_admission, selected_execution, profile)
+            payload = self.selection_payload(task_handle, task_admission, selected_execution, profile,
+                                              selected_home_binding)
             request_sha = hashlib.sha256(payload).hexdigest()
             now = service.monotonic()
             expiry = min(float(task_handle.expires_monotonic), float(task_admission.deadline_monotonic),
@@ -347,6 +355,7 @@ class RootResourceTaskAuthority:
                     "grant": auth, "context": context, "handle": task_handle,
                     "child": child_admission, "source": task_source, "task": task_admission,
                     "execution": selected_execution, "controller_digest": controller_digest,
+                    "home_binding": selected_home_binding,
                     "controller": controller,
                     "profile": profile, "selection_payload": payload,
                     "state": "pending", "proof": None,
@@ -397,8 +406,8 @@ class RootResourceTaskAuthority:
                     or not self._is_current(entry)):
                 raise AuthorityDenied("resource.task_start", "root task source or controller changed")
             self._nonces[auth.nonce] = ("consumed", auth.expires_monotonic)
-            proof = VerifiedRootResourceTaskStart(context, auth, entry["profile"], self,
-                                                  self._seal, auth.nonce)
+            proof = VerifiedRootResourceTaskStart(context, auth, entry["profile"],
+                                                  entry["home_binding"], self, self._seal, auth.nonce)
             entry["state"], entry["proof"] = "consumed", proof
             return proof
 
@@ -412,6 +421,7 @@ class RootResourceTaskAuthority:
             if (entry is None or entry["proof"] is not proof or entry["state"] != "consumed"
                     or entry["task"] is not task_admission or entry["profile"] is not selected_profile
                     or proof.selected_profile is not selected_profile
+                    or proof.selected_home_binding is not entry["home_binding"]
                     or proof.authorization.request_sha256 != hashlib.sha256(canonical_selection_payload).hexdigest()
                     or self._nonces.get(proof._nonce) != ("consumed", proof.authorization.expires_monotonic)):
                 return False
@@ -427,7 +437,8 @@ class RootResourceTaskAuthority:
                     and context.service_generation_digest == self.service.service_generation_digest
                     and context.policy_revision == self.service._policy_revision()
                     and context.selected_generation == self.service.profile_generations.get(context.selected_profile_id)
-                    and self._controller_is_current(handle, entry))
+                    and self._controller_is_current(handle, entry)
+                    and entry["home_binding"].verify_current(entry["execution"]))
         except Exception:
             return False
 
@@ -439,13 +450,18 @@ class RootResourceTaskAuthority:
                     and self._controller_matches_digest(controller, entry["controller_digest"]))
 
     @staticmethod
-    def selection_payload(handle: Any, task: Any, execution: Any, profile: Any) -> bytes:
+    def selection_payload(handle: Any, task: Any, execution: Any, profile: Any,
+                          selected_home_binding: Any) -> bytes:
         return canonical_bytes({
             "schema": 1, "enrollment_id": profile.enrollment_id, "generation": profile.generation,
             "operation_id": execution.operation_id, "parameters": {},
             "admission_handle": handle.handle_id, "node_id": handle.node_id,
             "task_payload_sha256": handle.task_payload_sha256,
             "stdin_sha256": task.stdin_sha256, "stdin_size_bytes": task.stdin_size_bytes,
+            "source_profile_id": execution.source_profile_id,
+            "home_binding_id": execution.home_binding_id,
+            "home_binding_handle": selected_home_binding.binding_handle,
+            "home_binding_sha256": selected_home_binding.binding_sha256,
         })
 
     @staticmethod

@@ -159,8 +159,28 @@ def test_root_resource_task_start_is_consumed_once_and_bound_to_exact_input():
         process_start_target="process:task", native_package_id="package:task",
         native_package_generation="package-gen", task_body_recipe_id="body:task",
         task_request_schema_id="schema:task", process_operation=object(), launch_recipe=object(),
-        native_package=object(), task_body_recipe=object(),
+        native_package=object(), task_body_recipe=object(), source_profile_id="hermes",
+        home_binding_id="m" * 64,
     )
+
+    class _HomeBindingIssuer:
+        def __init__(self):
+            self._binding_seal = object()
+
+        def verify_current(self, binding, selection):
+            return binding is selected_home_binding and selection is execution
+
+    home_issuer = _HomeBindingIssuer()
+    selected_home_binding = object.__new__(__import__(
+        "hermes_installer.authority.native_profile_task_homes",
+        fromlist=["RootSelectedResourceTaskHomeBinding"],
+    ).RootSelectedResourceTaskHomeBinding)
+    object.__setattr__(selected_home_binding, "_issuer", home_issuer)
+    object.__setattr__(selected_home_binding, "_seal", home_issuer._binding_seal)
+    object.__setattr__(selected_home_binding, "source_profile_id", "hermes")
+    object.__setattr__(selected_home_binding, "home_binding_id", "m" * 64)
+    object.__setattr__(selected_home_binding, "binding_handle", "home-binding-handle")
+    object.__setattr__(selected_home_binding, "binding_sha256", "b" * 64)
     class Jobs:
         def resolve_task_child_admission(self, got, node):
             assert got is handle and node == task.node_id
@@ -180,9 +200,11 @@ def test_root_resource_task_start_is_consumed_once_and_bound_to_exact_input():
     jobs = Jobs()
     authority = RootResourceTaskAuthority(service, jobs, object())
     service_generation = service.service_generation_digest
-    expected_payload = authority.selection_payload(handle, task, execution, profile)
+    expected_payload = authority.selection_payload(handle, task, execution, profile,
+                                                    selected_home_binding)
     grant = authority.issue_root_resource_task_start(
         child, source, task, execution, task_handle=handle, controller=controller,
+        selected_home_binding=selected_home_binding,
     )
     proof = authority.consume_root_resource_task_start(
         grant, child, source, task, expected_payload, task_handle=handle,

@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import threading
 from dataclasses import dataclass, field, replace
@@ -2254,7 +2255,8 @@ class ResourceJobAuthority:
                         or set(envelope) != {
                             "schema", "enrollment_id", "generation", "operation_id", "parameters",
                             "admission_handle", "node_id", "task_payload_sha256", "stdin_sha256",
-                            "stdin_size_bytes",
+                            "stdin_size_bytes", "source_profile_id", "home_binding_id",
+                            "home_binding_handle", "home_binding_sha256",
                         }
                         or _canonical(envelope) != selection_payload
                         or envelope["schema"] != 1
@@ -2318,6 +2320,15 @@ class ResourceJobAuthority:
                     or backend.consent_revision != enrollment.consent_revision
                     or backend.profile_id != enrollment.profile_id
                     or backend.principal_id != enrollment.principal_id
+                    or envelope is not None and (
+                        not isinstance(backend.execution_binding, Mapping)
+                        or envelope["source_profile_id"] != backend.execution_binding.get("source_profile_id")
+                        or envelope["home_binding_id"] != backend.execution_binding.get("home_binding_id")
+                        or not isinstance(envelope["home_binding_handle"], str)
+                        or not envelope["home_binding_handle"]
+                        or not isinstance(envelope["home_binding_sha256"], str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", envelope["home_binding_sha256"])
+                    )
                     or self.service.profile_generations.get(enrollment.profile_id)
                        != event.parent_context.generation
                     or not self.ledger.is_job_active(child.job_id, current_generation=current_generation)

@@ -4418,6 +4418,8 @@ class ManagedProcessEffectHandler:
                task_admission: RootAdmittedTask | None = None,
                daemon_liveness_pidfd: int | None = None,
                root_resource_start: Any | None = None,
+               root_resource_home_binding: Any | None = None,
+               root_resource_selection: Any | None = None,
                root_application_start: Any | None = None) -> Mapping[str, Any]:
         with self._lock:
             if (profile.profile_id in self._starting
@@ -4432,6 +4434,8 @@ class ManagedProcessEffectHandler:
                     _start_guard=start_guard, _task_admission=task_admission,
                     _daemon_liveness_pidfd=daemon_liveness_pidfd,
                     _root_resource_start=root_resource_start,
+                    _root_resource_home_binding=root_resource_home_binding,
+                    _root_resource_selection=root_resource_selection,
                     _root_application_start=root_application_start,
                 )
             return self._start_reserved(profile, context, authorization, payload, timeout,
@@ -4453,6 +4457,8 @@ class ManagedProcessEffectHandler:
                                  _xauthority_mount_source: Path | None = None,
                                  _daemon_liveness_pidfd: int | None = None,
                                  _root_resource_start: Any | None = None,
+                                 _root_resource_home_binding: Any | None = None,
+                                 _root_resource_selection: Any | None = None,
                                  _root_application_start: Any | None = None) -> Mapping[str, Any]:
         """Resolve a selection-only worker request to one immutable root recipe.
 
@@ -4696,25 +4702,38 @@ class ManagedProcessEffectHandler:
                     or _root_selected_effect.action != "start"
                     or _xauthority_mount_source is not None):
                 raise AuthorityDenied("root-selected.mount", "selected operation has no fixed supported role binding")
-        cwd_root_id = recipe["cwd_root_id"]
-        root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
-                      profile.data_id: profile.data_root}
-        root_path = root_by_id.get(cwd_root_id)
-        if root_path is None:
-            raise AuthorityDenied("process.cwd", "operation working root is not enrolled")
-        relative = recipe["cwd_subpath"]
-        cwd = root_path if relative in {"", "."} else root_path / relative
-        try:
-            resolved_cwd = cwd.resolve(strict=True)
-            if not resolved_cwd.is_dir() or not resolved_cwd.is_relative_to(root_path):
-                raise ValueError("working directory escapes enrolled root")
-            cursor = root_path
-            for part in Path(relative).parts if relative not in {"", "."} else ():
-                cursor /= part
-                if stat.S_ISLNK(cursor.lstat().st_mode):
-                    raise ValueError("working directory traverses a symlink")
-        except (OSError, ValueError):
-            raise AuthorityDenied("process.cwd", "operation working directory is unavailable") from None
+        resource_home_binding = _root_resource_home_binding
+        if _task_admission is not None:
+            from hermes_installer.authority.native_profile_task_homes import RootSelectedResourceTaskHomeBinding
+            if (type(resource_home_binding) is not RootSelectedResourceTaskHomeBinding
+                    or _root_resource_selection is None
+                    or not resource_home_binding.verify_current(_root_resource_selection)):
+                raise AuthorityDenied("resource.home_binding", "selected task home binding is stale")
+            environment["HOME"] = "/hermes"
+            environment["HERMES_HOME"] = "/hermes"
+            resolved_cwd = Path("/hermes")
+            cwd_root = resolved_cwd
+            cwd_target = "/hermes"
+        else:
+            cwd_root_id = recipe["cwd_root_id"]
+            root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
+                          profile.data_id: profile.data_root}
+            root_path = root_by_id.get(cwd_root_id)
+            if root_path is None:
+                raise AuthorityDenied("process.cwd", "operation working root is not enrolled")
+            relative = recipe["cwd_subpath"]
+            cwd = root_path if relative in {"", "."} else root_path / relative
+            try:
+                resolved_cwd = cwd.resolve(strict=True)
+                if not resolved_cwd.is_dir() or not resolved_cwd.is_relative_to(root_path):
+                    raise ValueError("working directory escapes enrolled root")
+                cursor = root_path
+                for part in Path(relative).parts if relative not in {"", "."} else ():
+                    cursor /= part
+                    if stat.S_ISLNK(cursor.lstat().st_mode):
+                        raise ValueError("working directory traverses a symlink")
+            except (OSError, ValueError):
+                raise AuthorityDenied("process.cwd", "operation working directory is unavailable") from None
         recipe_argv = tuple([str(executable), *(
             "{child_artifact}" if token in children else token for token in executable_tokens[1:]
         )])
@@ -4743,6 +4762,8 @@ class ManagedProcessEffectHandler:
                                    lease_expires_monotonic=float(lifecycle_deadline),
                                    process_expires_monotonic=_root_selected_lifecycle_deadline,
                                    root_selected_effect=_root_selected_effect,
+                                   root_resource_home_binding=resource_home_binding,
+                                   root_resource_selection=_root_resource_selection,
                                    xauthority_mount_source=_xauthority_mount_source,
                                    daemon_liveness_pidfd=_daemon_liveness_pidfd)
 
@@ -5315,6 +5336,8 @@ class ManagedProcessEffectHandler:
                             expected_stdin_sha256: str, peer_pid: int | None,
                             peer_pidfd: int | None, timeout: float,
                             cancelled: Callable[[], bool],
+                            selected_home_binding: Any | None = None,
+                            selected_task_execution: Any | None = None,
                             _verified_resource_start: Any | None = None,
                             initial_input_coordinator: Any | None = None,
                             daemon_liveness_pidfd: int | None = None) -> ManagedTaskHandle:
@@ -5391,6 +5414,7 @@ class ManagedProcessEffectHandler:
                     or not callable(verify)
                     or verify(_verified_resource_start, selection_payload,
                               task_admission=task_handle, selected_profile=profile) is not True
+                    or _verified_resource_start.selected_home_binding is not selected_home_binding
                     or _verified_resource_start.authorization.expires_monotonic
                        != authorization.expires_monotonic
                     or _verified_resource_start.context.selected_principal_id != context.principal_id
@@ -5420,7 +5444,8 @@ class ManagedProcessEffectHandler:
         selection = self._json(selection_payload)
         if (set(selection) != {"schema", "enrollment_id", "generation", "operation_id", "parameters",
                                "admission_handle", "node_id", "task_payload_sha256",
-                               "stdin_sha256", "stdin_size_bytes"}
+                               "stdin_sha256", "stdin_size_bytes", "source_profile_id",
+                               "home_binding_id", "home_binding_handle", "home_binding_sha256"}
                 or selection.get("schema") != 1
                 or selection.get("enrollment_id") != profile.enrollment_id
                 or selection.get("generation") != profile.generation
@@ -5431,6 +5456,19 @@ class ManagedProcessEffectHandler:
                 or selection.get("stdin_sha256") != task_handle.stdin_sha256
                 or selection.get("stdin_size_bytes") != task_handle.stdin_size_bytes):
             raise AuthorityDenied("resource.task_selection", "task recipe selection is not the admitted fixed operation")
+        from hermes_installer.authority.native_profile_task_homes import RootSelectedResourceTaskHomeBinding
+        from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+        if (type(selected_home_binding) is not RootSelectedResourceTaskHomeBinding
+                or type(selected_task_execution) is not SelectedResourceProfileTask
+                or not selected_home_binding.verify_current(selected_task_execution)
+                or selected_task_execution.profile_id != profile.profile_id
+                or selection.get("source_profile_id") != selected_task_execution.source_profile_id
+                or selection.get("home_binding_id") != selected_task_execution.home_binding_id
+                or selection.get("home_binding_handle") != selected_home_binding.binding_handle
+                or selection.get("home_binding_sha256") != selected_home_binding.binding_sha256
+                or selected_task_execution.source_profile_id != selected_home_binding.source_profile_id
+                or selected_task_execution.home_binding_id != selected_home_binding.home_binding_id):
+            raise AuthorityDenied("resource.home_binding", "selected source home is not bound to this admitted task")
         from hermes_installer.registry.resource_jobs import (
             RootResourceJobAdmissionHandle, RootAdmittedTaskSource, RootTaskInitialInputReceipt,
         )
@@ -5461,10 +5499,13 @@ class ManagedProcessEffectHandler:
                                task_admission=task_handle,
                                daemon_liveness_pidfd=daemon_liveness_pidfd,
                                root_resource_start=_verified_resource_start,
+                               root_resource_home_binding=selected_home_binding,
+                               root_resource_selection=selected_task_execution,
                                start_guard=lambda: bool(self._task_admission_is_current(task_handle, selection_payload)
                                    and self.monotonic() < task_handle.deadline_monotonic
-                                   and (_verified_resource_start is None or self._root_resource_start_current(
+                               and (_verified_resource_start is None or self._root_resource_start_current(
                                        _verified_resource_start, task_handle, selection_payload, profile))
+                                   and selected_home_binding.verify_current(selected_task_execution)
                                    and not cancelled()))
         try:
             body = json.loads(response["body"].decode("ascii"))
@@ -5570,6 +5611,7 @@ class ManagedProcessEffectHandler:
             admission_handle: Any, node_id: str, admitted_source: Any,
             exact_stdin: bytes, expected_stdin_sha256: str, timeout: float,
             cancelled: Callable[[], bool], initial_input_coordinator: Any,
+            selected_home_binding: Any, selected_task_execution: Any,
     ) -> ManagedTaskHandle:
         """Start a task under the distinct consumed root-resource effect proof.
 
@@ -5586,6 +5628,7 @@ class ManagedProcessEffectHandler:
                 or type(admitted_source) is not RootAdmittedTaskSource
                 or initial_input_coordinator is not self.task_input_coordinator
                 or verified_start.selected_profile is not selected_profile
+                or verified_start.selected_home_binding is not selected_home_binding
                 or not isinstance(selection_payload, bytes)
                 or verified_start.authorization.request_sha256 != hashlib.sha256(selection_payload).hexdigest()
                 or verified_start.context.selected_profile_id != selected_profile.profile_id
@@ -5620,6 +5663,8 @@ class ManagedProcessEffectHandler:
                 expected_stdin_sha256=expected_stdin_sha256, peer_pid=None,
                 peer_pidfd=None, timeout=timeout, cancelled=cancelled,
                 _verified_resource_start=verified_start,
+                selected_home_binding=selected_home_binding,
+                selected_task_execution=selected_task_execution,
                 initial_input_coordinator=initial_input_coordinator,
                 daemon_liveness_pidfd=daemon_liveness_pidfd,
             )
@@ -6181,6 +6226,8 @@ class ManagedProcessEffectHandler:
                         lease_expires_monotonic: float | None = None,
                         process_expires_monotonic: float | None = None,
                         root_selected_effect: Any | None = None,
+                        root_resource_home_binding: Any | None = None,
+                        root_resource_selection: Any | None = None,
                         xauthority_mount_source: Path | None = None,
                         daemon_liveness_pidfd: int | None = None) -> Mapping[str, Any]:
         if (self._native_worker_profile_id is not None
@@ -6322,16 +6369,36 @@ class ManagedProcessEffectHandler:
             value = env.get(key)
             if value is not None and not (value == "/hermes" or value.startswith("/hermes/")):
                 raise AuthorityDenied("process.environment", "profile writable path escapes its private mount")
-        cwd = Path(request["cwd"]).resolve(strict=True)
-        roots = [(profile.data_root.resolve(strict=True), f"/hermes/profiles/{profile.profile_id}")]
-        if profile.home_root is not None:
-            roots.append((profile.home_root.resolve(strict=True), "/hermes"))
-        if profile.work_root is not None:
-            roots.append((profile.work_root.resolve(strict=True), "/workspace"))
-        cwd_binding = next(((root, target) for root, target in roots if cwd.is_relative_to(root)), None)
-        if cwd_binding is None:
-            raise AuthorityDenied("process.cwd", "working directory is outside the enrolled private roots")
-        cwd_root, cwd_target = cwd_binding
+        if root_resource_home_binding is not None:
+            from hermes_installer.authority.native_profile_task_homes import RootSelectedResourceTaskHomeBinding
+            if (type(root_resource_home_binding) is not RootSelectedResourceTaskHomeBinding
+                    or root_resource_selection is None
+                    or not root_resource_home_binding.verify_current(root_resource_selection)
+                    or request["cwd"] != "/hermes"):
+                raise AuthorityDenied("resource.home_binding", "fixed task home mount is stale or malformed")
+            held_fd = getattr(getattr(root_resource_home_binding, "_home", None), "_directory_fd", None)
+            if type(held_fd) is not int:
+                raise AuthorityDenied("resource.home_binding", "retained task home descriptor is unavailable")
+            held_stat = os.fstat(held_fd)
+            if ((held_stat.st_dev, held_stat.st_ino, held_stat.st_uid, held_stat.st_gid,
+                 stat.S_IMODE(held_stat.st_mode)) !=
+                    (root_resource_home_binding.home_device, root_resource_home_binding.home_inode,
+                     root_resource_home_binding.home_owner_uid, root_resource_home_binding.home_owner_gid,
+                     root_resource_home_binding.home_mode)):
+                raise AuthorityDenied("resource.home_binding", "retained task home descriptor identity changed")
+            cwd = Path("/hermes")
+            cwd_root, cwd_target = cwd, "/hermes"
+        else:
+            cwd = Path(request["cwd"]).resolve(strict=True)
+            roots = [(profile.data_root.resolve(strict=True), f"/hermes/profiles/{profile.profile_id}")]
+            if profile.home_root is not None:
+                roots.append((profile.home_root.resolve(strict=True), "/hermes"))
+            if profile.work_root is not None:
+                roots.append((profile.work_root.resolve(strict=True), "/workspace"))
+            cwd_binding = next(((root, target) for root, target in roots if cwd.is_relative_to(root)), None)
+            if cwd_binding is None:
+                raise AuthorityDenied("process.cwd", "working directory is outside the enrolled private roots")
+            cwd_root, cwd_target = cwd_binding
         lifetime, output_cap = request["max_lifetime_seconds"], request["max_output_bytes"]
         if (isinstance(lifetime, bool) or not isinstance(lifetime, (int, float))
                 or not 0 < lifetime <= min(profile.max_lifetime_seconds, 600)
@@ -6376,7 +6443,10 @@ class ManagedProcessEffectHandler:
             "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
         ]
         bind_paths = [f"{profile.data_root}:{mount}"]
-        if profile.home_root is not None:
+        if root_resource_home_binding is not None:
+            held_fd = root_resource_home_binding._home._directory_fd
+            bind_paths.append(f"/proc/{os.getpid()}/fd/{held_fd}:/hermes")
+        elif profile.home_root is not None:
             bind_paths.append(f"{profile.home_root}:/hermes")
         if profile.work_root is not None:
             bind_paths.append(f"{profile.work_root}:/workspace")

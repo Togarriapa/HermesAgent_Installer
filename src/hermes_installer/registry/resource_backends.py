@@ -34,6 +34,7 @@ _TASK_ARGV_SUFFIX = (
 )
 _EXECUTION_BINDING_FIELDS = frozenset({
     "process_enrollment_id", "process_generation", "operation_id",
+    "source_profile_id", "home_binding_id",
     "native_package_id", "native_package_generation", "child_operation",
     "child_target_id", "child_capability", "task_body_recipe_id",
     "task_request_schema_id",
@@ -183,6 +184,8 @@ class SelectedResourceProfileTask:
     profile_id: str
     principal_id: str
     profile_generation: str
+    source_profile_id: str
+    home_binding_id: str
     process_enrollment_id: str
     process_generation: str
     operation_id: str
@@ -254,7 +257,7 @@ def resolve_resource_profile_task(
     text_fields = (
         "process_enrollment_id", "process_generation", "operation_id", "native_package_id",
         "native_package_generation", "child_operation", "child_target_id", "child_capability",
-        "task_body_recipe_id", "task_request_schema_id",
+        "task_body_recipe_id", "task_request_schema_id", "source_profile_id", "home_binding_id",
     )
     if any(not isinstance(binding.get(name), str) or not binding[name] for name in text_fields):
         raise ResourceProfileTaskUnavailable("selected profile-task execution binding is malformed")
@@ -325,6 +328,7 @@ def resolve_resource_profile_task(
         resource_backend_id=backend.backend_id, resource_id=backend.resource_id,
         resource_generation=backend.generation, profile_id=backend.profile_id,
         principal_id=backend.principal_id, profile_generation=backend.profile_generation,
+        source_profile_id=binding["source_profile_id"], home_binding_id=binding["home_binding_id"],
         process_enrollment_id=binding["process_enrollment_id"],
         process_generation=binding["process_generation"], operation_id=binding["operation_id"],
         process_start_target=binding["child_target_id"],

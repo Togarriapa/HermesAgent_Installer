@@ -380,7 +380,7 @@ class ResourceBackendEnrollment:
                 "process_enrollment_id", "process_generation", "operation_id",
                 "native_package_id", "native_package_generation", "child_operation",
                 "child_target_id", "child_capability", "task_body_recipe_id",
-                "task_request_schema_id",
+                "task_request_schema_id", "source_profile_id", "home_binding_id",
             }
             binding = self.execution_binding
             if not isinstance(binding, Mapping) or set(binding) != fields:
@@ -389,6 +389,9 @@ class ResourceBackendEnrollment:
             for key, value in binding.items():
                 _ident(value, f"backend execution {key}")
                 frozen_binding[key] = value
+            if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", frozen_binding["source_profile_id"])
+                    or not re.fullmatch(r"[0-9a-f]{64}", frozen_binding["home_binding_id"])):
+                raise ResourceJobDenied("backend execution source-home identity is malformed")
             if (frozen_binding["operation_id"] != "hermes-resource-profile-task-v1"
                     or frozen_binding["child_operation"] != "process.start"
                     or frozen_binding["native_package_id"] != self.native_package_id

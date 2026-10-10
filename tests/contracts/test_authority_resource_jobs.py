@@ -38,6 +38,8 @@ _EXECUTION_BINDING = {
     "child_capability": "hermes-profile-invoke",
     "task_body_recipe_id": "task-recipe",
     "task_request_schema_id": "hermes-resource-profile-query-v1",
+    "source_profile_id": "hermes",
+    "home_binding_id": "a" * 64,
 }
 
 
@@ -293,7 +295,9 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         process_generation=binding["process_generation"], operation_id=binding["operation_id"],
         process_start_target=binding["child_target_id"], child_capability=binding["child_capability"],
         task_body_recipe_id=binding["task_body_recipe_id"],
-        task_request_schema_id=binding["task_request_schema_id"],
+            task_request_schema_id=binding["task_request_schema_id"],
+            source_profile_id=binding["source_profile_id"],
+            home_binding_id=binding["home_binding_id"],
     )
     task_adapter.node_id = "node-1"
     task_adapter.launcher = service
@@ -335,6 +339,10 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
             "parameters": {}, "admission_handle": handle.handle_id,
             "node_id": task.node_id, "task_payload_sha256": task.task_payload_sha256,
             "stdin_sha256": task.stdin_sha256, "stdin_size_bytes": task.stdin_size_bytes,
+            "source_profile_id": binding["source_profile_id"],
+            "home_binding_id": binding["home_binding_id"],
+            "home_binding_handle": "current-home-binding",
+            "home_binding_sha256": "d" * 64,
         }
         selection_bytes = json.dumps(selection, sort_keys=True, separators=(",", ":"),
                                      ensure_ascii=True).encode("ascii")

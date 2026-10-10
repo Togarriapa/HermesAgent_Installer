@@ -2275,11 +2275,14 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                 "process_enrollment_id", "process_generation", "operation_id",
                 "native_package_id", "native_package_generation", "child_operation",
                 "child_target_id", "child_capability", "task_body_recipe_id",
-                "task_request_schema_id",
+                "task_request_schema_id", "source_profile_id", "home_binding_id",
             }
             selected = _exact(execution, execution_fields, "resource profile execution binding")
             for field in execution_fields:
                 _read_id(selected[field], f"resource execution {field}")
+            if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", selected["source_profile_id"])
+                    or not re.fullmatch(r"[0-9a-f]{64}", selected["home_binding_id"])):
+                raise AuthorityDenied("enrollment.generation", "resource execution source-home identity is invalid")
     body_rows = item["resource_body_recipes"]
     if (not isinstance(body_rows, list) or len(body_rows) > 4096
             or any(not isinstance(row, dict) for row in body_rows)):
