@@ -14,6 +14,7 @@ import re
 import secrets
 import stat
 import threading
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -91,7 +92,9 @@ def _read_health_record_at(directory_fd: int, transaction_id: str) -> tuple[str,
                 or set(row) != expected_fields or row.get("journal_transaction_id") != transaction_id
                 or not isinstance(row.get("health_receipt"), dict)
                 or set(row["health_receipt"]) != set(RootNativeHealthReceipt.__dataclass_fields__)
+                or row["health_receipt"].get("schema") != 2
                 or row["health_receipt"].get("status") != "passed"
+                or not _valid_digest(row["health_receipt"].get("health_run_proof_sha256"))
                 or row["health_receipt"].get("health_receipt_handle") != row.get("health_receipt_handle")
                 or row["health_receipt"].get("service_generation_digest") != row.get("service_generation_digest")
                 or not _valid_digest(row.get("service_generation_digest"))
@@ -161,7 +164,9 @@ def _append_health_record_at(directory_fd: int, transaction_id: str, encoded: by
                 or parsed.get("journal_transaction_id") != transaction_id
                 or not isinstance(parsed.get("health_receipt"), dict)
                 or set(parsed["health_receipt"]) != set(RootNativeHealthReceipt.__dataclass_fields__)
+                or parsed["health_receipt"].get("schema") != 2
                 or parsed["health_receipt"].get("status") != "passed"
+                or not _valid_digest(parsed["health_receipt"].get("health_run_proof_sha256"))
                 or parsed["health_receipt"].get("health_receipt_handle") != parsed.get("health_receipt_handle")
                 or parsed["health_receipt"].get("service_generation_digest") != parsed.get("service_generation_digest")
                 or not _valid_digest(parsed.get("service_generation_digest"))
@@ -535,3 +540,212 @@ class RootFunctionalHealthReceiptConsumer:
 
     def close(self) -> None:
         self._journal.close()
+
+
+class RootDaemonFunctionalHealthCompletionWriter:
+    """Concrete bridge from one observer consumption ticket to the daemon CAS."""
+
+    def __init__(self, *, consumer: "RootDaemonFunctionalHealthReceiptConsumer",
+                 intent: Any, proof: Any, admission: Any):
+        self.consumer = consumer
+        self.health_observer = consumer.health_observer
+        self.intent = intent
+        self.daemon_commit_proof = proof
+        self.daemon_admission = admission
+
+    def persist_consumed_receipt(self, ticket: Any) -> tuple[str, str, Mapping[str, Any]]:
+        from .native_health_observer import (
+            RootDaemonCommittedHealthProof, RootDaemonHealthControllerLease,
+            RootNativeHealthReceipt, RootNativeHealthStartAdmission,
+        )
+        if (type(self.daemon_commit_proof) is not RootDaemonCommittedHealthProof
+                or type(self.daemon_admission) is not RootNativeHealthStartAdmission
+                or self.daemon_admission.authority_branch != "daemon-committed"
+                or self.daemon_admission._verified_commit is not self.daemon_commit_proof):
+            raise AuthorityDenied("native.health.daemon_proof", "completion writer is not bound to the exact daemon admission")
+        try:
+            receipt, active_receipt, expected_digest = self.health_observer._resolve_pending_consumption_ticket(ticket)
+            if (ticket.daemon_proof is not self.daemon_commit_proof
+                    or ticket.daemon_admission is not self.daemon_admission
+                    or active_receipt is not self.consumer.active_receipt
+                    or type(receipt) is not RootNativeHealthReceipt):
+                raise ValueError
+            run_receipt, run, events, run_proof_sha256 = self.health_observer.resolve_current_daemon_receipt(
+                receipt.health_receipt_handle, self.daemon_commit_proof, self.daemon_admission)
+            projection = self.consumer.commit_registry.resolve_health_source_projection(self.daemon_commit_proof)
+            journal = self.consumer.intent_journal
+            accepted = journal.resolve_current_accepted_intent_for_handle(
+                self.intent.intent_handle, self.consumer.receiver, self.consumer.active_receipt)
+            controller = self.daemon_admission._controller_lease
+            if (run_receipt is not receipt or accepted.intent_sha256 != self.intent.intent_sha256
+                    or accepted.body != self.intent.body
+                    or type(controller) is not RootDaemonHealthControllerLease
+                    or not controller.is_current()
+                    or self.consumer.start_authority.is_current(self.daemon_admission) is not True
+                    or expected_digest != self.daemon_commit_proof.service_generation_digest
+                    or receipt.service_generation_digest != expected_digest
+                    or receipt.status != "passed"
+                    or receipt.committed_enrollment_receipt_id != self.daemon_commit_proof.committed_transaction_id
+                    or receipt.bootstrap_transaction_handle != self.daemon_commit_proof.bootstrap_transaction_handle
+                    or run.profile_id != self.daemon_admission.profile_id
+                    or run.operation_id != self.daemon_admission.operation_id
+                    or run.result_schema_id != self.daemon_admission.health_result_schema_id
+                    or projection.current_generation_digest != receipt.service_generation_digest
+                    or projection.transaction_id != receipt.committed_enrollment_receipt_id):
+                raise ValueError
+            if self.consumer.material_registry.is_current(self.daemon_admission._source_material) is not True:
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("native.health.current", "observer receipt or daemon source is no longer current") from None
+
+        receipt_body = {name: getattr(receipt, name) for name in receipt.__dataclass_fields__}
+        receipt_sha256 = hashlib.sha256(canonical_bytes(receipt_body)).hexdigest()
+        event_rows: list[dict[str, Any]] = []
+        event_order = ("loader-ready", "native-request", "provider-result",
+                       "tool-invocation", "tool-result", "terminal")
+        for event in sorted(events.values(), key=lambda item: event_order.index(item.event_kind)):
+            row = {name: getattr(event, name) for name in event.__dataclass_fields__}
+            if row.get("result_bytes") is not None:
+                row["result_bytes"] = base64.b64encode(row["result_bytes"]).decode("ascii")
+            event_rows.append(row)
+
+        intent_body = self.intent.body
+        completion = {
+            "schema": 2,
+            "completion_handle": secrets.token_urlsafe(32),
+            "intent_handle": self.intent.intent_handle,
+            "intent_sha256": self.intent.intent_sha256,
+            "committed_transaction_id": self.daemon_commit_proof.committed_transaction_id,
+            "bootstrap_transaction_handle": self.daemon_commit_proof.bootstrap_transaction_handle,
+            "generation_id": self.daemon_commit_proof.generation_id,
+            "service_generation_digest": self.daemon_commit_proof.service_generation_digest,
+            "publication_receipt_handle": self.daemon_commit_proof.publication_receipt_handle,
+            "publication_sha256": self.daemon_commit_proof.publication_sha256,
+            "source_choice_signed_record_sha256": self.daemon_commit_proof.source_choice_signed_record_sha256,
+            "health_definition_sha256": self.daemon_commit_proof.health_definition_sha256,
+            "health_receipt_handle": receipt.health_receipt_handle,
+            "health_receipt_sha256": receipt_sha256,
+            "health_run_proof_sha256": run_proof_sha256,
+            "result_schema_id": receipt.result_schema_id,
+            "result_sha256": receipt.result_sha256,
+            "parent_closure_digest": receipt.parent_closure_digest,
+            "terminal_receipt_handle": receipt.terminal_receipt_handle,
+            "daemon_unit_id": controller.unit_id,
+            "daemon_invocation_id": controller.invocation_id,
+            "daemon_pid": controller.pid,
+            "daemon_start_ticks": controller.start_ticks,
+            "daemon_actor_witness_sha256": controller.proof_sha256,
+            "completed_monotonic": self.consumer.monotonic(),
+        }
+        try:
+            self.consumer.commit_registry.resolve_health_source_projection(self.daemon_commit_proof)
+            if (self.consumer.start_authority.is_current(self.daemon_admission) is not True
+                    or not controller.is_current()
+                    or intent_body.get("intent_handle") != self.intent.intent_handle):
+                raise ValueError
+            completion_handle, completion_sha256 = self.consumer.intent_journal.commit_completion(
+                self.intent.intent_handle, self.intent.intent_sha256, completion,
+                health_receipt_body=receipt_body, health_event_proof=event_rows)
+            self.consumer.commit_registry.resolve_health_source_projection(self.daemon_commit_proof)
+            if (self.consumer.start_authority.is_current(self.daemon_admission) is not True
+                    or not controller.is_current()):
+                raise ValueError
+            body, _receipt, _events = self.consumer.intent_journal.resolve_current_completed_health_proof(
+                self.intent.intent_handle, completion_handle)
+            if body != completion or hashlib.sha256(canonical_bytes(body)).hexdigest() != completion_sha256:
+                raise ValueError
+            return completion_handle, completion_sha256, MappingProxyType(dict(body))
+        except Exception:
+            raise AuthorityDenied("native.health.completion", "durable current health completion could not be committed") from None
+
+
+class RootDaemonFunctionalHealthReceiptConsumer:
+    """Consume exact daemon-admitted native health into its protected intent CAS."""
+
+    def __init__(self, *, runtime: Any, commit_registry: Any, material_registry: Any,
+                 start_authority: Any, health_observer: Any, run_registry: Any):
+        from .listener_activation import RootSetupHealthIntentJournal, RootAuthorityListenerActivationReceiver
+        from .runtime_composition import RootAuthorityRuntime
+        from .native_health_observer import (
+            RootDaemonCommittedHealthEnrollmentRegistry, RootNativeHealthObserver,
+            RootNativeHealthStartAuthority,
+        )
+        service = getattr(runtime, "service", None)
+        journal = getattr(service, "root_setup_health_intent_journal", None)
+        receiver = getattr(service, "root_authority_listener_activation_receiver", None)
+        if (type(commit_registry) is not RootDaemonCommittedHealthEnrollmentRegistry
+                or type(runtime) is not RootAuthorityRuntime
+                or type(start_authority) is not RootNativeHealthStartAuthority
+                or type(health_observer) is not RootNativeHealthObserver
+                or not start_authority.daemon_mode
+                or start_authority.committed_enrollment_registry is not commit_registry
+                or start_authority.daemon_material_registry is not material_registry
+                or start_authority.health_observer is not health_observer
+                or start_authority.daemon_run_registry is not run_registry
+                or service.root_authority_runtime is not runtime
+                or type(journal) is not RootSetupHealthIntentJournal
+                or journal.root_journal != commit_registry.root_journal
+                or type(receiver) is not RootAuthorityListenerActivationReceiver
+                or journal.receiver is not receiver):
+            raise AuthorityDenied("native.health.consumer", "daemon health consumer needs exact composed root owners")
+        self.runtime = runtime
+        self.commit_registry = commit_registry
+        self.material_registry = material_registry
+        self.start_authority = start_authority
+        self.health_observer = health_observer
+        self.run_registry = run_registry
+        self.receiver = receiver
+        self.intent_journal = journal
+        self.monotonic = start_authority.monotonic
+        self.active_receipt = self.receiver.current_active_receipt()
+
+    @classmethod
+    def from_root_runtime(cls, runtime: Any, commit_registry: Any,
+                          material_registry: Any, start_authority: Any,
+                          health_observer: Any, run_registry: Any
+                          ) -> "RootDaemonFunctionalHealthReceiptConsumer":
+        return cls(runtime=runtime, commit_registry=commit_registry,
+                   material_registry=material_registry, start_authority=start_authority,
+                   health_observer=health_observer, run_registry=run_registry)
+
+    def admit_daemon_selected_health(self, intent_handle: str) -> Any:
+        from .listener_activation import RootAcceptedHealthIntent
+        if not isinstance(intent_handle, str) or not 32 <= len(intent_handle) <= 128:
+            raise AuthorityDenied("native.health.intent", "health intent handle is malformed")
+        try:
+            self.intent_journal.resolve_current_completed_for_intent(intent_handle)
+        except Exception:
+            pass
+        else:
+            raise AuthorityDenied("native.health.replay", "health intent already has a durable completion")
+        admission = self.start_authority.admit_daemon_selected_health(intent_handle)
+        self.active_receipt = self.receiver.current_active_receipt()
+        return admission
+
+    def record_daemon_functional_health(self, intent_handle: str,
+                                        health_receipt_handle: str) -> tuple[str, str]:
+        if not isinstance(health_receipt_handle, str) or not 32 <= len(health_receipt_handle) <= 128:
+            raise AuthorityDenied("native.health.receipt", "health receipt handle is malformed")
+        try:
+            completion_handle, completion_sha256, _body = (
+                self.intent_journal.resolve_current_completed_for_intent(intent_handle))
+            return completion_handle, completion_sha256
+        except Exception:
+            pass
+        intent = self.intent_journal.resolve_current_accepted_intent_for_handle(
+            intent_handle, self.receiver, self.receiver.current_active_receipt())
+        admission = self.start_authority.resolve_current_daemon_health_admission_for_intent(intent_handle)
+        proof = admission._verified_commit
+        if (admission._verified_commit is not proof
+                or self.start_authority.is_current(admission) is not True):
+            raise AuthorityDenied("native.health.admission", "receipt has no current matching daemon admission")
+        writer = RootDaemonFunctionalHealthCompletionWriter(
+            consumer=self, intent=intent, proof=proof, admission=admission)
+        self.health_observer.consume_selected_health_receipt(
+            health_receipt_handle, proof.committed_transaction_id,
+            proof.service_generation_digest, completion_journal=writer,
+            active_receipt=self.receiver.current_active_receipt(),
+            daemon_commit_proof=proof, daemon_admission=admission)
+        completion_handle, completion_sha256, _body = (
+            self.intent_journal.resolve_current_completed_for_intent(intent_handle))
+        return completion_handle, completion_sha256

@@ -2256,11 +2256,13 @@ class AuthorityService:
                 sensitivity = sensitivity if isinstance(sensitivity, Sensitivity) else Sensitivity(sensitivity)
             except ValueError:
                 raise AuthorityDenied("root-selected.issue", "selected source sensitivity is invalid") from None
+            from .native_health_observer import RootNativeHealthStartAdmission
             fields = {
                 "schema": 1, "context_id": secrets.token_urlsafe(24),
                 "admission_handle": self._selected_binding_text(current_admission, "admission_handle"),
-                "admission_kind": "memory" if current_admission is getattr(authority, "memory_admission", None) else
-                    ("memory" if type(current_admission).__module__.startswith("hermes_installer.memory.") else "startup"),
+                "admission_kind": "health" if type(current_admission) is RootNativeHealthStartAdmission else (
+                    "memory" if current_admission is getattr(authority, "memory_admission", None) else
+                    ("memory" if type(current_admission).__module__.startswith("hermes_installer.memory.") else "startup")),
                 "controller_proof_sha256": self._selected_controller_digest(current_admission, binding, controller),
                 "selected_principal_id": self._selected_binding_text(binding, "principal_id"),
                 "selected_profile_id": self._selected_binding_text(binding, "profile_id"),
@@ -2394,7 +2396,19 @@ class AuthorityService:
                                        action: str) -> tuple[Any, Any, Any]:
         startup = self.root_selected_startup_authority
         memory = self.root_selected_memory_authority
-        if startup is not None and type(admission).__module__ == "hermes_installer.authority.selected_startup_authority":
+        manager = self.process_effect_handler
+        health = getattr(manager, "native_health_start_authority", None)
+        from .native_health_observer import RootNativeHealthStartAdmission, RootNativeHealthStartAuthority
+        if (type(admission) is RootNativeHealthStartAdmission
+                and type(health) is RootNativeHealthStartAuthority):
+            authority = health
+            current = authority.resolve_current_health_admission(admission.admission_handle)
+            if (current is not admission or not authority.is_current(current)
+                    or action != "start" or getattr(binding, "role", None) != "health"):
+                raise AuthorityDenied("root-selected.binding", "health admission is not current for its fixed start action")
+            selected = authority.resolve_selected_recipe_binding(current, "health", "start")
+            expected = RootNativeHealthStartAdmission
+        elif startup is not None and type(admission).__module__ == "hermes_installer.authority.selected_startup_authority":
             authority = startup
             current = authority.resolve_current_admission(admission.admission_handle)
             stop_reason = getattr(binding, "stop_reason", "shutdown")

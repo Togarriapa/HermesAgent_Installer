@@ -86,7 +86,7 @@ _HEALTH_COMPLETION_FIELDS = frozenset({
     "health_receipt_handle", "health_receipt_sha256", "result_schema_id", "result_sha256",
     "parent_closure_digest", "terminal_receipt_handle", "daemon_unit_id",
     "daemon_invocation_id", "daemon_pid", "daemon_start_ticks",
-    "daemon_actor_witness_sha256", "completed_monotonic",
+    "daemon_actor_witness_sha256", "health_run_proof_sha256", "completed_monotonic",
 })
 _MAX_MESSAGE = 8192
 _MAX_TTL = 30.0
@@ -163,7 +163,9 @@ def _health_identifier(value: Any) -> bool:
 def _validate_health_receipt_evidence(value: Mapping[str, Any],
                                       completion: Mapping[str, Any]) -> None:
     """Validate the persisted original observer receipt and exact event closure."""
-    from .native_health_observer import RootNativeHealthEvent, RootNativeHealthReceipt
+    from .native_health_observer import (
+        RootNativeHealthEvent, RootNativeHealthReceipt, _validate_event_ancestry,
+    )
 
     receipt_body = value.get("health_receipt_body")
     receipt_sha = value.get("health_receipt_sha256")
@@ -174,6 +176,7 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
             or type(receipt_body.get("schema")) is not int
             or not isinstance(receipt_sha, str) or not _HEX64.fullmatch(receipt_sha)
             or receipt_sha != _digest(receipt_body)
+            or receipt_body.get("schema") != 2
             or not isinstance(proof_rows, list) or not 5 <= len(proof_rows) <= 6):
         raise ValueError("durable health receipt evidence has an invalid closed schema")
     receipt = RootNativeHealthReceipt(**receipt_body)
@@ -184,9 +187,9 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
     completion_digests = ("intent_sha256", "service_generation_digest", "publication_sha256",
                           "source_choice_signed_record_sha256", "health_definition_sha256",
                           "health_receipt_sha256", "result_sha256", "parent_closure_digest",
-                          "daemon_actor_witness_sha256")
+                          "daemon_actor_witness_sha256", "health_run_proof_sha256")
     completed_at = completion.get("completed_monotonic")
-    if (completion.get("schema") != 1
+    if (type(completion.get("schema")) is not int or completion.get("schema") != 2
             or any(type(completion.get(name)) is not str
                    or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", completion[name]) is None
                    for name in completion_handles)
@@ -212,6 +215,7 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
             or completion.get("result_schema_id") != receipt.result_schema_id
             or completion.get("result_sha256") != receipt.result_sha256
             or completion.get("parent_closure_digest") != receipt.parent_closure_digest
+            or completion.get("health_run_proof_sha256") != receipt.health_run_proof_sha256
             or completion.get("terminal_receipt_handle") != receipt.terminal_receipt_handle):
         raise ValueError("completion row differs from the retained original health receipt")
 
@@ -220,6 +224,10 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
         if not isinstance(raw, dict) or set(raw) != event_fields:
             raise ValueError("health event proof row differs from the exact event schema")
         row = dict(raw)
+        for name in ("causal_parent_event_ids", "source_receipt_handles", "source_receipt_ids"):
+            if not isinstance(row.get(name), list):
+                raise ValueError("health event ancestry arrays are malformed")
+            row[name] = tuple(row[name])
         encoded = row.get("result_bytes")
         if encoded is not None:
             if not isinstance(encoded, str):
@@ -239,7 +247,9 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
                     "operation_id", "enrollment_id", "profile_id", "process_generation",
                     "process_id", "package_id"))
                 or any(not _HEX64.fullmatch(getattr(event, name)) for name in (
-                    "service_generation_digest", "compiled_closure_sha256", "parent_closure_digest"))
+                    "service_generation_digest", "compiled_closure_sha256"))
+                or (event.parent_closure_digest is not None
+                    and not _HEX64.fullmatch(event.parent_closure_digest))
                 or type(event.process_pid) is not int or event.process_pid <= 1
                 or type(event.process_uid) is not int or event.process_uid <= 0
                 or any(isinstance(number, bool) or type(number) not in (int, float)
@@ -257,15 +267,20 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
             raise ValueError("health event proof row has invalid typed values")
         if event.event_kind != "tool-result" and event.result_bytes is not None:
             raise ValueError("only the exact tool-result event may carry result bytes")
+        if not _validate_event_ancestry(event):
+            raise ValueError("health event does not preserve its actual native source ancestry")
         events.append(event)
-    if ([row.event_id for row in events] != sorted(row.event_id for row in events)
-            or len({row.event_id for row in events}) != len(events)):
-        raise ValueError("health event proof rows are duplicated or not canonically ordered")
+    if len({row.event_id for row in events}) != len(events):
+        raise ValueError("health event proof rows are duplicated")
     by_kind = {row.event_kind: row for row in events}
     required = {"loader-ready", "native-request", "tool-invocation", "tool-result", "terminal"}
     if receipt.provider_result_event_id is not None:
         required.add("provider-result")
-    if set(by_kind) != required:
+    ordered_kinds = ["loader-ready", "native-request"]
+    if receipt.provider_result_event_id is not None:
+        ordered_kinds.append("provider-result")
+    ordered_kinds.extend(("tool-invocation", "tool-result", "terminal"))
+    if set(by_kind) != required or [event.event_kind for event in events] != ordered_kinds:
         raise ValueError("health event proof does not contain the receipt's exact role closure")
     loader, request = by_kind["loader-ready"], by_kind["native-request"]
     invocation, result, terminal = (by_kind["tool-invocation"], by_kind["tool-result"],
@@ -292,19 +307,26 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
             or hashlib.sha256(result.result_bytes).hexdigest() != receipt.result_sha256
             or result.invocation_handle != invocation.invocation_handle
             or terminal.event_kind != "terminal" or terminal.terminal_status != "succeeded"
-            or terminal.cleanup_verified is not True):
+            or terminal.cleanup_verified is not True
+            or receipt.parent_closure_digest != result.parent_closure_digest
+            or loader.causal_parent_event_ids != ()
+            or request.causal_parent_event_ids != (loader.event_id,)
+            or (provider is not None and provider.causal_parent_event_ids != (request.event_id,))
+            or invocation.causal_parent_event_ids != ((provider.event_id,)
+                                                       if provider is not None else (request.event_id,))
+            or result.causal_parent_event_ids != (invocation.event_id,)
+            or terminal.causal_parent_event_ids != (result.event_id,)):
         raise ValueError("health event proof does not join the original receipt or terminal")
     first = events[0]
     for event in events:
         if ((event.operation_id, event.enrollment_id, event.profile_id,
              event.process_generation, event.service_generation_digest, event.process_id,
              event.process_pid, event.process_uid, event.package_id,
-             event.compiled_closure_sha256, event.parent_closure_digest)
+             event.compiled_closure_sha256)
                 != (receipt.operation_id, receipt.enrollment_id, receipt.profile_id,
                     receipt.process_generation, receipt.service_generation_digest,
                     receipt.process_id, first.process_pid, first.process_uid,
-                    first.package_id, first.compiled_closure_sha256,
-                    receipt.parent_closure_digest)):
+                    first.package_id, first.compiled_closure_sha256)):
             raise ValueError("health events do not share the retained receipt's process closure")
 
 
@@ -1106,7 +1128,7 @@ class RootSetupHealthIntentJournal:
         if (self.receiver is None or self.active_receipt is None
                 or not isinstance(completion_body, Mapping)
                 or set(completion_body) != _HEALTH_COMPLETION_FIELDS
-                or completion_body.get("schema") != 1
+                or completion_body.get("schema") != 2
                 or completion_body.get("intent_handle") != intent_handle
                 or completion_body.get("intent_sha256") != intent_sha256
                 or not isinstance(health_receipt_body, Mapping)
@@ -1480,10 +1502,20 @@ class RootSetupFunctionalHealthWitnessResolver:
                 session._current_root_journal_selection(), active_listener.activation_id)
             try:
                 intent, witness = journal.resolve_current_completed_pair(intent_handle, completion_handle)
+                durable_witness, receipt_body, event_rows = journal.resolve_current_completed_health_proof(
+                    intent_handle, completion_handle)
             finally:
                 journal.close()
             recipe = generation._recipe
-            if (intent.get("purpose") != "root-native-health-intent-v1"
+            if (dict(durable_witness) != dict(witness)
+                    or receipt_body.get("schema") != 2
+                    or receipt_body.get("health_run_proof_sha256")
+                       != witness.get("health_run_proof_sha256")
+                    or receipt_body.get("parent_closure_digest")
+                       != witness.get("parent_closure_digest")
+                    or not event_rows
+                    or event_rows[-1].get("event_kind") != "terminal"
+                    or intent.get("purpose") != "root-native-health-intent-v1"
                     or intent.get("committed_transaction_id") != committed.journal_transaction_id
                     or intent.get("bootstrap_transaction_handle") != active.transaction_handle
                     or intent.get("generation_id") != active.generation_id
@@ -1504,6 +1536,8 @@ class RootSetupFunctionalHealthWitnessResolver:
                     or witness.get("source_choice_signed_record_sha256")
                        != generation.source_choice_signed_record_sha256
                     or witness.get("health_definition_sha256") != recipe.health_definition_sha256
+                    or witness.get("schema") != 2
+                    or witness.get("health_run_proof_sha256") != receipt_body.get("health_run_proof_sha256")
                     or witness.get("daemon_unit_id") != active_listener.daemon_unit_id
                     or witness.get("daemon_invocation_id") != active_listener.daemon_invocation_id
                     or witness.get("daemon_pid") != active_listener.daemon_pid
