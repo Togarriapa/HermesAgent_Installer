@@ -268,3 +268,10 @@ The installer SHALL enroll an existing Home Assistant MCP instance only through 
 #### Scenario: Credential is revoked after a successful read
 - **WHEN** reconnect receives unauthorized or revoked credential evidence
 - **THEN** new reads are denied, stale transport handles are retired and HA configuration remains unchanged
+
+### Requirement: Home Assistant actual Assist resource scope
+The installer SHALL bind Assist reads to actual observed selected exposure or unique source-supported human resource filters through a typed root choice.
+
+#### Scenario: GetLiveContext exposes an unfiltered overview
+- **WHEN** current explicit exposure-set selection or unique reviewed filter proof is absent
+- **THEN** the read remains pending and no entity-ID read or whole-house permission is inferred

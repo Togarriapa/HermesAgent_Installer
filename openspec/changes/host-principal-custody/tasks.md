@@ -430,3 +430,6 @@ Existing `HI-T197.1`/`HI-T197.2`/`VD-T197.4` remain OPEN and include exact durab
 - [ ] MC-R0101.2 HA: protected transport/vault/publication fixtures, reconnect/revoke/write-denial/TLS/schema/CAS/redaction and separate actual-target evidence.
 
 Existing HI-T197.1/.2/.3, HI-T173.1/178.2 and VD-T197.4 include the exact source producer ownership/order in `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; remain OPEN.
+
+- [ ] MC-R0101.3 HA/factory/consent/parser/broker: actual typed choice/exposure/current scope/schema/result/grant joins.
+- [ ] MC-R0101.4 HA: real-schema Assist read fixtures, ambiguity/new exposure/unfiltered/action/revoke/TLS denial and distinct actual-target acceptance.
