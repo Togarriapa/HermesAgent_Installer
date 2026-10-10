@@ -235,40 +235,71 @@ class RootManagedCPython39Probe:
         )
         if any(not hasattr(probe, key) for key in expected_fields):
             raise AuthorityDenied("build.python_probe", "root probe terminal receipt is incomplete")
-        if (not isinstance(probe.terminal_success_record_id, str) or not probe.terminal_success_record_id
-                or probe.terminal_success_record_id == build_result.terminal_success_record_id
-                or probe.build_terminal_success_record_id != build_result.terminal_success_record_id
-                or probe.build_process_identity_digest != build_result.process_identity_digest
-                or not isinstance(probe.process_identity_digest, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", probe.process_identity_digest)
-                or probe.process_identity_digest == build_result.process_identity_digest
-                or not isinstance(probe.process_id, str)
-                or not re.fullmatch(r"[0-9a-f]{32}", probe.process_id)
-                or probe.generation != build_result.generation
-                or type(probe.uid) is not int or probe.uid != build_result.uid
-                or probe.uid != build_inputs.output_owner_uid
-                or type(probe.gid) is not int or probe.gid != build_inputs.output_owner_gid
-                or type(probe.pid) is not int or probe.pid <= 1 or type(probe.start_ticks) is not int
-                or probe.start_ticks <= 0 or type(probe.exit_code) is not int or probe.exit_code != 0
-                or probe.cleanup_verified is not True or probe.startup_gate_verified is not True
-                or not isinstance(probe.cgroup_id, str) or not probe.cgroup_id
-                or probe.cgroup_id == build_result.cgroup_id
-                or type(probe.mount_namespace_inode) is not int or probe.mount_namespace_inode <= 0
-                or type(probe.network_namespace_inode) is not int or probe.network_namespace_inode <= 0
-                or probe.mount_namespace_inode == build_result.mount_namespace_inode
-                or probe.network_namespace_inode == build_result.network_namespace_inode
-                or probe.output_root_id != build_inputs.output_root_id
-                or type(probe.output_root_device) is not int or type(probe.output_root_inode) is not int
-                or probe.output_root_device != before_root.st_dev or probe.output_root_inode != before_root.st_ino
-                or probe.executable_sha256 != before_digest or probe.executable_size_bytes != before_size
-                or type(probe.executable_size_bytes) is not int
-                or not isinstance(probe.bounded_log_digest, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", probe.bounded_log_digest)
-                or type(probe.log_bytes) is not int or not 0 <= probe.log_bytes <= _PROBE_OUTPUT_LIMIT
-                or not isinstance(probe.stdout, bytes) or len(probe.stdout) != probe.log_bytes
-                or hashlib.sha256(probe.stdout).hexdigest() != probe.bounded_log_digest
-                or self.monotonic() - started > _PROBE_TIMEOUT_SECONDS + 2):
-            raise AuthorityDenied("build.python_probe", "root probe receipt does not prove bounded clean execution")
+        # Report only fixed field names when root's typed result fails a proof
+        # check. Never include receipt values, paths, PIDs, or probe output in
+        # a denial: this is enough to diagnose cross-layer schema drift safely.
+        stdout_valid = isinstance(probe.stdout, bytes)
+        stdout_digest_valid = (
+            stdout_valid and type(probe.log_bytes) is int
+            and len(probe.stdout) == probe.log_bytes
+            and isinstance(probe.bounded_log_digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", probe.bounded_log_digest) is not None
+            and hashlib.sha256(probe.stdout).hexdigest() == probe.bounded_log_digest
+        )
+        receipt_checks = (
+            ("terminal_success_record_id", isinstance(probe.terminal_success_record_id, str)
+             and bool(probe.terminal_success_record_id)
+             and probe.terminal_success_record_id != build_result.terminal_success_record_id),
+            ("build_terminal_success_record_id", probe.build_terminal_success_record_id
+             == build_result.terminal_success_record_id),
+            ("build_process_identity_digest", probe.build_process_identity_digest
+             == build_result.process_identity_digest),
+            ("process_identity_digest", isinstance(probe.process_identity_digest, str)
+             and re.fullmatch(r"[0-9a-f]{64}", probe.process_identity_digest) is not None
+             and probe.process_identity_digest != build_result.process_identity_digest),
+            ("process_id", isinstance(probe.process_id, str)
+             and re.fullmatch(r"[0-9a-f]{32}", probe.process_id) is not None),
+            ("generation", probe.generation == build_result.generation),
+            ("uid", type(probe.uid) is int and probe.uid == build_result.uid
+             and probe.uid == build_inputs.output_owner_uid),
+            ("gid", type(probe.gid) is int and probe.gid == build_inputs.output_owner_gid),
+            ("pid", type(probe.pid) is int and probe.pid > 1),
+            ("start_ticks", type(probe.start_ticks) is int and probe.start_ticks > 0),
+            ("exit_code", type(probe.exit_code) is int and probe.exit_code == 0),
+            ("cleanup_verified", probe.cleanup_verified is True),
+            ("startup_gate_verified", probe.startup_gate_verified is True),
+            ("cgroup_id", isinstance(probe.cgroup_id, str) and bool(probe.cgroup_id)
+             and probe.cgroup_id != build_result.cgroup_id),
+            # A completed build's namespace no longer exists; Linux can reuse
+            # its inode number. The manager already checks the *live probe*
+            # namespace against the host during PIDFD-bound capture, so compare
+            # only type/positivity here, not to historical build inode values.
+            ("mount_namespace_inode", type(probe.mount_namespace_inode) is int
+             and probe.mount_namespace_inode > 0),
+            ("network_namespace_inode", type(probe.network_namespace_inode) is int
+             and probe.network_namespace_inode > 0),
+            ("output_root_id", probe.output_root_id == build_inputs.output_root_id),
+            ("output_root_identity", type(probe.output_root_device) is int
+             and type(probe.output_root_inode) is int
+             and probe.output_root_device == before_root.st_dev
+             and probe.output_root_inode == before_root.st_ino),
+            ("executable_identity", probe.executable_sha256 == before_digest
+             and type(probe.executable_size_bytes) is int
+             and probe.executable_size_bytes == before_size),
+            ("bounded_log_digest", isinstance(probe.bounded_log_digest, str)
+             and re.fullmatch(r"[0-9a-f]{64}", probe.bounded_log_digest) is not None
+             and stdout_digest_valid),
+            ("log_bytes", type(probe.log_bytes) is int
+             and 0 <= probe.log_bytes <= _PROBE_OUTPUT_LIMIT and stdout_valid),
+            ("deadline", self.monotonic() - started <= _PROBE_TIMEOUT_SECONDS + 2),
+        )
+        failed = [name for name, valid in receipt_checks if not valid]
+        if failed:
+            # The error string is intentionally capped to stable schema keys.
+            raise AuthorityDenied(
+                "build.python_probe",
+                "root probe receipt proof failed: " + ",".join(failed[:16]),
+            )
         expected_identity = managed_process_identity_digest(
             process_id=probe.process_id, generation=probe.generation, uid=probe.uid, pid=probe.pid,
             start_ticks=probe.start_ticks, cgroup_id=probe.cgroup_id,

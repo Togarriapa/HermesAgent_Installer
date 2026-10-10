@@ -55,6 +55,8 @@ class ProbeLauncher:
             self.executable.write_bytes(b"changed after root hash")
         root_info = self.root.lstat()
         executable_info = self.executable.lstat()
+        mount_namespace_inode = self.changes.get("mount_namespace_inode", 201)
+        network_namespace_inode = self.changes.get("network_namespace_inode", 202)
         stdout = self.changes.get("stdout", json.dumps({
             "python_version": "3.9.25", "soabi": "cpython-39-aarch64-linux-gnu",
             "debug": False, "glibc_version": "2.35",
@@ -62,7 +64,7 @@ class ProbeLauncher:
         process_identity = managed_process_identity_digest(
             process_id="f" * 32, generation=build_result.generation, uid=os.getuid(), pid=422,
             start_ticks=1235, cgroup_id="/system.slice/probe-1.service",
-            mount_namespace_inode=201, network_namespace_inode=202)
+            mount_namespace_inode=mount_namespace_inode, network_namespace_inode=network_namespace_inode)
         return SimpleNamespace(
             terminal_success_record_id=self.changes.get("probe_id", "probe-terminal-1"),
             build_terminal_success_record_id=self.changes.get("build_id", "build-terminal-1"),
@@ -73,8 +75,8 @@ class ProbeLauncher:
             uid=os.getuid(), gid=os.getgid(), pid=422, start_ticks=1235,
             exit_code=self.changes.get("exit_code", 0), cleanup_verified=self.changes.get("cleanup", True),
             startup_gate_verified=self.changes.get("startup_gate_verified", True),
-            cgroup_id="/system.slice/probe-1.service", mount_namespace_inode=201,
-            network_namespace_inode=202, output_root_id=inputs.output_root_id,
+            cgroup_id="/system.slice/probe-1.service", mount_namespace_inode=mount_namespace_inode,
+            network_namespace_inode=network_namespace_inode, output_root_id=inputs.output_root_id,
             output_root_device=root_info.st_dev, output_root_inode=root_info.st_ino,
             executable_sha256=hashlib.sha256(self.executable.read_bytes()).hexdigest(),
             executable_size_bytes=self.executable.stat().st_size,
@@ -128,6 +130,41 @@ def test_probe_rejects_unbound_or_invalid_terminal_receipt(tmp_path, changes):
             SimpleNamespace(target_id="coral-cpython-build:start", generation="build-generation-1"),
             executable, build_result=_build_result(), build_inputs=_inputs(root), cancelled=lambda: False,
         )
+
+
+def test_probe_diagnostic_names_only_failed_proof_field(tmp_path):
+    root, executable = _selected_output(tmp_path)
+    probe = RootManagedCPython39Probe(
+        ProbeLauncher(root, executable, changes={"startup_gate_verified": False}))
+    with pytest.raises(AuthorityDenied) as denied:
+        probe.inspect_cpython39(
+            SimpleNamespace(target_id="coral-cpython-build:start", generation="build-generation-1"),
+            executable, build_result=_build_result(), build_inputs=_inputs(root), cancelled=lambda: False,
+        )
+    assert "startup_gate_verified" in str(denied.value)
+    assert "probe-terminal-1" not in str(denied.value)
+    assert str(executable) not in str(denied.value)
+
+
+def test_probe_accepts_inode_reuse_from_completed_build_but_keeps_probe_identity_distinct(tmp_path):
+    root, executable = _selected_output(tmp_path)
+    build = _build_result()
+    launcher = ProbeLauncher(root, executable, changes={
+        "mount_namespace_inode": build.mount_namespace_inode,
+        "network_namespace_inode": build.network_namespace_inode,
+    })
+
+    facts = RootManagedCPython39Probe(launcher).inspect_cpython39(
+        SimpleNamespace(target_id="coral-cpython-build:start", generation=build.generation),
+        executable, build_result=build, build_inputs=_inputs(root), cancelled=lambda: False,
+    )
+
+    probe = facts["probe_execution"]
+    assert probe["mount_namespace_inode"] == build.mount_namespace_inode
+    assert probe["network_namespace_inode"] == build.network_namespace_inode
+    assert probe["pid"] != build.pid
+    assert probe["cgroup_id"] != build.cgroup_id
+    assert probe["process_identity_digest"] != build.process_identity_digest
 
 
 def test_probe_rejects_caller_selected_path_before_launch(tmp_path):
