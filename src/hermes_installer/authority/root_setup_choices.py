@@ -281,6 +281,38 @@ class RootSetupChoiceRegistry:
             _registry_seal=_SEAL,
         )
 
+    def resolve_current_session_choices(self, current_setup_selection: Any
+                                        ) -> tuple[RootSetupChoiceSnapshot, ...]:
+        """Enumerate only exact current signed choices for this live setup.
+
+        The publisher/compiler can join the finite retained set to its prepared
+        catalog without reading this registry's private row map. Stale, expired,
+        revoked, or not-yet-reattached choices are omitted; malformed stored
+        signatures still fail closed through `_verify_row`.
+        """
+        self._verify_current_setup(current_setup_selection)
+        session_handle = self._setup_session_handle_for_selection(current_setup_selection)
+        with self._lock:
+            handles = tuple(sorted(
+                handle for handle, row in self._rows.items()
+                if row.get("setup_session_handle") == session_handle
+                and row.get("purpose") in _DOMAIN_PURPOSES
+            ))
+        current: list[RootSetupChoiceSnapshot] = []
+        for handle in handles:
+            row = self._rows.get(handle)
+            if row is None:
+                continue
+            self._verify_row(row)
+            if row.get("revocation_epoch") != 1:
+                continue
+            try:
+                snapshot = self.resolve_current_setup_choice(handle, row["purpose"])
+            except AuthorityDenied:
+                continue
+            current.append(snapshot)
+        return tuple(current)
+
     def reattach_current_setup_selection(self, selection_handle: str,
                                          current_setup_selection: Any) -> None:
         """Rebind a persisted intent only to the exact freshly resumed TTY choice."""
