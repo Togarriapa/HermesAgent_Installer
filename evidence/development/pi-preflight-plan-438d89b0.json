@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_preflight_plan",
+  "state": "report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "candidate": {
+    "git_sha": "438d89b0fb6c3f57898fa84561e6a0c15866eca8",
+    "tree_sha": "e9c8459263513146790bea295c29fd7f6ce4ef9c",
+    "checkout_path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/bootstrap-preflight-438d89b0/checkout",
+    "checkout_clean": true
+  },
+  "target": {
+    "connect_device_id": "48dfbc75-8877-40bb-b391-9b08301911ad",
+    "target_name": "PI-HERMES",
+    "owner": "admin",
+    "uid": 1000,
+    "gid": 1000,
+    "architecture": "aarch64",
+    "model": "Raspberry Pi 5 Model B Rev 1.1",
+    "privilege": "unprivileged"
+  },
+  "stage": {
+    "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/bootstrap-preflight-438d89b0",
+    "owner_uid": 1000,
+    "owner_gid": 1000,
+    "mode": "0700",
+    "checkout_status_bytes": 0
+  },
+  "execution": {
+    "started_at": "2026-10-10T07:57:49Z",
+    "ended_at": "2026-10-10T07:57:49Z",
+    "timeout_seconds": 45,
+    "python_runtime": "existing Hermes PM Python 3.14.7",
+    "python_flags": ["-B"],
+    "module": "hermes_installer.cli",
+    "arguments": ["plan", "--json"],
+    "environment": {
+      "mode": "sanitized",
+      "names_reported": ["HOME", "TMPDIR", "PATH", "PYTHONPATH"],
+      "values_recorded": false
+    },
+    "exit_code": 0,
+    "stdout": {
+      "bytes": 2706,
+      "sha256": "27edb3f9817e9cbb6afcf26987bdfa8b686b18fa8b7c41643a80f2ff934c1e0"
+    },
+    "stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "raw_output_copied": false,
+    "exact_executable_path_and_full_argv_recorded": false
+  },
+  "plan_result": {
+    "state": "pending",
+    "finding_count": 9,
+    "ready_count": 6,
+    "pending_count": 3,
+    "ready_findings": [
+      {"description": "supported ARM64 platform", "reported_ready": true},
+      {"description": "graphical user session", "reported_ready": true},
+      {"description": "DNS connectivity", "reported_ready": true},
+      {"description": "TLS certificate validation", "reported_ready": true},
+      {"description": "root ext4 storage", "reported_ready": true, "available_gb_approx": 90.8},
+      {"description": "Coral-compatible USB device", "reported_ready": true, "qualification": "USB enumeration only"}
+    ],
+    "pending_findings": [
+      {"description": "foreign cloudflared-hermes.service", "action": "preserve; explicit adoption review required"},
+      {"description": "foreign hermes-pi-testd.service", "action": "preserve; explicit adoption review required"},
+      {"description": "listener-port conflicts", "action": "review and resolve owned-port conflicts before installation"}
+    ]
+  },
+  "related_observations": {
+    "sudo_noninteractive_check": "command was issued but Connect disconnected before its exit status was visible",
+    "last_direct_sudo_status": {"exit_code": 1, "reported_at": "2026-10-10T07:17:38Z", "meaning": "password required"},
+    "tls_diagnostic": "a previous candidate's TLS false warning was traced to a HEAD-method rejection before connection; later direct HEAD checks succeeded in PM and system Python. This does not change this report's candidate-bound plan output."
+  },
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "not_observed": [
+    "privileged installer execution or deployment",
+    "native profile/plugin invocation or effect",
+    "Cloudflare or other account mutation",
+    "Coral delegate-used inference",
+    "successful sudo authorization in this command sequence",
+    "authenticated enrolled-target Result"
+  ],
+  "claim_limit": "A non-root plan command completed and returned candidate-bound preflight findings. It is not an install result or acceptance test; all AC01-AC18 remain open."
+}
