@@ -18,7 +18,11 @@ import pytest
 from hermes_installer.components.scrapegraph_ai import (
     FIXTURE_HTML,
     FIXTURE_NAME,
+    PROBE_NAME,
+    PROBE_SHA256,
     ScrapeGraphFixtureError,
+    _probe_asset,
+    _stage_probe_asset,
     stage_scrapegraph_ai_fixture,
     verify_scrapegraph_ai_fixture_result,
     verify_scrapegraph_source,
@@ -130,6 +134,8 @@ def _verified_source_from_checkout(source_root: Path) -> VerifiedComponentSource
 def test_fixture_verifier_rejects_failed_ambiguous_and_incomplete_proofs() -> None:
     with pytest.raises(ScrapeGraphFixtureError, match="process failed"):
         verify_scrapegraph_ai_fixture_result({"exit_code": 1, "stdout": ""})
+    with pytest.raises(ScrapeGraphFixtureError, match="process failed"):
+        verify_scrapegraph_ai_fixture_result({"exit_code": False, "stdout": ""})
     with pytest.raises(ScrapeGraphFixtureError, match="missing or ambiguous"):
         verify_scrapegraph_ai_fixture_result({"exit_code": 0, "stdout": ""})
     with pytest.raises(ScrapeGraphFixtureError, match="missing or ambiguous"):
@@ -137,6 +143,20 @@ def test_fixture_verifier_rejects_failed_ambiguous_and_incomplete_proofs() -> No
             "exit_code": 0,
             "stdout": "HERMES_SCRAPEGRAPH_AI_PROOF={}\nHERMES_SCRAPEGRAPH_AI_PROOF={}",
         })
+
+
+def test_probe_asset_is_fixed_staged_private_source(tmp_path: Path) -> None:
+    import hashlib
+
+    work = tmp_path / "private-work"
+    work.mkdir(mode=0o700)
+    body = _probe_asset()
+    staged = _stage_probe_asset(work)
+    assert hashlib.sha256(body).hexdigest() == PROBE_SHA256
+    assert staged.name == f".{PROBE_NAME}"
+    assert staged.read_bytes() == body
+    assert staged.stat().st_mode & 0o077 == 0
+    assert b'"schema_version": 1' in body
 
 
 @pytest.mark.parametrize(
@@ -155,6 +175,7 @@ def test_fixture_verifier_rejects_incomplete_model_network_or_policy_proof(
     field: str, value: object,
 ) -> None:
     proof: dict[str, object] = {
+        "schema_version": 1,
         "source_revision": "194055e203afce41ed4e70365dbc416bad756115",
         "upstream_class": "scrapegraphai.graphs.SmartScraperGraph",
         "upstream_source": "/private/source/scrapegraphai/__init__.py",
@@ -174,6 +195,34 @@ def test_fixture_verifier_rejects_incomplete_model_network_or_policy_proof(
         verify_scrapegraph_ai_fixture_result({
             "exit_code": 0,
             "stdout": "HERMES_SCRAPEGRAPH_AI_PROOF=" + json.dumps(proof),
+        })
+
+
+def test_fixture_verifier_rejects_extra_keys_duplicate_keys_and_bool_for_count() -> None:
+    proof = {
+        "schema_version": 1,
+        "source_revision": "194055e203afce41ed4e70365dbc416bad756115",
+        "upstream_class": "scrapegraphai.graphs.SmartScraperGraph",
+        "upstream_source": "/private/source/scrapegraphai/__init__.py",
+        "nodes": ["Fetch", "GenerateAnswer"], "source_kind": "local_dir",
+        "local_fetch_calls": 1, "model": "allowlisted-fixture-mock", "model_calls": 1,
+        "observed_fixture_values": True,
+        "structured_result": {"name": "Cedar Mug", "price": "$18.50"},
+        "network_attempts": 0, "telemetry_enabled": False, "metered_cost_usd": 0,
+    }
+    with pytest.raises(ScrapeGraphFixtureError, match="required local graph effects"):
+        verify_scrapegraph_ai_fixture_result({
+            "exit_code": 0, "stdout": "HERMES_SCRAPEGRAPH_AI_PROOF=" + json.dumps({**proof, "extra": True}),
+        })
+    with pytest.raises(ScrapeGraphFixtureError, match="required local graph effects"):
+        verify_scrapegraph_ai_fixture_result({
+            "exit_code": 0,
+            "stdout": "HERMES_SCRAPEGRAPH_AI_PROOF=" + json.dumps({**proof, "local_fetch_calls": True}),
+        })
+    duplicate = json.dumps(proof).replace('"model_calls": 1', '"model_calls": 1, "model_calls": 1')
+    with pytest.raises(ScrapeGraphFixtureError, match="invalid JSON"):
+        verify_scrapegraph_ai_fixture_result({
+            "exit_code": 0, "stdout": "HERMES_SCRAPEGRAPH_AI_PROOF=" + duplicate,
         })
 
 
