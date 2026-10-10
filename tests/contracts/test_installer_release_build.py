@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -17,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from hermes_installer.authority import installer_release_build as release_build
+from hermes_installer.authority import installer_release as release
 from hermes_installer.authority.application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 
 
@@ -62,6 +64,80 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
             receipt.verify_current()
     finally:
         receipt.close()
+
+
+def test_update_predecessor_snapshot_uses_shared_receipt_bound_without_name_error():
+    pointer = {
+        "parent_device": 1,
+        "parent_inode": 2,
+        "candidate_git_sha": "a" * 40,
+        "sha256": "0" * 64,
+        "device": 3,
+        "inode": 4,
+        "canonical_bytes_b64": base64.b64encode(
+            b"x" * (release.MAX_RECEIPT_BYTES + 1)).decode("ascii"),
+    }
+    projection = {
+        "root_device": 1,
+        "root_inode": 2,
+        "closure_manifest_sha256": "1" * 64,
+        "baseline_tree_sha256": "2" * 64,
+        "amendment_manifest_sha256": "3" * 64,
+    }
+    with pytest.raises(release_build.InstallerReleaseBuildError,
+                       match="update predecessor pointer bytes exceed their fixed bound"):
+        release_build._verify_update_predecessor_snapshot({
+            "pointer": pointer,
+            "release": projection,
+        })
+
+
+def test_update_predecessor_snapshot_reopens_current_receipt_and_historical_closure():
+    candidate = "a" * 40
+    original_bytes = json.dumps(
+        {"candidate_git_sha": candidate, "schema": 1},
+        sort_keys=True, separators=(",", ":")).encode()
+    pointer_hash = hashlib.sha256(original_bytes).hexdigest()
+    snapshot = {
+        "pointer": {
+            "parent_device": 11,
+            "parent_inode": 12,
+            "candidate_git_sha": candidate,
+            "sha256": pointer_hash,
+            "device": 13,
+            "inode": 14,
+            "canonical_bytes_b64": base64.b64encode(original_bytes).decode("ascii"),
+        },
+        "release": {
+            "root_device": 21,
+            "root_inode": 22,
+            "closure_manifest_sha256": "1" * 64,
+            "baseline_tree_sha256": "2" * 64,
+            "amendment_manifest_sha256": "3" * 64,
+        },
+    }
+    pointer_info = SimpleNamespace(st_dev=13, st_ino=14)
+    predecessor = release_build.DeploymentPredecessor(
+        "present", 11, 12, pointer_hash, 13, 14, candidate)
+    held = SimpleNamespace(
+        release_commit=candidate,
+        deployment_receipt_sha256=pointer_hash,
+        root_device=21,
+        root_inode=22,
+        closure_manifest_sha256="1" * 64,
+        baseline_tree_sha256="2" * 64,
+        amendment_manifest_sha256="3" * 64,
+        verify_current=lambda: None,
+        close=lambda: None,
+    )
+    with patch.object(release_build, "_read_deployment_predecessor", return_value=predecessor), \
+            patch("hermes_installer.authority.installed_stage_publisher._read_record",
+                  return_value=(original_bytes, pointer_info)) as read_record, \
+            patch.object(release.InstalledRootReleaseVerifier,
+                         "verify_installed_predecessor_release", return_value=held) as verify_release:
+        release_build._verify_update_predecessor_snapshot(snapshot)
+    read_record.assert_called_once()
+    verify_release.assert_called_once_with()
 
 
 def test_distribution_receipt_materializes_and_verifies_many_files_under_low_nofile(tmp_path):

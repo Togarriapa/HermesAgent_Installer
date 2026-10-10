@@ -4251,6 +4251,8 @@ def _verify_update_predecessor_snapshot(snapshot: Mapping[str, Any]) -> None:
     if (not isinstance(pointer, dict) or set(pointer) != pointer_fields
             or not isinstance(release_projection, dict) or set(release_projection) != release_fields):
         raise InstallerReleaseBuildError("update predecessor identity projection is malformed")
+    from .installer_release import MAX_RECEIPT_BYTES, InstalledRootReleaseVerifier
+    from .installed_stage_publisher import _read_record
     try:
         original_bytes = base64.b64decode(pointer["canonical_bytes_b64"], validate=True)
     except (ValueError, TypeError):
@@ -4267,7 +4269,6 @@ def _verify_update_predecessor_snapshot(snapshot: Mapping[str, Any]) -> None:
     if (raw != original_bytes or hashlib.sha256(raw).hexdigest() != pointer["sha256"]
             or (info.st_dev, info.st_ino) != (pointer["device"], pointer["inode"])):
         raise BootstrapEnrollmentPending("installed update predecessor pointer identity changed")
-    from .installer_release import InstalledRootReleaseVerifier
     held = InstalledRootReleaseVerifier.verify_installed_predecessor_release()
     try:
         if (held.release_commit != pointer["candidate_git_sha"]
