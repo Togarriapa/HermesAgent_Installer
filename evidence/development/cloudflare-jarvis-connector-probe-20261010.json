@@ -15,7 +15,8 @@
   "connector_probe": {
     "cloudflared_version": "2026.9.3",
     "canonical_binary": "/usr/bin/cloudflared",
-    "binary_sha256": "aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b3263",
+    "binary_sha256": "aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d",
+    "binary_digest_source": "Root-reported digest from the actual official Linux ARM64 /usr/bin/cloudflared binary on PI-HERMES during the 2026-10-10 browser/Pi probe.",
     "normal_usr_local_path": "symlink to /usr/bin/cloudflared",
     "unit": "hermes-installer-jarvis-connector-probe2-20261010.service",
     "attempt_history": "Initial transient invocation failed because systemd-run preserved a literal %d credential-path specifier. The corrected invocation used the actual credential directory and produced the bounded connection proof.",
