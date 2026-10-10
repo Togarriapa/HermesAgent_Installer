@@ -1740,7 +1740,7 @@ class FixedBuildProfile:
     environment: Mapping[str, str]
     max_lifetime_seconds: int
     output_root_id: str
-    output_root: Path
+    output_root: Path | None
     output_owner_uid: int
     output_specs: Mapping[str, FixedBuildOutputSpec]
     service_generation_digest: str = ""
