@@ -22,6 +22,7 @@ from hermes_installer.authority.native_materialization import (
     _deny_legacy_user_profile_identity,
     _atomic_service_write_at,
     _hash_file_at,
+    _hash_relative_member,
     _open_parent,
     _selected_files,
 )
@@ -288,7 +289,15 @@ def test_native_mutation_is_denied_outside_root_authority() -> None:
 def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_path: Path) -> None:
     operation = RootNativeMaterialization.__new__(RootNativeMaterialization)
     operation._database = tmp_path / "journal.sqlite3"
+    operation._home_root = tmp_path / "home"
+    operation._home_root.mkdir(mode=0o700)
+    body = b"# Jarvis\n"
+    (operation._home_root / "SOUL.md").write_bytes(body)
+    nested = operation._home_root / "skills" / "native-test" / "SKILL.md"
+    nested.parent.mkdir(parents=True, mode=0o700)
+    nested.write_bytes(b"# Test skill\n")
     operation._monotonic = lambda: 10.0
+    operation._require_authority = lambda: None
     operation._registry = SimpleNamespace(source=SimpleNamespace(
         revision="resources-revision", content_digest="a" * 64))
     with sqlite3.connect(operation._database) as db:
@@ -298,6 +307,12 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
                 protected_enrollment_digest TEXT,service_profile_id TEXT,resource_profile_id TEXT,
                 resources_revision TEXT,resources_content_digest TEXT,selected_closure_digest TEXT,
                 items TEXT,skill_ids TEXT,state TEXT,expires REAL,discovery TEXT);
+            CREATE TABLE native_home_identities(
+                receipt_handle TEXT PRIMARY KEY, resource_profile_id TEXT NOT NULL,
+                resources_revision TEXT NOT NULL, resources_content_digest TEXT NOT NULL,
+                home_generation TEXT NOT NULL, device INTEGER NOT NULL, inode INTEGER NOT NULL,
+                owner_uid INTEGER NOT NULL, owner_gid INTEGER NOT NULL, mode INTEGER NOT NULL,
+                behavioral_manifest_sha256 TEXT NOT NULL, behavioral_manifest TEXT NOT NULL);
             INSERT INTO plans VALUES('operation','{}','applying',1.0);
         """)
     selection = NativeMaterializationSelection(
@@ -306,7 +321,10 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
         "profile", "profiles/profile.yaml", "e" * 64, "resources-revision")
     discovery = NativeInstallReceipt(
         PINNED_HERMES_REVISION, "3.14.7", "profile", True, True,
-        ("skill-one",), ("skill-one",), {"profile": "d" * 64})
+        ("skill-one",), ("skill-one",), {
+            "SOUL.md": hashlib.sha256(body).hexdigest(),
+            "skills/native-test/SKILL.md": hashlib.sha256(b"# Test skill\n").hexdigest(),
+        })
     operation._record_receipt(
         "e" * 32, selection, "profile", "f" * 64,
         (NativeMaterializedItem("profile", "profile", "d" * 64, "installed"),
@@ -320,6 +338,32 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
     public = operation._public_receipt(stored, "discovered")
     assert public.hermes_revision == PINNED_HERMES_REVISION
     assert public.python_version == "3.14.7"
+    home = operation.resolve_durable_home_identity("e" * 32)
+    assert home["resource_profile_id"] == "profile"
+    assert home["home_generation"] == "generation"
+    assert home["behavioral_manifest_sha256"] == hashlib.sha256(
+        json.dumps(discovery.content_digests, sort_keys=True,
+                   separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+    (operation._home_root / "SOUL.md").write_bytes(b"# modified\n")
+    with pytest.raises(NativeMaterializationDenied, match="behavioral members changed"):
+        operation.resolve_durable_home_identity("e" * 32)
+
+
+def test_held_home_member_hash_is_nofollow_and_rejects_escape(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    member = home / "SOUL.md"
+    member.write_bytes(b"# Jarvis\n")
+    fd = os.open(home, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        assert _hash_relative_member(fd, "SOUL.md") == hashlib.sha256(b"# Jarvis\n").hexdigest()
+        with pytest.raises(NativeMaterializationDenied, match="path is invalid"):
+            _hash_relative_member(fd, "../outside")
+        (home / "linked.md").symlink_to(member)
+        with pytest.raises(OSError):
+            _hash_relative_member(fd, "linked.md")
+    finally:
+        os.close(fd)
 
 
 def test_pm_python_resolver_is_bound_to_the_selected_receipt(tmp_path: Path) -> None:

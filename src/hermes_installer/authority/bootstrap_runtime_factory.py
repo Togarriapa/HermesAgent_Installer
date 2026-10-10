@@ -1327,6 +1327,100 @@ class RootSelectedNativeProfileHomeSource:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedNativeProfileHomeSource:
+    """Setup compiler input for one materialized Resources home.
+
+    This type is not a published row or task grant. Its private references are
+    retained only so the active compiler can revalidate the source, native
+    receipt, PM runtime and setup principal/namespace before publication.
+    """
+
+    home_binding_id: str
+    source_profile_id: str
+    source_revision: str
+    source_manifest_sha256: str
+    role: str
+    native_profile_key: str
+    display_name: str
+    home_selection_handle: str
+    materialization_receipt_handle: str
+    mapping_sha256: str
+    home_generation: str
+    principal_id: str
+    namespace_id: str
+    runtime_receipt_handle: str
+    runtime_identity_sha256: str
+    behavioral_manifest_sha256: str
+    _native_receipt: Any = field(repr=False, compare=False)
+    _materializer: Any = field(repr=False, compare=False)
+    _verified_source: Any = field(repr=False, compare=False)
+    _runtime_selection: Any = field(repr=False, compare=False)
+    _current_identity: Any = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+
+    def public_row(self) -> dict[str, str]:
+        """Return only the exact closed v214 source-home identity fields."""
+        return {
+            "home_binding_id": self.home_binding_id,
+            "source_profile_id": self.source_profile_id,
+            "source_revision": self.source_revision,
+            "source_manifest_sha256": self.source_manifest_sha256,
+            "role": self.role,
+            "native_profile_key": self.native_profile_key,
+            "display_name": self.display_name,
+            "home_selection_handle": self.home_selection_handle,
+            "materialization_receipt_handle": self.materialization_receipt_handle,
+            "mapping_sha256": self.mapping_sha256,
+            "home_generation": self.home_generation,
+            "principal_id": self.principal_id,
+            "namespace_id": self.namespace_id,
+            "runtime_receipt_handle": self.runtime_receipt_handle,
+            "runtime_identity_sha256": self.runtime_identity_sha256,
+            "behavioral_manifest_sha256": self.behavioral_manifest_sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedNativeProfileHomeSourceSet:
+    """Sealed complete source-home output reserved for one active compilation."""
+
+    rows: tuple[RootPreparedNativeProfileHomeSource, ...]
+    precompile_output_closure_sha256: str
+    member_sha256: str
+    _reservation: Any = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+
+    def public_member_bytes(self) -> bytes:
+        return _canonical({"schema": 1, "rows": [row.public_row() for row in self.rows]})
+
+    def verify_current(self) -> "RootPreparedNativeProfileHomeSourceSet":
+        session = self._session
+        if (not isinstance(session, RootBootstrapSession)
+                or session._seal != self._session_seal
+                or session._check_live() is None):
+            raise BootstrapEnrollmentPending("prepared Jarvis home source set lost its live root session")
+        current = session._resolve_prepared_native_profile_home_source_rows()
+        payload = _canonical({"schema": 1, "rows": [row.public_row() for row in current]})
+        try:
+            reservation = session._root_native_output_receipts().resolve_current_precompile_reservation(
+                self._reservation.reservation_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("Jarvis home source output reservation is no longer current") from None
+        if (tuple(row.public_row() for row in current)
+                != tuple(row.public_row() for row in self.rows)
+                or reservation != self._reservation
+                or reservation.output_closure_sha256 != self.precompile_output_closure_sha256
+                or hashlib.sha256(payload).hexdigest() != self.member_sha256
+                or payload != self.public_member_bytes()):
+            raise BootstrapEnrollmentPending("prepared Jarvis home source rows changed after compilation")
+        return self
+
+    def __repr__(self) -> str:
+        return "RootPreparedNativeProfileHomeSourceSet(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootSelectedApplicationQualificationChoice:
     """Root-TTY workflow selection plus bounded local qualification consent."""
 
@@ -7524,6 +7618,133 @@ class RootBootstrapSession:
         if receipt._session_seal != self._seal:
             raise BootstrapEnrollmentPending("native home source receipt lost its root session binding")
         return receipt
+
+    def resolve_prepared_native_profile_home_sources(
+            self, reservation: Any) -> RootPreparedNativeProfileHomeSourceSet:
+        """Build compiler-only source rows for every actually materialized home.
+
+        The rows are not publication authority. The active compiler revalidates
+        every private typed join and emits the separate v214 immutable member.
+        """
+        from .native_output_receipts import RootNativePrecompileOutputReservation
+        if (type(reservation) is not RootNativePrecompileOutputReservation
+                or reservation.setup_session_id != self._handle.session_id
+                or reservation.transaction_handle != self._authorization.transaction_handle
+                or reservation.plan_digest != self._authorization.plan_digest):
+            raise BootstrapEnrollmentPending("Jarvis home source rows require the exact current native precompile reservation")
+        current_reservation = self._root_native_output_receipts().resolve_current_precompile_reservation(
+            reservation.reservation_handle)
+        if current_reservation != reservation:
+            raise BootstrapEnrollmentPending("Jarvis home source output reservation changed")
+        rows = self._resolve_prepared_native_profile_home_source_rows()
+        payload = _canonical({"schema": 1, "rows": [row.public_row() for row in rows]})
+        return RootPreparedNativeProfileHomeSourceSet(
+            rows, reservation.output_closure_sha256, hashlib.sha256(payload).hexdigest(),
+            reservation, self, self._seal)
+
+    def _resolve_prepared_native_profile_home_source_rows(
+            self) -> tuple[RootPreparedNativeProfileHomeSource, ...]:
+        self._check_live()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not self._resource_profile_source_index
+                or len(self._resource_profile_source_index) != 208):
+            raise BootstrapEnrollmentPending(
+                "Jarvis publication requires the complete current 208-profile source index")
+        if self._native_materializer is None or self._pm_runtime_registry is None:
+            raise BootstrapEnrollmentPending("Jarvis primary native materializer or PM runtime is absent")
+        runtime_handle = self._pm_runtime_handle
+        if not isinstance(runtime_handle, str):
+            raise BootstrapEnrollmentPending("Jarvis source homes have no current PM runtime receipt")
+        runtime_selection = self._pm_runtime_registry.resolve_runtime(
+            runtime_handle, self._authorization.transaction_handle, prepared.generation_id)
+        identity = self.resolve_current_setup_identity()
+        principal = getattr(identity, "principal", None)
+        namespace = getattr(identity, "namespace", None)
+        principal_id = getattr(principal, "principal_id", None)
+        namespace_id = getattr(namespace, "namespace_id", None)
+        if (not isinstance(principal_id, str) or not principal_id
+                or not isinstance(namespace_id, str) or not namespace_id
+                or getattr(identity, "expires_monotonic", 0) <= time.monotonic()):
+            raise BootstrapEnrollmentPending(
+                "Jarvis source-home publication requires current selected principal and namespace receipts")
+        runtime_identity = {
+            "runtime_receipt_handle": runtime_selection.receipt_handle,
+            "runtime_sha256": runtime_selection.runtime_sha256,
+            "device": runtime_selection.device, "inode": runtime_selection.inode,
+            "uid": runtime_selection.uid, "gid": runtime_selection.gid,
+            "version_info": list(runtime_selection.version_info),
+            "implementation": runtime_selection.implementation,
+            "cache_tag": runtime_selection.cache_tag, "soabi": runtime_selection.soabi,
+            "machine": runtime_selection.machine,
+        }
+        runtime_identity_sha256 = hashlib.sha256(_canonical(runtime_identity)).hexdigest()
+        output: list[RootPreparedNativeProfileHomeSource] = []
+        for source_profile_id in sorted(self._resource_profile_source_index):
+            source_row = self._resource_profile_source_index[source_profile_id]
+            if not isinstance(source_row, tuple) or len(source_row) != 3:
+                raise BootstrapEnrollmentPending("Jarvis source index row is malformed")
+            source_path, source_digest, source_revision = source_row
+            selected = self.resolve_selected_native_profile_home_source(source_profile_id)
+            materializer = (self._native_materializer if source_profile_id == "hermes"
+                            else self._native_delegate_materializers.get(source_profile_id))
+            matches = [receipt for receipt in self._native_materialization_receipts.values()
+                       if receipt.resource_profile_id == source_profile_id]
+            if source_profile_id != "hermes":
+                delegate = self._native_delegate_materialization_receipts.get(source_profile_id)
+                matches = [delegate] if delegate is not None else []
+            if materializer is None or len(matches) != 1:
+                raise BootstrapEnrollmentPending(
+                    f"verified source profile {source_profile_id} has no unique materialized native home")
+            materialization = matches[0]
+            bundle = self._verified_resources.get(self._resources_source_handle)
+            if bundle is None:
+                raise BootstrapEnrollmentPending("Jarvis source bytes are no longer retained by setup")
+            verified_source, registry = bundle
+            if (verified_source.revision != source_revision
+                    or source_path not in verified_source.files
+                    or hashlib.sha256(verified_source.files[source_path]).hexdigest() != source_digest
+                    or registry.source.revision != source_revision):
+                raise BootstrapEnrollmentPending("Jarvis source manifest changed during home compilation")
+            home_identity = materializer.resolve_durable_home_identity(materialization.receipt_handle)
+            if (home_identity["resource_profile_id"] != source_profile_id
+                    or home_identity["resources_revision"] != source_revision
+                    or home_identity["home_generation"] != prepared.generation_id):
+                raise BootstrapEnrollmentPending("Jarvis native home journal differs from the selected source")
+            role = "jarvis-primary-home" if source_profile_id == "hermes" else "resource-delegate-home"
+            display = ("Jarvis" if source_profile_id == "hermes"
+                      else source_profile_id.replace("-", " ").replace("_", " ").title())
+            identity_fields = {
+                "source_profile_id": source_profile_id,
+                "source_revision": source_revision,
+                "source_manifest_sha256": source_digest,
+                "role": role, "native_profile_key": "default", "display_name": display,
+                "home_selection_handle": selected.home_selection_handle,
+                "materialization_receipt_handle": materialization.receipt_handle,
+                "home_generation": prepared.generation_id,
+                "principal_id": principal_id, "namespace_id": namespace_id,
+                "runtime_receipt_handle": runtime_handle,
+                "runtime_identity_sha256": runtime_identity_sha256,
+                "behavioral_manifest_sha256": home_identity["behavioral_manifest_sha256"],
+            }
+            mapping_sha256 = hashlib.sha256(_canonical(identity_fields)).hexdigest()
+            home_binding_id = hashlib.sha256(
+                b"jarvis-published-native-home-v214\0" + bytes.fromhex(mapping_sha256)
+            ).hexdigest()
+            output.append(RootPreparedNativeProfileHomeSource(
+                home_binding_id, source_profile_id, source_revision, source_digest,
+                role, "default", display, selected.home_selection_handle,
+                materialization.receipt_handle, mapping_sha256, prepared.generation_id,
+                principal_id, namespace_id, runtime_handle, runtime_identity_sha256,
+                home_identity["behavioral_manifest_sha256"], materialization,
+                materializer, verified_source, runtime_selection, identity, self._seal,
+            ))
+        if (len(output) != 208 or sum(row.source_profile_id == "hermes" for row in output) != 1
+                or sum(row.role == "resource-delegate-home" for row in output) != 207
+                or len({row.source_profile_id for row in output}) != 208
+                or len({row.home_binding_id for row in output}) != 208):
+            raise BootstrapEnrollmentPending("Jarvis source-home table is incomplete or ambiguous")
+        return tuple(output)
 
     def resolve_profile(self, source_profile_id: str) -> Any | None:
         """Implement the existing resolver protocol from root-held receipts.
