@@ -463,3 +463,17 @@ The implementation SHALL apply the exact v234 Gateway member/config/output diges
 #### Scenario: Missing cleanup proof or cyclic Gateway digest
 - **WHEN** cleanup ownership/tool evidence is missing or Gateway config embeds a recipe-derived legacy input closure
 - **THEN** the implementation SHALL deny the affected effect and retain recovery-pending journal state where applicable
+
+
+## ADDED Requirements
+
+### Requirement: Genuine preactive native manager composition
+The implementation SHALL compose the actual native setup-only handler and runner from original live root setup binding/registry and SHALL derive remote build runtime identity only from current role NSS/root facts and fixed reviewed plan. It SHALL NOT substitute active enrollment or accept caller adapter/profile maps.
+
+#### Scenario: Fresh prepared remote build
+- **WHEN** genuine empty prepared setup has a current root-TTY enable choice and complete held providers/PM/NSS/source/controller facts
+- **THEN** the setup-only native runner SHALL execute the selected fixed build with existing isolated managed lifecycle without requiring active service rows
+
+#### Scenario: Incomplete provider or creator cleanup
+- **WHEN** a provider or current ownership proof is absent, or mounted namespace facts cannot be durably recorded
+- **THEN** setup SHALL remain pending and preserve owned resources for recovery without fabricated receipts or foreign cleanup

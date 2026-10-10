@@ -172,3 +172,12 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 - [ ] VD-T234.3 Test digest mutations, foreign resources, nonempty members, missing tool and durable phase/CAS failure preservation.
 
 Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` and `planning/gateway-digests-owned-network-cleanup-v234.json`; all AC OPEN.
+
+
+## v237 Preactive native manager composition
+
+- [ ] RT-T237.1 Implement source-bound native setup-only handler/runner and session hook.
+- [ ] RT-T237.2 Wire actual root choice/concrete providers/preparation/complete aggregate and verified-dead cleanup.
+- [ ] VD-T237.3 Test empty prepared composition and wrong-owner/currentness/effect/cancellation/mount journal failures.
+
+Exact contract: `planning/preactive-native-build-manager-composition-v237.json`; all AC OPEN.
