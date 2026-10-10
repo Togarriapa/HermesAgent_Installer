@@ -1179,3 +1179,10 @@ The installer SHALL use planning/jarvis-source-profile-task-identity-v215.json t
 #### Scenario: Delegate source differs from task service profile
 - **WHEN** a current protected backend selects an internal source profile
 - **THEN** source_profile_id resolves exact current owned home while service profile/principal/namespace/grant checks remain unchanged and no additional serviceprofile identity is fabricated
+
+### Requirement: Fresh current published PM runtime for delegate homes
+The installer SHALL use planning/current-published-pm-home-runtime-v221.json to verify current published PM/home identity through genuine fresh held bytes without extending setup receipts.
+
+#### Scenario: Setup receipt expires before delegate task
+- **WHEN** the installed current publication remains valid after setup expiry or daemon restart
+- **THEN** the existing committed PM resolver reopens current receipt, executable and full closure and issues a fresh typed proof matching the exact home projection; an old setup seal is not restored
