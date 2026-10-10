@@ -105,8 +105,17 @@ class XauthorityMountKernelTests(unittest.TestCase):
             fixture.profile, binding, self.registry)
         self.xauthority_stage = stage
         self.assertEqual(stage_receipt.source_sha256, binding.source_sha256)
-        self.assertEqual(stage_receipt.size_bytes, binding.source_size)
+        self.assertEqual(stage_receipt.source_size_bytes, binding.source_size)
         self.assertEqual(stage_receipt.owner_gid, fixture.gid)
+        source_stat = os.fstat(self.source_lease.file_fd)
+        self.assertEqual((source_stat.st_dev, source_stat.st_ino, source_stat.st_size),
+                         (binding.source_device, binding.source_inode, binding.source_size))
+        self.assertEqual(self.source_lease.content_sha256, binding.source_sha256)
+        self.assertEqual(
+            hashlib.sha256(os.pread(self.source_lease.file_fd, binding.source_size, 0)).hexdigest(),
+            binding.source_sha256,
+        )
+        self.assertTrue(self.registry.verify_mount_source(self.source_lease, binding))
 
         report_relative = "xauthority-mount-report.json"
         report_path = fixture.data_root / report_relative
