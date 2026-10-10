@@ -362,6 +362,7 @@ class RootInstalledReleaseMemberReceipt:
     _session_id: str = field(repr=False, compare=False)
     _session_seal: str = field(repr=False, compare=False)
     _session: Any = field(repr=False, compare=False)
+    role: str = "module"
 
     def read_current(self) -> bytes:
         return self._session._read_installed_release_member_receipt(self)
@@ -826,6 +827,12 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("application build driver is not owned by this setup session")
         return self._session._resolve_installed_application_builder_module()
+
+    def resolve_prepared_native_worker_start_source_module_receipts(
+            self) -> tuple[RootInstalledReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native worker start source receipts are not owned by this setup session")
+        return self._session._resolve_prepared_native_worker_start_source_module_receipts()
 
     def resolve_application_runtime_probe_artifact(self, application_id: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -8179,11 +8186,80 @@ class RootBootstrapSession:
             handle = secrets.token_urlsafe(36)
             prior = RootInstalledReleaseMemberReceipt(
                 artifact_id, relative_path, digest, size_bytes, release.release_commit,
-                release.deployment_receipt_sha256, handle, self._handle.session_id, self._seal, self)
+                release.deployment_receipt_sha256, handle, self._handle.session_id, self._seal, self,
+                role=role)
             self._installed_release_member_receipts[handle] = prior
         prior.read_current()
         actor.verify_current(release)
         return prior
+
+    def _resolve_prepared_native_worker_start_source_module_receipts(
+            self) -> tuple[RootInstalledReleaseMemberReceipt, ...]:
+        """Return the exact held five-module startup source closure.
+
+        The producer's own source identity is selected by the reviewed v183
+        source ID and current actor origin. The four fixed helper modules have
+        separate exact path, artifact ID, role, mode, size, and digest checks.
+        Worker-role source-module receipts remain a distinct API.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "native worker startup modules require current empty prepared custody")
+        from .native_worker_start_recipe import _INSTALLER_MEMBER_PINS, _PRODUCER_MEMBER
+
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        expected_by_path = dict(_INSTALLER_MEMBER_PINS)
+        expected_by_path[_PRODUCER_MEMBER[0]] = (_PRODUCER_MEMBER[1], None, None)
+        output: list[RootInstalledReleaseMemberReceipt] = []
+        for relative_path, (artifact_id, expected_sha, expected_size) in expected_by_path.items():
+            rows = [row for row in release.files if row.artifact_id == artifact_id]
+            if (len(rows) != 1 or artifact_id not in plan.allowed_artifact_ids):
+                raise BootstrapEnrollmentPending(
+                    "native worker startup source module is absent from the selected release plan")
+            row = rows[0]
+            if (row.relative_path != relative_path or row.roles != ("module",)
+                    or row.mode != 0o444
+                    or (expected_sha is not None and row.sha256 != expected_sha)
+                    or (expected_size is not None and row.size_bytes != expected_size)):
+                raise BootstrapEnrollmentPending(
+                    "native worker startup module differs from its finite reviewed release row")
+            if relative_path == _PRODUCER_MEMBER[0]:
+                if _PRODUCER_MEMBER[1] != artifact_id:
+                    raise BootstrapEnrollmentPending("native worker producer artifact identity changed")
+                source_id = "installer-native-hermes-worker-start-adapter-v183"
+                if source_id not in plan.allowed_artifact_ids:
+                    raise BootstrapEnrollmentPending(
+                        "native worker producer source is not selected by the reviewed v183 plan")
+            expected_origin = str(release.release_root / relative_path)
+            module_name = relative_path.removeprefix("lib/python/").removesuffix(".py").replace("/", ".")
+            loaded = sys.modules.get(module_name)
+            if (loaded is None
+                    or getattr(getattr(loaded, "__spec__", None), "origin", None) != expected_origin
+                    or len([origin for origin in actor.module_origins
+                            if origin[0] == module_name and origin[1] == expected_origin
+                            and origin[4] == row.sha256]) != 1):
+                raise BootstrapEnrollmentPending(
+                    "native worker startup module is outside the verified root actor import closure")
+            prior = next((item for item in self._installed_release_member_receipts.values()
+                          if item.artifact_id == artifact_id
+                          and item.release_commit == release.release_commit), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootInstalledReleaseMemberReceipt(
+                    artifact_id, relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, self._seal, self, role="module")
+                self._installed_release_member_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
 
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
@@ -8323,7 +8399,7 @@ class RootBootstrapSession:
         receipt = RootInstalledReleaseMemberReceipt(
             artifact_id, relative_path, sha256, size_bytes, release.release_commit,
             release.deployment_receipt_sha256, handle, self._handle.session_id,
-            self._seal, self,
+            self._seal, self, role=role,
         )
         self._installed_release_member_receipts[handle] = receipt
         # First read verifies the held release FD and digest before the receipt
@@ -8920,17 +8996,49 @@ class RootBootstrapSession:
             _APPLICATION_BUILD_DRIVER[0]: _APPLICATION_BUILD_DRIVER,
         }.get(receipt.artifact_id)
         if expected is None:
+            from .native_worker_start_recipe import _INSTALLER_MEMBER_PINS, _PRODUCER_MEMBER
+            expected_by_path = dict(_INSTALLER_MEMBER_PINS)
+            expected_by_path[_PRODUCER_MEMBER[0]] = (_PRODUCER_MEMBER[1], None, None)
+            expected = next(((receipt.artifact_id, path, digest, size, "module")
+                             for path, (artifact_id, digest, size) in expected_by_path.items()
+                             if artifact_id == receipt.artifact_id), None)
+        if expected is None:
             raise BootstrapEnrollmentPending("installed release member has no purpose-specific resolver")
         artifact_id, relative_path, sha256, size_bytes, role = expected
         row = next((item for item in release.files if item.artifact_id == artifact_id), None)
         expected_roles = (role,)
+        dynamic_producer = artifact_id == "installer-module:hermes_installer.authority.native_worker_start_recipe"
         if (row is None or row.roles != expected_roles or row.relative_path != relative_path
-                or row.sha256 != sha256 or row.size_bytes != size_bytes
+                or (sha256 is not None and row.sha256 != sha256)
+                or (size_bytes is not None and row.size_bytes != size_bytes)
+                or receipt.role != role or receipt.sha256 != row.sha256
+                or receipt.size_bytes != row.size_bytes
                 or (artifact_id == _APPLICATION_BUILD_DRIVER[0] and row.mode != 0o444)
-                or receipt.artifact_id != artifact_id or receipt.sha256 != sha256
-                or receipt.size_bytes != size_bytes or receipt.release_commit != release.release_commit
+                or (role == "module" and row.mode != 0o444)
+                or receipt.artifact_id != artifact_id or receipt.release_commit != release.release_commit
                 or receipt.deployment_receipt_sha256 != release.deployment_receipt_sha256):
             raise BootstrapEnrollmentPending("installed release member differs from its fixed receipt")
+        if dynamic_producer:
+            plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+            if "installer-native-hermes-worker-start-adapter-v183" not in plan.allowed_artifact_ids:
+                raise BootstrapEnrollmentPending("native worker producer source is not in the selected plan")
+            sha256, size_bytes = row.sha256, row.size_bytes
+            module_name = "hermes_installer.authority.native_worker_start_recipe"
+            expected_origin = str(release.release_root / relative_path)
+            if (receipt.role != "module"
+                    or getattr(getattr(sys.modules.get(module_name), "__spec__", None), "origin", None)
+                    != expected_origin
+                    or len([origin for origin in actor.module_origins
+                            if origin[0] == module_name and origin[1] == expected_origin
+                            and origin[4] == sha256]) != 1):
+                raise BootstrapEnrollmentPending(
+                    "native worker producer is outside the verified root actor import closure")
+        elif role == "module" and artifact_id in {
+                item[0] for item in _INSTALLER_MEMBER_PINS.values()}:
+            plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+            if artifact_id not in plan.allowed_artifact_ids:
+                raise BootstrapEnrollmentPending(
+                    "native worker helper module is no longer allowed by the selected plan")
         fd = release.open_file(artifact_id)
         try:
             content = bytearray()

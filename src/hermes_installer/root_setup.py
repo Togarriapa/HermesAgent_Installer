@@ -351,8 +351,9 @@ def verify_installed_launcher() -> bool:
 
 
 def _import_v180_native_support_closure() -> None:
-    """Load the exact native support modules before the actor origin snapshot."""
+    """Load the finite native support and worker source closure before actor observation."""
     from .components import native_plugins, public_registries
+    from . import native_boundary_patch, native_plugin_bindings, native_plugin_loader
     from .authority import (
         local_resource_effects,
         native_assembler,
@@ -360,12 +361,17 @@ def _import_v180_native_support_closure() -> None:
         native_policy_preparation,
         native_registration_projection,
         native_source_definitions,
+        native_worker_start_recipe,
+        pm_runtime,
     )
+    from .registry import resource_backends
 
     # Keep explicit references so this remains a finite, intentional import set.
     _ = (native_assembler, native_registration_projection, native_plugins, public_registries,
          native_definition_composition, native_policy_preparation,
-         native_source_definitions, local_resource_effects)
+         native_source_definitions, local_resource_effects, native_worker_start_recipe,
+         native_plugin_loader, native_boundary_patch, native_plugin_bindings,
+         resource_backends, pm_runtime)
 
 
 def run_root_setup_action(
