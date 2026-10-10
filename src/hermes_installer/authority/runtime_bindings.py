@@ -1539,6 +1539,15 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
         if len(actions) != 1:
             raise EnrollmentDenied("source observer does not select one exact process-role action binding")
         action = actions[0]
+        registrations = getattr(join, "registrations", {})
+        if not isinstance(registrations, Mapping):
+            raise EnrollmentDenied("source observer registration join is invalid")
+        source_registration_ids = sorted(
+            registration_id for registration_id, registration in registrations.items()
+            if observer_id in getattr(registration, "observer_enrollment_ids", ())
+            and any(binding.action_binding_id == action.action_binding_id
+                    for binding in getattr(registration, "action_bindings", ()))
+        )
         source_kind = selected_kind(issuer.issuer_channel_id, action)
         if source_kind is None:
             raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
@@ -1555,6 +1564,7 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
             "role_sha256": process_role.role_sha256, "channel_id": issuer.issuer_channel_id,
             "capture_schema_id": issuer.capture_schema_id, "source_action_id": action.action_id,
             "source_action_binding_id": action.action_binding_id,
+            "source_registration_ids": source_registration_ids,
             "role_source_receipt_handle": process_role.role_source_receipt_handle,
             "role_module_name": process_role.module_name,
             "role_closure_member_path": process_role.closure_member_path,
