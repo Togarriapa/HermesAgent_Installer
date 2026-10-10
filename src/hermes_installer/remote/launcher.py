@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shlex
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -21,12 +20,11 @@ from .session import SessionSpec, SessionUnavailable, require_sandbox_evidence
 def build_xpra_command(session: SessionSpec, xpra: str | Path, runtime_dir: Path) -> list[str]:
     """Build argv using only options accepted by the pinned Xpra parser."""
     executable = str(Path(xpra).resolve(strict=False))
-    child = shlex.join([session.hermes_executable, *session.hermes_arguments])
     return [
         executable, "seamless", session.display,
         "--daemon=no", "--systemd-run=no", "--attach=no", "--exit-with-children=yes",
         "--socket-dirs=" + str(runtime_dir), "--bind-tcp=127.0.0.1:14500",
-        "--html=on", "--start-child=" + child,
+        "--html=on", "--use-display=no", "--xvfb", session.xvfb_artifact_ref,
         "--commands=no", "--shell=no", "--start-new-commands=no",
         "--start-via-proxy=no", "--proxy-start-sessions=no", "--control=no",
         "--dbus=no", "--dbus-control=no", "--clipboard=no", "--file-transfer=no",
@@ -73,9 +71,11 @@ class XpraLauncher:
             raise SessionUnavailable("Hermes Desktop executable must be inside its enrolled profile mount")
         hermes_digest = _sha256_file(hermes_path)
         child_refs = process_template.child_artifact_refs or {}
-        if not any(ref.rsplit(":", 1)[-1] == digest == hermes_digest
-                   for ref, digest in child_refs.items()):
-            raise SessionUnavailable("Hermes Desktop executable is absent from the protected child artifact pins")
+        if (session.xvfb_artifact_ref not in child_refs
+                or child_refs[session.xvfb_artifact_ref] != session.xvfb_artifact_ref.rsplit(":", 1)[-1]):
+            raise SessionUnavailable("Xvfb executable is absent from the protected child artifact pins")
+        if len(hermes_digest) != 64:
+            raise SessionUnavailable("Hermes Desktop executable digest could not be verified")
         if type(process_template.max_lifetime_seconds) is not int or not 1 <= process_template.max_lifetime_seconds <= 600:
             raise SessionUnavailable("managed Xpra lifetime must be an integer bounded to ten minutes")
         self.session = session
