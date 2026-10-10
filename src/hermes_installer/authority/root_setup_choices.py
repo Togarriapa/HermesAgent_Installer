@@ -248,6 +248,8 @@ class RootSetupChoiceRegistry:
         if row is None or row.get("purpose") != expected_purpose:
             raise AuthorityDenied("setup-choice.stale", "setup choice is absent or has another purpose")
         self._verify_row(row)
+        if row["revocation_epoch"] != 1:
+            raise AuthorityDenied("setup-choice.revoked", "signed setup choice has been revoked")
         if live is None:
             raise AuthorityDenied("setup-choice.session", "current root setup session has not reattached this choice")
         current_selection, original_choice = live
@@ -283,6 +285,8 @@ class RootSetupChoiceRegistry:
         if row is None:
             raise AuthorityDenied("setup-choice.stale", "persisted setup choice is absent")
         self._verify_row(row)
+        if row["revocation_epoch"] != 1:
+            raise AuthorityDenied("setup-choice.revoked", "revoked setup choice cannot be reattached")
         self._verify_current_setup(current_setup_selection)
         payload = row["choice_payload"]
         choice = self._resolve_persisted_choice(current_setup_selection, row)

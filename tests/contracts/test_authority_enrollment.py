@@ -89,6 +89,23 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**dynamic, "derivation_receipt_handle": None}])
 
+
+    def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
+        row = {
+            "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
+            "producer_role_artifact_id": "role-artifact", "producer_role_sha256": "a" * 64,
+            "capture_schema_id": "capture-schema", "allowed_parent_channels": [],
+            "generation": "process-g1", "observer_enrollment_id": "observer-a",
+            "source_action_ids": ["authenticated-input"],
+        }
+        legacy = _parse_source_issuers([row])[0]
+        self.assertEqual(legacy.private_provider_route_ids, ())
+        selected = _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"]}])[0]
+        self.assertEqual(selected.private_provider_route_ids, ("provider-route-a",))
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,

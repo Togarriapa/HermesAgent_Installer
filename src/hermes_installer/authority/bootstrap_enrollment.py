@@ -1708,7 +1708,8 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              # explicit selection. Enrollment never infers either from policy
              # aliases, model lists, or the prepared setup transaction.
              "private_memory_endpoint_selections": [],
-             "private_memory_model_selections": []}
+             "private_memory_model_selections": [],
+             "public_web_scopes": [dict(row) for row in getattr(policy, "public_web_scopes", ())]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:

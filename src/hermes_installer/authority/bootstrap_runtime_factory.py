@@ -462,6 +462,41 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("current setup identity is not owned by this setup session")
         return self._session.resolve_current_setup_identity()
 
+    def resolve_current_setup_choice_signer(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup-choice signer is not owned by this session")
+        return self._session.resolve_current_setup_choice_signer()
+
+    def resolve_setup_choice_registry(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup-choice registry is not owned by this session")
+        return self._session._root_setup_choice_registry()
+
+    def resolve_current_setup_choice(self, selection_handle: str, expected_purpose: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.resolve_current_setup_choice(selection_handle, expected_purpose)
+
+    def record_durable_setup_choice(self, actual_root_tty_choice: Any) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.record_durable_setup_choice(actual_root_tty_choice)
+
+    def resolve_current_release_receipt_handle(self) -> str:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("held installer release is not owned by this session")
+        return self._session.resolve_current_release_receipt_handle()
+
+    def resolve_current_setup_session_handle(self) -> RootSetupSessionHandle:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("setup session is not owned by this binding")
+        return self._session.resolve_current_setup_session_handle()
+
+    def resolve_durable_memory_enablement_choice_handle(self, choice_handle: str) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable memory choice is not owned by this session")
+        return self._session.resolve_durable_memory_enablement_choice_handle(choice_handle)
+
     def observe_existing_model_selection(self, private_profile_selection_handle: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("existing model selection is not owned by this setup session")
@@ -3402,6 +3437,7 @@ class RootInitialSetupAggregate:
         factory = RootBootstrapRuntimeFactory(
             _release=self.release, _actor=self.actor,
             _initial_compilation_registry=self.initial_registry,
+            _authority_key_registry=self.key_registry,
             _initial_principal_registry=self.principal_registry,
             _initial_identity_observer=self.identity_observer,
             _initial_identity_intake=self.identity_intake)
@@ -3438,6 +3474,7 @@ class RootBootstrapRuntimeFactory:
 
     def __init__(self, *, _release: Any | None = None, _actor: Any | None = None,
                  _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None,
+                 _authority_key_registry: Any | None = None,
                  _initial_principal_registry: Any | None = None,
                  _initial_identity_observer: Any | None = None,
                  _initial_identity_intake: Any | None = None,
@@ -3466,6 +3503,16 @@ class RootBootstrapRuntimeFactory:
                      or _initial_compilation_registry.actor is not _actor)):
             raise BootstrapEnrollmentPending("initial publication registry is not bound to this held release actor")
         self._initial_compilation_registry = _initial_compilation_registry
+        self._authority_key_registry = _authority_key_registry
+        if _authority_key_registry is not None:
+            if (_initial_compilation_registry is None
+                    or getattr(_authority_key_registry, "initial_compilation_registry", None)
+                       is not _initial_compilation_registry
+                    or getattr(_authority_key_registry, "release", None) is not _release
+                    or not callable(getattr(_authority_key_registry,
+                                            "resolve_normal_setup_choice_signer", None))):
+                raise BootstrapEnrollmentPending(
+                    "authority-key signer registry is not bound to the transferred release and initial setup")
         if ((_initial_principal_registry is None)
                 != (_initial_identity_observer is None)
                 or (_initial_principal_registry is None)
@@ -3532,6 +3579,7 @@ class RootBootstrapRuntimeFactory:
         self._seal = secrets.token_hex(32)
         self._native_assembly_seal = object()
         self._sessions: dict[str, RootBootstrapSession] = {}
+        self._setup_choice_signers: dict[str, Any] = {}
 
     @classmethod
     def from_installed(cls) -> "RootBootstrapRuntimeFactory":
@@ -3608,6 +3656,24 @@ class RootBootstrapRuntimeFactory:
             session._adopted_identity_receipt_handle = identity_receipt_handle
             session._adopted_principal_registry = normal_principal_registry
             session._adopted_principal_selection_handle = principal_selection_handle
+            # Re-open the exact stage-zero key receipt and adopt it against the
+            # consumed publication handoff. Durable setup choices never use the
+            # process-local session seal as a signer.
+            key_registry = self._authority_key_registry
+            if key_registry is None:
+                raise BootstrapEnrollmentPending(
+                    "normal setup lacks the transferred stage-zero authority-key registry")
+            adopted_handoff = self._initial_compilation_registry.resolve_adopted_handoff(handle)
+            key_receipt = key_registry.resolve_selected_key_for_compilation_session(
+                adopted_handoff.compilation_session_handle)
+            signer = key_registry.adopt_for_normal_setup(
+                key_receipt.receipt_handle,
+                adopted_handoff.compilation_session_handle,
+                handle,
+                adopted_handoff.handoff_handle,
+            )
+            session._setup_choice_signer = signer
+            self._setup_choice_signers[handle.session_id] = signer
             return session
         except Exception:
             self.session_store.close_session(handle)
@@ -3730,6 +3796,10 @@ class RootBootstrapSession:
         self._adopted_identity_receipt_handle: str | None = None
         self._adopted_principal_registry: Any | None = None
         self._adopted_principal_selection_handle: str | None = None
+        self._setup_choice_signer: Any | None = None
+        self._setup_choice_registry: Any | None = None
+        self._durable_memory_choice_handles: dict[str, str] = {}
+        self._release_receipt_handle: str | None = None
         self._native_output_receipts: Any | None = None
         self._pm_runtime_registry: Any | None = None
         self._pm_runtime_handle: str | None = None
@@ -3781,6 +3851,87 @@ class RootBootstrapSession:
         if self._last_receipt is None or self._last_receipt.state != "prepared":
             raise BootstrapEnrollmentPending("selected installation binding requires committed prepared custody")
         return self._selected_installation
+
+    def resolve_current_setup_choice_signer(self) -> Any:
+        self._check_live()
+        registry = self._factory._authority_key_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("normal setup has no adopted authority-key signer registry")
+        try:
+            signer = registry.resolve_normal_setup_choice_signer(self._handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("durable root setup-choice signer is stale or unavailable") from None
+        if (self._setup_choice_signer is not None
+                and getattr(self._setup_choice_signer, "key_id", None) != getattr(signer, "key_id", None)):
+            raise BootstrapEnrollmentPending("normal setup-choice signer key changed after adoption")
+        self._setup_choice_signer = signer
+        return signer
+
+    def _root_setup_choice_registry(self) -> Any:
+        self._check_live()
+        self.resolve_current_setup_choice_signer()
+        if self._setup_choice_registry is None:
+            try:
+                from .root_setup_choices import RootSetupChoiceRegistry
+                self._setup_choice_registry = RootSetupChoiceRegistry.from_root_setup(
+                    self._factory._release, self._factory._actor, self._factory.session_store,
+                    self._current_root_journal_selection(), self._setup_choice_signer)
+            except Exception:
+                raise BootstrapEnrollmentPending("durable root setup-choice registry is not composed") from None
+        return self._setup_choice_registry
+
+    def resolve_current_setup_choice(self, selection_handle: str, expected_purpose: str) -> Any:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.resolve_current_setup_choice(selection_handle, expected_purpose)
+        except Exception:
+            raise BootstrapEnrollmentPending("durable setup choice is absent, stale, or has another purpose") from None
+
+    def record_durable_setup_choice(self, actual_root_tty_choice: Any) -> str | None:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.record_observed_choice(actual_root_tty_choice, self._selected_installation)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY choice could not be durably signed and retained") from None
+
+    def resolve_current_release_receipt_handle(self) -> str:
+        self._check_live()
+        self._factory._actor.verify_current(self._factory._release)
+        self._factory._release.verify_current()
+        initial = self._factory._initial_compilation_registry
+        if initial is None:
+            raise BootstrapEnrollmentPending("normal setup has no adopted release receipt lineage")
+        try:
+            handoff = initial.resolve_adopted_handoff(self._handle)
+            source_session = handoff._initial_session
+            if (not isinstance(source_session, RootInitialCompilationSession)
+                    or source_session.compilation_session_handle != handoff.compilation_session_handle
+                    or source_session.verified_release_receipt_handle == ""):
+                raise ValueError("adopted handoff has no exact release receipt lineage")
+            value = source_session.verified_release_receipt_handle
+        except Exception:
+            raise BootstrapEnrollmentPending("current normal session does not resolve its original held release receipt") from None
+        if self._release_receipt_handle is not None and self._release_receipt_handle != value:
+            raise BootstrapEnrollmentPending("adopted installer release receipt changed")
+        self._release_receipt_handle = value
+        return value
+
+    def resolve_current_setup_session_handle(self) -> RootSetupSessionHandle:
+        self._check_live()
+        live = self._factory.session_store._live(self._handle)
+        proof = self._factory.session_store._proof(live)
+        if (proof.setup_session_id != self._handle.session_id
+                or proof.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("current setup session binding changed")
+        return self._handle
+
+    def resolve_durable_memory_enablement_choice_handle(self, choice_handle: str) -> str | None:
+        self._check_live()
+        choice = self.resolve_current_memory_service_enablement_choice(choice_handle)
+        durable = self._durable_memory_choice_handles.get(choice_handle)
+        if choice.enabled and not durable:
+            raise BootstrapEnrollmentPending("memory service choice has not been durably signed")
+        return durable
 
     def resolve_adopted_principal_selection(self) -> Any:
         """Return the freshly re-observed principal bound to this normal session."""
@@ -3898,9 +4049,6 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("existing model selection requires the current empty prepared generation")
         if not isinstance(private_profile_selection_handle, str) or not private_profile_selection_handle:
             raise BootstrapEnrollmentPending("existing model selection requires a root-issued private-profile handle")
-        authority_service = self._factory._authority_service
-        if authority_service is None:
-            raise BootstrapEnrollmentPending("root model-store observation awaits the same-graph AuthorityService binding")
         profile = self.resolve_current_private_profile(
             private_profile_selection_handle, "existing-model-selection")
         if (profile.profile_id != "hermes-agent-native-v1"
@@ -3913,7 +4061,9 @@ class RootBootstrapSession:
         if self._model_store_filesystem_registry is None:
             self._model_store_filesystem_registry = RootOwnedFilesystemSelectionRegistry.from_root_setup(
                 self._selected_installation, self._root_private_profile_registry(),
-                self._selected_installation, self._current_root_journal_selection(), authority_service)
+                self._selected_installation, self._current_root_journal_selection(),
+                self._selected_installation.resolve_setup_choice_registry(),
+                self._selected_installation.resolve_current_setup_choice_signer())
         root_selection = self._model_store_filesystem_registry.observe_existing_model_store(
             private_profile_selection_handle)
         try:
@@ -4011,12 +4161,15 @@ class RootBootstrapSession:
             signature = hmac.new(self._seal.encode("ascii"), _canonical(signed), hashlib.sha256).hexdigest()
             choice = RootSelectedMemoryServiceEnablementChoice(
                 **signed, signature=signature, _session_seal=self._seal)
-            directory = self._factory.resolver.journal_root / "memory-service-enable-choices"
-            _ensure_root_directory(directory)
-            _atomic_root_file(directory / f"{handle}.json",
-                              _canonical({**signed, "signature": signature}), 0o600)
             self._memory_enablement_choices[handle] = choice
             self._memory_enablement_tty_proofs[handle] = proof
+            durable_handle = self._selected_installation.record_durable_setup_choice(choice)
+            if enabled and not durable_handle:
+                self._memory_enablement_choices.pop(handle, None)
+                self._memory_enablement_tty_proofs.pop(handle, None)
+                raise BootstrapEnrollmentPending("enabled memory configuration was not durably signed")
+            if durable_handle is not None:
+                self._durable_memory_choice_handles[handle] = durable_handle
             proof = None
             return self.resolve_current_memory_service_enablement_choice(handle)
         finally:

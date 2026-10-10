@@ -3165,7 +3165,7 @@ class NativeInitialInputDelivery:
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        result = {
+        wire = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -3174,8 +3174,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            result["turn_handle"] = self.turn_handle
-        return result
+            wire["turn_handle"] = self.turn_handle
+        return wire
 
 
 @dataclass(slots=True)
