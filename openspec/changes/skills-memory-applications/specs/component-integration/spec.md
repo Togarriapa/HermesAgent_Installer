@@ -703,3 +703,30 @@ The installer SHALL record v124 actual protected root TTY service-enable configu
 
 - **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
 - **THEN** memory service startup is unavailable and no service authorization is inferred
+
+### Requirement: Actual observed private endpoint and separate model deployments
+
+The installer SHALL require v125 actual root-held endpoint/model/runtime/source-load/current process evidence for private memory route selection, separately for GLM5.2 extraction and embedding.
+
+#### Scenario: Model-list alias without verified source loading
+
+- **WHEN** an endpoint lists a model alias but no exact verified installed model/runtime/config/current load proof exists
+- **THEN** no deployment receipt is minted and private memory remains unavailable with the missing prerequisite stated
+
+### Requirement: Root selected existing model source tree observation
+
+The installer SHALL use v127 actual held root directory/source-member verification and finite authority signing for pre-existing model artifacts outside the static catalog.
+
+#### Scenario: Arbitrary directory or listed model alias
+
+- **WHEN** no genuine selected owned-directory/source inventory receipt exists
+- **THEN** the registry denies model source observation and does not infer source or deployment proof from a path or served alias
+
+### Requirement: Exact private model protected selection and held directory getters
+
+The installer SHALL resolve v128 exact protected endpoint/model selection records and current owned-directory source getters independently of actual deployment observations.
+
+#### Scenario: A typed caller object lacks registry membership
+
+- **WHEN** a selection object or directory FD is not the exact retained current root selection
+- **THEN** source/model observation is denied even if its fields appear structurally valid

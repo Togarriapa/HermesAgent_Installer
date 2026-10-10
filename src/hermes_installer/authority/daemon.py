@@ -263,18 +263,34 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
                 failures.append(exc)
             stop_event.set()
 
+    def run_resource_scheduler() -> None:
+        runtime = getattr(service, "root_authority_runtime", None)
+        scheduler = getattr(runtime, "resource_scheduler", None)
+        if scheduler is None:
+            return
+        try:
+            scheduler.run(stop_event)
+        except BaseException as exc:
+            with failure_lock:
+                failures.append(exc)
+            stop_event.set()
+
     threads = [threading.Thread(target=run_one, args=(uid, gid),
                                 name=f"authority-uid-{uid}", daemon=False)
                for uid, gid in sorted(socket_gid_by_uid.items())]
     pruner = threading.Thread(target=prune_root_observers,
                               name="authority-observer-prune", daemon=False)
+    scheduler_thread = threading.Thread(target=run_resource_scheduler,
+                                         name="authority-resource-scheduler", daemon=False)
     pruner.start()
+    scheduler_thread.start()
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
     stop_event.set()
     pruner.join()
+    scheduler_thread.join()
     if failures:
         raise AuthorityDenied("authority.listener", "protected authority listener exited") from failures[0]
 
