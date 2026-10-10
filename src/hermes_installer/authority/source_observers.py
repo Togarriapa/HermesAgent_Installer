@@ -969,8 +969,13 @@ class SourceObserverRegistry:
         target_pid = getattr(native_binding, "peer_pid", None)
         target_profile = getattr(native_binding, "profile_id", None)
         target_generation = getattr(native_binding, "generation", None)
-        target_pidfd = getattr(native_binding, "peer_pidfd", None)
-        target_identity = getattr(native_binding, "current_identity", None)
+        # These are intentionally private on the sealed binding. The public
+        # channel DTO carries no PIDFD or process identity; only a validated
+        # root-issued binding lets this root-owned registry reach its retained
+        # peer record. duplicate_peer_pidfd() supplies the descriptor we own.
+        retained_peer = getattr(native_binding, "_peer", None)
+        target_pidfd = getattr(retained_peer, "pidfd", None)
+        target_identity = getattr(retained_peer, "identity", None)
         if (observer is None or event_handle.source_kind != "native-input"
                 or observer.source_kind != "native-input"
                 or event_record.handle is not event_handle
@@ -1031,6 +1036,10 @@ class SourceObserverRegistry:
                 or receipt.principal_id != observer.principal_id
                 or receipt.namespace_id != observer.namespace_id
                 or receipt.process_generation != observer.generation
+                or receipt.origin_id != (
+                    f"{source_leaf.origin_id}:channel:{getattr(proof, 'channel_ingress_id', '')}")
+                or getattr(proof, "channel_ingress_id", None)
+                    != getattr(native_binding, "channel_ingress_id", None)
                 or receipt.native_process_identity != source_leaf.native_process_identity
                 or receipt.payload_digest != canonical_digest(event_payload)
                 or receipt.parent_receipt_ids != event_handle.source_receipt_ids
@@ -1043,7 +1052,8 @@ class SourceObserverRegistry:
         expected_context_ids = set(event_handle.source_receipt_ids) | {receipt.receipt_id}
         context_ids = [item.receipt_id for item in source_context.source_receipts]
         if (set(context_ids) != expected_context_ids or len(context_ids) != len(expected_context_ids)
-                or receipt not in source_context.source_receipts
+                or tuple(source_context.source_receipts)
+                    != (*event_record.parent_receipts, receipt)
                 or source_context.profile_id != observer.profile_id
                 or source_context.principal_id != observer.principal_id
                 or source_context.namespace_id != observer.namespace_id
@@ -1929,6 +1939,15 @@ class SourceObserverRegistry:
         and recipient. Adapter artifacts are never promoted to process roles.
         """
         package_generation = observer.native_package_generation or observer.generation
+        if (observer.native_package_generation is None
+                or observer.source_action_binding_id is None
+                or observer.role_source_receipt_handle is None
+                or observer.role_module_name is None
+                or observer.role_closure_member_path is None
+                or observer.role_source_revision is None
+                or observer.role_source_tree_sha256 is None
+                or not observer.source_registration_ids):
+            raise AuthorityDenied("source.package", "selected process-role source and action registration proof is incomplete")
         try:
             package = self.package_resolver(observer.package_id, package_generation)
         except Exception:
@@ -2032,20 +2051,19 @@ class SourceObserverRegistry:
             "role_source_tree_sha256", "role_module_device", "role_module_inode",
             "role_module_sha256", "observed_registration_ids",
         )
-        role_proof_required = observer.role_source_receipt_handle is not None
+        role_proof_required = True
         required = (
             "proof_id", "package_id", "profile_id", "generation",
             "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256",
             "mount_namespace_inode", "mount_id", "mount_target_digest", "mount_flags",
             "source_root_device", "source_root_inode", "target_peer_identity",
             "loader_role_artifact_id", "loader_role_sha256", "loader_ready_event_id",
-            "observed_entrypoint_action_ids", "issued_monotonic", "expires_monotonic",
+            "issued_monotonic", "expires_monotonic",
             "service_generation_digest",
         ) + (role_fields if role_proof_required else ())
         if proof is None or any(not hasattr(proof, name) for name in required):
             raise AuthorityDenied("source.package", "root loaded-package proof is incomplete")
         flags = getattr(proof, "mount_flags")
-        actions = getattr(proof, "observed_entrypoint_action_ids")
         digest_fields = (
             "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256",
             "mount_target_digest", "service_generation_digest",
@@ -2062,10 +2080,6 @@ class SourceObserverRegistry:
                 or proof.loader_role_sha256 != observer.role_sha256
                 or not isinstance(proof.loader_ready_event_id, str)
                 or not 1 <= len(proof.loader_ready_event_id) <= 128
-                or not isinstance(actions, (tuple, list, frozenset, set))
-                or not 1 <= len(actions) <= 256
-                or any(not isinstance(action, str) or not action for action in actions)
-                or observer.source_action_id not in actions
                 or not isinstance(flags, (tuple, list, frozenset, set))
                 or not {"ro", "nosuid", "nodev"}.issubset(flags)
                 or "rw" in flags
@@ -2106,10 +2120,10 @@ class SourceObserverRegistry:
                     or proof.role_module_inode <= 0
                     or not isinstance(observed_registrations, (tuple, list, set, frozenset))
                     or len(set(observed_registrations)) != len(observed_registrations)
-                    or any(not isinstance(item, str) for item in observed_registrations)
+                    or any(not isinstance(item, str) or not item for item in observed_registrations)
                     or not set(observed_registrations).issubset(role_registrations)
-                    or (selected_registrations and not selected_registrations.issubset(
-                        set(observed_registrations)))):
+                    or not selected_registrations
+                    or not selected_registrations.issubset(set(observed_registrations))):
                 raise AuthorityDenied("source.package", "loaded process-role module proof does not match protected role")
         return proof
 
@@ -2692,7 +2706,7 @@ class NativeInitialInputDelivery:
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        result = {
+        wire = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -2701,8 +2715,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            result["turn_handle"] = self.turn_handle
-        return result
+            wire["turn_handle"] = self.turn_handle
+        return wire
 
 
 @dataclass(slots=True)

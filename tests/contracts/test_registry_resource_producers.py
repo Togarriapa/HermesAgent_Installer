@@ -262,7 +262,7 @@ def test_cron_occurrence_store_is_durable_monotone_and_replay_bounded():
 def test_root_scheduler_has_no_unselected_callback_surface():
     import inspect
 
-    assert tuple(inspect.signature(RootSelectedCronProducer.tick).parameters) == ("self",)
+    assert tuple(inspect.signature(RootSelectedCronProducer.tick).parameters) == ("self", "cancelled")
     scheduler = RootSelectedResourceScheduler((), poll_seconds=1)
     assert scheduler.tick_once() == ()
     with pytest.raises(ResourceObservationError, match="selected cron producers"):

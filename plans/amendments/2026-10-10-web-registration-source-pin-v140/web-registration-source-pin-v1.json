@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T08",
+    "HI-T120",
+    "HI-T121",
+    "RB-T08"
+  ],
+  "why": "Committed source result wrapper now consumes actual v126 root web content receipt and normalized media type. Immutable v99 capture records old source bytes and cannot authenticate current implementation; exact updated module pin is a separate source cohort.",
+  "source_record": {
+    "module_name": "hermes_installer.components.plugin_local_voice_web",
+    "relative_path": "src/hermes_installer/components/plugin_local_voice_web.py",
+    "source_commit": "13dd3f0fbe92d85fd0ec93d2cbcfd33ed20670f0",
+    "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/13dd3f0fbe92d85fd0ec93d2cbcfd33ed20670f0/src/hermes_installer/components/plugin_local_voice_web.py",
+    "sha256": "f46733a6e59788c94360187bb4d24369c5f3298984b6a351b190b1dca4feea84",
+    "size_bytes": 23963,
+    "native_tool_names": [
+      "epic_board",
+      "voice_speak",
+      "voice_transcribe",
+      "web_retrieve"
+    ]
+  },
+  "source_review": "Actual held source read at named clean owner checkout matches SHA/size. web_retrieve serializer retains exact v120/121 fields, actual v126 artifact handle/domain, current root operation equality, canonical HTTPS redirect chain, untrusted_source true/authority none; MIME normalized content_type matches raw artifact media_type. It deliberately does not compare raw response SHA to decoded content UTF8 bytes. Exact raw root receipt byte/transport identity is independently registry validated. Source handler max receipt metadata bound does not raise root transport/CAS bound. No account/HTTP/public-source permission or runtime success inferred from adapter tests.",
+  "producer_join": "Current RootReleaseModuleReceipt and source/schema observers must resolve this exact module from installed verified release/source closure before selecting current registration/action/workflow records. All four registrations sharing the module must bind this current source receipt/SHA, not only web_retrieve. Backend action adapter SHA source references follow actual module cohort. No arbitrary artifact ID alias or blanket hash replacement in old receipts. Legacy v99 source-only capture remains immutable and operational_projection=false.",
+  "projection": "Native registration capture owner re-runs actual source register calls under current typed selected context and verifies exact names/toolset/descriptions/full argument schemas; result schemas/source observers/selected target/effect/workflow proofs remain genuine independently observed v112/v113/v120/v123/v137. Existing 42registration/61backend route counts stay distinct. Do not copy old source receipt or assert registration names/arguments unchanged without actual capture.",
+  "tasks": [
+    {
+      "id": "HI-T140.1",
+      "owner": "native source/projection/factory",
+      "work": "Consume current held module pin, re-observe exact registration/action/schema source joins and current registration capture; stale source receipts/hash deny."
+    },
+    {
+      "id": "RB-T140.2",
+      "owner": "web/native integration",
+      "work": "Preserve genuine raw receipt/result/media/operation joins and PUBLIC-only egress positive with private ancestry/revocation negatives; actual runtime/account/ARM acceptance remains open."
+    }
+  ],
+  "acceptance": "Source pin/schema/fixture evidence only. All original AC open."
+}

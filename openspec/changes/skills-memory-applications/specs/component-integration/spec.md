@@ -767,3 +767,10 @@ The installer SHALL acquire only exact supported-origin integrity-locked package
 #### Scenario: Old source-only consent or missing package evidence
 - **WHEN** acquisition lacks the explicit phase, exact lock integrity, allowed origin, current held bytes or required reviewed license eligibility
 - **THEN** the affected phase remains pending and no static catalog handle, unchecked cache or metadata assertion substitutes for proof
+
+### Requirement: Actual held existing model-store source selection v139
+The installer SHALL select an already-present model directory only through the fixed reviewed model-store root and actual protected directory/source observations, independently of private profile intent and deployment proof.
+
+#### Scenario: Model store or selected tree absent
+- **WHEN** the exact store/child/source inventory is absent, unowned, writable or changed
+- **THEN** selection remains pending with its exact prerequisite and no arbitrary path, download, copy or inferred model load substitutes

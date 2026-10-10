@@ -114,3 +114,5 @@ Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selecto
 GLM source/license pins v135: `plans/amendments/2026-10-10-glm-source-license-pins-v135.md`; actual finite source blobs and held model inventory verification remain separate from deployment, no weight acquisition or AC promotion.
 
 Locked package/license receipts v136: `plans/amendments/2026-10-10-locked-package-source-license-receipts-v136.md`; finite actual acquisition phase, root-held artifacts/license evidence and noneditable isolated deployment; license/platform/deployment acceptance remains pending.
+
+Existing model-store source v139: `plans/amendments/2026-10-10-existing-model-store-selection-source-v139.md`; actual fixed root/child FD selection and source observations distinct private profile/deployment. No model acquisition or acceptance promotion.

@@ -175,6 +175,9 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         "channel_delivery_bindings": [],
         "remote_startup_enrollments": [], "private_loopback_networks": [],
         "selected_resource_executions": [], "selected_application_runtimes": [],
+        # These rows require separately verified root endpoint/model receipts;
+        # a prepared snapshot must not derive or activate them.
+        "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
         "root_journal_roots": [rows],
     }
     value["generation_digest"] = hashlib.sha256(_canonical_json(value)).hexdigest()

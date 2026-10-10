@@ -112,9 +112,15 @@ class _Package:
     adapter_records: dict = None
     action_records: dict = None
     process_role_records: dict = None
+    registration_records: dict = None
 
     def __post_init__(self):
         action = _Adapter()
+        registration = SimpleNamespace(
+            registration_id="registration.native.input",
+            observer_enrollment_ids=("observer.native.primary",),
+            action_bindings=(SimpleNamespace(action_binding_id=action.action_binding_id),),
+        )
         role = SimpleNamespace(
             role_id="native-process-role", package_id=self.package_id,
             native_package_generation=self.generation, profile_id=self.profile_id,
@@ -130,6 +136,7 @@ class _Package:
         object.__setattr__(self, "adapter_records", {"hermes-main": action})
         object.__setattr__(self, "action_records", {action.action_binding_id: action})
         object.__setattr__(self, "process_role_records", {role.role_id: role})
+        object.__setattr__(self, "registration_records", {registration.registration_id: registration})
 
 
 class _Service:
@@ -252,6 +259,14 @@ def _enrollment(**changes):
         target_id="provider.fixed",
         recipient="public-provider",
         allowed_parent_source_kinds=frozenset({"native-input"}),
+        native_package_generation="gen-4",
+        source_action_binding_id="hermes-main:action:authenticated-input",
+        role_source_receipt_handle="role-source-receipt",
+        role_module_name="hermes_installer.runtime.native_role",
+        role_closure_member_path="roles/native_role.py",
+        role_source_revision="reviewed-role",
+        role_source_tree_sha256=_digest("8"),
+        source_registration_ids=("registration.native.input",),
     )
     fields.update(changes)
     return SourceObserverEnrollment(**fields)
@@ -435,7 +450,14 @@ class SourceObserverContracts(unittest.TestCase):
             self.selected_package.entrypoint_sha256, self.selected_package.resolver_sha256,
             123, "mount-1", _digest("1"), frozenset({"ro", "nosuid", "nodev"}),
             8, 99, identity, "native-role-module", _digest("9"), "loader-ready-event",
-            ("authenticated-input",), 9.0, 39.0, _digest("2"))
+            (), 9.0, 39.0, _digest("2"),
+            role_id="native-process-role", role_source_receipt_handle="role-source-receipt",
+            role_module_name="hermes_installer.runtime.native_role",
+            role_closure_member_path="roles/native_role.py",
+            role_source_revision="reviewed-role", role_source_tree_sha256=_digest("8"),
+            role_module_device=8, role_module_inode=99, role_module_sha256=_digest("9"),
+            observed_registration_ids=("registration.native.input",),
+        )
 
     def role_proof(self, **changes):
         proof = self.loaded_package_proof(

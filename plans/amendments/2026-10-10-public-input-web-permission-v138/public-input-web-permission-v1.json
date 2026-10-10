@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "requirements": [
+    "PR-F03",
+    "HI-T11",
+    "RB-T08",
+    "R0060"
+  ],
+  "why": "Actual RootPrivateInputConsentRegistry permits only private eligible recipients and cannot authorize public web. Existing source receipt issuers otherwise have empty recipient ceilings. A PUBLIC input observation and purpose-specific public-web permission are independently required; native profile or private consent is insufficient.",
+  "owner_module": "hermes_installer.authority.root_public_input_permission",
+  "registry": "RootPublicInputPermissionRegistry",
+  "constructor": "from_root_runtime(authority_service,active_bindings,root_native_input_selection_registry,root_source_observer_registry,root_journal)",
+  "purpose": "public-free-web-read",
+  "configuration_producer": "RootBootstrapSession.observe_public_web_permission_selection records explicit root foreground TTY normal configuration under current installed actor/principal/namespace selectors and genuine selected EnrolledPublicWebScope. Show exact finite HTTPS hosts/path/query scopes and disclosure purpose, zero additional metered budget. No defaults or private consent reuse. Persistent selection is permission intent only; public classification requires a separate actual per-input source observation. Factory registry persists selection, active publisher binds it to same actual selected web effect enrollment/profile/current generation. Unconfigured choice remains precise pending, not inferred from PUBLIC profile names.",
+  "selection_type": "RootPublicInputPermissionSelection",
+  "selection_fields": [
+    "selection_handle",
+    "consent_id",
+    "purpose",
+    "choice_observation_id",
+    "setup_session_id",
+    "transaction_handle",
+    "plan_sha256",
+    "principal_selection_handle",
+    "namespace_selection_handle",
+    "principal_id",
+    "profile_id",
+    "namespace_id",
+    "web_scope_ids",
+    "web_scope_sha256",
+    "public_recipient_ids",
+    "allowed_operations",
+    "additional_metered_budget_usd",
+    "controller_binding_handle",
+    "issued_monotonic",
+    "expires_monotonic",
+    "revocation_epoch"
+  ],
+  "selection_rules": {
+    "purpose": "public-free-web-read",
+    "allowed_operations": [
+      "plugin.web.read"
+    ],
+    "budget": 0,
+    "scope": "Exact current protected EnrolledPublicWebScope enrollment_id/target_id/generation/principal/profile/recipient and bounded PublicReadTarget records. Source API existing components.plugin_public_https: hostname canonical public DNS, path_prefixes and query_keys bounded; no wildcard all hosts, local/private/reserved destinations, arbitrary authenticated headers/cookies or scheme. All DNS/connect/redirect/TLS checks and byte/deadline bounds remain source handler enforced at each request; permission does not authorize URL parameters to escape that scope. Target rows derive actual root reviewed normal config/source contracts, not worker URLs or route label public.",
+    "lease": "Persistent root setup choice is adopted into current actual active policy generation under publisher receipt; resolve each source/dispatch/retry as <=30s snapshot with same selected principal/profile/namespace/web scope/epoch/current loader. No old setup monotonic lease revival or unregistered bearer."
+  },
+  "public_source_observation": {
+    "type": "RootPublicNativeInputObservation",
+    "fields": [
+      "observation_handle",
+      "retained_input_selection_handle",
+      "input_sha256",
+      "input_size_bytes",
+      "source_observation_handle",
+      "public_permission_selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "profile_generation",
+      "service_generation_digest",
+      "source_classification",
+      "parent_source_receipt_handles",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "source": "Actual root-observed explicit public input bytes supplied via foreground installer/native selected public-input entry or fixed source-reviewed PUBLIC qualification fixture, bound to exact selected live native input peer and retained root input selection/delivery. UI makes disclosed public use explicit for this exact input; root captures/hash retains the actual bytes outside argv/logs. Runtime selected source adapter is root-selected and validates actual provenance; worker flags or model claims never classify input. A public transport, private profile or untrusted website does not classify arbitrary human content PUBLIC.",
+    "classification": "source_classification is PUBLIC only with actual root selected public-source observation and this explicit purpose. Any parent sensitivity PRIVATE/UNKNOWN, credentials/private attachment/history/memory/delegation content or uncaptured input invalidates the PUBLIC path. No source ancestry stripping, masking hash or consent-based downgrade. Existing source trust aggregation preserved: public web responses remain untrusted-source authority none, not authorization evidence.",
+    "bounds": "Reuse actual selected input/source capture schema and max_event_bytes; exact current immutable input SHA/size and retained source handles, no generic new source kind. Source kind remains native-input. Root input coordinator/selection store owns actual source observation independently of native pending request pair."
+  },
+  "permission_type": "RootPublicInputPermission",
+  "permission_fields": [
+    "receipt_handle",
+    "consent_id",
+    "purpose",
+    "selection_handle",
+    "principal_id",
+    "profile_id",
+    "namespace_id",
+    "profile_generation",
+    "service_generation_digest",
+    "retained_input_selection_handle",
+    "input_observation_handle",
+    "input_sha256",
+    "web_scope_ids",
+    "web_scope_sha256",
+    "public_recipient_ids",
+    "allowed_operations",
+    "additional_metered_budget_usd",
+    "revocation_epoch",
+    "issued_monotonic",
+    "expires_monotonic",
+    "signature"
+  ],
+  "source_resolver": "resolve_for_selected_input(observed_public_input_proof,selected_input_binding)->RootPublicInputPermission; consumes only actual root retained input/public observation once, validates current registered purpose/scope/classification/peer/source ancestry and signed selected input proof. Not private-input or memory-capture consent.",
+  "current_resolver": "resolve_current_for_selection(receipt_handle,retained_input_selection_handle,expected_consent_id,expected_revocation_epoch)->same current typed RootPublicInputPermission; nonconsuming root-private resolution for every dispatch/retry. Confirms actual current profile/policy generation/web scope/permission epoch/lease and original retained input/public source identity; never reconsumes ingress proof, extends expiry, reclassifies parent or substitutes current unrelated input. Revocation cancels pending effect delivery and subsequent retries.",
+  "source_issuer_join": "SourceIssuerRecord and SourceObserverEnrollment add public_web_scope_ids (sorted unique tuple/list <=32, empty for nonpublic-selected issuers). RootRuntimeBindings resolves exact current EnrolledPublicWebScope rows matching principal/profile/process generation/recipient; no scope ID alone confers permission. RootNativeInputSelection retains optional public_input_permission_selection_handle from real root selection, mutually exclusive with a private consent purpose for that input. Root observed input proof/current permission selects one path; configuration can support both private and public inputs but each captured input has explicit independent classification and source ancestry. Do not auto-public label existing private input to produce a positive test.",
+  "authority_rule": "Dedicated existing root-selected source issuance path sets recipient_ceiling only to intersection of genuine current RootPublicInputPermission.public_recipient_ids and exact selected web scope recipients and every parent source ceiling, with allowed operations intersected to plugin.web.read. Source sensitivity must remain PUBLIC all ancestry; UNKNOWN/PRIVATE has empty public ceiling regardless permission. Existing source budget intersection stays zero additional. Authorization/revalidation always retains signed source receipts, checks every parent/current permission/scope/epoch/source lease and actual input identity. RootPrivateInputConsentRegistry remains private-only; no public provider chat/embedding/memory export permission is added.",
+  "retention": "Root-owned protected journal public-input-permission durable selection and signed actual per-input receipt membership, domain-separated existing AuthorityService finite signer. Root-private handles only. Public input bytes retained only under existing bounded input lifetime; revoke/expiry cleanup does not erase required receipt digest audit. No arbitrary sign/worker-issued consent endpoint.",
+  "tasks": [
+    {
+      "id": "PR-T138.1",
+      "owner": "factory/consent",
+      "work": "Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias."
+    },
+    {
+      "id": "HI-T138.2",
+      "owner": "source input/host authority",
+      "work": "Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests."
+    },
+    {
+      "id": "RB-T138.3",
+      "owner": "web/native integration",
+      "work": "Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance."
+    }
+  ],
+  "acceptance": "All original AC remain open. No live web/account/audio/host installation performed by this amendment; private sources remain forbidden public egress."
+}

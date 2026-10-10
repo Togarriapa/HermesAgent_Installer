@@ -67,6 +67,22 @@ COMPOSIO_POLICY_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reade
 COMPOSIO_POLICY_TEMPLATE_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 COMPOSIO_POLICY_TEMPLATE_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 COMPOSIO_POLICY_TEMPLATE_BYTES = 528
+EXISTING_MODEL_STORE_TEMPLATE_PATH = (
+    "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/"
+    "existing-model-store-root-template-v1.json")
+EXISTING_MODEL_STORE_TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
+EXISTING_MODEL_STORE_TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
+EXISTING_MODEL_STORE_TEMPLATE_BYTES = 712
+REVIEWED_SOURCE_MODULES = (
+    ("hermes_installer.components.native_plugins",
+     "src/hermes_installer/components/native_plugins.py",
+     "lib/python/hermes_installer/components/native_plugins.py",
+     "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+    ("hermes_installer.components.public_registries",
+     "src/hermes_installer/components/public_registries.py",
+     "lib/python/hermes_installer/components/public_registries.py",
+     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+)
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
 REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
@@ -110,6 +126,7 @@ STAGED_IDENTITY_TEMPLATE_PATH = "templates/authentik-policy-template-v1.json"
 STAGED_PREPARED_BASE_TEMPLATE_PATH = "templates/prepared-authority-base-template-v1.json"
 STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 STAGED_COMPOSIO_POLICY_TEMPLATE_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
+STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH = "templates/existing-model-store-root-template-v1.json"
 STAGED_REVIEWED_CAPABILITY_MAP_PATH = "templates/reviewed-native-capability-map-v1.json"
 STAGED_CATALOG_PATH = "catalog/artifacts.json"
 ROOT_PLAN_TEMPLATE_ARTIFACT_IDS = (
@@ -1289,6 +1306,10 @@ def _elf_machine(path: Path) -> int:
 
 def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | None]]:
     rows: list[tuple[str, str, int, int, str | None]] = []
+    root_info = root.lstat()
+    if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0 or root_info.st_gid != 0
+            or stat.S_IMODE(root_info.st_mode) != 0o555):
+        raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
     for directory, dirs, files in os.walk(root, topdown=True, followlinks=False):
         base = Path(directory)
         for name in list(dirs):
@@ -1296,6 +1317,11 @@ def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | No
             if path.is_symlink():
                 dirs.remove(name)
                 _append_runtime_member(rows, root, path)
+            else:
+                info = path.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                        or stat.S_IMODE(info.st_mode) != 0o555):
+                    raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
         for name in files:
             _append_runtime_member(rows, root, base / name)
     rows.sort(key=lambda row: row[0])
@@ -1313,9 +1339,12 @@ def _append_runtime_member(rows: list[tuple[str, str, int, int, str | None]], ro
         # extraction, rather than rejecting them as stand-alone source paths.
         _resolve_runtime_archive_symlink(f"python/{rel}", target)
         rows.append((rel, hashlib.sha256(target.encode()).hexdigest(), len(target.encode()), 0o777, target))
-    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0:
+    elif (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0
+          and stat.S_IMODE(info.st_mode) in {0o444, 0o555}):
         digest, size = _hash_path(path, MAX_SOURCE_FILE_BYTES)
         rows.append((rel, digest, size, stat.S_IMODE(info.st_mode), None))
+    elif stat.S_ISREG(info.st_mode):
+        raise InstallerReleaseBuildError("runtime file mode is not read-only sealed")
     else:
         raise InstallerReleaseBuildError("materialized runtime closure contains a hardlink or special member")
 
@@ -1337,7 +1366,7 @@ def _seal_runtime_tree(root: Path) -> None:
                 continue
             info = path.lstat()
             os.chown(path, 0, 0, follow_symlinks=False)
-            os.chmod(path, 0o555 if info.st_mode & 0o111 else 0o444, follow_symlinks=False)
+            os.chmod(path, _sealed_runtime_mode(info.st_mode), follow_symlinks=False)
         for name in dirs:
             path = current / name
             if not path.is_symlink():
@@ -1346,6 +1375,10 @@ def _seal_runtime_tree(root: Path) -> None:
         os.chown(current, 0, 0, follow_symlinks=False)
         os.chmod(current, 0o555, follow_symlinks=False)
         _fsync_dir(current)
+
+
+def _sealed_runtime_mode(mode: int) -> int:
+    return 0o555 if mode & 0o111 else 0o444
 
 
 def _verify_runtime_materialization(root: Path, expected_closure: str) -> None:
@@ -1502,6 +1535,9 @@ class RootInstallerInterpreterRegistry:
                 site_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
                 _materialize_pyyaml_wheel(wheel_bytes, site_dir)
                 runtime_probe = _probe_materialized_runtime(executable, python_dir, site_dir)
+                # The closure ID names the immutable tree we will retain, so
+                # seal modes before calculating its digest and before rename.
+                _seal_runtime_tree(python_dir)
                 runtime_rows = _runtime_archive_rows(python_dir)
                 runtime_closure = hashlib.sha256(_canonical_json([
                     {"path": row[0], "sha256": row[1], "size_bytes": row[2],
@@ -1512,7 +1548,6 @@ class RootInstallerInterpreterRegistry:
                     _verify_runtime_materialization(final / "python", runtime_closure)
                     _remove_tree_no_follow(stage)
                 else:
-                    _seal_runtime_tree(python_dir)
                     os.rename(stage_name, runtime_closure, src_dir_fd=root_fd, dst_dir_fd=root_fd)
                     os.fsync(root_fd)
                 prefix = final if final.exists() else BOOTSTRAP_RUNTIME_ROOT / runtime_closure
@@ -1996,8 +2031,10 @@ class RootBootstrapRuntimeHandoffRegistry:
                 raise InstallerReleaseBuildError("bootstrap descriptor message exceeds fixed bound")
             _write_all(memfd, message)
             os.fsync(memfd)
-            seals = (fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
-            fcntl.fcntl(memfd, fcntl.F_ADD_SEALS, seals)
+            constants = _memfd_seal_constants()
+            seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                     | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+            fcntl.fcntl(memfd, constants["F_ADD_SEALS"], seals)
             descriptor = os.fstat(memfd)
             record = {
             "schema": 1, "state": "pending", "handoff_handle": handle,
@@ -2064,7 +2101,7 @@ class RootBootstrapRuntimeHandoffRegistry:
                 except OSError:
                     pass
             code = _fixed_reexec_entry_code()
-            argv = [str(runtime.executable), "-I", "-S", "-c", code]
+            argv = _fixed_reexec_argv(runtime.executable)
             os.execve(runtime.executable, argv, {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
                                                  "LC_ALL": "C.UTF-8"})
         except BaseException:
@@ -2498,6 +2535,8 @@ class RootInstalledReleaseBuilder:
              RECEIPT_BINDINGS_TEMPLATE_SHA256, RECEIPT_BINDINGS_TEMPLATE_BYTES),
             (COMPOSIO_POLICY_TEMPLATE_PATH, STAGED_COMPOSIO_POLICY_TEMPLATE_PATH, "template",
              COMPOSIO_POLICY_TEMPLATE_SHA256, COMPOSIO_POLICY_TEMPLATE_BYTES),
+            (EXISTING_MODEL_STORE_TEMPLATE_PATH, STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH, "template",
+             EXISTING_MODEL_STORE_TEMPLATE_SHA256, EXISTING_MODEL_STORE_TEMPLATE_BYTES),
             (REVIEWED_CAPABILITY_MAP_PATH, STAGED_REVIEWED_CAPABILITY_MAP_PATH, "template",
              REVIEWED_CAPABILITY_MAP_SHA256, REVIEWED_CAPABILITY_MAP_BYTES),
             (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog", None, None),
@@ -2538,6 +2577,16 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
             self._copy_source(source, output_fd, source_rel, target, ("module",))
             staged.append(self._last_output_row)
+        staged_paths = {row[0] for row in staged}
+        for _name, source_rel, target, expected_digest, expected_size in REVIEWED_SOURCE_MODULES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, ("module",))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
         return staged
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
@@ -3570,9 +3619,31 @@ def _pidfd_is_live(pidfd: int) -> bool:
     return not bool(poll.poll(0))
 
 
+def _memfd_seal_constants() -> dict[str, int]:
+    """Return Linux memfd seal commands if CPython omitted their names.
+
+    These values are architecture-independent Linux fcntl UAPI constants.
+    The pinned standalone CPython build omits the Python bindings, although
+    the kernel memfd sealing operations are available.
+    """
+    if not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("sealed bootstrap handoff requires Linux memfd support")
+    uapi = {
+        "F_ADD_SEALS": 1033,
+        "F_GET_SEALS": 1034,
+        "F_SEAL_SEAL": 0x0001,
+        "F_SEAL_SHRINK": 0x0002,
+        "F_SEAL_GROW": 0x0004,
+        "F_SEAL_WRITE": 0x0008,
+    }
+    return {name: int(getattr(fcntl, name, value)) for name, value in uapi.items()}
+
+
 def _decode_sealed_handoff_descriptor(fd: int) -> tuple[dict[str, Any], os.stat_result, bytes]:
-    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
-    required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+    constants = _memfd_seal_constants()
+    seals = fcntl.fcntl(fd, constants["F_GET_SEALS"])
+    required = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
     info = os.fstat(fd)
     if (seals & required != required or not stat.S_ISREG(info.st_mode)
             or info.st_size <= 0 or info.st_size > 4096):
@@ -3741,9 +3812,19 @@ def _handoff_from_record(record: Mapping[str, Any]) -> RootBootstrapRuntimeHando
     return RootBootstrapRuntimeHandoff(_HANDOFF_SEAL, **fields)
 
 
+def _fixed_reexec_argv(executable: Path) -> list[str]:
+    """Start the sealed runtime without bytecode writes to its closure."""
+    return [str(executable), "-B", "-I", "-S", "-c", _fixed_reexec_entry_code()]
+
+
 def _fixed_reexec_entry_code() -> str:
     return '''
 import fcntl, hashlib, json, os, re, stat, sys
+
+seal_uapi = {"F_GET_SEALS": 1034, "F_SEAL_WRITE": 0x0008, "F_SEAL_GROW": 0x0004,
+             "F_SEAL_SHRINK": 0x0002, "F_SEAL_SEAL": 0x0001}
+def seal_constant(name):
+    return int(getattr(fcntl, name, seal_uapi[name]))
 
 def unique(pairs):
     result = {}
@@ -3757,8 +3838,9 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 descriptor = os.fstat(3)
-seals = fcntl.fcntl(3, fcntl.F_GET_SEALS)
-required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+seals = fcntl.fcntl(3, seal_constant("F_GET_SEALS"))
+required = (seal_constant("F_SEAL_WRITE") | seal_constant("F_SEAL_GROW")
+            | seal_constant("F_SEAL_SHRINK") | seal_constant("F_SEAL_SEAL"))
 message = os.read(3, 4097)
 if seals & required != required or len(message) > 4096:
     raise RuntimeError("invalid bootstrap transition descriptor")

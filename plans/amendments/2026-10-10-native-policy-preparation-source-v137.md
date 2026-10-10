@@ -1,0 +1,3 @@
+# Initial native policy preparation source v137
+
+HI-T03/08/09/11 and R0060 preserve all eighteen components. Actual factory choices currently have no effect/target/source-role configuration; source42/backend61 schemas alone cannot grant operation. Adjacent complete staged record/source contract defines genuine root configuration, actual component target evidence and source-role/observer policy preparation before first assembly. Existing v113/v123 data records remain separate identities; actual output and live process observations occur later. All four artifacts/open implementation tasks preserved, baseline/all AC unchanged.

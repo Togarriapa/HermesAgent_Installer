@@ -20,6 +20,12 @@ def test_captured_registrations_match_actual_source_inventory_without_authority_
     assert inventory["operational_projection"] is False
     assert inventory["registration_count"] == 42
     source_by_name = {row["native_tool_name"]: row for row in inventory["registrations"]}
+    contract = json.loads((ROOT / "planning/native-package-binding-contract.json").read_text())
+    current_source_pins = {
+        record["relative_path"]: record["sha256"]
+        for version in ("registration_source_pin_refinement_v140", "registration_source_pin_refinement_v141")
+        for record in (contract[version]["source_record"],)
+    }
 
     captured = capture_actual_hermes_registrations()
     assert len(captured) == 42
@@ -30,7 +36,14 @@ def test_captured_registrations_match_actual_source_inventory_without_authority_
         assert row.toolset == source["toolset"]
         assert row.argument_schema == source["argument_schema"]
         assert row.native_schema_sha256 == source["native_schema_sha256"]
-        assert row.registration_source_sha256 == source["registration_source_sha256"]
+        current_pin = current_source_pins.get("src/" + row.registration_source_path)
+        if current_pin is None:
+            assert row.registration_source_sha256 == source["registration_source_sha256"]
+        else:
+            # v99 is a historical, explicitly non-operational capture. New
+            # module bytes are validated against the append-only v140/v141
+            # current source pins instead of rewriting that record.
+            assert row.registration_source_sha256 == current_pin
     # This capture type intentionally cannot be serialized as executable
     # registration authority: it has no result schema, source receipt, action
     # bindings, or observer enrollments.

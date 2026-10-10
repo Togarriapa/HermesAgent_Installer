@@ -140,6 +140,149 @@ def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_sep
         )
 
 
+def _private_endpoint_row(**overrides):
+    row = {
+        "binding_id": "endpoint-selection-a", "profile_id": "profile-a",
+        "namespace_id": "namespace-a", "principal_id": "principal-a",
+        "service_enrollment_id": "service-a", "service_generation": "memory-gen-a",
+        "process_profile_id": "server-profile-a", "process_profile_generation": "process-gen-a",
+        "endpoint_target_id": "memory-openviking:profile-a", "connector_route_ids": ["memory-search-v1"],
+        "recipient_id": "recipient-a", "credential_reference_id": "credential-a",
+        "server_config_artifact_id": "server-config-a", "server_config_sha256": "a" * 64,
+        "runtime_artifact_ids": ["server-runtime-a"], "network_binding_handle": "network-receipt-a",
+    }
+    row.update(overrides)
+    return row
+
+
+def _private_model_row(**overrides):
+    row = {
+        "binding_id": "model-selection-a", "endpoint_binding_id": "endpoint-selection-a",
+        "served_model_id": "private-model-a", "source_model_id": "source-model-a",
+        "source_revision": "revision-a", "license_artifact_id": "license-a",
+        "license_sha256": "b" * 64, "model_artifact_id": "model-a",
+        "model_artifact_sha256": "c" * 64, "model_tree_manifest_sha256": "d" * 64,
+        "runtime_artifact_id": "model-runtime-a", "runtime_artifact_sha256": "e" * 64,
+        "load_config_artifact_id": "load-config-a", "load_config_sha256": "f" * 64,
+        "capability": "extraction-text", "dimensions": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_private_memory_selection_dtos_are_exact_immutable_and_dimension_typed():
+    from hermes_installer.protected_enrollment import (
+        RootSelectedPrivateMemoryEndpointBinding, RootSelectedPrivateMemoryModelBinding,
+    )
+    endpoint = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+        _private_endpoint_row(), service_generation_digest="9" * 64,
+    )
+    assert endpoint.connector_route_ids == ("memory-search-v1",)
+    assert endpoint.service_generation_digest == "9" * 64
+    assert "service_generation_digest" not in _private_endpoint_row()
+    model = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+        _private_model_row(), service_generation_digest="9" * 64,
+    )
+    assert model.dimensions is None and model.capability == "extraction-text"
+    embedding = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+        _private_model_row(capability="embedding", dimensions=768), service_generation_digest="9" * 64,
+    )
+    assert embedding.dimensions == 768
+    bad_rows = [
+        _private_endpoint_row(service_generation_digest="9" * 64),
+        _private_endpoint_row(connector_route_ids=["memory-search-v1", "memory-search-v1"]),
+        _private_endpoint_row(server_config_sha256="not-a-digest"),
+    ]
+    for row in bad_rows:
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                row, service_generation_digest="9" * 64,
+            )
+    for override in ({"capability": "extraction-text", "dimensions": 768},
+                     {"capability": "embedding", "dimensions": None},
+                     {"capability": "embedding", "dimensions": 8193}):
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                _private_model_row(**override), service_generation_digest="9" * 64,
+            )
+
+
+def test_private_memory_catalog_getters_rejoin_exact_service_routes_and_endpoint(monkeypatch):
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="memory-gen-a", profile_id="profile-a",
+        principal_id="principal-a", namespace_identity="namespace-a",
+    )
+    process = SimpleNamespace(
+        enrollment_id="server-enrollment-a", generation="process-gen-a",
+        profile_id="server-profile-a", principal_id="principal-a",
+        namespace_identity="namespace-a",
+    )
+    memory = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="memory-gen-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
+        target_id="memory-openviking:profile-a", auth_reference_id="credential-a",
+        fixed_route_map={"memory-search-v1": object()},
+    )
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_: profile)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_profile_generation", lambda self, *_: process)
+    resolved_routes = []
+    monkeypatch.setattr(
+        ProtectedEnrollmentCatalog, "resolve_connector_route",
+        lambda self, _enrollment, _generation, _target, route: resolved_routes.append(route) or object(),
+    )
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+        memory_enrollments={("service-a", "memory-gen-a"): memory},
+        private_memory_endpoint_selections=[_private_endpoint_row()],
+        private_memory_model_selections=[_private_model_row()],
+    )
+    endpoint = catalog.resolve_private_memory_endpoint_binding("endpoint-selection-a")
+    model = catalog.resolve_private_memory_model_binding("model-selection-a", "endpoint-selection-a")
+    assert endpoint.service_generation_digest == catalog.digest
+    assert model.endpoint_binding_id == endpoint.binding_id
+    assert resolved_routes == ["memory-search-v1", "memory-search-v1", "memory-search-v1"]
+    with pytest.raises(EnrollmentDenied, match="another endpoint"):
+        catalog.resolve_private_memory_model_binding("model-selection-a", "other-endpoint")
+    with pytest.raises(EnrollmentDenied, match="absent or stale"):
+        catalog.resolve_private_memory_model_binding("unknown-model")
+
+
+def test_private_memory_catalog_denies_stale_process_join_and_unknown_model_endpoint(monkeypatch):
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="memory-gen-a", profile_id="profile-a",
+        principal_id="principal-a", namespace_identity="namespace-a",
+    )
+    process = SimpleNamespace(
+        enrollment_id="server-enrollment-a", generation="process-gen-wrong",
+        profile_id="server-profile-a", principal_id="principal-a",
+        namespace_identity="namespace-a",
+    )
+    memory = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="memory-gen-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
+        target_id="memory-openviking:profile-a", auth_reference_id="credential-a",
+        fixed_route_map={"memory-search-v1": object()},
+    )
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_: profile)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_profile_generation", lambda self, *_: process)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_connector_route", lambda self, *_: object())
+    with pytest.raises(EnrollmentDenied, match="stale or incomplete"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+            memory_enrollments={("service-a", "memory-gen-a"): memory},
+            private_memory_endpoint_selections=[_private_endpoint_row()],
+        )
+
+    process.generation = "process-gen-a"
+    with pytest.raises(EnrollmentDenied, match="foreign key"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+            memory_enrollments={("service-a", "memory-gen-a"): memory},
+            private_memory_endpoint_selections=[_private_endpoint_row()],
+            private_memory_model_selections=[_private_model_row(endpoint_binding_id="other-endpoint")],
+        )
+
+
 def test_fixed_build_record_rejects_unlisted_target_and_caller_recipe_fields():
     item = build_record("arbitrary-shell:start")
     with pytest.raises(EnrollmentDenied):

@@ -563,3 +563,45 @@ The system SHALL deliver exact v123 role records through the v134 verified manif
 #### Scenario: Manifest role has not been imported
 - **WHEN** a catalog role exists but the current loader has no matching actual module origin observation
 - **THEN** the role is unavailable for source issuance and no loaded proof is inferred from an adapter.
+
+### Requirement: Genuine preactive native policy configuration source v137
+The installer SHALL prepare native action, registration, workflow, process-role and observer policy from actual root-selected source and target evidence before initial assembly; prepared empty capability state and static schema inventory SHALL NOT substitute for permission or force an active-before-assembly cycle.
+
+#### Scenario: A selected family lacks target or source proof
+- **WHEN** a required target/account/permission/schema/observer/runtime source is not observed
+- **THEN** all-family coverage retains the registration as configurable pending with exact next step, emits no unproved executable candidate and preserves the original functional obligation
+
+### Requirement: Purpose-bound PUBLIC input web permission v138
+The installer SHALL authorize public web egress only from genuine root-observed PUBLIC input and current exact selected public web permission; PRIVATE or UNKNOWN source ancestry SHALL remain denied even when a public scope is configured.
+
+#### Scenario: Private input requests an enrolled public website
+- **WHEN** any retained parent/input source is PRIVATE or UNKNOWN or the public permission is absent/revoked/expired
+- **THEN** public web dispatch and retries are denied without dropping ancestry, widening private consent or adding budget
+
+### Requirement: Current web registration source receipt cohort v140
+The installer SHALL select all registrations sharing the updated web/voice/epic source module only against its current actual held release module receipt and renewed source capture; old audit inventory SHALL NOT authenticate changed bytes.
+
+#### Scenario: Source receipt identifies historical module bytes
+- **WHEN** current selected module SHA differs from the retained registration/action source receipt
+- **THEN** assembly denies the stale join and requires actual current source observation without editing immutable audit evidence
+
+### Requirement: Current bounded finance registration source cohort v141
+The installer SHALL bind the updated financial source module and all its actual registrations to current held source/schema receipts and bounded selected-alias observations; stale inventory or generic backend output SHALL NOT substitute for source/execution authority.
+
+#### Scenario: Root financial read omits selected account alias
+- **WHEN** the read result lacks the actual root-selected alias or violates the closed scalar/UTF8/byte bounds
+- **THEN** the native result is denied without fabricating an alias or promoting backend claims to account/transaction proof
+
+### Requirement: Protected public web scope source v142
+The installer SHALL publish only source-selected public web scopes with exact target, effect and configuration receipt joins and SHALL require separate current PUBLIC input permission.
+
+#### Scenario: Private input names a configured public URL
+- **WHEN** a request carries PRIVATE or UNKNOWN ancestry despite a configured public scope
+- **THEN** egress is denied without widening the private consent or interpreting scope configuration as input permission
+
+### Requirement: Durable setup source choice signing v143
+The installer SHALL retain purpose-specific setup choices through genuine existing key custody and protected journal records and SHALL adopt them only through actual active publication before issuing fresh runtime permissions.
+
+#### Scenario: Setup process-local choice seal survives no durable adoption
+- **WHEN** runtime permission is requested from a choice without verified durable signature and publication adoption
+- **THEN** permission is denied rather than constructing a parallel authority service or treating old setup evidence as current authority

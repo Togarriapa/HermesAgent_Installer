@@ -4,6 +4,7 @@ import base64
 import hashlib
 import os
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
@@ -130,6 +131,46 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
         service.process_effect_handler = SimpleNamespace(resolve_live_peer=process_resolver)
 
         package = _Package()
+        object.__setattr__(package, "profile_generation", generation)
+        process_role = package.process_role_records["native-process-role"]
+        protected_action = next(iter(package.action_records.values()))
+        source_action_binding_id = "hermes-main:action:chat-complete"
+        tool_action_binding_id = "hermes-main:action:selected-tool"
+        source_action = replace(
+            protected_action, action_id="chat.complete",
+            action_binding_id=source_action_binding_id, target_id=target,
+            operation="provider.dispatch", recipient=recipient,
+            observer_enrollment_ids=("observer.provider.result",),
+        )
+        tool_action = replace(
+            protected_action, action_id="selected-tool",
+            action_binding_id=tool_action_binding_id, target_id="plugin.selected-tool",
+            operation="plugin.selected-tool.execute", recipient="native-plugin",
+            observer_enrollment_ids=(),
+        )
+        object.__setattr__(package, "action_records", {
+            source_action_binding_id: source_action, tool_action_binding_id: tool_action,
+        })
+        object.__setattr__(package, "adapter_records", {"hermes-main": source_action})
+        object.__setattr__(package, "profile_generation", generation)
+        process_role.action_binding_ids = (source_action_binding_id, tool_action_binding_id)
+        process_role.observer_enrollment_ids = ("observer.provider.result",)
+        process_role.registration_ids = ("registration.native.input", "registration.native.tool")
+        source_registration = package.registration_records["registration.native.input"]
+        source_registration.adapter_id = "hermes-main"
+        source_registration.generation = package.generation
+        source_registration.observer_enrollment_ids = ("observer.provider.result",)
+        source_registration.action_bindings = (SimpleNamespace(action_binding_id=source_action_binding_id),)
+        tool_registration = SimpleNamespace(
+            registration_id="registration.native.tool", adapter_id="hermes-main",
+            generation=package.generation, observer_enrollment_ids=(),
+            action_bindings=(SimpleNamespace(action_binding_id=tool_action_binding_id),),
+        )
+        object.__setattr__(package, "registration_records", {
+            "registration.native.input": source_registration,
+            "registration.native.tool": tool_registration,
+        })
+        object.__setattr__(package, "workflow_records", {})
         loaded_proof_fixture = _LoadedProof(
             proof_id="loaded-proof-fixture",
             package_id=package.package_id,
@@ -145,13 +186,25 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             source_root_device=8,
             source_root_inode=99,
             target_peer_identity=producer_identity,
-            loader_role_artifact_id="hermes-main",
-            loader_role_sha256="b" * 64,
+            loader_role_artifact_id=process_role.role_artifact_id,
+            loader_role_sha256=process_role.role_sha256,
             loader_ready_event_id="loader-ready-fixture",
-            observed_entrypoint_action_ids=("chat.complete",),
+            # v134 leaves action IDs empty; the root joins the selected action
+            # through its protected role registration FK below.
+            observed_entrypoint_action_ids=(),
             issued_monotonic=service.monotonic() - 1,
             expires_monotonic=service.monotonic() + 60,
             service_generation_digest="2" * 64,
+            role_id=process_role.role_id,
+            role_source_receipt_handle=process_role.role_source_receipt_handle,
+            role_module_name=process_role.module_name,
+            role_closure_member_path=process_role.closure_member_path,
+            role_source_revision=process_role.role_source_revision,
+            role_source_tree_sha256=process_role.role_source_tree_sha256,
+            role_module_device=8,
+            role_module_inode=99,
+            role_module_sha256=process_role.role_sha256,
+            observed_registration_ids=("registration.native.input", "registration.native.tool"),
         )
         source_enrollment = _enrollment(
             observer_enrollment_id="observer.provider.result",
@@ -159,6 +212,8 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             origin_id="hermes.provider.result",
             enrollment_id=producer_enrollment_id,
             source_action_id="chat.complete",
+            source_action_binding_id=source_action_binding_id,
+            source_registration_ids=("registration.native.input",),
             target_id=target,
             recipient=recipient,
             allowed_parent_source_kinds=frozenset(),
@@ -205,8 +260,10 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 package_id=package.package_id,
                 profile_id=producer_profile,
                 generation=generation,
+                package_generation=package.generation,
                 adapter_id="hermes-main",
-                action_id="chat.complete",
+                action_id="selected-tool",
+                registration_id="registration.native.tool",
                 operation="plugin.selected-tool.execute",
                 validate_arguments=lambda args: args == b'{"x":1}',
             )

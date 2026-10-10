@@ -3504,13 +3504,15 @@ class ManagedProcessEffectHandler:
                 if launcher.poll() is not None:
                     sink = self._diagnostic_sink
                     if sink is not None:
-                        parts = [f"launcher-exit={launcher.returncode}".encode("ascii")]
+                        parts = [f"unit={unit} launcher-exit={launcher.returncode}".encode("ascii")]
                         for name, stream in ((b"stdout", launcher.stdout), (b"stderr", launcher.stderr)):
                             if stream is None:
                                 continue
                             try:
                                 output = stream.read(1024)
                             except (OSError, ValueError):
+                                output = b""
+                            if not isinstance(output, bytes):
                                 output = b""
                             parts.append(name + b"=" + output[:1024])
                         # `systemd-run --quiet --wait --collect` intentionally
@@ -3524,7 +3526,10 @@ class ManagedProcessEffectHandler:
                             (b"unit-properties", [str(self.systemctl), "--system", "show", unit,
                                 "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus",
                                 "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
-                                "-p", "RestrictAddressFamilies"]),
+                                "-p", "RestrictAddressFamilies", "-p", "RuntimeDirectory",
+                                "-p", "RuntimeDirectoryMode", "-p", "PrivateMounts",
+                                "-p", "MountFlags", "-p", "NoExecPaths", "-p", "NoSuidPaths",
+                                "-p", "NoDevicePaths"]),
                             (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
                                 "-n", "8", "-o", "cat", "--unit", unit]),
                         ):

@@ -62,10 +62,26 @@ class _RuntimeProof:
         return self.enabled
 
 
+class _ChannelPublisher:
+    def __init__(self):
+        self.events = []
+        self.fail_once = False
+
+    def publish_captured_event(self, *, channel_ingress_id, event_handle):
+        if self.fail_once:
+            self.fail_once = False
+            raise RuntimeError("fixture peer unavailable")
+        self.events.append((channel_ingress_id, event_handle))
+        return len(self.events)
+
+
 class _Registry:
     def __init__(self, issuer):
         self.issuer = issuer
         self.events = []
+        self.channel_publisher = _ChannelPublisher()
+        self.service = types.SimpleNamespace(
+            channel_peer_delivery_registry=self.channel_publisher)
 
     def resolve_selected_ingress_controller(self, role_id, issuer_id, backend_id):
         assert (role_id, issuer_id, backend_id) == (
@@ -77,6 +93,7 @@ class _Registry:
         assert self.issuer.kwargs["validate_provenance"](self.issuer.proof["provenance"])
         assert isinstance(_proof, RootResourceSourceEventProof)
         self.events.append(_proof)
+        return _proof
 
 
 class _ReplayLedger:
@@ -218,6 +235,7 @@ def test_telegram_registered_sdk_callback_mints_exact_one_use_native_event(teleg
     assert receipt.payload.startswith(b'{"account_binding_digest":"' + b"a" * 64)
     assert producer.status.accepted == 1
     assert hashlib.sha256(receipt.payload).hexdigest()
+    assert registry.channel_publisher.events == [(selection.source_issuer_id, receipt)]
 
     # A reconstructed normalized event outside the registered PTB callback has no provenance.
     forged_event = _MessageEvent(
@@ -491,6 +509,7 @@ def test_composio_v3_webhook_authenticates_and_deduplicates_selected_delivery():
     assert len(registry.events) == 1
     assert issuer.proof["resource_id"] == selection.channel_resource_id
     assert b'"text":"fixture only"' in issuer.proof["payload"]
+    assert registry.channel_publisher.events == [(selection.source_issuer_id, accepted.event_handle)]
     # The issuer validator is valid only during the accepted root callback;
     # replaying the observation after that callback has returned is rejected.
     assert not ingress.validate_claims(issuer.proof["provenance"])
@@ -498,6 +517,29 @@ def test_composio_v3_webhook_authenticates_and_deduplicates_selected_delivery():
     duplicate = ingress.accept_request(request)
     assert duplicate.accepted and duplicate.duplicate
     assert duplicate.event_handle is accepted.event_handle
+    assert len(registry.events) == 1
+
+
+def test_composio_retained_event_retries_delivery_without_recapturing_source():
+    now = 1_799_500_000.0
+    selection = _composio_selection()
+    issuer = _Issuer()
+    registry = _Registry(issuer)
+    ledger = _ReplayLedger()
+    ingress, secret = _composio_ingress(selection, issuer, registry, ledger, now)
+    request = _signed_composio_request(selection, secret, now)
+    request.transport_peer = "listener-peer"
+    registry.channel_publisher.fail_once = True
+
+    with pytest.raises(ChannelIngressUnavailable, match="retained but could not be delivered"):
+        ingress.accept_request(request)
+    assert len(registry.events) == 1
+    assert not registry.channel_publisher.events
+
+    retried = ingress.accept_request(request)
+    assert retried.accepted and retried.duplicate
+    assert retried.event_handle is registry.events[0]
+    assert registry.channel_publisher.events == [(selection.source_issuer_id, registry.events[0])]
     assert len(registry.events) == 1
 
 
