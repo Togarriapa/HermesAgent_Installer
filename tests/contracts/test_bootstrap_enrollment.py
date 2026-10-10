@@ -41,6 +41,7 @@ from hermes_installer.authority.bootstrap_enrollment import (
     _write_journal,
 )
 from hermes_installer.authority.enrollment import _validate_service_generations
+from hermes_installer.authority.types import AuthorityDenied
 
 
 class BootstrapEnrollmentContracts(unittest.TestCase):
@@ -77,6 +78,10 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         self.assertEqual(snapshot["private_memory_endpoint_selections"], [])
         self.assertEqual(snapshot["private_memory_model_selections"], [])
         self.assertEqual(snapshot["public_web_scopes"], [])
+        self.assertEqual(snapshot["schema"], 2)
+        self.assertEqual(snapshot["native_worker_network_records"], [])
+        self.assertEqual(snapshot["active_network_generation_records"], [])
+        self.assertEqual(snapshot["native_worker_runtime_records"], [])
         self.assertEqual(set(snapshot), {
             "schema", "generation_id", "service_records", "protected_devices",
             "protected_build_records", "native_packages", "memory_enrollments",
@@ -91,6 +96,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "resource_controller_roles", "native_mcp_tool_bindings",
             "remote_observation_enrollments",
             "private_memory_endpoint_selections", "private_memory_model_selections",
+            "native_worker_network_records", "active_network_generation_records",
+            "native_worker_runtime_records",
             "native_schema_artifacts", "composio_channel_enrollments",
             "channel_delivery_bindings",
             "generation_digest",
@@ -103,6 +110,22 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         changed = dict(snapshot)
         changed["service_records"] = [{"label": "cafe"}]
         with self.assertRaises(Exception):
+            _validate_service_generations(changed)
+
+    def test_network_generation_rows_stay_unavailable_until_source_join_parser_exists(self):
+        snapshot = _generation(EnrollmentPolicy(
+            service_profile_id="hermes-profile", principal_id="hermes-service",
+            generation_id="root-generation-1", source_artifact_id="hermes-source",
+            records=(), resource_controller_roles=(), native_mcp_tool_bindings=(),
+            remote_observation_enrollments=(),
+        ))
+        changed = dict(snapshot)
+        changed["native_worker_network_records"] = [{"id": "caller-row"}]
+        changed.pop("generation_digest")
+        changed["generation_digest"] = hashlib.sha256(json.dumps(
+            changed, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        with self.assertRaisesRegex(AuthorityDenied, "unavailable until verified source joins"):
             _validate_service_generations(changed)
 
     def test_request_accepts_only_opaque_bounded_handles_and_intent(self):

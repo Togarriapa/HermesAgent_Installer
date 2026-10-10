@@ -164,7 +164,7 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
     if set(rows) != expected_root_fields or rows.get("root_id") != "installer-authority-journal-v1":
         raise InitialPolicyCompilationError("prepared service snapshot has no exact selected journal-root row")
     value = {
-        "schema": 1, "generation_id": generation_id, "service_records": [],
+        "schema": 2, "generation_id": generation_id, "service_records": [],
         "protected_devices": [], "protected_build_records": [], "native_packages": [],
         "memory_enrollments": [], "operation_parameter_schemas": [], "source_issuers": [],
         "resource_jobs": [], "remote_session_enrollments": [], "resource_backend_enrollments": [],
@@ -174,6 +174,8 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         "native_schema_artifacts": [], "composio_channel_enrollments": [],
         "channel_delivery_bindings": [],
         "remote_startup_enrollments": [], "private_loopback_networks": [],
+        "native_worker_network_records": [], "active_network_generation_records": [],
+        "native_worker_runtime_records": [],
         "selected_resource_executions": [], "selected_application_runtimes": [],
         # These rows require separately verified root endpoint/model receipts;
         # a prepared snapshot must not derive or activate them.
