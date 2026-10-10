@@ -299,6 +299,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
         selected_action = NativeActionSelection(
             package_id="package-a", profile_id="profile-a", generation="process-gen-a",
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
+            operation="mcp.request",
             validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
         )
 
@@ -345,10 +346,12 @@ class NativeMCPExecutionTests(unittest.TestCase):
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
             tool_name="mcp__figma__read_metadata",
             arguments_sha256=hashlib.sha256(b'{"fileKey":"selected-file"}').hexdigest(),
+            canonical_arguments=b'{"fileKey":"selected-file"}',
             parent_closure_digest="b" * 64, receipt_handles=(self.source_handle,),
             observer_id="provider-result-observer", loaded_package_proof=self.source_observers.loaded_proof,
             expires_monotonic=time.monotonic() + 30,
             service_generation_digest=self.authority.service_generation_digest,
+            operation="mcp.request",
         )
         self.invocation_registry._invocations[self.invocation_handle] = self.invocation
         def artifact_bytes(schema):

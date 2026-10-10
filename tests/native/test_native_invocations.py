@@ -32,6 +32,8 @@ from hermes_installer.native_invocations import (
     install_provider_response_tool_calls,
     attach_provider_stream_capture,
     finish_provider_stream_response,
+    finish_selected_native_turn,
+    clear_native_turn_scope,
 )
 
 
@@ -44,6 +46,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
             invocations._initial_input_messages.clear()
         with invocations._native_result_lock:
             invocations._pending_native_mcp_results.clear()
+        invocations.clear_native_turn_scope()
 
     def _metadata(self, arguments: dict):
         import hashlib
@@ -283,6 +286,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         delivery = SimpleNamespace(
             schema=1, source_receipt_handle="s" * 40,
             selected_execution_handle="e" * 40,
+            turn_handle="t" * 40,
             input_sha256=hashlib.sha256(raw).hexdigest(), input_size_bytes=len(raw),
             expires_monotonic=time.monotonic() + 20,
         )
@@ -296,6 +300,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
              patch.object(AuthorityClient, "for_current_process",
                           new=classmethod(lambda cls, **_kwargs: authority)):
             self.assertEqual(read_selected_native_input(io.BytesIO(raw)), "root admitted prompt\n")
+            self.assertEqual(invocations._CURRENT_NATIVE_TURN_HANDLE.get(), "t" * 40)
             messages = [{"role": "user", "content": "root admitted prompt\n"}]
             saved = []
             with patch.object(native_boundary, "_save_receipt", side_effect=lambda rows, handle: saved.append((rows, handle))), \
@@ -307,6 +312,65 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         self.assertIs(result["messages"], messages)
         self.assertEqual(saved, [(messages, "s" * 40)])
 
+    def test_turn_finish_requires_matching_root_handles_and_successful_facade_result(self):
+        import hermes_installer.native_invocations as invocations
+        from hermes_installer.authority.client import AuthorityClient
+
+        calls = []
+        authority = SimpleNamespace(
+            finish_selected_native_turn=lambda turn, response: calls.append((turn, response)),
+        )
+        with patch.object(AuthorityClient, "for_current_process",
+                          new=classmethod(lambda cls, **_kwargs: authority)):
+            invocations._CURRENT_NATIVE_TURN_HANDLE.set("t" * 40)
+            invocations._CURRENT_FINAL_RESPONSE.set(("t" * 40, "f" * 40))
+            finish_selected_native_turn(SimpleNamespace(), {"final_response": "answer"})
+            self.assertEqual(calls, [("t" * 40, "f" * 40)])
+
+            invocations._CURRENT_NATIVE_TURN_HANDLE.set("t" * 40)
+            invocations._CURRENT_FINAL_RESPONSE.set(("other-turn" * 4, "f" * 40))
+            finish_selected_native_turn(SimpleNamespace(), {"final_response": "answer"})
+            invocations._CURRENT_NATIVE_TURN_HANDLE.set("t" * 40)
+            invocations._CURRENT_FINAL_RESPONSE.set(("t" * 40, "f" * 40))
+            finish_selected_native_turn(SimpleNamespace(), {"interrupted": True})
+        self.assertEqual(calls, [("t" * 40, "f" * 40)])
+        clear_native_turn_scope()
+
+    def test_turn_finish_uses_only_root_response_take_metadata(self):
+        import hermes_installer.native_invocations as invocations
+        from hermes_installer.authority.client import AuthorityClient
+
+        calls = []
+        raw_body = b'{"choices":[]}'
+        root_metadata = {
+            "producer_context_handle": "p" * 40,
+            "tool_call_bindings": [],
+            "turn_handle": "t" * 40,
+            "final_response_delivery_handle": "f" * 40,
+        }
+        class Headers:
+            def get_list(self, name):
+                return {
+                    "x-hermes-native-response-ref": ["r" * 43],
+                    "content-encoding": ["identity"],
+                    "content-length": [str(len(raw_body))],
+                }.get(name, [])
+        response = SimpleNamespace(headers=Headers(), content=raw_body)
+        response.http_response = response
+        authority = SimpleNamespace(
+            take_native_response_metadata=lambda *args: calls.append(("take", args)) or root_metadata,
+            finish_selected_native_turn=lambda *args: calls.append(("finish", args)),
+        )
+        with patch.object(AuthorityClient, "for_current_process",
+                          new=classmethod(lambda cls, **_kwargs: authority)):
+            invocations._CURRENT_NATIVE_TURN_HANDLE.set("t" * 40)
+            install_provider_response_tool_calls(SimpleNamespace(), response, "n" * 40)
+            finish_selected_native_turn(SimpleNamespace(), {"final_response": "answer"})
+        self.assertEqual([name for name, _ in calls], ["take", "finish"])
+        self.assertEqual(calls[0][1], ("r" * 43, hashlib.sha256(raw_body).hexdigest(), "n" * 40))
+        self.assertEqual(calls[1][1], ("t" * 40, "f" * 40))
+        clear_native_turn_scope()
+
     def test_root_selected_input_mismatch_denies_before_provider_prepare(self):
         import io
         from hermes_installer.authority.client import AuthorityClient
@@ -316,6 +380,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
         raw = b"expected"
         delivery = SimpleNamespace(
             schema=1, source_receipt_handle="s" * 40, selected_execution_handle="e" * 40,
+            turn_handle="t" * 40,
             input_sha256=hashlib.sha256(raw).hexdigest(), input_size_bytes=len(raw),
             expires_monotonic=time.monotonic() + 20,
         )
