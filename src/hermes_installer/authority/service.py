@@ -37,6 +37,13 @@ MAX_REQUEST = 4 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
 MAX_CONTEXT_LEASE = 600.0
 MAX_EFFECT_LEASE = 30.0
+_ROOT_SETUP_CHOICE_PURPOSES = frozenset({
+    "memory-service-enablement", "memory-capture-configuration", "private-input-routes",
+    "public-free-web-read", "existing-model-selection", "native-policy-preparation",
+    "application-qualification",
+})
+_ROOT_SETUP_CHOICE_DOMAIN = b"hermes-installer.setup-choice.v1\0"
+_ROOT_SETUP_CHOICE_REVOCATION_DOMAIN = b"hermes-installer.setup-choice-revocation.v1\0"
 _EFFECT_LEASE_BY_OPERATION = {
     "artifact.fetch": 120.0,
     "package.install": 600.0,
@@ -262,6 +269,119 @@ def _context_digest(context: HostContext) -> str:
     return canonical_digest({**context.claims(), "signature": context.signature})
 
 
+class _ApplicationPackageObservationSigner:
+    """Narrow public facade for the two source-owned v136 observations."""
+
+    __slots__ = ("__service",)
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+
+    def issue_locked_package_artifact(self, observation: Any) -> Any:
+        return self.__service._issue_application_package_observation(
+            "locked-package-artifact", observation)
+
+    def verify_locked_package_artifact(self, receipt: Any) -> Any:
+        return self.__service._verify_application_package_observation(
+            "locked-package-artifact", receipt)
+
+    def issue_package_license_observation(self, observation: Any) -> Any:
+        return self.__service._issue_application_package_observation(
+            "package-license", observation)
+
+    def verify_package_license_observation(self, receipt: Any) -> Any:
+        return self.__service._verify_application_package_observation(
+            "package-license", receipt)
+
+
+class _PublicInputPermissionSigner:
+    """Narrow signer facade for the v138 public-web-read permission DTO."""
+
+    __slots__ = ("__service",)
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+
+    def issue_permission(self, permission: Any) -> Any:
+        return self.__service._issue_public_input_permission(permission)
+
+    def verify_permission(self, receipt: Any) -> Any:
+        return self.__service._verify_public_input_permission(receipt)
+
+
+class _RootSetupChoiceSigner:
+    """Finite-purpose facade over the active service's already selected key."""
+
+    __slots__ = ("__service", "key_id")
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+        self.key_id = service.key_id
+
+    def sign_choice(self, purpose: str, canonical_record_bytes: bytes) -> str:
+        service = self.__service
+        service._assert_root_setup_choice_signer_current(self)
+        payload = _validate_setup_choice_record_bytes(purpose, canonical_record_bytes)
+        message = _ROOT_SETUP_CHOICE_DOMAIN + purpose.encode("ascii") + b"\0" + payload
+        return hmac.new(service._key, message, hashlib.sha256).hexdigest()
+
+    def verify_choice(self, purpose: str, canonical_record_bytes: bytes,
+                      signature: str) -> bool:
+        if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            return False
+        try:
+            expected = self.sign_choice(purpose, canonical_record_bytes)
+        except AuthorityDenied:
+            return False
+        return hmac.compare_digest(expected, signature)
+
+
+class _RootChoiceRevocationSigner:
+    """Separate fixed-domain signer; actual typed revocation admission stays elsewhere."""
+
+    __slots__ = ("__service", "key_id")
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+        self.key_id = service.key_id
+
+    def sign_revocation(self, observed_request: Any) -> str:
+        service = self.__service
+        service._assert_root_setup_choice_signer_current(self)
+        payload = service._root_choice_revocation_claims(observed_request)
+        message = _ROOT_SETUP_CHOICE_REVOCATION_DOMAIN + payload
+        return hmac.new(service._key, message, hashlib.sha256).hexdigest()
+
+    def verify_revocation(self, receipt: Any) -> bool:
+        service = self.__service
+        try:
+            service._assert_root_setup_choice_signer_current(self)
+            payload = service._root_choice_revocation_claims(receipt)
+            signature = getattr(receipt, "signature", None)
+            if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+                return False
+            expected = hmac.new(service._key, _ROOT_SETUP_CHOICE_REVOCATION_DOMAIN + payload,
+                                hashlib.sha256).hexdigest()
+            return hmac.compare_digest(expected, signature)
+        except AuthorityDenied:
+            return False
+
+
+def _validate_setup_choice_record_bytes(purpose: str, payload: bytes) -> bytes:
+    if (purpose not in _ROOT_SETUP_CHOICE_PURPOSES or type(payload) is not bytes
+            or not payload or len(payload) > 1_048_576):
+        raise AuthorityDenied("setup.choice", "setup choice purpose or canonical record is invalid")
+    try:
+        decoded = strict_json_loads(payload.decode("utf-8", errors="strict"))
+        canonical = json.dumps(decoded, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except Exception:
+        raise AuthorityDenied("setup.choice", "setup choice record is not canonical JSON") from None
+    if type(decoded) is not dict or canonical != payload:
+        raise AuthorityDenied("setup.choice", "setup choice record is not canonical JSON")
+    return payload
+
+
 class AuthorityService:
     """One authenticated client request per connection on the fixed socket."""
 
@@ -297,6 +417,7 @@ class AuthorityService:
         if set(handlers) - enrolled_operations:
             raise ValueError("effect handler has no protected enrollment rule")
         self._key = bytes(signing_key)
+        self._key_source_binding: tuple[Path, int, int, int, str] | None = None
         self.key_id = key_id
         self.bindings_by_uid = dict(bindings_by_uid)
         self.rules = dict(rules)
@@ -339,6 +460,12 @@ class AuthorityService:
         self.private_memory_route_resolver = None
         self.private_memory_job_queue = None
         self.private_memory_observation_producer = None
+        self.application_package_observation_producer = None
+        self._application_package_observation_signer = None
+        self.public_input_permission_registry = None
+        self._public_input_permission_signer = None
+        self._root_setup_choice_signer: _RootSetupChoiceSigner | None = None
+        self._root_choice_revocation_signer: _RootChoiceRevocationSigner | None = None
         self.web_content_artifact_registry = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -385,6 +512,98 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def root_setup_choice_signer(self) -> _RootSetupChoiceSigner:
+        """Return the finite setup-choice facade over this service's selected key.
+
+        It is available only in the fully composed installed root runtime. The
+        pre-active setup path continues to use RootSetupChoiceSigner from the
+        selected-key custody registry; this facade does not create or retain a
+        second key.
+        """
+        self._assert_root_setup_choice_signer_current(self._root_setup_choice_signer)
+        if self._root_setup_choice_signer is None:
+            self._root_setup_choice_signer = _RootSetupChoiceSigner(self)
+        return self._root_setup_choice_signer
+
+    def root_choice_revocation_signer(self) -> _RootChoiceRevocationSigner:
+        """Return a domain-specific revocation facade, which remains deny-only
+        until the exact root-observed revocation source is attached.
+        """
+        self._assert_root_setup_choice_signer_current(self._root_choice_revocation_signer)
+        if self._root_choice_revocation_signer is None:
+            self._root_choice_revocation_signer = _RootChoiceRevocationSigner(self)
+        return self._root_choice_revocation_signer
+
+    def _assert_root_setup_choice_signer_current(self, signer: Any) -> None:
+        from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
+        from .runtime_composition import RootAuthorityRuntime
+
+        if signer is not None:
+            if (type(signer) is _RootSetupChoiceSigner
+                    and signer._RootSetupChoiceSigner__service is not self):
+                raise AuthorityDenied("setup.choice", "choice signer belongs to another authority service")
+            if (type(signer) is _RootChoiceRevocationSigner
+                    and signer._RootChoiceRevocationSigner__service is not self):
+                raise AuthorityDenied("setup.choice", "revocation signer belongs to another authority service")
+            if type(signer) not in (_RootSetupChoiceSigner, _RootChoiceRevocationSigner):
+                raise AuthorityDenied("setup.choice", "choice signer is not the exact authority facade")
+        runtime = getattr(self, "root_authority_runtime", None)
+        if (os.geteuid() != 0 or type(runtime) is not RootAuthorityRuntime
+                or runtime.service is not self or runtime.bindings is not self.root_runtime_bindings
+                or not isinstance(self.service_generation_digest, str)
+                or runtime.enrollment.protected_enrollment_digest != self.service_generation_digest
+                or runtime.bindings.enrollment_catalog.digest != self.service_generation_digest
+                or runtime.enrollment.key_id != self.key_id
+                or len(self._key) < 32
+                or runtime.controller_release_receipt is None
+                or type(runtime.controller_release_receipt) is not VerifiedInstallerReleaseReceipt
+                or runtime.controller_actor_observation is None
+                or type(runtime.controller_actor_observation) is not RootActorObservation
+                or self._key_source_binding is None
+                or set(self.bindings_by_uid) != set(self._active_binding_snapshot)
+                or any(self.bindings_by_uid.get(uid) is not binding
+                       for uid, binding in self._active_binding_snapshot.items())
+                or self.profile_generations != self._active_profile_generation_snapshot):
+            raise AuthorityDenied("setup.choice", "current installed root release, actor, key or service generation is unavailable")
+        try:
+            self._verify_setup_choice_key_file_current()
+            runtime.controller_release_receipt.verify_current()
+            runtime.controller_actor_observation.verify_current(runtime.controller_release_receipt)
+        except Exception:
+            raise AuthorityDenied("setup.choice", "installed root release or controller actor is stale") from None
+
+    def _verify_setup_choice_key_file_current(self) -> None:
+        binding = self._key_source_binding
+        if binding is None:
+            raise AuthorityDenied("setup.choice", "authority key has no retained protected-file identity")
+        path, expected_uid, expected_device, expected_inode, expected_digest = binding
+        try:
+            parent = path.parent.lstat()
+            if (stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode)
+                    or parent.st_uid != expected_uid or parent.st_mode & 0o022):
+                raise ValueError
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0))
+            try:
+                info = os.fstat(fd)
+                data = os.read(fd, 33)
+            finally:
+                os.close(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid
+                    or info.st_mode & 0o077 or info.st_dev != expected_device
+                    or info.st_ino != expected_inode or len(data) != 32
+                    or not hmac.compare_digest(hashlib.sha256(data).hexdigest(), expected_digest)
+                    or not hmac.compare_digest(data, self._key)):
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("setup.choice", "selected authority key custody changed") from None
+
+    def _root_choice_revocation_claims(self, observed_request: Any) -> bytes:
+        # The source owner has not yet landed the v156 consumed TTY request
+        # type/currentness resolver. Do not turn this cryptographic facade into
+        # an arbitrary-claims signing service while that source is absent.
+        raise AuthorityDenied("setup.choice.revocation", "root-observed revocation source is unavailable")
 
     def attach_root_runtime_bindings(self, bindings: Any) -> None:
         """Attach the exact typed root composition used to resolve active rows."""
@@ -496,6 +715,212 @@ class AuthorityService:
             raise
         except Exception:
             raise AuthorityDenied("memory.observation", "private-memory observation verification failed") from None
+
+    def attach_application_package_closure_registry(self, registry: Any) -> None:
+        """Attach the exact root-owned locked-package observation registry."""
+        from .application_runtime_preparation import RootApplicationOfflinePackageClosureRegistry
+
+        if (self.application_package_observation_producer is not None
+                or type(registry) is not RootApplicationOfflinePackageClosureRegistry
+                or getattr(registry, "authority_service", None) is not self
+                or not callable(getattr(registry, "verify_observation_for_authority", None))
+                or not callable(getattr(registry, "retain_authority_signed_observation", None))
+                or not callable(getattr(registry, "verify_observation_receipt", None))):
+            raise AuthorityDenied("application.package_observation", "root package observation registry is invalid")
+        self.application_package_observation_producer = registry
+
+    def application_package_observation_signer(self) -> Any:
+        """Return the service-owned signer scoped to two exact v136 DTOs."""
+        if self._application_package_observation_signer is None:
+            self._application_package_observation_signer = _ApplicationPackageObservationSigner(self)
+        return self._application_package_observation_signer
+
+    def _issue_application_package_observation(self, kind: str, observation: Any) -> Any:
+        from dataclasses import replace
+        from .application_runtime_preparation import (
+            RootApplicationLockedPackageArtifactReceipt,
+            RootApplicationPackageLicenseObservation,
+        )
+
+        specs = {
+            "locked-package-artifact": (
+                RootApplicationLockedPackageArtifactReceipt,
+                "root-application-locked-package-artifact-v136",
+                frozenset({
+                    "receipt_handle", "artifact_id", "application_id",
+                    "source_preparation_selection_handle", "qualification_choice_handle",
+                    "qualification_consent_receipt_handle", "setup_session_id", "transaction_handle",
+                    "plan_sha256", "prepared_generation_digest", "lock_receipt_handle", "lock_sha256",
+                    "lock_member_id", "package_name", "package_version", "artifact_kind",
+                    "platform_tags", "origin_policy_id", "source_url", "lock_integrity_algorithm",
+                    "lock_integrity_digest", "artifact_sha256", "size_bytes", "cas_device",
+                    "cas_inode", "cas_mode", "controller_binding_handle", "issued_monotonic",
+                    "expires_monotonic",
+                }),
+            ),
+            "package-license": (
+                RootApplicationPackageLicenseObservation,
+                "root-application-package-license-observation-v136",
+                frozenset({
+                    "receipt_handle", "artifact_receipt_handle", "artifact_sha256", "package_name",
+                    "package_version", "metadata_kind", "metadata_member_path",
+                    "metadata_member_sha256", "declared_license_expression", "license_member_records",
+                    "evidence_sha256", "eligibility", "review_policy_receipt_handle",
+                    "issued_monotonic", "expires_monotonic",
+                }),
+            ),
+        }
+        spec = specs.get(kind)
+        registry = self.application_package_observation_producer
+        if (spec is None or registry is None or type(observation) is not spec[0]
+                or not callable(getattr(observation, "claims", None))):
+            raise AuthorityDenied("application.package_observation", "package observation kind or source type is unavailable")
+        try:
+            if registry.verify_observation_for_authority(kind, observation) is not True:
+                raise AuthorityDenied("application.package_observation", "package source evidence is not current")
+            claims = observation.claims()
+            if not isinstance(claims, Mapping) or set(claims) != spec[2]:
+                raise AuthorityDenied("application.package_observation", "package observation claims differ from v136 schema")
+            receipt = replace(observation, signature=self._sign_root_selected(spec[1], claims))
+            if registry.retain_authority_signed_observation(kind, receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package receipt was not retained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.package_observation", "package observation could not be signed and retained") from None
+
+    def _verify_application_package_observation(self, kind: str, receipt: Any) -> Any:
+        from .application_runtime_preparation import (
+            RootApplicationLockedPackageArtifactReceipt,
+            RootApplicationPackageLicenseObservation,
+        )
+
+        specs = {
+            "locked-package-artifact": (RootApplicationLockedPackageArtifactReceipt,
+                                         "root-application-locked-package-artifact-v136"),
+            "package-license": (RootApplicationPackageLicenseObservation,
+                                "root-application-package-license-observation-v136"),
+        }
+        registry = self.application_package_observation_producer
+        spec = specs.get(kind)
+        if (registry is None or spec is None or type(receipt) is not spec[0]
+                or not isinstance(getattr(receipt, "signature", None), str)
+                or len(receipt.signature) != hashlib.sha256().digest_size * 2):
+            raise AuthorityDenied("application.package_observation", "package observation receipt type is invalid")
+        try:
+            claims = receipt.claims()
+            expected_claims = set(receipt.__dataclass_fields__) - {"signature"}
+            if not isinstance(claims, Mapping) or set(claims) != expected_claims:
+                raise AuthorityDenied("application.package_observation", "package receipt claims differ from its typed schema")
+            self._verify_root_selected_signature(spec[1], claims, receipt.signature)
+            if registry.verify_observation_receipt(receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package observation is stale or unretained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.package_observation", "package observation could not be verified") from None
+
+    def attach_root_public_input_permission_registry(self, registry: Any) -> None:
+        """Attach the exact durable public-input permission registry once."""
+        from .root_public_input_permission import RootPublicInputPermissionRegistry
+
+        if (self.public_input_permission_registry is not None
+                or type(registry) is not RootPublicInputPermissionRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "verify_observation_for_authority", None))
+                or not callable(getattr(registry, "retain_authority_signed_observation", None))
+                or not callable(getattr(registry, "verify_permission_membership", None))):
+            raise AuthorityDenied("source.public_permission", "root public-input permission registry is invalid")
+        self.public_input_permission_registry = registry
+
+    def root_public_input_permission_signer(self) -> Any:
+        """Return the only signer for the exact v138 public-input permission DTO."""
+        if self._public_input_permission_signer is None:
+            self._public_input_permission_signer = _PublicInputPermissionSigner(self)
+        return self._public_input_permission_signer
+
+    def _issue_public_input_permission(self, permission: Any) -> Any:
+        from dataclasses import replace
+        from .root_public_input_permission import RootPublicInputPermission
+
+        registry = self.public_input_permission_registry
+        expected_claims = frozenset({
+            "receipt_handle", "consent_id", "purpose", "selection_handle",
+            "principal_id", "profile_id", "namespace_id", "profile_generation",
+            "service_generation_digest", "retained_input_selection_handle",
+            "input_observation_handle", "input_sha256", "web_scope_ids",
+            "web_scope_sha256", "public_recipient_ids", "allowed_operations",
+            "additional_metered_budget_usd", "revocation_epoch", "issued_monotonic",
+            "expires_monotonic",
+        })
+        if (registry is None or type(permission) is not RootPublicInputPermission
+                or not callable(getattr(permission, "claims", None))):
+            raise AuthorityDenied("source.public_permission", "public-input permission candidate is unavailable")
+        try:
+            if registry.verify_observation_for_authority(permission) is not True:
+                raise AuthorityDenied("source.public_permission", "public-input observation or selection is not current")
+            claims = permission.claims()
+            if not isinstance(claims, Mapping) or set(claims) != expected_claims:
+                raise AuthorityDenied("source.public_permission", "public-input permission claims differ from v138 schema")
+            now = self.monotonic()
+            if (permission.purpose != "public-free-web-read"
+                    or permission.allowed_operations != ("plugin.web.read",)
+                    or isinstance(permission.additional_metered_budget_usd, bool)
+                    or not isinstance(permission.additional_metered_budget_usd, (int, float))
+                    or permission.additional_metered_budget_usd != 0.0
+                    or isinstance(permission.issued_monotonic, bool)
+                    or not isinstance(permission.issued_monotonic, (int, float))
+                    or isinstance(permission.expires_monotonic, bool)
+                    or not isinstance(permission.expires_monotonic, (int, float))
+                    or not math.isfinite(permission.issued_monotonic)
+                    or not math.isfinite(permission.expires_monotonic)
+                    or not permission.issued_monotonic <= now < permission.expires_monotonic
+                    or permission.expires_monotonic - permission.issued_monotonic > 30.0):
+                raise AuthorityDenied("source.public_permission", "public-input permission exceeds its fixed purpose")
+            signed = replace(permission, signature=self._sign_root_selected(
+                "root-public-input-permission-v138", claims))
+            if registry.retain_authority_signed_observation(signed) is not True:
+                raise AuthorityDenied("source.public_permission", "signed public-input permission was not retained")
+            return signed
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.public_permission", "public-input permission could not be signed and retained") from None
+
+    def _verify_public_input_permission(self, receipt: Any) -> Any:
+        from .root_public_input_permission import RootPublicInputPermission
+
+        registry = self.public_input_permission_registry
+        if (registry is None or type(receipt) is not RootPublicInputPermission
+                or not isinstance(getattr(receipt, "signature", None), str)
+                or len(receipt.signature) != hashlib.sha256().digest_size * 2
+                or not callable(getattr(receipt, "claims", None))):
+            raise AuthorityDenied("source.public_permission", "public-input permission receipt type is invalid")
+        try:
+            claims = receipt.claims()
+            expected_claims = {
+                "receipt_handle", "consent_id", "purpose", "selection_handle",
+                "principal_id", "profile_id", "namespace_id", "profile_generation",
+                "service_generation_digest", "retained_input_selection_handle",
+                "input_observation_handle", "input_sha256", "web_scope_ids",
+                "web_scope_sha256", "public_recipient_ids", "allowed_operations",
+                "additional_metered_budget_usd", "revocation_epoch", "issued_monotonic",
+                "expires_monotonic",
+            }
+            if (not isinstance(claims, Mapping)
+                    or set(claims) != expected_claims):
+                raise AuthorityDenied("source.public_permission", "public-input permission claims differ from typed schema")
+            self._verify_root_selected_signature(
+                "root-public-input-permission-v138", claims, receipt.signature)
+            if registry.verify_permission_membership(receipt) is not True:
+                raise AuthorityDenied("source.public_permission", "public-input permission is stale or unretained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.public_permission", "public-input permission could not be verified") from None
 
     def attach_web_content_artifact_registry(self, registry: Any) -> None:
         """Attach the exact staged web-content CAS/receipt owner once."""
@@ -2737,6 +3162,195 @@ class AuthorityService:
             raise AuthorityDenied("source.native_input", "selected-input consent association failed") from None
         return handle
 
+    def issue_public_input_source(self, proof: Any, selected_execution: Any) -> Any:
+        """Mint one PUBLIC native-input leaf for a separately selected web permission.
+
+        Public classification comes only from the source registry's distinct
+        sealed proof and its retained PUBLIC-only parent closure. The private
+        input-consent path is never consulted or widened here.
+        """
+        from .source_observers import (
+            RootPublicNativeInputObservation, RootSelectedNativeExecution,
+            SourceReceiptHandle, SourceObserverRegistry,
+        )
+        from .root_public_input_permission import (
+            RootPublicInputPermission, RootPublicInputPermissionRegistry,
+        )
+        try:
+            from .public_web_selection import RootTTYPublicInputDisclosure
+        except ImportError:
+            raise AuthorityDenied(
+                "source.public_input", "root TTY public-input disclosure support is unavailable") from None
+
+        source_registry = self.source_observer_registry
+        permission_registry = self.public_input_permission_registry
+        verify_proof = getattr(source_registry, "verify_current_public_input_observation", None)
+        if (type(proof) is not RootPublicNativeInputObservation
+                or type(selected_execution) is not RootSelectedNativeExecution
+                or type(source_registry) is not SourceObserverRegistry
+                or type(permission_registry) is not RootPublicInputPermissionRegistry
+                or not callable(verify_proof)
+                or verify_proof(proof, selected_execution) is not True
+                or proof.expires_monotonic <= self.monotonic()
+                or proof.source_classification is not Sensitivity.PUBLIC
+                or selected_execution.public_input_permission_selection_handle
+                   != proof.public_permission_selection_handle
+                or selected_execution.private_consent_selection_handle is not None):
+            raise AuthorityDenied("source.public_input", "current root public-input proof is unavailable")
+
+        # This exact registry validates the persistent root TTY choice, current
+        # protected scope rows, and pending proof before it consumes that proof.
+        permission = permission_registry.resolve_for_selected_input(proof, selected_execution)
+        self._verify_public_input_permission(permission)
+        if (permission.retained_input_selection_handle != selected_execution.selection_handle
+                or permission.input_observation_handle != proof.observation_handle
+                or permission.input_sha256 != proof.input_sha256
+                or permission.profile_id != proof.profile_id
+                or permission.profile_generation != proof.profile_generation
+                or permission.principal_id != proof.principal_id
+                or permission.namespace_id != proof.namespace_id
+                or permission.service_generation_digest != self.service_generation_digest
+                or permission.allowed_operations != ("plugin.web.read",)
+                or not permission.public_recipient_ids
+                or permission.additional_metered_budget_usd != 0.0):
+            raise AuthorityDenied("source.public_input", "public permission does not bind this exact input")
+
+        source_handle = None
+        try:
+            material = source_registry.resolve_consumed_public_input_source_material(proof)
+            verify_disclosure = getattr(
+                source_registry, "verify_consumed_public_input_disclosure", None)
+            if (material.observation is not proof
+                    or material.selected_execution is not selected_execution
+                    or material.consumed is not True
+                    or type(material.disclosure) is not RootTTYPublicInputDisclosure
+                    or material.disclosure.disclosure_observation_handle
+                       != proof.disclosure_observation_handle
+                    or material.disclosure.input_sha256 != proof.input_sha256
+                    or material.disclosure.input_size_bytes != proof.input_size_bytes
+                    or material.disclosure.public_permission_selection_handle
+                       != proof.public_permission_selection_handle
+                    or material.disclosure.selected_execution_handle
+                       != selected_execution.selection_handle
+                    or not callable(verify_disclosure)
+                    or verify_disclosure(proof, material) is not True
+                    or material.source_proof.proof_nonce != proof.source_observation_handle
+                    or material.source_proof.selected_execution is not selected_execution
+                    or not isinstance(material.payload_bytes, bytes)
+                    or hashlib.sha256(material.payload_bytes).hexdigest() != proof.input_sha256
+                    or len(material.payload_bytes) != proof.input_size_bytes
+                    or tuple(material.parent_receipt_handles) != proof.parent_source_receipt_handles
+                    or len(material.parent_receipts) != len(material.parent_receipt_handles)
+                    or len(set(material.parent_receipt_handles)) != len(material.parent_receipt_handles)
+                    or any(item.sensitivity is not Sensitivity.PUBLIC for item in material.parent_receipts)):
+                raise AuthorityDenied("source.public_input", "retained public input material is incomplete")
+            parent_context = material.parent_context
+            if (not isinstance(parent_context, HostContext)
+                    or parent_context.profile_id != proof.profile_id
+                    or parent_context.principal_id != proof.principal_id
+                    or parent_context.namespace_id != proof.namespace_id
+                    or parent_context.generation != proof.profile_generation
+                    or parent_context.native_process_identity is None
+                    or parent_context.sensitivity is not Sensitivity.PUBLIC
+                    or parent_context.monotonic_expires_at <= self.monotonic()
+                    or tuple(parent_context.source_receipts) != tuple(material.parent_receipts)):
+                raise AuthorityDenied("source.public_input", "public input parent context is not the exact public closure")
+
+            binding = self._binding(parent_context.uid)
+            self._verify_context_signature(parent_context)
+            self._assert_current_context(parent_context, binding, parent_context.uid)
+            parent_ids = tuple(sorted(item.receipt_id for item in material.parent_receipts))
+            if (len(parent_ids) != len(set(parent_ids))
+                    or any((item.uid, item.profile_id, item.principal_id, item.namespace_id,
+                            item.process_generation, item.native_process_identity)
+                           != (binding.uid, proof.profile_id, proof.principal_id,
+                               proof.namespace_id, proof.profile_generation,
+                               parent_context.native_process_identity)
+                           for item in material.parent_receipts)):
+                raise AuthorityDenied("source.public_input", "public source ancestry identity or closure differs")
+            parent_id_set = set(parent_ids)
+            if any(not set(item.parent_receipt_ids).issubset(parent_id_set)
+                   for item in material.parent_receipts):
+                raise AuthorityDenied("source.public_input", "public source parent closure is incomplete")
+
+            by_handle: dict[str, SourceReceipt] = {}
+            with self._lock:
+                now = self.monotonic()
+                for handle in material.parent_receipt_handles:
+                    parent = self._source_receipt_handles.get(handle)
+                    if parent is None or parent.monotonic_expires_at <= now:
+                        raise AuthorityDenied("source.public_input", "a public parent receipt is no longer retained")
+                    by_handle[handle] = parent
+            if (tuple(by_handle[handle] for handle in material.parent_receipt_handles)
+                    != tuple(material.parent_receipts)):
+                raise AuthorityDenied("source.public_input", "public parent handles do not resolve to exact receipts")
+            for parent in material.parent_receipts:
+                self._verify_source_receipt(parent, binding)
+
+            now = self.monotonic()
+            expiry = min(now + 30.0, proof.expires_monotonic, selected_execution.expires_monotonic,
+                         permission.expires_monotonic, parent_context.monotonic_expires_at)
+            if not now < expiry:
+                raise AuthorityDenied("source.public_input", "public input permission lease expired")
+            ceilings = [frozenset(item.recipient_ceiling) for item in material.parent_receipts]
+            recipients = frozenset(permission.public_recipient_ids)
+            if ceilings:
+                recipients = recipients.intersection(frozenset.intersection(*ceilings))
+            if not recipients:
+                raise AuthorityDenied("source.public_input", "verified public ancestry grants no enrolled web recipient")
+
+            observer = source_registry.observers.get(material.source_proof.observer_enrollment_id)
+            if (observer is None or observer.source_kind != "native-input"
+                    or not observer.public_web_scope_ids
+                    or material.source_proof.source_kind != "native-input"
+                    or material.source_proof.payload_sha256 != proof.input_sha256
+                    or material.source_proof.origin_id == ""):
+                raise AuthorityDenied("source.public_input", "selected public source observer is unavailable")
+            enrollment_id = canonical_digest({
+                "uid": binding.uid, "principal_id": binding.principal_id,
+                "profile_id": binding.profile_id, "namespace_id": binding.namespace_id,
+                "generation": proof.profile_generation, "authority_epoch": self.authority_epoch,
+            })
+            receipt = SourceReceipt(
+                receipt_id=secrets.token_urlsafe(24), issuer_id="host-authority",
+                source_kind="native-input", principal_id=binding.principal_id,
+                profile_id=binding.profile_id, namespace_id=binding.namespace_id, uid=binding.uid,
+                origin_id=material.source_proof.origin_id,
+                process_generation=proof.profile_generation, payload_digest=proof.input_sha256,
+                sensitivity=Sensitivity.PUBLIC,
+                parent_lineage_hash=parent_context.lineage_hash,
+                policy_revision=self._policy_revision(), recipient_ceiling=recipients,
+                issued_at_monotonic=now, monotonic_expires_at=expiry, signature="pending",
+                enrollment_id=enrollment_id,
+                native_process_identity=parent_context.native_process_identity,
+                parent_receipt_ids=parent_ids, nonce=secrets.token_urlsafe(24),
+            )
+            receipt = replace(receipt, signature=self._sign(receipt.claims()))
+            source_handle = SourceReceiptHandle(secrets.token_urlsafe(32))
+            with self._lock:
+                if len(self._source_receipt_handles) >= 100_000 or str(source_handle) in self._source_receipt_handles:
+                    raise AuthorityDenied("source.capacity", "root source receipt store is unavailable")
+                self._source_receipt_handles[str(source_handle)] = receipt
+            retain = getattr(source_registry, "retain_selected_public_input_permission", None)
+            if not callable(retain) or retain(proof, selected_execution, source_handle, permission) is not True:
+                self.revoke_source_handle(source_handle)
+                raise AuthorityDenied("source.public_input", "public permission linkage was not retained")
+            return source_handle
+        except AuthorityDenied:
+            if source_handle is not None:
+                try:
+                    self.revoke_source_handle(source_handle)
+                except Exception:
+                    pass
+            raise
+        except Exception:
+            if source_handle is not None:
+                try:
+                    self.revoke_source_handle(source_handle)
+                except Exception:
+                    pass
+            raise AuthorityDenied("source.public_input", "public input source could not be authorized") from None
+
     def _issue_observed_source(self, observation: Any, *, selected_input_consent: Any,
                                selected_input: bool = False) -> Any:
         """Sign and retain one receipt from the root-only observer registry.
@@ -2956,7 +3570,7 @@ class AuthorityService:
                                                 request_digest=request_digest,
                                                 retry_index=retry_index)):
             raise AuthorityDenied("effect.revalidation", "fresh host policy denied the final effect boundary")
-        self._revalidate_selected_input_egress(context, rule.recipient)
+        self._revalidate_selected_input_egress(context, rule.recipient, operation)
         return True
 
     def serve_unix(self, socket_path: Path, *, socket_gid: int,
@@ -3035,13 +3649,17 @@ class AuthorityService:
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o077:
                     raise AuthorityDenied("key.custody", "authority signing key custody is invalid")
                 data = os.read(fd, 33)
+                device, inode = info.st_dev, info.st_ino
             finally:
                 os.close(fd)
         except OSError:
             raise AuthorityDenied("key.custody", "authority signing key is unavailable") from None
         if len(data) != 32:
             raise AuthorityDenied("key.custody", "authority signing key has invalid length")
-        return cls(signing_key=data, key_id=key_id, **kwargs)
+        service = cls(signing_key=data, key_id=key_id, **kwargs)
+        service._key_source_binding = (
+            path, expected_uid, device, inode, hashlib.sha256(data).hexdigest())
+        return service
 
     def handle_connection(self, connection: socket.socket) -> None:
         """Authenticate kernel peer, issue challenge, and process exactly one RPC."""
@@ -4075,7 +4693,7 @@ class AuthorityService:
             raise AuthorityDenied("effect.request", "effect binding is invalid")
         rule = self.rules.get((capability, context.operation, target))
         if rule is not None:
-            self._revalidate_selected_input_egress(context, rule.recipient)
+            self._revalidate_selected_input_egress(context, rule.recipient, rule.operation)
         if (rule is None or (rule.operation, rule.target) not in self.handlers
                 or rule.recipient != recipient
                 or context.operation != rule.operation
@@ -4109,7 +4727,8 @@ class AuthorityService:
         return {**grant.claims(), "signature": signed}
 
     def _revalidate_selected_input_egress(self, context: HostContext,
-                                          recipient: str | None) -> None:
+                                          recipient: str | None,
+                                          operation: str) -> None:
         """Recheck root-selected private-input consent at every egress boundary.
 
         A signed source receipt preserves the original consent ceiling, but it
@@ -4145,7 +4764,42 @@ class AuthorityService:
                 from .source_observers import SourceReceiptHandle
                 root_handle = SourceReceiptHandle(handle)
                 selection = resolve_selection(root_handle)
+                public_selection = getattr(selection, "public_input_permission_selection_handle", None)
+                if public_selection is not None:
+                    if (operation != "plugin.web.read"
+                            or len(input_receipts) != 1
+                            or context.sensitivity is not Sensitivity.PUBLIC
+                            or any(item.sensitivity is not Sensitivity.PUBLIC
+                                   for item in context.source_receipts)):
+                        raise AuthorityDenied("source.public_permission", "public permission cannot authorize this operation or mixed lineage")
+                    resolve_public = getattr(observers, "resolve_selected_public_input_permission", None)
+                    if not callable(resolve_public):
+                        raise AuthorityDenied("source.public_permission", "current public permission linkage is unavailable")
+                    retained = resolve_public(root_handle, selection)
+                    from .root_public_input_permission import RootPublicInputPermission
+                    permission = getattr(retained, "permission", None)
+                    if (getattr(retained, "source_receipt_handle", None) != root_handle
+                            or getattr(retained, "selected_execution", None) is not selection
+                            or getattr(retained, "permission_receipt_handle", None)
+                               != getattr(permission, "receipt_handle", None)
+                            or type(permission) is not RootPublicInputPermission
+                            or permission.retained_input_selection_handle != selection.selection_handle
+                            or permission.profile_id != receipt.profile_id
+                            or permission.principal_id != receipt.principal_id
+                            or permission.namespace_id != receipt.namespace_id
+                            or permission.profile_generation != receipt.process_generation
+                            or permission.service_generation_digest != self.service_generation_digest
+                            or permission.allowed_operations != ("plugin.web.read",)
+                            or recipient not in permission.public_recipient_ids
+                            or recipient not in receipt.recipient_ceiling
+                            or permission.expires_monotonic <= self.monotonic()
+                            or getattr(retained, "expires_monotonic", 0) <= self.monotonic()):
+                        raise AuthorityDenied("source.public_permission", "current public permission does not cover this source and recipient")
+                    self._verify_public_input_permission(permission)
+                    continue
                 retained_consent = resolve_consent(root_handle, selection)
+            except AuthorityDenied:
+                raise
             except Exception:
                 raise AuthorityDenied("source.native_consent", "selected-input consent is absent or revoked") from None
             consent = getattr(retained_consent, "consent", None)
@@ -4191,7 +4845,7 @@ class AuthorityService:
                 or grant.final_payload_digest != grant.request_digest):
             raise AuthorityDenied("effect.binding", "fixed effect operation does not match protected target")
         context = self._context_from_grant(grant, binding)
-        self._revalidate_selected_input_egress(context, rule.recipient)
+        self._revalidate_selected_input_egress(context, rule.recipient, rule.operation)
         if (enforce_peer_identity
                 and context.native_process_identity != self._native_process_identity(peer_pid, uid)):
             raise AuthorityDenied("peer.process", "effect grant belongs to a different native process")
@@ -4475,6 +5129,11 @@ class AuthorityService:
             "generation": self.profile_generations.get(binding.profile_id, "unversioned"),
             "authority_epoch": self.authority_epoch,
         })
+        sensitivity_valid = receipt.sensitivity in {
+            Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN,
+        }
+        if receipt.sensitivity is Sensitivity.PUBLIC:
+            sensitivity_valid = self._verify_retained_public_input_leaf(receipt)
         if (receipt.issuer_id not in {"host-authority", "host-authority:root-channel-event-v129"}
                 or receipt.uid != binding.uid
                 or receipt.principal_id != binding.principal_id
@@ -4485,9 +5144,48 @@ class AuthorityService:
                 or not receipt.native_process_identity
                 or receipt.nonce == ""
                 or receipt.policy_revision != self._policy_revision()
-                or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}
+                or not sensitivity_valid
                 or not allow_expired and receipt.monotonic_expires_at <= self.monotonic()):
             raise AuthorityDenied("source.lineage", "source receipt is stale or bound to another host identity")
+
+    def _verify_retained_public_input_leaf(self, receipt: SourceReceipt) -> bool:
+        """Accept PUBLIC sensitivity only for the exact retained v138 input leaf."""
+        if (receipt.issuer_id != "host-authority" or receipt.source_kind != "native-input"
+                or not receipt.recipient_ceiling):
+            return False
+        observers = self.source_observer_registry
+        resolve_execution = getattr(observers, "resolve_retained_selected_input_execution", None)
+        resolve_permission = getattr(observers, "resolve_selected_public_input_permission", None)
+        if not callable(resolve_execution) or not callable(resolve_permission):
+            return False
+        try:
+            from .source_observers import SourceReceiptHandle
+            with self._lock:
+                matches = [handle for handle, retained in self._source_receipt_handles.items()
+                           if retained is receipt]
+            if len(matches) != 1:
+                return False
+            handle = SourceReceiptHandle(matches[0])
+            execution = resolve_execution(handle)
+            retained = resolve_permission(handle, execution)
+            permission = getattr(retained, "permission", None)
+            return bool(
+                getattr(retained, "source_receipt_handle", None) == handle
+                and getattr(retained, "selected_execution", None) is execution
+                and getattr(permission, "retained_input_selection_handle", None)
+                   == getattr(execution, "selection_handle", None)
+                and getattr(permission, "allowed_operations", None) == ("plugin.web.read",)
+                and getattr(permission, "service_generation_digest", None) == self.service_generation_digest
+                and getattr(permission, "expires_monotonic", 0) > self.monotonic()
+                and receipt.recipient_ceiling.issubset(set(permission.public_recipient_ids))
+                and receipt.profile_id == permission.profile_id
+                and receipt.principal_id == permission.principal_id
+                and receipt.namespace_id == permission.namespace_id
+                and receipt.process_generation == permission.profile_generation
+                and receipt.payload_digest == permission.input_sha256
+            )
+        except Exception:
+            return False
 
     def _verify_grant_signature(self, grant: EffectAuthorization) -> None:
         self._verify_signature(grant.claims(), grant.signature)

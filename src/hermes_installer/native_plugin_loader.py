@@ -632,9 +632,10 @@ class _NativePluginContextResultAdapter:
         candidate = package.candidate(name)
         if (candidate is None or candidate.is_native_mcp or candidate.adapter_id != adapter_id
                 or candidate.native_server_name != "hermes-installer"
-                or toolset != candidate.toolset or description != candidate.description
-                or not isinstance(schema, dict)
-                or _canonical(schema) != _canonical(_thaw_frozen_json(candidate.argument_schema))):
+                or toolset != (candidate.toolset or "hermes-installer")
+                or description != candidate.description
+                or not isinstance(schema, dict) or expected_schema is None
+                or _canonical(schema) != _canonical(expected_schema)):
             raise NativePluginLoadUnavailable("native PluginContext tool differs from the selected candidate index")
         is_bounded_backend = (candidate.registration_id, candidate.native_tool_name) in _BOUNDED_BACKEND_REGISTRATIONS
         if is_async:
@@ -1622,6 +1623,11 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 registered = set()
                 setattr(plugin_manager, "_hermes_installer_native_registered_adapters", registered)
             registered.add(_adapter_id)
+            if progress_writer is not None and registered == set(package.adapter_ids):
+                progress_writer.emit(
+                    sequence=1, phase="actions-registered",
+                    registered_action_ids=package.registered_action_ids,
+                )
         module.register = register
         prepared[adapter_id] = module
     # Publish atomically after every adapter and key has been validated.

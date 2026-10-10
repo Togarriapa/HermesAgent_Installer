@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T03",
+    "HI-T133",
+    "HI-T137",
+    "HI-T138",
+    "SK-T124",
+    "SK-T127",
+    "SK-T139"
+  ],
+  "why": "Actual pre-active factory has no AuthorityService. Stage-zero key receipt is short lived, process-local seals are not durable choices, and model-store template is a release member, not executable module. This supplies one source-intent signer bridge using the existing selected authority key.",
+  "key_custody": {
+    "owner_module": "hermes_installer.authority.enrollment",
+    "existing_registry": "RootAuthorityKeySelectionRegistry",
+    "adoption_call": "adopt_for_normal_setup(key_receipt_handle, initial_compilation_session_handle, normal_setup_session_handle, prepared_publication_handoff_handle)->RootSetupChoiceSigner",
+    "semantics": "Root composition calls while genuine stage-zero key receipt and publication handoff are current; independently resolves actual normal setup/session predecessor adoption, same installed release/actor/key_id/key device+inode. Retains held existing key FD and protected selection/private binding digest into normal session journal. No key export, second key, key rotation, parallel AuthorityService or extension of stage-zero receipt expiry.",
+    "resume_call": "resolve_normal_setup_choice_signer(normal_setup_session_handle)->RootSetupChoiceSigner",
+    "resume_checks": "Genuine current resumed RootSetupSessionStore authorization/installed actor/controller, retained signed normal-session adoption record and exact persisted /etc/hermes-installer/authority-key-selection.json identity; securely reopen existing /etc/hermes-installer/authority.key root0/0600 nofollow, verify exact device/inode/private key-binding digest and key_id. Missing/changed key/adoption is unavailable; never auto-create or repair."
+  },
+  "choice_registry": {
+    "owner_module": "hermes_installer.authority.root_setup_choices",
+    "class": "RootSetupChoiceRegistry",
+    "constructor": "from_root_setup(verified_installer_release, current_actor_verifier, root_setup_session_store, root_journal, selected_choice_signer)->RootSetupChoiceRegistry",
+    "store": "ProtectedRootJournal child setup-choices, root0 private atomic nofollow records; choice canonical UTF8 JSON sorted keys compact separators; signature domain hermes-installer.setup-choice.v1 distinct runtime source/effect/consent domains.",
+    "signer_interface": "RootSetupChoiceSigner.sign_choice(purpose,canonical_record_bytes) and verify_choice(purpose,canonical_record_bytes,signature); finite supported purposes only memory-service-enablement, memory-capture-configuration, private-input-routes, public-free-web-read, existing-model-selection, native-policy-preparation, application-qualification. Caller never chooses algorithm/key/path/domain or signs effect/runtime receipts.",
+    "record_fields": [
+      "schema",
+      "selection_handle",
+      "purpose",
+      "key_id",
+      "release_receipt_handle",
+      "setup_session_handle",
+      "transaction_handle",
+      "plan_id",
+      "prepared_generation",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "private_profile_selection_handle",
+      "source_member_receipt_handles",
+      "choice_payload",
+      "choice_payload_sha256",
+      "choice_epoch",
+      "revocation_epoch",
+      "issued_at_unix",
+      "setup_deadline_unix",
+      "adoption_publication_receipt_handle",
+      "signature"
+    ],
+    "record_rules": "private_profile_selection_handle nullable only purposes not private-profile-bound. adoption_publication_receipt_handle null until actual publication adoption. Exact purpose-specific closed payload remains existing v107/v124/v127/v137/v138 schema, not generic authority labels. Genuine root TTY choice/controller/source member observations required before recording; handles minted/retained by registry membership. No secret in record.",
+    "methods": "record_observed_choice(actual_root_tty_choice, current_setup_selection)->opaque selection_handle; resolve_current_setup_choice(selection_handle,expected_purpose)->short current root choice snapshot; revoke_choice(selection_handle)->epoch; adopt_published_choice(selection_handle,actual_active_publication_receipt)->durable active selection handle. These are root-only concrete source producer/consumer methods, not worker RPC.",
+    "currentness": "Stable record identity survives short principal/namespace snapshot refresh; every use freshly resolves same v133 subject/groups/System/policy/profile/namespace/controller and source template, current epoch/revocation. No old snapshot extends, boot-safe journal unix deadlines with current boot/session proof; expired setup cannot revive a grant.",
+    "adoption": "Actual active publisher verifies and retains signed source record digest/key provenance and exact selected profile/namespace/current generation projection, then signs adoption with genuine publication receipt. Runtime AuthorityService may issue fresh <=30s purpose-specific receipts only after current active adoption/source/epoch checks. Runtime grants never use process-local setup seal or historical setup controller as worker identity."
+  },
+  "held_source_member": {
+    "model_store_template": "RootExistingModelStoreTemplateReceipt from factory resolve_existing_model_store_template()/read_current; held verified installer release descriptor exact role existing-model-store-root-template, path/SHA/size/canonical fixed root bytes. Not RootReleaseModuleReceipt.",
+    "other_templates": "Equivalent genuine selected release member observation for literal source templates; executable source adapters continue actual RootReleaseModuleReceipt. Source member receipt verifies current held bytes before choice and publication; no fabricated generic registry."
+  },
+  "correction": "v139 from_root_setup does not require pre-active AuthorityService: it consumes genuine RootSetupChoiceRegistry/selected choice signer and held RootExistingModelStoreTemplateReceipt. Runtime model observations remain signed by actual composed AuthorityService after active adoption. Same unified bridge serves memory/public/native choices; configuration consent remains purpose-specific, not capture/egress/start authorization.",
+  "tasks": [
+    {
+      "id": "HI-T143.1",
+      "owner": "bootstrap enrollment/factory/consent",
+      "work": "Existing key custody normal-session adoption/resume and finite durable choice signer/registry, genuine TTY source methods and release member receipts; no parallel key/service."
+    },
+    {
+      "id": "HI-T143.2",
+      "owner": "factory/active publisher/runtime composer",
+      "work": "Actual signed choice adoption into selected generation and fresh runtime purpose projections; changed source/key/subject/epoch, expired snapshots and unadopted intent deny."
+    }
+  ],
+  "acceptance": "Actual producing graph and tests required; no operational permission or original acceptance inferred. Baseline and all AC open."
+}

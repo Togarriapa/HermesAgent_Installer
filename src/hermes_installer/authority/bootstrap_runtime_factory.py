@@ -148,6 +148,7 @@ _COMPOSIO_POLICY = {
 _GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
+_PREPARED_RELEASE_MEMBER_SEAL = object()
 
 
 def _fail(message: str) -> None:
@@ -237,6 +238,36 @@ class RootReleaseModuleReceipt:
     def read_current(self) -> bytes:
         """Read the exact installed module through the held release FD."""
         return self._session._read_release_member_receipt(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedReleaseMemberReceipt:
+    """Held-release source membership for code loaded later by a managed worker.
+
+    This proves release membership and bytes only. It deliberately does not
+    claim that the current setup actor imported the module; worker loader
+    evidence is a separate join.
+    """
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    release_commit: str
+    deployment_receipt_sha256: str
+    source_receipt_handle: str
+    setup_session_id: str = field(repr=False)
+    prepared_generation_id: str = field(repr=False)
+    _receipt_seal: object = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._receipt_seal is not _PREPARED_RELEASE_MEMBER_SEAL:
+            raise TypeError("prepared release members are minted by the current root setup session")
+
+    def read_current(self) -> bytes:
+        return self._session._read_prepared_release_member(self)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -417,6 +448,17 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("application qualification consent is not owned by this setup session")
         return self._session.resolve_application_qualification_consent(choice_handle, phase_id)
 
+    def attach_application_package_closure_registry(self, registry: Any) -> None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application package registry is not owned by this setup session")
+        self._session.attach_application_package_closure_registry(registry)
+
+    def resolve_current_application_package_closure(self, source_preparation_selection_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application package registry is not owned by this setup session")
+        return self._session.resolve_current_application_package_closure(
+            source_preparation_selection_handle)
+
     def resolve_application_controller_binding(
         self, choice_handle: str,
     ) -> "RootApplicationSetupControllerBinding":
@@ -457,10 +499,149 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("namespace selector is not owned by this setup session")
         return self._session.resolve_adopted_namespace_selector()
 
+    def observe_public_web_permission_selection(self, native_policy_selection_handle: str) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("public web choice is not owned by this setup session")
+        return self._session.observe_public_web_permission_selection(native_policy_selection_handle)
+
+    def resolve_current_public_web_permission_choice(self, choice_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("public web choice is not owned by this setup session")
+        return self._session.resolve_current_public_web_permission_choice(choice_handle)
+
+    def attach_public_input_disclosure_registry(self, registry: Any) -> None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("public input disclosure is not owned by this setup session")
+        self._session.attach_public_input_disclosure_registry(registry)
+
+    def observe_public_input_disclosure(self, selection_handle: str, input_handle: str,
+                                        execution_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("public input disclosure is not owned by this setup session")
+        return self._session.observe_public_input_disclosure(selection_handle, input_handle, execution_handle)
+
     def resolve_current_setup_identity(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("current setup identity is not owned by this setup session")
         return self._session.resolve_current_setup_identity()
+
+    def resolve_current_setup_choice_signer(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup-choice signer is not owned by this session")
+        return self._session.resolve_current_setup_choice_signer()
+
+    def resolve_setup_choice_registry(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup-choice registry is not owned by this session")
+        return self._session._root_setup_choice_registry()
+
+    def resolve_current_setup_choice(self, selection_handle: str, expected_purpose: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.resolve_current_setup_choice(selection_handle, expected_purpose)
+
+    def record_durable_setup_choice(self, actual_root_tty_choice: Any) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.record_durable_setup_choice(actual_root_tty_choice)
+
+    def revoke_durable_setup_choice_purpose(self, purpose: str, profile_id: str) -> int:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.revoke_durable_setup_choice_purpose(purpose, profile_id)
+
+    def attach_public_web_selection_registry(self, registry: Any) -> None:
+        """Attach the public-specific configuration producer during root composition."""
+        self._check_live()
+        from .public_web_selection import RootPublicWebSelectionRegistry
+        targets = getattr(self, "_native_component_target_registry", None)
+        if (type(registry) is not RootPublicWebSelectionRegistry
+                or registry._session is not self or targets is None
+                or registry._targets is not targets
+                or self._public_web_selection_registry is not None):
+            raise BootstrapEnrollmentPending("public web selector is not the exact retained native-target composition")
+        self._public_web_selection_registry = registry
+
+    def observe_public_web_permission_selection(
+            self, native_policy_selection_handle: str,
+    ) -> str | None:
+        """Ask the root TTY to select finite source-derived public scope intent."""
+        self._check_live()
+        from .public_web_selection import RootPublicWebSelectionRegistry
+        registry = self._public_web_selection_registry
+        if (type(registry) is not RootPublicWebSelectionRegistry
+                or registry._session is not self
+                or registry._targets is not getattr(self, "_native_component_target_registry", None)):
+            raise BootstrapEnrollmentPending("public web configuration producer is not composed")
+        try:
+            return registry.observe_public_web_permission_selection(native_policy_selection_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY public web choice is unavailable or was declined") from None
+
+    def resolve_current_public_web_permission_choice(self, choice_handle: str) -> Any:
+        self._check_live()
+        registry = self._public_web_selection_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("public web choice resolver is not composed")
+        try:
+            return registry.resolve_current_public_web_permission_choice(choice_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY public web choice is absent or no longer current") from None
+
+    def attach_public_input_disclosure_registry(self, registry: Any) -> None:
+        """Attach the single public-specific TTY proof registry during root composition."""
+        self._check_live()
+        from .public_web_selection import RootPublicInputDisclosureRegistry
+        from .source_observers import SourceObserverRegistry
+        source = getattr(registry, "_source", None)
+        if (type(registry) is not RootPublicInputDisclosureRegistry
+                or type(source) is not SourceObserverRegistry or registry._session is not self
+                or registry._source is not source
+                or self._public_input_disclosure_registry is not None):
+            raise BootstrapEnrollmentPending("public input disclosure registry is not the exact root source composition")
+        source.attach_public_input_disclosure_registry(registry)
+        self._public_input_disclosure_registry = registry
+
+    def resolve_current_public_input_disclosure_registry(self) -> Any:
+        self._check_live()
+        from .public_web_selection import RootPublicInputDisclosureRegistry
+        from .source_observers import SourceObserverRegistry
+        registry = self._public_input_disclosure_registry
+        source = getattr(registry, "_source", None)
+        if (type(registry) is not RootPublicInputDisclosureRegistry
+                or type(source) is not SourceObserverRegistry
+                or registry._session is not self or registry._source is not source):
+            raise BootstrapEnrollmentPending("root public input disclosure is not composed with the current source observer")
+        return registry
+
+    def observe_public_input_disclosure(
+            self, public_permission_selection_handle: str,
+            retained_observed_input_handle: str, selected_execution_handle: str,
+    ) -> Any:
+        """Review one exact retained input at the root TTY before public issuance."""
+        self._check_live()
+        registry = self.resolve_current_public_input_disclosure_registry()
+        try:
+            return registry.observe_public_input_disclosure(
+                public_permission_selection_handle, retained_observed_input_handle,
+                selected_execution_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("exact public input disclosure is unavailable or was declined") from None
+
+    def resolve_current_release_receipt_handle(self) -> str:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("held installer release is not owned by this session")
+        return self._session.resolve_current_release_receipt_handle()
+
+    def resolve_current_setup_session_handle(self) -> RootSetupSessionHandle:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("setup session is not owned by this binding")
+        return self._session.resolve_current_setup_session_handle()
+
+    def resolve_durable_memory_enablement_choice_handle(self, choice_handle: str) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable memory choice is not owned by this session")
+        return self._session.resolve_durable_memory_enablement_choice_handle(choice_handle)
 
     def observe_existing_model_selection(self, private_profile_selection_handle: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -591,11 +772,46 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native target source modules are not owned by this setup session")
         return self._session._resolve_prepared_native_target_module_receipts()
 
+    def resolve_prepared_worker_role_module_receipts(self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("worker role source receipts are not owned by this setup session")
+        return self._session._resolve_prepared_worker_role_module_receipts()
+
+    def resolve_prepared_native_source_definition_module_receipt(self) -> RootReleaseModuleReceipt:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native source definition receipt is not owned by this setup session")
+        return self._session._resolve_prepared_native_source_definition_module_receipt()
+
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native schema receipt is not owned by this setup session")
         return self._session._mint_native_registration_schema_receipt(artifact_id)
+
+    def resolve_current_native_policy_registry(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native policy registry is not owned by this setup session")
+        return self._session._resolve_current_native_policy_registry()
+
+    def observe_native_policy_configuration(self) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native policy choice is not owned by this setup session")
+        return self._session.observe_native_policy_configuration()
+
+    def resolve_current_native_policy_configuration_choice(self, choice_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native policy choice is not owned by this setup session")
+        return self._session.resolve_current_native_policy_configuration_choice(choice_handle)
+
+    def resolve_current_native_policy_selection(self, selection_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native policy selection is not owned by this setup session")
+        return self._session.resolve_current_native_policy_selection(selection_handle)
+
+    def resolve_current_native_policy_targets(self, selection_handle: str) -> tuple[Any, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native policy targets are not owned by this setup session")
+        return self._session.resolve_current_native_policy_targets(selection_handle)
 
     def resolve_native_registration_schema_receipt(
             self, receipt_handle: str) -> RootNativeRegistrationSchemaReceipt:
@@ -1572,7 +1788,7 @@ class InstalledBootstrapPolicyResolver:
                 or roots["service_parent_root"] != _SERVICE_PARENT_ROOT):
             _fail("bootstrap service root policy does not use the selected private root layout")
         base = doc["authority_base_template"]
-        self._validate_authority_base_template(base)
+        self._validate_authority_base_template(base, compilation_phase=compilation_phase)
         templates = doc["service_record_templates"]
         if not isinstance(templates, list) or not 1 <= len(templates) <= 64:
             _fail("bootstrap service-record template list is empty or oversized")
@@ -1625,7 +1841,8 @@ class InstalledBootstrapPolicyResolver:
                             "root_journal_roots", "resource_controller_roles",
                             "native_mcp_tool_bindings", "remote_observation_enrollments",
                             "native_schema_artifacts", "composio_channel_enrollments",
-                            "channel_delivery_bindings"}
+                            "channel_delivery_bindings", "selected_resource_executions",
+                            "selected_application_runtimes"}
         catalogs = doc["catalog_selections"]
         if not isinstance(catalogs, dict) or set(catalogs) != selection_fields:
             _fail("bootstrap catalog selections do not cover the exact enrollment schema")
@@ -1634,11 +1851,12 @@ class InstalledBootstrapPolicyResolver:
             if not isinstance(rows, list) or len(rows) > 1024 or any(not isinstance(row, dict) for row in rows):
                 _fail("bootstrap catalog selection rows are malformed")
             clean_catalogs[name] = tuple(copy.deepcopy(rows))
-        if any(clean_catalogs[name] for name in selection_fields - {"root_journal_roots"}):
-            # Nonempty secondary catalogs need their own exact nested-schema
-            # validator and selected policy receipts. The current bootstrap
-            # policy supports only the finite service profile and source set.
-            _fail("bootstrap policy requests an unimplemented protected catalog enrollment")
+        active_catalog_names = selection_fields - {"root_journal_roots"}
+        if compilation_phase == "prepared":
+            if any(clean_catalogs[name] for name in active_catalog_names):
+                _fail("prepared bootstrap policy cannot preselect active catalogs")
+        else:
+            self._validate_active_catalog_selections(clean_catalogs, base)
         binding_rules = self._validate_receipt_binding_rules(
             doc["receipt_binding_rules"], plan_row["allowed_artifact_ids"],
             dormant_prepared=(compilation_phase == "prepared"))
@@ -1746,7 +1964,7 @@ class InstalledBootstrapPolicyResolver:
         return field_name in common | role_specific.get(role, set())
 
     @staticmethod
-    def _validate_authority_base_template(value: Any) -> None:
+    def _validate_authority_base_template(value: Any, *, compilation_phase: str = "prepared") -> None:
         required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
                     "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
                     "native_bridges", "normalization_policies", "delegations", "service_generations"}
@@ -1777,11 +1995,61 @@ class InstalledBootstrapPolicyResolver:
             "resource_scope_bindings", "resource_validators", "resource_controller_roles",
             "native_mcp_tool_bindings", "remote_observation_enrollments", "native_schema_artifacts",
             "composio_channel_enrollments", "channel_delivery_bindings",
+            "selected_resource_executions", "selected_application_runtimes",
         )
-        if (normalized["service_records"]
-                or any(normalized[name] for name in empty_snapshot_catalogs)
-                or len(normalized["root_journal_roots"]) != 1):
-            _fail("prepared authority base must bind the exact empty root-journal service snapshot")
+        if len(normalized["root_journal_roots"]) != 1:
+            _fail("authority base must bind the exact root-journal identity")
+        if compilation_phase == "prepared" and (
+                normalized["service_records"]
+                or any(normalized[name] for name in empty_snapshot_catalogs)):
+            _fail("prepared authority base must bind the exact empty service snapshot")
+
+    @staticmethod
+    def _validate_active_catalog_selections(catalogs: Mapping[str, tuple[Mapping[str, Any], ...]],
+                                            base: Mapping[str, Any]) -> None:
+        """Require active catalog selections to equal strict, digest-bound rows.
+
+        The policy parser proves structure and joins only. The active compiler
+        and publisher additionally prove the source receipts/current selection
+        before these rows can be published.
+        """
+        from .enrollment import _validate_service_generations
+        generation = base.get("service_generations")
+        if (not isinstance(generation, dict)
+                or generation == {"root_binding": "prepared_service_generation.exact_empty_snapshot"}):
+            _fail("active bootstrap policy requires a complete digest-bound service generation")
+        try:
+            normalized = _validate_service_generations(generation)
+        except Exception:
+            _fail("active bootstrap policy service generation is malformed or has broken joins")
+        joins = {
+            "protected_devices": "protected_devices",
+            "protected_build_records": "protected_build_records",
+            "native_packages": "native_packages",
+            "memory_enrollments": "memory_enrollments",
+            "operation_parameter_schemas": "operation_parameter_schemas",
+            "source_issuers": "source_issuers",
+            "resource_jobs": "resource_jobs",
+            "remote_session_enrollments": "remote_session_enrollments",
+            "resource_backend_enrollments": "resource_backend_enrollments",
+            "resource_body_recipes": "resource_body_recipes",
+            "resource_scope_bindings": "resource_scope_bindings",
+            "resource_validators": "resource_validators",
+            "root_journal_roots": "root_journal_roots",
+            "resource_controller_roles": "resource_controller_roles",
+            "native_mcp_tool_bindings": "native_mcp_tool_bindings",
+            "remote_observation_enrollments": "remote_observation_enrollments",
+            "native_schema_artifacts": "native_schema_artifacts",
+            "composio_channel_enrollments": "composio_channel_enrollments",
+            "channel_delivery_bindings": "channel_delivery_bindings",
+            "selected_resource_executions": "selected_resource_executions",
+            "selected_application_runtimes": "selected_application_runtimes",
+        }
+        for selected_name, generation_name in joins.items():
+            selected = tuple(_plain_json(row) for row in catalogs[selected_name])
+            actual = tuple(_plain_json(row) for row in normalized[generation_name])
+            if selected != actual:
+                _fail("active catalog selection differs from its digest-bound service-generation rows")
 
     @staticmethod
     def _selection_row(value: Any, keys: set[str]) -> dict[str, Any]:
@@ -3402,6 +3670,7 @@ class RootInitialSetupAggregate:
         factory = RootBootstrapRuntimeFactory(
             _release=self.release, _actor=self.actor,
             _initial_compilation_registry=self.initial_registry,
+            _authority_key_registry=self.key_registry,
             _initial_principal_registry=self.principal_registry,
             _initial_identity_observer=self.identity_observer,
             _initial_identity_intake=self.identity_intake)
@@ -3438,6 +3707,7 @@ class RootBootstrapRuntimeFactory:
 
     def __init__(self, *, _release: Any | None = None, _actor: Any | None = None,
                  _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None,
+                 _authority_key_registry: Any | None = None,
                  _initial_principal_registry: Any | None = None,
                  _initial_identity_observer: Any | None = None,
                  _initial_identity_intake: Any | None = None,
@@ -3466,6 +3736,16 @@ class RootBootstrapRuntimeFactory:
                      or _initial_compilation_registry.actor is not _actor)):
             raise BootstrapEnrollmentPending("initial publication registry is not bound to this held release actor")
         self._initial_compilation_registry = _initial_compilation_registry
+        self._authority_key_registry = _authority_key_registry
+        if _authority_key_registry is not None:
+            if (_initial_compilation_registry is None
+                    or getattr(_authority_key_registry, "initial_compilation_registry", None)
+                       is not _initial_compilation_registry
+                    or getattr(_authority_key_registry, "release", None) is not _release
+                    or not callable(getattr(_authority_key_registry,
+                                            "resolve_normal_setup_choice_signer", None))):
+                raise BootstrapEnrollmentPending(
+                    "authority-key signer registry is not bound to the transferred release and initial setup")
         if ((_initial_principal_registry is None)
                 != (_initial_identity_observer is None)
                 or (_initial_principal_registry is None)
@@ -3532,6 +3812,7 @@ class RootBootstrapRuntimeFactory:
         self._seal = secrets.token_hex(32)
         self._native_assembly_seal = object()
         self._sessions: dict[str, RootBootstrapSession] = {}
+        self._setup_choice_signers: dict[str, Any] = {}
 
     @classmethod
     def from_installed(cls) -> "RootBootstrapRuntimeFactory":
@@ -3608,6 +3889,24 @@ class RootBootstrapRuntimeFactory:
             session._adopted_identity_receipt_handle = identity_receipt_handle
             session._adopted_principal_registry = normal_principal_registry
             session._adopted_principal_selection_handle = principal_selection_handle
+            # Re-open the exact stage-zero key receipt and adopt it against the
+            # consumed publication handoff. Durable setup choices never use the
+            # process-local session seal as a signer.
+            key_registry = self._authority_key_registry
+            if key_registry is None:
+                raise BootstrapEnrollmentPending(
+                    "normal setup lacks the transferred stage-zero authority-key registry")
+            adopted_handoff = self._initial_compilation_registry.resolve_adopted_handoff(handle)
+            key_receipt = key_registry.resolve_selected_key_for_compilation_session(
+                adopted_handoff.compilation_session_handle)
+            signer = key_registry.adopt_for_normal_setup(
+                key_receipt.receipt_handle,
+                adopted_handoff.compilation_session_handle,
+                handle,
+                adopted_handoff.handoff_handle,
+            )
+            session._setup_choice_signer = signer
+            self._setup_choice_signers[handle.session_id] = signer
             return session
         except Exception:
             self.session_store.close_session(handle)
@@ -3730,6 +4029,12 @@ class RootBootstrapSession:
         self._adopted_identity_receipt_handle: str | None = None
         self._adopted_principal_registry: Any | None = None
         self._adopted_principal_selection_handle: str | None = None
+        self._setup_choice_signer: Any | None = None
+        self._setup_choice_registry: Any | None = None
+        self._public_input_disclosure_registry: Any | None = None
+        self._public_web_selection_registry: Any | None = None
+        self._durable_memory_choice_handles: dict[str, str] = {}
+        self._release_receipt_handle: str | None = None
         self._native_output_receipts: Any | None = None
         self._pm_runtime_registry: Any | None = None
         self._pm_runtime_handle: str | None = None
@@ -3743,6 +4048,7 @@ class RootBootstrapSession:
         self._application_controller_tty_proofs: dict[str, Any] = {}
         self._application_controller_bindings: dict[str, RootApplicationSetupControllerBinding] = {}
         self._application_qualification_consents: dict[str, RootApplicationQualificationConsent] = {}
+        self._application_package_closure_registry: Any | None = None
         self._private_profile_registry: RootPrivateProfileSelectionRegistry | None = None
         self._private_profile_proofs: dict[str, Any] = {}
         self._model_store_filesystem_registry: Any | None = None
@@ -3758,11 +4064,19 @@ class RootBootstrapSession:
         self._native_assembly_definitions: dict[str, RootNativeAssemblyDefinitions] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._prepared_release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
+        self._prepared_release_file_receipts: dict[str, RootPreparedReleaseMemberReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
         self._native_schema_receipts: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipt_registry: Any | None = None
         self._native_schema_receipt_registry_minted_for: tuple[str, str] | None = None
+        self._native_policy_preparation_registry: Any | None = None
+        self._native_component_target_registry: Any | None = None
+        self._native_registration_projection_registry: Any | None = None
+        self._native_source_definition_registry: Any | None = None
+        self._native_policy_choices: dict[str, Any] = {}
+        self._native_policy_tty_proofs: dict[str, Any] = {}
+        self._native_policy_records_by_selection: dict[str, Any] = {}
         self._prepared_build_identity: SystemIdentityAdapter | None = None
         self._prepared_build_selections: dict[str, RootPreparedBuildServiceSelection] = {}
         self._prepared_build_output_roots: dict[str, RootPreparedBuildOutputRoot] = {}
@@ -3781,6 +4095,314 @@ class RootBootstrapSession:
         if self._last_receipt is None or self._last_receipt.state != "prepared":
             raise BootstrapEnrollmentPending("selected installation binding requires committed prepared custody")
         return self._selected_installation
+
+    def resolve_current_setup_choice_signer(self) -> Any:
+        self._check_live()
+        registry = self._factory._authority_key_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("normal setup has no adopted authority-key signer registry")
+        try:
+            signer = registry.resolve_normal_setup_choice_signer(self._handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("durable root setup-choice signer is stale or unavailable") from None
+        if (self._setup_choice_signer is not None
+                and getattr(self._setup_choice_signer, "key_id", None) != getattr(signer, "key_id", None)):
+            raise BootstrapEnrollmentPending("normal setup-choice signer key changed after adoption")
+        self._setup_choice_signer = signer
+        return signer
+
+    def _root_setup_choice_registry(self) -> Any:
+        self._check_live()
+        self.resolve_current_setup_choice_signer()
+        if self._setup_choice_registry is None:
+            try:
+                from .root_setup_choices import RootSetupChoiceRegistry
+                self._setup_choice_registry = RootSetupChoiceRegistry.from_root_setup(
+                    self._factory._release, self._factory._actor, self._factory.session_store,
+                    self._current_root_journal_selection(), self._setup_choice_signer)
+            except Exception:
+                raise BootstrapEnrollmentPending("durable root setup-choice registry is not composed") from None
+        return self._setup_choice_registry
+
+    def resolve_current_setup_choice(self, selection_handle: str, expected_purpose: str) -> Any:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.resolve_current_setup_choice(selection_handle, expected_purpose)
+        except Exception:
+            raise BootstrapEnrollmentPending("durable setup choice is absent, stale, or has another purpose") from None
+
+    def record_durable_setup_choice(self, actual_root_tty_choice: Any) -> str | None:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.record_observed_choice(actual_root_tty_choice, self._selected_installation)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY choice could not be durably signed and retained") from None
+
+    def revoke_durable_setup_choice_purpose(self, purpose: str, profile_id: str) -> int:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.revoke_current_profile_purpose(
+                self._selected_installation, purpose, profile_id)
+        except Exception:
+            raise BootstrapEnrollmentPending("current durable setup choice could not be revoked") from None
+
+    def _resolve_current_native_policy_registry(self) -> Any:
+        """Compose the retained preactive native-policy registries once per session."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("native policy configuration requires current empty prepared custody")
+        principal = self._adopted_principal_registry
+        if principal is None:
+            raise BootstrapEnrollmentPending("native policy configuration requires the adopted root principal registry")
+        if self._native_policy_preparation_registry is None:
+            from .native_component_targets import RootNativeComponentTargetRegistry
+            from .native_registration_projection import RootNativeRegistrationProjectionRegistry
+            from .native_policy_preparation import RootNativePolicyPreparationRegistry
+            from .native_source_definitions import RootNativeSourceDefinitionRegistry
+            journal = self._current_root_journal_selection().path
+            binding = self._selected_installation
+            targets = RootNativeComponentTargetRegistry.from_root_setup(binding, principal, journal)
+            projections = RootNativeRegistrationProjectionRegistry.from_root_setup(binding, journal)
+            source_definitions = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+            registry = RootNativePolicyPreparationRegistry.from_root_setup(
+                binding, principal, targets, binding, projections, binding, journal)
+            registry.attach_source_definition_registry(source_definitions)
+            self._native_component_target_registry = targets
+            self._native_registration_projection_registry = projections
+            self._native_source_definition_registry = source_definitions
+            self._native_policy_preparation_registry = registry
+        self._verify_current_setup_controller()
+        return self._native_policy_preparation_registry
+
+    def observe_native_policy_configuration(self) -> Any:
+        """Capture root-TTY intent for finite native component families.
+
+        The choice selects source families only. The registry separately
+        resolves targets and reports any absent action, role, schema, observer,
+        account or permission evidence as pending.
+        """
+        self._check_live()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("native policy choice requires current empty prepared custody")
+        registry = self._resolve_current_native_policy_registry()
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):
+            raise BootstrapEnrollmentPending("native policy configuration requires the root controlling TTY")
+        from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+        proof = _capture_root_tty_proof()
+        choice_handle: str | None = None
+        try:
+            _verify_root_tty_proof(proof)
+            if (proof.controller_uid != 0 or proof.controller_gid != 0
+                    or proof.controller_pid != os.getpid()):
+                raise BootstrapEnrollmentPending("native policy choice is not joined to the current root TTY")
+            current = self.resolve_current_setup_identity()
+            principal_selector = self.resolve_adopted_principal_selector()
+            namespace_selector = self.resolve_adopted_namespace_selector()
+            if (current.principal_selection_handle != principal_selector.selection_handle
+                    or current.namespace_selection_handle != namespace_selector.selection_handle):
+                raise BootstrapEnrollmentPending("native policy choice identity selectors changed")
+            from .native_registration_projection import (
+                capture_actual_hermes_registrations, reviewed_native_registration_definitions,
+            )
+            captured = capture_actual_hermes_registrations()
+            definitions = reviewed_native_registration_definitions(captured)
+            component_ids = tuple(sorted({row.family for row in definitions}))
+            print("\nNative component source configuration (intent only):")
+            for index, component_id in enumerate(component_ids, 1):
+                print(f"  {index}. {component_id}")
+            print("Choose component family numbers separated by commas; blank selects none.")
+            answer = input("Native component families: ").strip()
+            _verify_root_tty_proof(proof)
+            selected: tuple[str, ...]
+            if not answer:
+                selected = ()
+            else:
+                try:
+                    numbers = tuple(int(item.strip(), 10) for item in answer.split(","))
+                except ValueError:
+                    raise BootstrapEnrollmentPending("native selection must use listed numbers or blank") from None
+                if (not numbers or len(set(numbers)) != len(numbers)
+                        or any(number < 1 or number > len(component_ids) for number in numbers)):
+                    raise BootstrapEnrollmentPending("native selection contains a duplicate or unknown component")
+                selected = tuple(component_ids[number - 1] for number in numbers)
+            selected_set = set(selected)
+            selected_registrations: list[str] = []
+            selected_actions: list[str] = []
+            for row in definitions:
+                if row.family not in selected_set:
+                    continue
+                selected_registrations.append(f"{row.adapter_id}:tool:{row.native_tool_name}")
+                selected_actions.extend(binding.action_id for binding in row.action_bindings)
+            selected_registrations = sorted(set(selected_registrations))
+            selected_actions = sorted(set(selected_actions))
+            if len(captured) != 42 or len(component_ids) != 18:
+                raise BootstrapEnrollmentPending("native source capture differs from the reviewed 18/42 set")
+            profile_rows = [self.resolve_selected_resource_profile(handle)
+                            for handle in tuple(self._resource_profiles)]
+            if len(profile_rows) > 1:
+                raise BootstrapEnrollmentPending("native policy choice has ambiguous Resources profiles")
+            resource_handle = profile_rows[0].receipt_handle if profile_rows else None
+            service_profile_id = self._policy.identity_policy.get("service_profile_id")
+            if not isinstance(service_profile_id, str) or not service_profile_id:
+                raise BootstrapEnrollmentPending("native policy choice lacks its selected service profile")
+            now = time.monotonic()
+            deadline = self._factory.session_store.current_deadline(self._handle)
+            expires = min(deadline, current.expires_monotonic, now + 300.0)
+            if expires <= now:
+                raise BootstrapEnrollmentPending("native policy choice lease is already expired")
+            choice_handle = secrets.token_urlsafe(36)
+            controller_handle = secrets.token_urlsafe(36)
+            from .native_policy_preparation import _issue_root_native_policy_configuration_choice
+            choice = _issue_root_native_policy_configuration_choice(
+                choice_handle=choice_handle, choice_observation_id=secrets.token_hex(16),
+                setup_session_id=self._handle.session_id,
+                transaction_handle=self._authorization.transaction_handle,
+                plan_sha256=self._authorization.plan_digest,
+                prepared_generation_id=prepared.generation_id,
+                prepared_generation_digest=prepared.generation_digest,
+                principal_selection_handle=principal_selector.selection_handle,
+                principal_binding_sha256=principal_selector.binding_sha256,
+                namespace_selection_handle=namespace_selector.selection_handle,
+                namespace_binding_sha256=namespace_selector.binding_sha256,
+                service_profile_id=service_profile_id,
+                service_generation=prepared.generation_id,
+                resource_profile_selection_handle=resource_handle,
+                package_id="hermes-agent-native-package-v1",
+                native_package_generation=None,
+                selected_component_ids=tuple(selected),
+                selected_registration_ids=tuple(selected_registrations),
+                selected_action_binding_ids=tuple(selected_actions),
+                controller_binding_handle=controller_handle,
+                private_input_consent_selection_handle=None,
+                issued_monotonic=now, expires_monotonic=expires, revocation_epoch=0,
+            )
+            self._native_policy_choices[choice_handle] = choice
+            self._native_policy_tty_proofs[choice_handle] = proof
+            selection = registry.record_configuration(choice)
+            records = registry.prepare_selected_policy(selection.selection_handle)
+            self._native_policy_records_by_selection[selection.selection_handle] = records
+            proof = None
+            return registry.resolve_selection_current(selection.selection_handle)
+        except BootstrapEnrollmentPending:
+            if choice_handle is not None:
+                self._native_policy_choices.pop(choice_handle, None)
+                self._native_policy_tty_proofs.pop(choice_handle, None)
+            raise
+        except Exception:
+            if choice_handle is not None:
+                self._native_policy_choices.pop(choice_handle, None)
+                self._native_policy_tty_proofs.pop(choice_handle, None)
+            raise BootstrapEnrollmentPending("native policy configuration could not be retained from root TTY") from None
+        finally:
+            if proof is not None:
+                proof.close()
+
+    def resolve_current_native_policy_configuration_choice(self, choice_handle: str) -> Any:
+        self._check_live()
+        choice = self._native_policy_choices.get(choice_handle)
+        proof = self._native_policy_tty_proofs.get(choice_handle)
+        if choice is None or proof is None or choice.expires_monotonic <= time.monotonic():
+            raise BootstrapEnrollmentPending("native policy TTY choice is absent, stale or revoked")
+        from ..root_setup import _verify_root_tty_proof
+        _verify_root_tty_proof(proof)
+        current = self.resolve_current_setup_identity()
+        principal_selector = self.resolve_adopted_principal_selector()
+        namespace_selector = self.resolve_adopted_namespace_selector()
+        prepared = self._last_receipt
+        resource_profile_current = None
+        if choice.resource_profile_selection_handle is not None:
+            resource_profile_current = self.resolve_selected_resource_profile(
+                choice.resource_profile_selection_handle)
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or choice.setup_session_id != self._handle.session_id
+                or choice.transaction_handle != self._authorization.transaction_handle
+                or choice.plan_sha256 != self._authorization.plan_digest
+                or choice.prepared_generation_id != prepared.generation_id
+                or choice.prepared_generation_digest != prepared.generation_digest
+                or choice.principal_selection_handle != principal_selector.selection_handle
+                or choice.principal_binding_sha256 != principal_selector.binding_sha256
+                or choice.namespace_selection_handle != namespace_selector.selection_handle
+                or choice.namespace_binding_sha256 != namespace_selector.binding_sha256
+                or current.principal_selection_handle != choice.principal_selection_handle
+                or current.namespace_selection_handle != choice.namespace_selection_handle
+                or self._policy.identity_policy.get("service_profile_id") != choice.service_profile_id
+                or choice.service_generation != prepared.generation_id
+                or (resource_profile_current is not None
+                    and resource_profile_current.receipt_handle != choice.resource_profile_selection_handle)):
+            raise BootstrapEnrollmentPending("native policy choice no longer matches current setup identity")
+        self._verify_current_setup_controller()
+        return choice
+
+    def resolve_current_native_policy_selection(self, selection_handle: str) -> Any:
+        registry = self._resolve_current_native_policy_registry()
+        try:
+            return registry.resolve_selection_current(selection_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("native policy selection is absent or stale") from None
+
+    def resolve_current_native_policy_targets(self, selection_handle: str) -> tuple[Any, ...]:
+        registry = self._resolve_current_native_policy_registry()
+        selection = registry.resolve_selection_current(selection_handle)
+        records = self._native_policy_records_by_selection.get(selection_handle)
+        if records is None:
+            try:
+                records = registry.prepare_selected_policy(selection_handle)
+            except Exception:
+                raise BootstrapEnrollmentPending("native policy target preparation is unavailable") from None
+            self._native_policy_records_by_selection[selection_handle] = records
+        try:
+            current_records = registry.resolve_prepared_policy(records.records_handle, self._selected_installation)
+            if current_records is not records:
+                raise ValueError
+            targets = self._native_component_target_registry
+            return tuple(targets.resolve_current_target(handle, selection_handle)
+                         for handle in current_records.target_selection_handles)
+        except Exception:
+            raise BootstrapEnrollmentPending("current native policy targets are unavailable") from None
+
+    def resolve_current_release_receipt_handle(self) -> str:
+        self._check_live()
+        self._factory._actor.verify_current(self._factory._release)
+        self._factory._release.verify_current()
+        initial = self._factory._initial_compilation_registry
+        if initial is None:
+            raise BootstrapEnrollmentPending("normal setup has no adopted release receipt lineage")
+        try:
+            handoff = initial.resolve_adopted_handoff(self._handle)
+            source_session = handoff._initial_session
+            if (not isinstance(source_session, RootInitialCompilationSession)
+                    or source_session.compilation_session_handle != handoff.compilation_session_handle
+                    or source_session.verified_release_receipt_handle == ""):
+                raise ValueError("adopted handoff has no exact release receipt lineage")
+            value = source_session.verified_release_receipt_handle
+        except Exception:
+            raise BootstrapEnrollmentPending("current normal session does not resolve its original held release receipt") from None
+        if self._release_receipt_handle is not None and self._release_receipt_handle != value:
+            raise BootstrapEnrollmentPending("adopted installer release receipt changed")
+        self._release_receipt_handle = value
+        return value
+
+    def resolve_current_setup_session_handle(self) -> RootSetupSessionHandle:
+        self._check_live()
+        live = self._factory.session_store._live(self._handle)
+        proof = self._factory.session_store._proof(live)
+        if (proof.setup_session_id != self._handle.session_id
+                or proof.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("current setup session binding changed")
+        return self._handle
+
+    def resolve_durable_memory_enablement_choice_handle(self, choice_handle: str) -> str | None:
+        self._check_live()
+        choice = self.resolve_current_memory_service_enablement_choice(choice_handle)
+        durable = self._durable_memory_choice_handles.get(choice_handle)
+        if choice.enabled and not durable:
+            raise BootstrapEnrollmentPending("memory service choice has not been durably signed")
+        return durable
 
     def resolve_adopted_principal_selection(self) -> Any:
         """Return the freshly re-observed principal bound to this normal session."""
@@ -3898,9 +4520,6 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("existing model selection requires the current empty prepared generation")
         if not isinstance(private_profile_selection_handle, str) or not private_profile_selection_handle:
             raise BootstrapEnrollmentPending("existing model selection requires a root-issued private-profile handle")
-        authority_service = self._factory._authority_service
-        if authority_service is None:
-            raise BootstrapEnrollmentPending("root model-store observation awaits the same-graph AuthorityService binding")
         profile = self.resolve_current_private_profile(
             private_profile_selection_handle, "existing-model-selection")
         if (profile.profile_id != "hermes-agent-native-v1"
@@ -3913,7 +4532,9 @@ class RootBootstrapSession:
         if self._model_store_filesystem_registry is None:
             self._model_store_filesystem_registry = RootOwnedFilesystemSelectionRegistry.from_root_setup(
                 self._selected_installation, self._root_private_profile_registry(),
-                self._selected_installation, self._current_root_journal_selection(), authority_service)
+                self._selected_installation, self._current_root_journal_selection(),
+                self._selected_installation.resolve_setup_choice_registry(),
+                self._selected_installation.resolve_current_setup_choice_signer())
         root_selection = self._model_store_filesystem_registry.observe_existing_model_store(
             private_profile_selection_handle)
         try:
@@ -4011,12 +4632,15 @@ class RootBootstrapSession:
             signature = hmac.new(self._seal.encode("ascii"), _canonical(signed), hashlib.sha256).hexdigest()
             choice = RootSelectedMemoryServiceEnablementChoice(
                 **signed, signature=signature, _session_seal=self._seal)
-            directory = self._factory.resolver.journal_root / "memory-service-enable-choices"
-            _ensure_root_directory(directory)
-            _atomic_root_file(directory / f"{handle}.json",
-                              _canonical({**signed, "signature": signature}), 0o600)
             self._memory_enablement_choices[handle] = choice
             self._memory_enablement_tty_proofs[handle] = proof
+            durable_handle = self._selected_installation.record_durable_setup_choice(choice)
+            if enabled and not durable_handle:
+                self._memory_enablement_choices.pop(handle, None)
+                self._memory_enablement_tty_proofs.pop(handle, None)
+                raise BootstrapEnrollmentPending("enabled memory configuration was not durably signed")
+            if durable_handle is not None:
+                self._durable_memory_choice_handles[handle] = durable_handle
             proof = None
             return self.resolve_current_memory_service_enablement_choice(handle)
         finally:
@@ -4731,6 +5355,35 @@ class RootBootstrapSession:
         self._application_source_preparations[selection_handle] = selection
         self._application_source_preparation_handles[selection_key] = selection_handle
         return selection
+
+    def attach_application_package_closure_registry(self, registry: Any) -> None:
+        self._check_live()
+        from .application_runtime_preparation import RootApplicationOfflinePackageClosureRegistry
+        if (type(registry) is not RootApplicationOfflinePackageClosureRegistry
+                or getattr(registry, "binding", None) is not self._selected_installation
+                or not callable(getattr(registry, "resolve_current_package_closure_for_selection", None))):
+            raise BootstrapEnrollmentPending("application package registry is not bound to this setup session")
+        source_registry = getattr(registry, "source_registry", None)
+        if getattr(source_registry, "binding", None) is not self._selected_installation:
+            raise BootstrapEnrollmentPending("application package registry uses another source preparation registry")
+        if (self._application_package_closure_registry is not None
+                and self._application_package_closure_registry is not registry):
+            raise BootstrapEnrollmentPending("another application package registry is already attached")
+        self._application_package_closure_registry = registry
+
+    def resolve_current_application_package_closure(self, source_preparation_selection_handle: str) -> Any:
+        self._check_live()
+        registry = self._application_package_closure_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("application package closure registry is not attached")
+        try:
+            closure = registry.resolve_current_package_closure_for_selection(
+                source_preparation_selection_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("current application package closure is unavailable") from None
+        if getattr(closure, "source_preparation_selection_handle", None) != source_preparation_selection_handle:
+            raise BootstrapEnrollmentPending("application package closure belongs to another source selection")
+        return closure
 
     def observe_selected_resource_profile(self) -> str:
         """Mint a current resource-profile choice from the verified bundle and root TTY.
@@ -5598,6 +6251,96 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return tuple(output)
 
+    def _resolve_prepared_worker_role_module_receipts(
+            self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        """Retain release-pinned worker role modules without claiming actor imports.
+
+        The role modules are loaded in their eventual managed worker. Their
+        membership is checked here; a later worker-start receipt must prove the
+        actual loader closure before any role becomes executable.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("worker role modules require current empty prepared custody")
+        pins = (
+            ("src/hermes_installer/native_invocations.py",
+             "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226"),
+            ("src/hermes_installer/native_boundary.py",
+             "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb"),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootPreparedReleaseMemberReceipt] = []
+        for relative_path, digest in pins:
+            rows = [row for row in release.files
+                    if row.relative_path == relative_path and row.sha256 == digest
+                    and "module" in row.roles and row.artifact_id in plan.allowed_artifact_ids]
+            if len(rows) != 1:
+                raise BootstrapEnrollmentPending(
+                    "worker role module is not uniquely pinned in the selected installed release")
+            row = rows[0]
+            prior = next((item for item in self._prepared_release_file_receipts.values()
+                          if item.artifact_id == row.artifact_id
+                          and item.prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootPreparedReleaseMemberReceipt(
+                    row.artifact_id, row.relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, prepared.generation_id,
+                    _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self)
+                self._prepared_release_file_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
+    def _resolve_prepared_native_source_definition_module_receipt(self) -> RootReleaseModuleReceipt:
+        """Resolve the root-imported source adapter with module-origin proof."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "native source definition adapter requires current empty prepared custody")
+        relative_path = "src/hermes_installer/authority/native_source_definitions.py"
+        digest = "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7"
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        rows = [row for row in release.files if row.relative_path == relative_path
+                and row.sha256 == digest and "module" in row.roles
+                and row.artifact_id in plan.allowed_artifact_ids]
+        if len(rows) != 1:
+            raise BootstrapEnrollmentPending(
+                "native source definition adapter is not uniquely pinned in the installed release")
+        row = rows[0]
+        origins = [origin for origin in actor.module_origins
+                   if origin[1] == str(release.release_root / relative_path)
+                   and origin[4] == digest]
+        if len(origins) != 1:
+            raise BootstrapEnrollmentPending(
+                "native source definition adapter is outside the current root actor import closure")
+        prior = next((item for item in self._prepared_release_member_receipts.values()
+                      if item.artifact_id == row.artifact_id
+                      and item._prepared_generation_id == prepared.generation_id), None)
+        if prior is None:
+            handle = secrets.token_urlsafe(36)
+            prior = RootReleaseModuleReceipt(
+                row.artifact_id, relative_path, digest, row.size_bytes,
+                release.release_commit, release.deployment_receipt_sha256,
+                handle, self._handle.session_id, self._seal, self,
+                prepared.generation_id)
+            self._prepared_release_member_receipts[handle] = prior
+        prior.read_current()
+        actor.verify_current(release)
+        return prior
+
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Mint one of the fixed local-result schema receipts from the held root catalog.
@@ -6174,6 +6917,44 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return bytes(content)
 
+    def _read_prepared_release_member(
+            self, receipt: RootPreparedReleaseMemberReceipt) -> bytes:
+        self._check_live()
+        if (type(receipt) is not RootPreparedReleaseMemberReceipt
+                or receipt._session is not self
+                or receipt.setup_session_id != self._handle.session_id
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or self._prepared_release_file_receipts.get(receipt.source_receipt_handle) is not receipt):
+            raise BootstrapEnrollmentPending("prepared release member is not retained by this live setup session")
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or prepared.generation_id != receipt.prepared_generation_id):
+            raise BootstrapEnrollmentPending("prepared release member is stale for current custody")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
+        if (row is None or row.artifact_id not in plan.allowed_artifact_ids
+                or "module" not in row.roles or row.relative_path != receipt.relative_path
+                or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
+                or release.release_commit != receipt.release_commit
+                or release.deployment_receipt_sha256 != receipt.deployment_receipt_sha256):
+            raise BootstrapEnrollmentPending("prepared release member differs from its fixed receipt")
+        fd = release.open_file(receipt.artifact_id)
+        try:
+            content = bytearray()
+            while len(content) <= receipt.size_bytes:
+                block = os.read(fd, min(64 * 1024, receipt.size_bytes + 1 - len(content)))
+                if not block:
+                    break
+                content.extend(block)
+        finally:
+            os.close(fd)
+        if len(content) != receipt.size_bytes or hashlib.sha256(content).hexdigest() != receipt.sha256:
+            raise BootstrapEnrollmentPending("prepared release member bytes changed")
+        actor.verify_current(release)
+        return bytes(content)
+
     def _revalidate_native_assembly_selection(
             self, selection: RootNativeBootstrapAssemblySelection) -> None:
         """Revalidate a retained selection; no caller-created DTO can pass."""
@@ -6621,7 +7402,8 @@ __all__ = [
     "RootInitialCompilationRegistry", "RootInitialCompilationSession",
     "RootInitialPublicationHandoff", "RootInitialSetupAggregate",
     "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember", "RootReleaseModuleReceipt",
-    "RootInstalledReleaseMemberReceipt", "RootSelectedApplicationQualificationChoice",
+    "RootPreparedReleaseMemberReceipt", "RootInstalledReleaseMemberReceipt",
+    "RootSelectedApplicationQualificationChoice",
     "RootApplicationQualificationConsent",
     "RootApplicationSetupControllerBinding",
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",

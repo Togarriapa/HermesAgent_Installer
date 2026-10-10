@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,12 +50,15 @@ def _registry(tmp_path: Path, *, digest: str = "a" * 64):
 
 
 @ROOT_LINUX
-def test_lifecycle_selection_is_unavailable_without_active_published_choice(tmp_path: Path):
-    registry = _registry(tmp_path)
-
-    with pytest.raises(RootMemoryServiceEnablementDenied,
-                       match="current root memory service enablement is unavailable"):
-        registry.resolve_selected_enablement("memory-fixture")
+def test_lifecycle_selection_is_unavailable_without_active_published_choice():
+    # /tmp is intentionally rejected by ProtectedRootJournalCatalog because
+    # its ancestor is writable by other users. Keep the test fixture under a
+    # private root-owned ancestor rather than weakening production custody.
+    with TemporaryDirectory(prefix="hermes-memory-enable-", dir="/root") as directory:
+        registry = _registry(Path(directory))
+        with pytest.raises(RootMemoryServiceEnablementDenied,
+                           match="current root memory service enablement is unavailable"):
+            registry.resolve_selected_enablement("memory-fixture")
 
 
 @ROOT_LINUX

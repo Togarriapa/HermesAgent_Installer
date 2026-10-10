@@ -1249,5 +1249,104 @@
       }
     ],
     "acceptance": "All original AC open; no root/store/model installation or model bytes accessed by Sol."
+  },
+  "memory_process_control_readmission_v145": {
+    "schema": 1,
+    "requirements": [
+      "SK-T64",
+      "HI-T80",
+      "SK-T119"
+    ],
+    "why": "A real memory service may outlive the initial <=30s start admission. Reusing expired admission denies valid status/stop and must not extend old proof.",
+    "api": {
+      "owner": "existing RootMemoryLifecycleRegistry and selected lifecycle authority/custody",
+      "call": "readmit_selected_control(memory_enrollment_id,owned_process_handle,operation)->fresh RootMemoryLifecycleAdmission",
+      "operations": [
+        "process.status",
+        "process.stop"
+      ],
+      "inputs": "Genuine retained owned process handle/terminal lineage only; no PID/profile/UID/source selector supplied by worker. Root registry independently resolves exact active memory enrollment, original start receipt and selected service/profile/generation/source closure.",
+      "checks": "Fresh actual current installed controller PIDFD, selected enablement choice/adoption and policy/epoch, current selected artifact/prestart/source proof, held process identity/PIDFD/cgroup/mount/network namespace. Current proof expires<=30s and <=original process deadline; old admission immutable/expired. No new start effect or service deadline extension.",
+      "status": "Fresh current same-process status permission; may not imply semantic readiness or model/capture permission.",
+      "stop": "Fresh narrowly scoped same retained process stop authorization using existing fixed shutdown/grace policy. Actual memory enablement revocation prohibits future work and schedules root-owned cleanup using retained original process/PIDFD custody; revocation must not prevent necessary stop cleanup. Root cleanup is separate finite custody obligation, no new caller grant.",
+      "cleanup": "Missing controller/consent/source currentness denies productive operations; retained root cleanup still terminates only exact originally owned live process or proves terminal state with no PID reuse/kill-by-number. Original deadline hard bound remains.",
+      "serialization": "Reuse existing finite selected lifecycle status/stop payload and signer/verify/consume route; no new generic signer/session/worker RPC."
+    },
+    "tasks": [
+      {
+        "id": "SK-T145.1",
+        "owner": "memory lifecycle/selected startup authority/custody",
+        "work": "Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD."
+      },
+      {
+        "id": "SK-T145.2",
+        "owner": "memory lifecycle integration",
+        "work": "Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership."
+      }
+    ],
+    "acceptance": "Meaningful process fixtures and actual target evidence separate. All AC and baseline unchanged."
+  },
+  "model_choice_observation_order_v146": {
+    "schema": 1,
+    "requirements": [
+      "SK-T127",
+      "SK-T139",
+      "HI-T143",
+      "HI-T142"
+    ],
+    "why": "Actual pre-service held release receipt has deployment SHA, not opaque handle; fixed model root observation must precede explicit child choice and model-tree verification without signing incomplete intent. Public scope requires actual retained canonical payload, not only matching config IDs.",
+    "release_identity": {
+      "replacement": "v143 choice record field release_receipt_handle is replaced by release_deployment_receipt_sha256",
+      "source": "Exact VerifiedInstallerReleaseReceipt.deployment_receipt_sha256 after verify_current; held release root/device/inode/manifest and current actor verified separately. This digest is named as digest, never relabeled opaque handle.",
+      "setup_session_handle": "Genuine RootSetupSessionStore normal session identity already adopted from stage-zero. No fabricated release handle/facade required; key bridge still resolves genuine live stage-zero receipt where that type actually has a handle."
+    },
+    "model_sequence": [
+      {
+        "step": 1,
+        "action": "Factory resolves current v133 private-profile selector and actual RootExistingModelStoreTemplateReceipt.read_current; opens only fixed reviewed /var/lib/hermes-installer/model-store securely through root-owned ancestor FDs.",
+        "output": "RootHeldExistingModelStoreObservation: schema, observation_handle, template_artifact_id, template_sha256, template_member_receipt_handle, root_id, root_device, root_inode, root_uid, root_gid, root_mode, private_profile_selection_handle, issued_monotonic, expires_monotonic; registry membership and held directory FD. No signature/consent/model source/deployment assertion."
+      },
+      {
+        "step": 2,
+        "action": "Foreground root TTY lists only bounded actual eligible direct-child basenames from held root and records explicit blank/no-default selection, controller observation and actual selected child device/inode/mode.",
+        "output": "Actual root TTY choice binds held root observation handle, direct child basename/inode, private profile/principal/namespace stable selectors and selected source metadata/license/README member receipt identities. No arbitrary path/default/download/copy/chown."
+      },
+      {
+        "step": 3,
+        "action": "Revalidate root/template/child/controller/current short principal/namespace snapshot, resolve genuine held small v135 metadata/license/README source receipts, then RootSetupChoiceRegistry.record_observed_choice records the completed closed existing-model-selection choice with v143/v146 named deployment digest and actual source receipt membership.",
+        "output": "Signed durable choice intent + opaque selection handle; signing only after actual root TTY selection and source-definition receipts. It is not a verified model tree or deployment and does not require model weights already hashed before the choice."
+      },
+      {
+        "step": 4,
+        "action": "RootExistingModelSelectionRegistry resolves signed choice and current held root/child/source metadata proof into existing RootExistingModelArtifactSelection; RootExistingModelArtifactObserver hashes all exact selected manifest members via retained child FD before issuing actual signed source observation.",
+        "output": "ExistingModelArtifactObservation only after complete actual all149-file verification; current source/private selector linkage, supporting source digest, existing signer. No model-load/private endpoint/embedding proof inferred."
+      }
+    ],
+    "held_root_api": {
+      "registry": "RootOwnedFilesystemSelectionRegistry",
+      "observe": "observe_existing_model_store(private_profile_selection_handle)->RootHeldExistingModelStoreObservation",
+      "current": "resolve_current_root(observation_handle,private_profile_selection_handle)->current held root observation",
+      "open": "open_selected_root(observation_handle)->genuine duplicate held directory FD after currentness",
+      "closure": "Root observation is pre-choice kernel/filesystem fact, not signed completed purpose choice. Source-definition member receipts are distinct from later model-tree observation. Existing fixed root missing or unsafe denies with exact prerequisite; observer never repairs it."
+    },
+    "public_scope_payload": {
+      "capability": "NativeActionRecord remains operation plugin.web.read, capability plugin:web; v142 does not rename existing action capability.",
+      "resolver": "RootNativeComponentTargetRegistry.resolve_current_public_web_scope(target_selection_handle)->root-retained canonical scope payload plus scope_payload_sha256, configuration_observation_handle/configuration_sha256 and exact target-contract source receipt joins.",
+      "payload": "Exactly v142 ten EnrolledPublicWebScope fields with nested targets; SHA canonical rule v142. Resolver reads retained actual typed source configuration observation, revalidates current registry membership and choice/controller/source contract, never accepts row payload as source.",
+      "active_validation": "Publisher/getter compare full canonical payload hash and exact field projection against retained target configuration, in addition to existing target/config IDs/profile/process generation/effect/recipient FKs. Matching configuration SHA/IDs without authenticated named scope member does not prove arbitrary targets."
+    },
+    "tasks": [
+      {
+        "id": "SK-T146.1",
+        "owner": "factory/model selection/consent",
+        "work": "Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately."
+      },
+      {
+        "id": "HI-T146.2",
+        "owner": "native target/factory/enrollment",
+        "work": "Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation."
+      }
+    ],
+    "acceptance": "Ordering/source records only; actual tree/load/route/runtime acceptance separate, all original AC and baseline unchanged."
   }
 }

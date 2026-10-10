@@ -598,3 +598,24 @@ The installer SHALL publish only source-selected public web scopes with exact ta
 #### Scenario: Private input names a configured public URL
 - **WHEN** a request carries PRIVATE or UNKNOWN ancestry despite a configured public scope
 - **THEN** egress is denied without widening the private consent or interpreting scope configuration as input permission
+
+### Requirement: Durable setup source choice signing v143
+The installer SHALL retain purpose-specific setup choices through genuine existing key custody and protected journal records and SHALL adopt them only through actual active publication before issuing fresh runtime permissions.
+
+#### Scenario: Setup process-local choice seal survives no durable adoption
+- **WHEN** runtime permission is requested from a choice without verified durable signature and publication adoption
+- **THEN** permission is denied rather than constructing a parallel authority service or treating old setup evidence as current authority
+
+### Requirement: Completed source choice ordering v146
+The installer SHALL distinguish held root observation from completed signed choice and full source verification, accurately name release identity and authenticate complete public scope payloads from retained configuration.
+
+#### Scenario: Fixed root is observed before child choice
+- **WHEN** only the fixed model store root is held
+- **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents

@@ -11,7 +11,8 @@ from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentE
 from hermes_installer.authority.setup_policy_publication import (
     _FileSpec, _atomic_replace, _ensure_generation, _read_fixed,
     _receipt_from_record, _verify_active_receipt_descriptor, _restore_compiled_selection,
-    _canonical, _sha, POLICY_GENERATIONS,
+    _canonical, _sha, POLICY_GENERATIONS, _choice_adoption_from_record,
+    _choice_adoption_value, PolicyPublicationReceiptResolver,
 )
 
 
@@ -133,6 +134,93 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
         record["materialization_receipt_handles"] = []
         with self.assertRaises(BootstrapEnrollmentError):
             _receipt_from_record(record)
+
+    def _choice_adoption_record(self):
+        return {
+            "selection_handle": "s" * 64, "purpose": "memory-service-enablement",
+            "key_id": "selected-key-1", "signed_record_sha256": "a" * 64,
+            "choice_payload_sha256": "b" * 64, "choice_epoch": 1, "revocation_epoch": 2,
+            "issued_at_unix": 1000.0, "setup_deadline_unix": 1100.0,
+            "release_deployment_receipt_sha256": "c" * 64,
+            "setup_session_handle": "d" * 64, "transaction_handle": "t" * 64,
+            "plan_id": "installer-root-setup-plan-v1", "prepared_generation": "prepared-v1",
+            "principal_selection_handle": "p" * 64, "namespace_selection_handle": "n" * 64,
+            "private_profile_selection_handle": "q" * 64,
+            "source_member_receipt_handles": ["1" * 64, "2" * 64],
+            "principal_id": "principal-1", "profile_id": "memory-profile-1",
+            "namespace_id": "namespace-1", "principal_binding_sha256": "3" * 64,
+            "namespace_binding_sha256": "4" * 64, "service_generation_id": "service-v1",
+            "service_generation_digest": "5" * 64, "selection_catalog_sha256": "6" * 64,
+            "publication_receipt_handle": "r" * 64, "publication_sha256": "7" * 64,
+            "generation_id": "installer-bootstrap-policy-generation-v1",
+        }
+
+    def test_published_choice_adoption_is_closed_and_digest_bound(self):
+        record = self._choice_adoption_record()
+        adoption = _choice_adoption_from_record(record)
+        self.assertEqual(_choice_adoption_value(adoption), record)
+        for mutate in (
+            lambda row: row.update(signed_record_sha256="not-a-digest"),
+            lambda row: row.update(source_member_receipt_handles=[]),
+            lambda row: row.update(purpose="unplanned-purpose"),
+            lambda row: row.update(publication_sha256="not-a-digest"),
+        ):
+            changed = dict(record)
+            mutate(changed)
+            with self.assertRaises(BootstrapEnrollmentError):
+                _choice_adoption_from_record(changed)
+
+    def test_active_record_rejects_adoption_from_another_publication(self):
+        record = self._active_record()
+        adoption = self._choice_adoption_record()
+        adoption["publication_sha256"] = "9" * 64
+        record["choice_adoptions"] = [adoption]
+        with self.assertRaises(BootstrapEnrollmentError):
+            _receipt_from_record(record)
+
+    def test_active_descriptor_must_retain_exact_choice_projection(self):
+        record = self._active_record()
+        adoption = self._choice_adoption_record()
+        adoption.update({"publication_receipt_handle": record["publication_receipt_handle"],
+                         "publication_sha256": record["publication_sha256"],
+                         "generation_id": record["generation_id"],
+                         "transaction_handle": record["transaction_handle"],
+                         "prepared_generation": record["prepared_generation_id"],
+                         "service_generation_digest": record["service_generation_digest"]})
+        record["choice_adoptions"] = [adoption]
+        receipt = _receipt_from_record(record)
+        projection = {key: value for key, value in adoption.items()
+                      if key not in {"publication_receipt_handle", "publication_sha256", "generation_id"}}
+        descriptor = {"policy_sha256": receipt.policy_sha256,
+                      "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
+                      "selection_sha256": receipt.selection_sha256,
+                      "inputs": {
+                          "publication_handle": receipt.publication_handle,
+                          "claim_digest": receipt.claim_digest,
+                          "prepared_generation_id": receipt.prepared_generation_id,
+                          "expected_service_generation_digest": receipt.service_generation_digest,
+                          "transaction_handle": receipt.transaction_handle,
+                          "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
+                          "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+                          "choice_projections": [projection],
+                      }}
+        _verify_active_receipt_descriptor(receipt, descriptor)
+        descriptor["inputs"]["choice_projections"][0]["signed_record_sha256"] = "8" * 64
+        with self.assertRaises(BootstrapEnrollmentError):
+            _verify_active_receipt_descriptor(receipt, descriptor)
+
+    def test_choice_adoption_currentness_rejects_changed_signed_row_digest(self):
+        adoption = _choice_adoption_from_record(self._choice_adoption_record())
+        with patch.object(PolicyPublicationReceiptResolver,
+                          "resolve_current_choice_adoption", return_value=adoption):
+            self.assertIs(adoption.verify_current(), adoption)
+        changed_record = self._choice_adoption_record()
+        changed_record["signed_record_sha256"] = "8" * 64
+        changed = _choice_adoption_from_record(changed_record)
+        with patch.object(PolicyPublicationReceiptResolver,
+                          "resolve_current_choice_adoption", return_value=changed):
+            with self.assertRaises(BootstrapEnrollmentPending):
+                adoption.verify_current()
 
     def test_current_selection_reconstructs_exact_compiler_catalog_document(self):
         compiled = {

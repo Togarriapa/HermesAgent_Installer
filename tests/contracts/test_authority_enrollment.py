@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+from unittest import mock
+import time
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
@@ -86,6 +90,23 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**dynamic, "derivation_receipt_handle": None}])
 
+
+    def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
+        row = {
+            "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
+            "producer_role_artifact_id": "role-artifact", "producer_role_sha256": "a" * 64,
+            "capture_schema_id": "capture-schema", "allowed_parent_channels": [],
+            "generation": "process-g1", "observer_enrollment_id": "observer-a",
+            "source_action_ids": ["authenticated-input"],
+        }
+        legacy = _parse_source_issuers([row])[0]
+        self.assertEqual(legacy.private_provider_route_ids, ())
+        selected = _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"]}])[0]
+        self.assertEqual(selected.private_provider_route_ids, ("provider-route-a",))
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,
@@ -122,6 +143,214 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-key signer fixture requires uid 0")
+    def test_setup_choice_signer_binds_finite_purpose_and_live_key_bytes(self):
+        class Issuer:
+            checks = 0
+            def _verify_normal_choice_signer(self, signer):
+                self.checks += 1
+
+        with tempfile.TemporaryDirectory(prefix="setup-choice-key-") as temp:
+            key_path = Path(temp) / "key"
+            key_path.write_bytes(b"k" * 32)
+            key_path.chmod(0o600)
+            fd = os.open(key_path, os.O_RDONLY)
+            try:
+                info = os.fstat(fd)
+                issuer = Issuer()
+                from hermes_installer.authority.enrollment import RootSetupChoiceSigner
+                signer = RootSetupChoiceSigner(
+                    issuer, key_fd=fd, session_handle=object(), key_id="authority-key-fixture",
+                    key_device=info.st_dev, key_inode=info.st_ino,
+                    key_digest=hashlib.sha256(b"k" * 32).hexdigest(), adoption_record={},
+                )
+                payload = b'{"schema":1,"choice":"private"}'
+                signature = signer.sign_choice("existing-model-selection", payload)
+                self.assertTrue(signer.verify_choice("existing-model-selection", payload, signature))
+                self.assertFalse(signer.verify_choice("memory-service-enablement", payload, signature))
+                self.assertFalse(signer.verify_choice("existing-model-selection", payload + b" ", signature))
+                with self.assertRaises(AuthorityDenied):
+                    signer.sign_choice("unbounded-purpose", payload)
+                self.assertGreaterEqual(issuer.checks, 4)
+            finally:
+                os.close(fd)
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-key adoption fixture requires uid 0")
+    def test_normal_setup_adopts_and_reopens_same_durable_key_signer(self):
+        from hermes_installer.authority import enrollment
+        from hermes_installer.authority.bootstrap_enrollment import RootSetupSessionHandle, RootSetupSessionStore
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            RootInitialCompilationSession, RootInitialPublicationHandoff, RootSetupChoices,
+        )
+        from hermes_installer.authority.installer_release import VerifiedInstallerReleaseReceipt, _SEAL
+
+        class LiveStore(RootSetupSessionStore):
+            def _live(self, handle):
+                if handle != session_handle or self.revoked:
+                    raise AuthorityDenied("setup.choice", "fixture session is revoked")
+                return object()
+
+            @staticmethod
+            def _proof(_live):
+                return proof
+
+        class CurrentVerifier:
+            def verify_current(self, _plan):
+                if self.revoked:
+                    raise AuthorityDenied("setup.choice", "fixture actor is revoked")
+
+            revoked = False
+
+        with tempfile.TemporaryDirectory(prefix="normal-setup-key-adoption-") as temp:
+            root = Path(temp)
+            root.chmod(0o700)
+            key_path = root / "authority.key"
+            key_path.write_bytes(b"z" * 32)
+            key_path.chmod(0o600)
+            release_root = root / "release"
+            release_root.mkdir(mode=0o700)
+            release_fd = os.open(release_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            release_info = os.fstat(release_fd)
+            release_root.chmod(0o500)
+            release = VerifiedInstallerReleaseReceipt(
+                _SEAL, release_root=release_root, release_commit="a" * 40,
+                deployment_receipt_sha256="f" * 64, root_device=release_info.st_dev,
+                root_inode=release_info.st_ino, closure_manifest_relative_path="closure.json",
+                closure_manifest_sha256="1" * 64, baseline_tag_object="2" * 40,
+                baseline_commit="3" * 40, baseline_tree_sha256="4" * 64,
+                amendment_manifest_sha256="5" * 64, files=(),
+                selected_plan_artifact_id="setup-plan", selected_plan_sha256="1" * 64,
+                root_fd=release_fd, expected_uid=0,
+            )
+            self.assertFalse(hasattr(release, "receipt_handle"))
+            key_info = key_path.stat()
+            key_digest = hashlib.sha256(b"z" * 32).hexdigest()
+            session_handle = RootSetupSessionHandle("setup-" + "a" * 32, "session-seal")
+            proof = SimpleNamespace(
+                setup_session_id=session_handle.session_id, transaction_handle="transaction-current",
+                plan_digest="1" * 64, plan_artifact_id="setup-plan", expires_monotonic=time.monotonic() + 300,
+            )
+            handoff = SimpleNamespace(
+                handoff_handle="handoff-current", compilation_session_handle="b" * 64,
+                compilation_transaction_handle="c" * 64, plan_sha256=proof.plan_digest,
+                publication_receipt_handle="publication-receipt", publication_sha256="2" * 64,
+                normal_transaction_handle=proof.transaction_handle,
+            )
+            actor = CurrentVerifier()
+            plan = object()
+            store = object.__new__(LiveStore)
+            store.revoked = False
+            store.plan_resolver = SimpleNamespace(resolve=lambda _artifact: plan)
+            store.actor_verifier = actor
+            stage0 = RootInitialCompilationSession(
+                schema=1, phase="initial-compilation", compilation_session_handle="b" * 64,
+                compilation_transaction_handle="c" * 64, verified_release_receipt_handle="6" * 64,
+                actor_observation_receipt_handle="7" * 64, plan_artifact_id="setup-plan",
+                plan_sha256=proof.plan_digest, closed_template_artifact_id="closed-template",
+                closed_template_sha256="8" * 64, choices_sha256="9" * 64,
+                source_catalog_sha256="a" * 64, expected_predecessor_catalog_sha256=None,
+                issued_monotonic=time.monotonic(), expires_monotonic=time.monotonic() + 30,
+                _choices=RootSetupChoices("install", "hermes", None, (), ()), _release=release,
+                _actor=actor, _root_journal_root={}, _seal="stage0-seal",
+            )
+            initial = SimpleNamespace(actor=actor, _seal="initial-registry-seal", _session_store=store,
+            )
+            handoff = RootInitialPublicationHandoff(
+                1, "handoff-current", stage0.compilation_session_handle,
+                stage0.compilation_transaction_handle, "publication-receipt", "2" * 64,
+                stage0.plan_sha256, stage0.choices_sha256, None, (), time.monotonic(),
+                time.monotonic() + 300, session_handle.session_id, proof.transaction_handle,
+                _initial_session=stage0, _registry_seal=initial._seal,
+            )
+            initial.resolve_adopted_handoff = lambda _handle: handoff
+            receipt = enrollment.RootAuthorityKeyReceipt(
+                1, "d" * 64, "authority-key-" + "e" * 32, "HMAC-SHA256",
+                key_info.st_dev, key_info.st_ino, 0, 0o600, stage0.verified_release_receipt_handle,
+                stage0.compilation_session_handle, time.monotonic(), time.monotonic() + 30, "issuer-seal",
+            )
+            registry = object.__new__(enrollment.RootAuthorityKeySelectionRegistry)
+            registry.release = release
+            registry.actor_verifier = actor
+            registry.root_journal = root
+            registry.initial_compilation_registry = initial
+            registry._seal = initial._seal
+            registry.private_root_name = "authority-key-receipts"
+            registry._normal_signers = {}
+            registry._key_fds = {receipt.receipt_handle: os.open(key_path, os.O_RDONLY)}
+            registry._key_digests = {receipt.receipt_handle: key_digest}
+            registry._resolve_stage0 = lambda _handle: stage0
+            registry.resolve_selected_key = lambda *_args: receipt
+            registry._normal_signer_path = lambda _session_id: root / "normal-signer.json"
+            registry._open_key = lambda: (os.open(key_path, os.O_RDONLY), key_path.stat(), key_path.read_bytes())
+            registry._read_selection = lambda: {
+                "key_id": receipt.key_id, "key_device": receipt.key_device,
+                "key_inode": receipt.key_inode, "release_receipt_handle": receipt.release_receipt_handle,
+                "receipt_handle": receipt.receipt_handle,
+                "initial_compilation_session_handle": stage0.compilation_session_handle,
+            }
+            registry._verify_private_binding = lambda *_args: None
+            (root / "authority-key-receipts").mkdir(mode=0o700)
+            private_binding = {"schema": 1, "receipt_handle": receipt.receipt_handle,
+                               "key_device": key_info.st_dev, "key_inode": key_info.st_ino,
+                               "key_sha256": key_digest}
+            (root / "authority-key-receipts" / f"{receipt.receipt_handle}.json").write_text(
+                json.dumps(private_binding, sort_keys=True, separators=(",", ":")), encoding="ascii")
+            (root / "authority-key-receipts" / f"{receipt.receipt_handle}.json").chmod(0o600)
+
+            def write_fixture(path, document, *, exclusive=False):
+                payload = json.dumps(dict(document), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+                flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+                fd = os.open(path, flags, 0o600)
+                try:
+                    os.write(fd, payload.encode("ascii"))
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+
+            def read_fixture(path, _maximum):
+                info = path.lstat()
+                if info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
+                    raise AuthorityDenied("setup.choice", "fixture custody changed")
+                return path.read_bytes()
+
+            try:
+                with mock.patch.object(enrollment, "_write_root_selection", write_fixture), \
+                     mock.patch.object(enrollment, "_read_root_selection_bytes", read_fixture):
+                    signer = registry.adopt_for_normal_setup(
+                        receipt.receipt_handle, stage0.compilation_session_handle,
+                        session_handle, handoff.handoff_handle,
+                    )
+                    payload = b'{"choice":"keep-existing-store","schema":1}'
+                    signature = signer.sign_choice("existing-model-selection", payload)
+                    self.assertTrue(signer.verify_choice("existing-model-selection", payload, signature))
+                    retried = registry.adopt_for_normal_setup(
+                        receipt.receipt_handle, stage0.compilation_session_handle,
+                        session_handle, handoff.handoff_handle,
+                    )
+                    self.assertIs(retried, signer)
+
+                    # Simulate a caller losing its in-memory signer and resolving the
+                    # durable setup binding again without minting or rotating the key.
+                    registry._normal_signers.clear()
+                    reopened = registry.resolve_normal_setup_choice_signer(session_handle)
+                    self.assertEqual(reopened.key_id, receipt.key_id)
+                    self.assertTrue(reopened.verify_choice("existing-model-selection", payload, signature))
+
+                    with self.assertRaises(AuthorityDenied):
+                        registry.adopt_for_normal_setup(
+                            receipt.receipt_handle, stage0.compilation_session_handle,
+                            session_handle, "forged-handoff",
+                        )
+
+                    actor.revoked = True
+                    with self.assertRaises(AuthorityDenied):
+                        reopened.sign_choice("existing-model-selection", payload)
+            finally:
+                os.close(registry._key_fds[receipt.receipt_handle])
+                release_root.chmod(0o700)
+                os.close(release_fd)
+
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
