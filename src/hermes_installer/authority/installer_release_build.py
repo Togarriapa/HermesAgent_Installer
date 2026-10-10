@@ -1289,6 +1289,10 @@ def _elf_machine(path: Path) -> int:
 
 def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | None]]:
     rows: list[tuple[str, str, int, int, str | None]] = []
+    root_info = root.lstat()
+    if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0 or root_info.st_gid != 0
+            or stat.S_IMODE(root_info.st_mode) != 0o555):
+        raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
     for directory, dirs, files in os.walk(root, topdown=True, followlinks=False):
         base = Path(directory)
         for name in list(dirs):
@@ -1296,6 +1300,11 @@ def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | No
             if path.is_symlink():
                 dirs.remove(name)
                 _append_runtime_member(rows, root, path)
+            else:
+                info = path.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                        or stat.S_IMODE(info.st_mode) != 0o555):
+                    raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
         for name in files:
             _append_runtime_member(rows, root, base / name)
     rows.sort(key=lambda row: row[0])
@@ -1313,9 +1322,12 @@ def _append_runtime_member(rows: list[tuple[str, str, int, int, str | None]], ro
         # extraction, rather than rejecting them as stand-alone source paths.
         _resolve_runtime_archive_symlink(f"python/{rel}", target)
         rows.append((rel, hashlib.sha256(target.encode()).hexdigest(), len(target.encode()), 0o777, target))
-    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0:
+    elif (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0
+          and stat.S_IMODE(info.st_mode) in {0o444, 0o555}):
         digest, size = _hash_path(path, MAX_SOURCE_FILE_BYTES)
         rows.append((rel, digest, size, stat.S_IMODE(info.st_mode), None))
+    elif stat.S_ISREG(info.st_mode):
+        raise InstallerReleaseBuildError("runtime file mode is not read-only sealed")
     else:
         raise InstallerReleaseBuildError("materialized runtime closure contains a hardlink or special member")
 
@@ -1337,7 +1349,7 @@ def _seal_runtime_tree(root: Path) -> None:
                 continue
             info = path.lstat()
             os.chown(path, 0, 0, follow_symlinks=False)
-            os.chmod(path, 0o555 if info.st_mode & 0o111 else 0o444, follow_symlinks=False)
+            os.chmod(path, _sealed_runtime_mode(info.st_mode), follow_symlinks=False)
         for name in dirs:
             path = current / name
             if not path.is_symlink():
@@ -1346,6 +1358,10 @@ def _seal_runtime_tree(root: Path) -> None:
         os.chown(current, 0, 0, follow_symlinks=False)
         os.chmod(current, 0o555, follow_symlinks=False)
         _fsync_dir(current)
+
+
+def _sealed_runtime_mode(mode: int) -> int:
+    return 0o555 if mode & 0o111 else 0o444
 
 
 def _verify_runtime_materialization(root: Path, expected_closure: str) -> None:
@@ -1502,6 +1518,9 @@ class RootInstallerInterpreterRegistry:
                 site_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
                 _materialize_pyyaml_wheel(wheel_bytes, site_dir)
                 runtime_probe = _probe_materialized_runtime(executable, python_dir, site_dir)
+                # The closure ID names the immutable tree we will retain, so
+                # seal modes before calculating its digest and before rename.
+                _seal_runtime_tree(python_dir)
                 runtime_rows = _runtime_archive_rows(python_dir)
                 runtime_closure = hashlib.sha256(_canonical_json([
                     {"path": row[0], "sha256": row[1], "size_bytes": row[2],
@@ -1512,7 +1531,6 @@ class RootInstallerInterpreterRegistry:
                     _verify_runtime_materialization(final / "python", runtime_closure)
                     _remove_tree_no_follow(stage)
                 else:
-                    _seal_runtime_tree(python_dir)
                     os.rename(stage_name, runtime_closure, src_dir_fd=root_fd, dst_dir_fd=root_fd)
                     os.fsync(root_fd)
                 prefix = final if final.exists() else BOOTSTRAP_RUNTIME_ROOT / runtime_closure
@@ -1996,8 +2014,10 @@ class RootBootstrapRuntimeHandoffRegistry:
                 raise InstallerReleaseBuildError("bootstrap descriptor message exceeds fixed bound")
             _write_all(memfd, message)
             os.fsync(memfd)
-            seals = (fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
-            fcntl.fcntl(memfd, fcntl.F_ADD_SEALS, seals)
+            constants = _memfd_seal_constants()
+            seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                     | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+            fcntl.fcntl(memfd, constants["F_ADD_SEALS"], seals)
             descriptor = os.fstat(memfd)
             record = {
             "schema": 1, "state": "pending", "handoff_handle": handle,
@@ -3570,9 +3590,31 @@ def _pidfd_is_live(pidfd: int) -> bool:
     return not bool(poll.poll(0))
 
 
+def _memfd_seal_constants() -> dict[str, int]:
+    """Return Linux memfd seal commands if CPython omitted their names.
+
+    These values are architecture-independent Linux fcntl UAPI constants.
+    The pinned standalone CPython build omits the Python bindings, although
+    the kernel memfd sealing operations are available.
+    """
+    if not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("sealed bootstrap handoff requires Linux memfd support")
+    uapi = {
+        "F_ADD_SEALS": 1033,
+        "F_GET_SEALS": 1034,
+        "F_SEAL_SEAL": 0x0001,
+        "F_SEAL_SHRINK": 0x0002,
+        "F_SEAL_GROW": 0x0004,
+        "F_SEAL_WRITE": 0x0008,
+    }
+    return {name: int(getattr(fcntl, name, value)) for name, value in uapi.items()}
+
+
 def _decode_sealed_handoff_descriptor(fd: int) -> tuple[dict[str, Any], os.stat_result, bytes]:
-    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
-    required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+    constants = _memfd_seal_constants()
+    seals = fcntl.fcntl(fd, constants["F_GET_SEALS"])
+    required = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
     info = os.fstat(fd)
     if (seals & required != required or not stat.S_ISREG(info.st_mode)
             or info.st_size <= 0 or info.st_size > 4096):
@@ -3745,6 +3787,11 @@ def _fixed_reexec_entry_code() -> str:
     return '''
 import fcntl, hashlib, json, os, re, stat, sys
 
+seal_uapi = {"F_GET_SEALS": 1034, "F_SEAL_WRITE": 0x0008, "F_SEAL_GROW": 0x0004,
+             "F_SEAL_SHRINK": 0x0002, "F_SEAL_SEAL": 0x0001}
+def seal_constant(name):
+    return int(getattr(fcntl, name, seal_uapi[name]))
+
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -3757,8 +3804,9 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 descriptor = os.fstat(3)
-seals = fcntl.fcntl(3, fcntl.F_GET_SEALS)
-required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+seals = fcntl.fcntl(3, seal_constant("F_GET_SEALS"))
+required = (seal_constant("F_SEAL_WRITE") | seal_constant("F_SEAL_GROW")
+            | seal_constant("F_SEAL_SHRINK") | seal_constant("F_SEAL_SEAL"))
 message = os.read(3, 4097)
 if seals & required != required or len(message) > 4096:
     raise RuntimeError("invalid bootstrap transition descriptor")
