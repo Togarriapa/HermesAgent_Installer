@@ -13,7 +13,7 @@ from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
     REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, LAUNCHER_PATH, INTERPRETER_PATH,
-    PLAN_PATH, ARTIFACT_CATALOG_PATH, _fixed_roles, _open_verified_fd,
+    PLAN_PATH, ARTIFACT_CATALOG_PATH, REQUIRED_LAUNCHER_MODULES, _fixed_roles, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
     _artifact_id_for, _module_name, _validate_fixed_layout_role,
 )
@@ -111,7 +111,7 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                   for artifact_id, path, digest, size in FIXED_TEMPLATES}
         for path, value in expected.items():
             self.assertEqual(actual[path], value)
-        self.assertEqual(len(actual), 7)
+        self.assertEqual(len(actual), 8)
         self.assertEqual(
             _artifact_id_for("templates/existing-model-store-root-template-v1.json", ["template"]),
             "installer-existing-model-store-root-template-v1",

@@ -82,7 +82,7 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.components.public_registries",
      "src/hermes_installer/components/public_registries.py",
      "lib/python/hermes_installer/components/public_registries.py",
-     "c4568783265044b6b877d581c7ece596d582b003221cccb8b0b7cfe78ac8cb0f", 29_374, "module"),
+     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
     ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py",
      "src/hermes_installer/native_invocations.py",
      "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
