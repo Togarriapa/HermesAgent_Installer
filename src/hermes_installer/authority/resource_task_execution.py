@@ -1,11 +1,13 @@
 """Root-owned execution and result capsules for selected Hermes resource tasks.
 
 This runner is deliberately separate from the managed build launcher and from
-worker RPC dispatch.  It accepts only the one-use in-process job handle minted
-by ``ResourceJobAuthority`` and delegates the fixed ``process.start`` effect to
-``AuthorityService``.  The process custodian owns stdin/EOF, PIDFD/cgroup wait,
-and cleanup proof; this module joins those facts to the selected finite result
-validator and retains an unforgeable, one-use root result capsule.
+worker RPC dispatch. It accepts only the one-use in-process job handle minted
+by ``ResourceJobAuthority``. Worker-produced tasks and root-dispatched tasks
+take distinct fixed ``process.start`` authority routes; root controllers never
+become worker peers or selected child identities. The process custodian owns
+stdin/EOF, PIDFD/cgroup wait, and cleanup proof; this module joins those facts
+to the selected finite result validator and retains an unforgeable, one-use
+root result capsule.
 """
 from __future__ import annotations
 
@@ -188,11 +190,13 @@ def _validate_admission(
 class RootResourceTaskRunner:
     """Run one selected, admitted Hermes task and retain its private result.
 
-    ``AuthorityService.perform_admitted_resource_process_start`` is a fixed
-    root-only seam: it re-resolves the protected process profile and current
-    controller, mints a fresh reduced ``process.start`` grant for the exact
-    selection bytes, and calls the actual process custodian.  No supplied
-    callback or argv/path is accepted here.
+    ``AuthorityService.perform_admitted_resource_process_start`` is the fixed
+    worker-source route. Root event controllers use the separate
+    ``perform_root_admitted_resource_process_start`` resource-child grant
+    route, which retains controller provenance independently from the selected
+    profile subject. Both routes re-resolve the protected recipe and dispatch
+    only to the actual process custodian. No supplied callback or argv/path is
+    accepted here.
     """
 
     def __init__(self, *, service: AuthorityService,
