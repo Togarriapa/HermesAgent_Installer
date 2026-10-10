@@ -191,11 +191,15 @@ class RootPrivateInputConsentRegistry:
         choice = resolver(current_explicit_choice_receipt_handle, profile_selection_handle)
         if (getattr(choice, "_registry_seal", None) is not getattr(self.choices, "_registry_seal", object())
                 or getattr(choice, "choice_receipt_handle", None) != current_explicit_choice_receipt_handle
+                or getattr(choice, "profile_selection_handle", None) != profile_selection_handle
                 or getattr(choice, "profile_id", None) != binding.profile_id
                 or getattr(choice, "principal_id", None) != binding.principal_id
                 or getattr(choice, "namespace_id", None) != binding.namespace_id
                 or getattr(choice, "profile_generation", None) != self.service.profile_generations.get(binding.profile_id, "unversioned")):
             raise AuthorityDenied("consent.choice", "TTY choice is forged, stale, or belongs to another profile")
+        current_choice = getattr(self.choices, "is_current_private_provider_choice", None)
+        if not callable(current_choice) or current_choice(choice) is not True:
+            raise AuthorityDenied("consent.choice", "root TTY private-route choice is no longer current")
         routes = _ids(getattr(choice, "provider_route_ids", None), "provider route IDs")
         recipients = _ids(getattr(choice, "private_recipient_ids", None), "private recipient IDs")
         if getattr(choice, "additional_metered_budget_usd", None) != 0:
@@ -236,6 +240,12 @@ class RootPrivateInputConsentRegistry:
         return handle
 
     def selection_handle_for_current_profile(self, binding: PrincipalBinding) -> str | None:
+        if type(binding) is not PrincipalBinding:
+            raise AuthorityDenied("consent.profile", "root selected principal binding is required")
+        with self._lock:
+            existing = self._records.get(binding.profile_id)
+        if existing is None or existing.get("state") != "enabled":
+            return None
         current = self._current_binding(binding)
         with self._lock:
             row = self._records.get(current.profile_id)
@@ -409,17 +419,18 @@ class RootPrivateInputConsentRegistry:
     def _current_binding(self, binding: Any) -> PrincipalBinding:
         if type(binding) is not PrincipalBinding:
             raise AuthorityDenied("consent.profile", "root selected principal binding is required")
-        current = self.service.bindings_by_uid.get(binding.uid)
-        if current is not binding or current.profile_id != binding.profile_id:
+        resolve = getattr(self.service, "resolve_current_active_principal_binding", None)
+        current = resolve(binding.profile_id) if callable(resolve) else None
+        if current is not binding or current.uid != binding.uid:
             raise AuthorityDenied("consent.profile", "selected principal binding is not current")
         return current
 
     def _current_binding_for_selection(self, selection: Any) -> PrincipalBinding:
-        matches = [item for item in self.service.bindings_by_uid.values()
-                   if item.profile_id == getattr(selection, "profile_id", None)]
-        if len(matches) != 1:
+        profile_id = getattr(selection, "profile_id", None)
+        resolve = getattr(self.service, "resolve_current_active_principal_binding", None)
+        if not callable(resolve):
             raise AuthorityDenied("consent.profile", "selected input profile has no unique current principal")
-        return matches[0]
+        return resolve(profile_id)
 
     def _binding_for_retained(self, selection: Any) -> PrincipalBinding:
         return self._current_binding_for_selection(selection)

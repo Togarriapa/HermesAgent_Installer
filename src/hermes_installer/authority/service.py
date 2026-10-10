@@ -235,6 +235,11 @@ class AuthorityService:
         self.monotonic = monotonic
         self.wall_clock = wall_clock
         self.profile_generations = dict(profile_generations or {})
+        # Keep the exact root-loaded activation snapshot. Consent producers may
+        # resolve an active profile by identifier, but must never provide a
+        # PrincipalBinding (or enrollment row) of their own.
+        self._active_binding_snapshot = dict(self.bindings_by_uid)
+        self._active_profile_generation_snapshot = dict(self.profile_generations)
         # Bind every context/receipt/grant to this daemon epoch. The signing
         # key intentionally survives service restarts, but replay tables do
         # not; changing this host-derived enrollment digest makes old signed
@@ -269,6 +274,7 @@ class AuthorityService:
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
         self.service_generation_digest = service_generation_digest
+        self.root_runtime_bindings = None
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -298,6 +304,22 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def attach_root_runtime_bindings(self, bindings: Any) -> None:
+        """Attach the exact typed root composition used to resolve active rows."""
+        from .runtime_bindings import RootRuntimeBindings
+
+        if (self.root_runtime_bindings is not None
+                or type(bindings) is not RootRuntimeBindings
+                or getattr(getattr(bindings, "enrollment_catalog", None), "digest", None)
+                != self.service_generation_digest
+                or (self.process_effect_handler is not None
+                    and bindings.process_manager is not self.process_effect_handler)
+                or len(bindings.protected_principal_bindings) != len(self.bindings_by_uid)
+                or any(all(item is not current for item in bindings.protected_principal_bindings)
+                       for current in self.bindings_by_uid.values())):
+            raise AuthorityDenied("authority.composition", "root runtime binding is not this active protected generation")
+        self.root_runtime_bindings = bindings
 
     def revoke_source_handle(self, handle: Any) -> bool:
         """Revoke and scrub one root-retained source handle in-process only.
@@ -2693,6 +2715,63 @@ class AuthorityService:
         if binding is None:
             raise AuthorityDenied("principal.unenrolled", "kernel peer UID has no enrolled profile")
         return binding
+
+    def resolve_current_active_principal_binding(self, profile_id: str) -> PrincipalBinding:
+        """Resolve a profile selector only against this daemon's protected activation.
+
+        Root TTY/setup choice registries use this in-process lookup while minting
+        current profile-choice receipts. The profile ID is only a selector: the
+        caller cannot supply identity fields, a PrincipalBinding, a filesystem
+        path, or an enrollment row. A prepared setup generation is not active
+        because it has no service generation digest and no enrolled binding.
+        """
+        if (not isinstance(profile_id, str) or not 1 <= len(profile_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in profile_id)):
+            raise AuthorityDenied("principal.selection", "active profile selector is malformed")
+        digest = self.service_generation_digest
+        if digest is None or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise AuthorityDenied("principal.selection", "no committed active service generation is loaded")
+        if (set(self.bindings_by_uid) != set(self._active_binding_snapshot)
+                or any(self.bindings_by_uid.get(uid) is not binding
+                       for uid, binding in self._active_binding_snapshot.items())
+                or self.profile_generations != self._active_profile_generation_snapshot):
+            raise AuthorityDenied("principal.selection", "protected active enrollment changed after service construction")
+        generation = self.profile_generations.get(profile_id)
+        if not isinstance(generation, str) or not generation:
+            raise AuthorityDenied("principal.selection", "profile has no active protected generation")
+        matches = [binding for binding in self._active_binding_snapshot.values()
+                   if type(binding) is PrincipalBinding and binding.profile_id == profile_id]
+        if len(matches) != 1:
+            raise AuthorityDenied("principal.selection", "active profile has no unique protected principal binding")
+        binding = matches[0]
+        if (self.bindings_by_uid.get(binding.uid) is not binding
+                or binding.uid <= 0 or not binding.principal_id or not binding.namespace_id):
+            raise AuthorityDenied("principal.selection", "active principal binding is no longer current")
+        runtime = getattr(self, "root_runtime_bindings", None)
+        from .runtime_bindings import RootRuntimeBindings
+        catalog = getattr(runtime, "enrollment_catalog", None)
+        if (type(runtime) is not RootRuntimeBindings
+                or catalog is None or getattr(catalog, "digest", None) != digest
+                or not callable(getattr(catalog, "resolve_profile_generation", None))):
+            raise AuthorityDenied("principal.selection", "active protected service catalog is unavailable")
+        try:
+            selected = catalog.resolve_profile_generation(profile_id, generation)
+        except Exception:
+            raise AuthorityDenied("principal.selection", "profile generation is not in the active protected catalog") from None
+        if (getattr(selected, "profile_id", None) != binding.profile_id
+                or getattr(selected, "generation", None) != generation
+                or getattr(selected, "service_uid", None) != binding.uid
+                or getattr(selected, "principal_id", None) != binding.principal_id
+                or getattr(selected, "namespace_identity", None) != binding.namespace_id):
+            raise AuthorityDenied("principal.selection", "active service row differs from the protected principal binding")
+        return binding
+
+    def current_authority_policy_revision(self) -> str:
+        """Return the current root policy revision for in-process choice receipts."""
+        revision = self._policy_revision()
+        if not isinstance(revision, str) or not revision:
+            raise AuthorityDenied("policy.selection", "active root policy revision is unavailable")
+        return revision
 
     def _issue_context(self, uid: int, payload: Any, *, allow_expired_sources: bool = False,
                        peer_pid: int | None = None,
