@@ -156,8 +156,8 @@
     "raw_outputs_copied": false
   },
   "supersedes": {
-    "prior_observation": "The 2026-10-10T07:17:38Z sudo -n result was exit 1 and password-required before user enablement; sudo was temporarily available at 08:50:36Z and 08:51:02Z, then unavailable noninteractively at 09:16:45Z and again at 09:48:11Z.",
-    "scope": "The later 2026-10-10T09:48:11Z check returned password-required, so noninteractive sudo was unavailable at that time despite the user's reported enablement. These observations do not alter acceptance state."
+    "prior_observation": "The 2026-10-10T07:17:38Z sudo -n result was exit 1 and password-required before user enablement; sudo was temporarily available at 08:50:36Z and 08:51:02Z, then unavailable noninteractively at 09:16:45Z and again at 09:48:11Z after the latest user-reported enablement.",
+    "scope": "The 2026-10-10T09:48:11Z check was the fresh check after the latest user-reported enablement and returned password-required. It is the latest measured privilege state in this record; no later enablement or check is claimed. These observations do not alter acceptance state."
   },
   "acceptance_assertions": {
     "AC01": null,
