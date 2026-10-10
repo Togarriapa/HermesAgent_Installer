@@ -1103,6 +1103,7 @@ class NativeInvocationRegistry:
                 response = self._responses.get(row.response_handle)
                 if (row.effect_result_consumed or row.expires_monotonic <= self.monotonic()
                         or response is None or response.turn_handle is None
+                        or row.operation != operation
                         or row.producer_identity.kernel_uid != context.uid
                         or row.profile_id != context.profile_id
                         or row.generation != context.generation
