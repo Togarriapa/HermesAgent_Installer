@@ -424,6 +424,80 @@ class RootNativeInputObserver:
             raise AuthorityDenied("native.input.health_event", "health input PIDFD or loaded source changed") from None
         return event
 
+    def resolve_completed_health_event(
+            self, input_event_id: str, health_observation_handle: str,
+            completed_terminal_proof: Any) -> RootNativeInputEvent:
+        """Revalidate retained input custody after the exact worker has exited.
+
+        The manager proof supplies the process identity observed while it was
+        live and binds it to verified cleanup. This checks the original event,
+        receipt, capsule, source enrollment and loaded-package proof identity
+        without attempting to resolve a dead PIDFD.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        if (not _opaque(input_event_id) or not _opaque(health_observation_handle)
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True):
+            raise AuthorityDenied("native.input.health_event", "completed health proof is unavailable")
+        proof = completed_terminal_proof
+        with self._lock:
+            event = self._events.get(input_event_id)
+            source = self._health_event_sources.get(input_event_id)
+        now = self.monotonic()
+        identity = proof.process_identity
+        if (type(event) is not RootNativeInputEvent or source is None
+                or source[0] != health_observation_handle or source[1] != identity
+                or event.expires_monotonic <= now or event.input_origin_kind != "selected-health-fixture"
+                or event.producer_profile_id != proof.profile_id
+                or event.producer_generation != proof.process_generation):
+            raise AuthorityDenied("native.input.health_event", "completed input event is stale or foreign")
+        with self.service._lock:
+            receipt = self.service._source_receipt_handles.get(event.source_receipt_handle)
+        if (receipt is None or receipt.profile_id != event.producer_profile_id
+                or receipt.process_generation != event.producer_generation
+                or event.expires_monotonic > receipt.monotonic_expires_at):
+            raise AuthorityDenied("native.input.health_event", "completed input receipt changed")
+        try:
+            with self.source_observers._lock:
+                capsule_rows = tuple(
+                    row for row in self.source_observers._payload_capsules.values()
+                    if row[0] is receipt and row[3] == self.service.authority_epoch
+                    and row[1].expires_monotonic > now
+                )
+                binding = self.source_observers._receipt_process_bindings.get(receipt.receipt_id)
+            if (len(capsule_rows) != 1
+                    or hashlib.sha256(bytes(capsule_rows[0][2])).hexdigest() != event.payload_sha256
+                    or len(capsule_rows[0][2]) != event.payload_size_bytes
+                    or canonical_digest(bytes(capsule_rows[0][2])) != receipt.payload_digest
+                    or binding is None or binding.handle != event.source_receipt_handle
+                    or binding.identity != identity or binding.pid != proof.process_pid
+                    or binding.profile_id != proof.profile_id
+                    or binding.generation != proof.process_generation
+                    or binding.expires != receipt.monotonic_expires_at
+                    or binding.authority_epoch != self.service.authority_epoch):
+                raise ValueError
+            observer = self.source_observers.observers.get(binding.observer_enrollment_id)
+            loaded = binding.loaded_package_proof
+            if (observer is None or observer.source_kind != "native-input"
+                    or observer.profile_id != proof.profile_id
+                    or observer.generation != proof.process_generation
+                    or getattr(loaded, "proof_id", None) != proof.loaded_package_proof_id
+                    or getattr(loaded, "process_id", None) != proof.process_id
+                    or getattr(loaded, "package_id", None) != proof.source_material.native_package_id
+                    or getattr(loaded, "compiled_closure_sha256", None)
+                       != proof.source_material.native_closure_sha256
+                    or getattr(loaded, "service_generation_digest", None)
+                       != proof.service_generation_digest
+                    or loaded.expires_monotonic <= now
+                    or loaded.loader_ready_event_id != proof.loader_ready_event_id):
+                raise ValueError
+            self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            if completed_terminal_proof.is_current() is not True:
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("native.input.health_event", "completed input receipt or source custody changed") from None
+        return event
+
     def record_selected_health_input(self, health_observation_handle: str,
                                      owned_process_handle: Any,
                                      selected_fixture_artifact_id: str) -> RootNativeInputEvent:

@@ -1714,6 +1714,150 @@ class SourceObserverRegistry:
         except Exception:
             raise AuthorityDenied("source.owner_overlay_health", "current tool result or source ancestry changed") from None
 
+
+    def resolve_completed_owner_overlay_health_result(
+            self, completion: Any, completed_terminal_proof: Any) -> RootCurrentOwnerOverlayHealthResult:
+        """Reopen a retained health result after manager-verified process cleanup.
+
+        Receipt, CAS, signed owner-source and process-binding records are
+        revalidated against the manager's frozen pre-stop identity. No live
+        process resolver is consulted after the worker has been reaped.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .local_resource_effects import (
+            RootSelectedOwnerOverlayHealthResult, RootActiveOwnerOverlayRegistry,
+            _OWNER_OVERLAY_HEALTH_RESULT_SEAL,
+        )
+        import base64
+        from .types import strict_json_loads
+        active = getattr(self.service, "active_owner_overlay_registry", None)
+        if (type(completion) is not RootSelectedOwnerOverlayHealthResult
+                or completion._seal is not _OWNER_OVERLAY_HEALTH_RESULT_SEAL
+                or type(active) is not RootActiveOwnerOverlayRegistry
+                or completion._issuer._registry is not active
+                or completion.selection is not completion.invocation.owner_invocation.source_observer.selection
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True
+                or completion.expires_monotonic <= self.service.monotonic()):
+            raise AuthorityDenied("source.owner_overlay_health", "completed owner result proof is required")
+        proof = completed_terminal_proof
+        try:
+            invocation = completion.invocation
+            if (invocation.owner_invocation.producer_identity != proof.process_identity
+                    or invocation.owner_invocation.producer_pid != proof.process_pid
+                    or invocation.owner_invocation.response.request_context.service_generation_digest
+                       != proof.service_generation_digest):
+                raise ValueError
+            verify_source = getattr(active, "verify_completed_health_source_observer", None)
+            if not callable(verify_source):
+                raise ValueError
+            verify_source(invocation.owner_invocation.source_observer, proof)
+            result_observer = active.resolve_current_result_source_observer(
+                completion.selection, invocation.owner_invocation.source_observer)
+            journal = active._effect_journal()
+            with journal._lock:
+                completion_rows = tuple(journal._connection.execute(
+                    "SELECT nonce,invocation_handle,registration_id,arguments_sha256,adoption_sha256,"
+                    "result_sha256,result_receipt_handle FROM owner_overlay_effect_completions "
+                    "WHERE invocation_handle=?", (completion.invocation_handle,),
+                ).fetchall())
+            if len(completion_rows) != 1:
+                raise ValueError
+            nonce, invocation_handle, registration_id, args_sha, adoption_sha, result_sha, result_handle = completion_rows[0]
+            if (invocation_handle != completion.invocation_handle
+                    or registration_id != "resource-overlay-store:tool:resource_overlay_read"
+                    or args_sha != hashlib.sha256(invocation.owner_invocation.canonical_arguments).hexdigest()
+                    or adoption_sha != completion.selection.adoption_sha256
+                    or result_sha != completion.result_sha256
+                    or result_handle != completion.result_receipt_handle):
+                raise ValueError
+            with journal._lock:
+                by_nonce = journal._connection.execute(
+                    "SELECT invocation_handle,registration_id,arguments_sha256,adoption_sha256,result_sha256 "
+                    "FROM owner_overlay_effect_completions WHERE nonce=?", (nonce,),
+                ).fetchone()
+            if by_nonce != (invocation_handle, registration_id, args_sha, adoption_sha, result_sha):
+                raise ValueError
+            handle = completion.result_receipt_handle
+            now = self.service.monotonic()
+            with self._lock:
+                entry = self._payload_capsules.get(handle)
+                delivery = self._receipt_delivery_bindings.get(handle)
+            if entry is None or delivery is None:
+                raise ValueError
+            receipt, capsule, payload_buffer, epoch = entry
+            payload = bytes(payload_buffer)
+            with self.service._lock:
+                held_receipt = self.service._source_receipt_handles.get(handle)
+                parent_receipts = tuple(
+                    self.service._source_receipt_handles.get(parent)
+                    for parent in completion.parent_source_receipt_handles
+                )
+            if (held_receipt is not receipt or epoch != self.service.authority_epoch
+                    or delivery.authority_epoch != self.service.authority_epoch
+                    or receipt.monotonic_expires_at <= now or delivery.expires <= now
+                    or capsule.expires_monotonic <= now
+                    or capsule.observer_enrollment_id
+                       != result_observer.observer_row["result_observer_enrollment_id"]
+                    or capsule.source_kind != "tool-result"
+                    or capsule.capture_schema_id != "native-owner-overlay-result-v1"
+                    or capsule.source_action_id != "registered-tool-result"
+                    or receipt.source_kind != "tool-result"
+                    or receipt.payload_digest != capsule.payload_sha256
+                    or hashlib.sha256(payload).hexdigest() != capsule.payload_sha256
+                    or capsule.parent_receipt_ids != receipt.parent_receipt_ids
+                    or tuple(completion.parent_source_receipt_handles)
+                       != tuple(invocation.owner_invocation.parent_source_receipt_handles)
+                    or tuple(completion.parent_source_receipt_handles)
+                       != tuple(dict.fromkeys(completion.parent_source_receipt_handles))
+                    or any(parent is None for parent in parent_receipts)):
+                raise ValueError
+            self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            binding = self._receipt_process_bindings.get(receipt.receipt_id)
+            if (binding is None or binding.handle != handle
+                    or binding.identity != proof.process_identity
+                    or binding.pid != proof.process_pid
+                    or binding.profile_id != proof.profile_id
+                    or binding.generation != proof.process_generation):
+                raise ValueError
+            if (capsule.parent_receipt_ids
+                    != tuple(sorted(parent.receipt_id for parent in parent_receipts))):
+                raise ValueError
+            value = strict_json_loads(payload.decode("utf-8", errors="strict"))
+            if (type(value) is not dict
+                    or set(value) != {"schema", "invocation_handle", "registration_id",
+                                      "result_schema_id", "result_sha256", "canonical_result_b64",
+                                      "parent_source_receipt_handles"}
+                    or value["schema"] != 1
+                    or value["invocation_handle"] != completion.invocation_handle
+                    or value["registration_id"] != "resource-overlay-store:tool:resource_overlay_read"
+                    or value["result_schema_id"] != "native-owner-overlay-result-v1"
+                    or value["result_sha256"] != completion.result_sha256
+                    or value["parent_source_receipt_handles"]
+                       != list(completion.parent_source_receipt_handles)
+                    or json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=False, allow_nan=False).encode("utf-8") != payload):
+                raise ValueError
+            result_payload = base64.b64decode(value["canonical_result_b64"], validate=True)
+            if hashlib.sha256(result_payload).hexdigest() != completion.result_sha256:
+                raise ValueError
+            by_handle = dict(zip(completion.parent_source_receipt_handles,
+                                 parent_receipts, strict=True))
+            ordered_handles = tuple(sorted(by_handle, key=lambda item: by_handle[item].receipt_id))
+            ordered_ids = tuple(by_handle[item].receipt_id for item in ordered_handles)
+            if (len(ordered_ids) != len(set(ordered_ids))
+                    or tuple(sorted(ordered_ids)) != capsule.parent_receipt_ids
+                    or proof.is_current() is not True):
+                raise ValueError
+            return RootCurrentOwnerOverlayHealthResult(
+                handle, receipt, capsule, payload, result_payload, completion.result_sha256,
+                ordered_handles, ordered_ids, self, completion,
+            )
+        except Exception:
+            raise AuthorityDenied(
+                "source.owner_overlay_health", "completed tool result or ancestry changed",
+            ) from None
+
     def capture_observed_ingress(self, observer_enrollment_id: str, *,
                                  payload_bytes: bytes, parent_context: HostContext,
                                  peer_pid: int, peer_pidfd: int,

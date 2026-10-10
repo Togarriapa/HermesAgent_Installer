@@ -1540,6 +1540,134 @@ class NativeInvocationRegistry:
             if callable(retire) and locals().get("current") is not None:
                 retire(current.selection.selection_handle)
 
+    def resolve_completed_health_owner_invocation(
+            self, selected: RootSelectedHealthOwnerInvocation,
+            request_projection: Any, input_event: Any,
+            completed_terminal_proof: Any) -> RootSelectedHealthOwnerInvocation:
+        """Revalidate a retained health call after its selected worker exited.
+
+        This deliberately avoids process-resolver/PIDFD lookups. The manager's
+        current postmortem proof supplies the exact pre-stop identity, while
+        this registry reopens the retained provider response, consumed call,
+        receipt ancestry, and signed owner source selector.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .native_request_observation import (
+            RootSelectedHealthNativeRequest, NativeRequestObservationRegistry,
+        )
+        from .native_input_observer import RootNativeInputEvent
+        if (type(selected) is not RootSelectedHealthOwnerInvocation
+                or selected._registry is not self
+                or selected._issuer is not self._health_selection_issuer
+                or type(request_projection) is not RootSelectedHealthNativeRequest
+                or type(request_projection._registry) is not NativeRequestObservationRegistry
+                or type(input_event) is not RootNativeInputEvent
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True):
+            raise AuthorityDenied("native.health.invocation", "completed exact invocation proof is required")
+        proof = completed_terminal_proof
+        row = selected.owner_invocation
+        response = selected.provider_response
+        observation = request_projection.observation
+        identity = proof.process_identity
+        if (type(row) is not RootNativeOwnerOverlayInvocation
+                or row._seal is not _OWNER_OVERLAY_INVOCATION_SEAL
+                or row._issuer is not self
+                or row.producer_identity != identity
+                or row.producer_pid != proof.process_pid
+                or row.native_request_handle != observation.native_request_handle
+                or row.registration_id != "resource-overlay-store:tool:resource_overlay_read"
+                or row.method != "read"
+                or row.expires_monotonic <= self.monotonic()
+                or input_event.source_receipt_handle not in observation.parent_source_receipt_handles
+                or (identity.profile_id, identity.generation, identity.kernel_uid)
+                   != (proof.profile_id, proof.process_generation, proof.process_uid)
+                or proof.service_generation_digest != proof.control.service_generation_digest
+                or observation.producer_profile_id != proof.profile_id
+                or observation.producer_process_generation != proof.process_generation
+                or observation.native_package_generation != proof.admission.native_package_generation
+                or proof.is_current() is not True):
+            raise AuthorityDenied("native.health.invocation", "retained invocation no longer joins completed process")
+        try:
+            request_projection._registry.resolve_completed_health_request_for_input(
+                request_projection, input_event, proof,
+            )
+            with self._lock:
+                self._ensure_open()
+                self._prune_locked(self.monotonic())
+                retained = self._owner_overlay_invocations.get(row.invocation_handle)
+                consumed = row.invocation_handle in self._owner_overlay_consumed
+                current_response = self._responses.get(row.response_observation_handle)
+            with self.service._lock:
+                receipt_rows = tuple(
+                    self.service._source_receipt_handles.get(handle)
+                    for handle in row.parent_source_receipt_handles
+                )
+            if (retained is not row or not consumed or current_response is not response
+                    or response is not row.response
+                    or response.handle != row.response_observation_handle
+                    or response.native_request_handle != observation.native_request_handle
+                    or response.producer_identity != identity
+                    or response.producer_pid != proof.process_pid
+                    or response.profile_id != proof.profile_id
+                    or response.generation != proof.process_generation
+                    or response.package_id != proof.source_material.native_package_id
+                    or response.native_package_generation != proof.admission.native_package_generation
+                    or response.request_context.service_generation_digest != proof.service_generation_digest
+                    or response.metadata_taken is not True
+                    or response.expires_monotonic <= self.monotonic()
+                    or hashlib.sha256(response.response_bytes).hexdigest() != response.response_digest
+                    or response.response_status < 200 or response.response_status >= 300
+                    or input_event.source_receipt_handle not in response.receipt_handles
+                    or len(receipt_rows) != len(row.parent_source_receipt_handles)
+                    or any(receipt is None for receipt in receipt_rows)):
+                raise ValueError
+            args = _strict_native_json(row.canonical_arguments)
+            canonical_args = json.dumps(args, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (type(args) is not dict or args != {"record_id": "hermes-health-probe-v1"}
+                    or canonical_args != row.canonical_arguments
+                    or hashlib.sha256(canonical_args).hexdigest() != row.arguments_sha256
+                    or row.parent_source_receipt_handles
+                       != response.receipt_handles + (row.invocation_source_receipt_handle,)
+                    or row.invocation_source_receipt_handle not in row.parent_source_receipt_handles):
+                raise ValueError
+            by_handle = dict(zip(row.parent_source_receipt_handles, receipt_rows, strict=True))
+            for receipt in by_handle.values():
+                self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            unique_handles = tuple(sorted(by_handle, key=lambda handle: by_handle[handle].receipt_id))
+            unique_ids = tuple(by_handle[handle].receipt_id for handle in unique_handles)
+            if (len(unique_ids) != len(set(unique_ids))
+                    or unique_handles != selected.source_receipt_handles
+                    or unique_ids != selected.source_receipt_ids):
+                raise ValueError
+            active = getattr(self.service, "active_owner_overlay_registry", None)
+            verify_source = getattr(active, "verify_completed_health_source_observer", None)
+            if not callable(verify_source):
+                raise ValueError
+            verify_source(row.source_observer, proof)
+            with self.service._lock:
+                provider_by_handle = {
+                    handle: self.service._source_receipt_handles.get(handle)
+                    for handle in response.receipt_handles
+                }
+            if any(receipt is None for receipt in provider_by_handle.values()):
+                raise ValueError
+            provider_handles = tuple(sorted(
+                response.receipt_handles,
+                key=lambda handle: provider_by_handle[handle].receipt_id,
+            ))
+            provider_ids = tuple(provider_by_handle[h].receipt_id for h in provider_handles)
+            if (provider_handles != selected.provider_source_receipt_handles
+                    or provider_ids != selected.provider_source_receipt_ids
+                    or proof.is_current() is not True):
+                raise ValueError
+            return selected
+        except Exception:
+            raise AuthorityDenied(
+                "native.health.invocation", "retained provider/call/source ancestry changed after cleanup",
+            ) from None
+
     def verify_current_health_owner_invocation(
             self, selected: RootSelectedHealthOwnerInvocation, input_event: Any, *,
             peer_uid: int, peer_pid: int, peer_pidfd: int,

@@ -2209,6 +2209,133 @@ class RootActiveOwnerOverlayRegistry:
                 "owner-overlay signed observer, held capture schemas or loaded source role is unavailable",
             ) from None
 
+    def verify_completed_health_source_observer(
+            self, source_observer: RootActiveOwnerOverlaySourceObserver,
+            completed_terminal_proof: Any) -> RootActiveOwnerOverlaySourceObserver:
+        """Revalidate the retained signed owner observer after worker cleanup.
+
+        This path uses the manager's exact pre-stop process identity and active
+        committed publication. It reopens publication, owner rows, package
+        closure and the pinned source module, but never resolves the dead PID.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .setup_policy_publication import PolicyPublicationReceiptResolver, validate_owner_overlay_adoption_row
+        from .installer_release import InstalledRootReleaseVerifier
+        from .owner_overlay_capture_schemas import CAPTURE_SCHEMAS, INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID
+        selection = getattr(source_observer, "selection", None)
+        if (type(source_observer) is not RootActiveOwnerOverlaySourceObserver
+                or source_observer._seal is not _ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL
+                or source_observer._issuer is not self
+                or type(selection) is not RootActiveOwnerOverlayInvocationSelection
+                or selection._issuer is not self or selection._seal is not _ACTIVE_OWNER_OVERLAY_SELECTION_SEAL
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True
+                or self._closed or selection.expires_monotonic <= time.monotonic()
+                or self._selections.get(selection.selection_handle) is not selection
+                or selection.peer_pid != completed_terminal_proof.process_pid
+                or selection.process_identity != completed_terminal_proof.process_identity
+                or selection.principal_snapshot.profile_id != completed_terminal_proof.profile_id
+                or selection.principal_snapshot.profile_generation != completed_terminal_proof.process_generation
+                or selection.principal_snapshot.service_generation_digest
+                   != completed_terminal_proof.service_generation_digest
+                or selection.package_id != completed_terminal_proof.source_material.native_package_id
+                or selection.package_generation != completed_terminal_proof.source_material.native_package_generation):
+            raise LocalProfileOverlayEffectsDenied("completed worker proof does not match retained owner source")
+        try:
+            selection.principal_snapshot.verify_current(self._principals)
+            publication = PolicyPublicationReceiptResolver.resolve_current()
+            if (publication.state != "active-committed"
+                    or publication.receipt_handle
+                       != selection.principal_snapshot.active_publication_receipt_handle
+                    or publication.service_generation_digest
+                       != selection.principal_snapshot.service_generation_digest):
+                raise ValueError
+            adoptions = tuple(
+                validate_owner_overlay_adoption_row(item)
+                for item in publication.owner_overlay_adoption_records
+            )
+            matches = tuple(row for row in adoptions
+                            if row["adoption_sha256"] == selection.adoption_sha256)
+            if len(matches) != 1:
+                raise ValueError
+            adoption = matches[0]
+            operations = tuple(row for row in adoption["operation_records"]
+                               if row["registration_id"] == selection.registration_id)
+            observers = tuple(row for row in adoption["owner_overlay_observer_records"]
+                              if row["registration_id"] == selection.registration_id)
+            package = self._runtime.bindings.resolve_native_package(
+                adoption["native_package"]["package_id"], adoption["native_package"]["generation"],
+            )
+            package_ops = getattr(package, "owner_overlay_operation_records", None)
+            if (len(operations) != 1 or dict(operations[0]) != dict(selection.operation_record)
+                    or len(observers) != 1 or dict(observers[0]) != dict(source_observer.observer_row)
+                    or package.profile_id != completed_terminal_proof.profile_id
+                    or package.generation != completed_terminal_proof.process_generation
+                    or package.package_id != completed_terminal_proof.source_material.native_package_id
+                    or not isinstance(package_ops, Mapping)
+                    or _canonical([dict(item) for _, item in sorted(package_ops.items())])
+                       != _canonical(adoption["operation_records"])):
+                raise ValueError
+            observer_row = observers[0]
+            enrolled = self._runtime.service.source_observer_registry
+            source_row = getattr(enrolled, "observers", {}).get(observer_row["observer_enrollment_id"])
+            if (source_row is None or source_row.source_kind != "provider-result"
+                    or source_row.observer_enrollment_id != observer_row["observer_enrollment_id"]
+                    or source_row.profile_id != observer_row["profile_id"]
+                    or source_row.principal_id != observer_row["principal_id"]
+                    or source_row.namespace_id != observer_row["namespace_id"]
+                    or source_row.generation != observer_row["profile_generation"]
+                    or source_row.package_id != observer_row["package_id"]
+                    or source_row.native_package_generation != observer_row["package_generation"]
+                    or source_row.role_sha256 != observer_row["role_sha256"]
+                    or source_row.role_source_receipt_handle != observer_row["role_source_receipt_handle"]
+                    or source_row.role_module_name != observer_row["role_module_name"]
+                    or source_row.role_closure_member_path != observer_row["role_closure_member_path"]
+                    or source_row.role_source_tree_sha256 != observer_row["role_source_tree_sha256"]):
+                raise ValueError
+            release = InstalledRootReleaseVerifier.verify_installed_release()
+            try:
+                source = release.resolve_reviewed_source_module(
+                    "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
+                )
+                fd = release.open_file(source.artifact_id)
+                try:
+                    chunks = []
+                    remaining = source.size_bytes
+                    while remaining:
+                        block = os.read(fd, min(65_536, remaining))
+                        if not block:
+                            raise ValueError
+                        chunks.append(block)
+                        remaining -= len(block)
+                    source_bytes = b"".join(chunks)
+                finally:
+                    os.close(fd)
+                member_rows = tuple(row for row in adoption["source_members"]
+                                    if row["role"] == "owner-overlay-capture-schema-source"
+                                    and row["artifact_id"] == source.artifact_id)
+                if (release.release_commit != source_observer.release_commit
+                        or len(member_rows) != 1 or member_rows[0]["sha256"] != source.sha256
+                        or member_rows[0]["relative_path"] != source.relative_path
+                        or hashlib.sha256(source_bytes).hexdigest() != source.sha256):
+                    raise ValueError
+                for schema_id in (INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID):
+                    schema_bytes, schema_digest = CAPTURE_SCHEMAS[schema_id]
+                    if not schema_bytes or hashlib.sha256(schema_bytes).hexdigest() != schema_digest:
+                        raise ValueError
+                if (source_observer.capture_schemas != CAPTURE_SCHEMAS
+                        or completed_terminal_proof.is_current() is not True):
+                    raise ValueError
+            finally:
+                release.close()
+            return source_observer
+        except LocalProfileOverlayEffectsDenied:
+            raise
+        except Exception:
+            raise LocalProfileOverlayEffectsDenied(
+                "completed owner observer no longer matches signed publication or held release",
+            ) from None
+
     def resolve_provider_tool_call(self, tool_name: str, peer_pid: int, peer_pidfd: int,
                                    package_id: str, profile_id: str, generation: str,
                                    package_generation: str, arguments: bytes
