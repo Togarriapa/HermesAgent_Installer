@@ -187,5 +187,13 @@
       "native_request_handle": "retained exact pending request correlation string, root-only",
       "canonical_request_bytes": "actual retained immutable bytes, SHA/size equal record; root-only"
     }
+  },
+  "private_input_recipient_ceiling": {
+    "schema": 1,
+    "API": "AuthorityService.issue_selected_input_source(observed_input_proof,selected_input_binding)->SourceReceipt root-private; uses existing root observed input proof/issuer, not worker bytes/role claims.",
+    "selection": "Selected input binding references exact current source_issuer enrollment, principal/profile/generation, source/consent receipt and protected provider route IDs. Root resolves only private route enrollments authorized for this input and zero additional metered budget. Exact recipients tuple is sorted unique actual enrollment recipients; never infer private eligibility from a hostname/model/body/worker flag.",
+    "field": "source_issuers.private_provider_route_ids optional finite unique protected provider enrollment IDs; active snapshot digest covered. No field means empty recipient ceiling. Each route must match selected profile/principal and current private classification/sensitivity/capability policy. Existing source_issuer recipient/target fields still independently enforced.",
+    "inheritance": "New observed input receipt ceiling is intersection of current selected private route recipients, actual consent recipient restrictions, and every retained parent source ceiling. Genuine new root ingress with no parent starts from explicit selected private route+consent ceilings, never unconstrained empty-parent wildcard. Unknown/private classification stays; public capability needs separate original authorized route/source permission. Root request observation preserves every source receipt and ceiling.",
+    "evidence": "Actual private native input dispatch under exact enrolled recipient, empty/missing/cross-profile/public route/changed consent/parent ceiling widening denied; no source provenance upgrade."
   }
 }
