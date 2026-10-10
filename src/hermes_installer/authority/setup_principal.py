@@ -742,7 +742,8 @@ class RootSetupPrincipalSelectionRegistry:
         _validate_identity_receipt(identity, authenticated_identity_receipt_handle)
         selected = self.capability_selection.select_for_identity(
             identity, _capability_authorization(proof))
-        _validate_capability_selection(selected)
+        _validate_capability_selection(
+            selected, allow_empty=proof.phase == "initial-compilation")
         now = time.monotonic()
         expires = min(now + SELECTION_RECEIPT_TTL_SECONDS,
                       proof.expires_monotonic, identity.expires_monotonic)
@@ -787,12 +788,26 @@ class RootSetupPrincipalSelectionRegistry:
             raise BootstrapEnrollmentPending("selected Authentik identity lease changed")
         selected = self.capability_selection.select_for_identity(
             identity, _capability_authorization(proof))
-        _validate_capability_selection(selected)
+        _validate_capability_selection(
+            selected, allow_empty=proof.phase == "initial-compilation")
         if (selected.service_profile_id != receipt.service_profile_id
                 or selected.namespace_id != receipt.namespace_id
                 or tuple(selected.capabilities) != receipt.capabilities):
             raise BootstrapEnrollmentPending("reviewed principal capability selection changed")
         return receipt
+
+    def resolve_reviewed_capability_selection(
+        self, current_identity_receipt_handle: str,
+        selected_effect_policy_receipt_handle: str,
+    ) -> Any:
+        """Resolve only a live selector-issued map/effect intersection receipt."""
+        resolver = getattr(self.capability_selection,
+                           "resolve_reviewed_capability_selection", None)
+        if not callable(resolver):
+            raise BootstrapEnrollmentPending(
+                "root-reviewed capability selector does not expose sealed receipt resolution")
+        return resolver(current_identity_receipt_handle,
+                        selected_effect_policy_receipt_handle)
 
     def adopt_initial_publication(
         self, *, normal_session_store: RootSetupSessionStore,
@@ -1224,11 +1239,13 @@ def _validate_identity_receipt(receipt: AuthentikIdentityReceipt, receipt_id: st
         raise BootstrapEnrollmentPending("Authentik identity receipt is malformed")
 
 
-def _validate_capability_selection(value: ReviewedPrincipalCapabilities) -> None:
+def _validate_capability_selection(value: ReviewedPrincipalCapabilities, *,
+                                   allow_empty: bool = False) -> None:
     if (not isinstance(value, ReviewedPrincipalCapabilities)
             or not _ID.fullmatch(value.service_profile_id)
             or not _ID.fullmatch(value.namespace_id)
-            or not isinstance(value.capabilities, tuple) or not 1 <= len(value.capabilities) <= 64
+            or not isinstance(value.capabilities, tuple)
+            or not (0 if allow_empty else 1) <= len(value.capabilities) <= 64
             or any(not _ID.fullmatch(item) for item in value.capabilities)
             or len(set(value.capabilities)) != len(value.capabilities)):
         raise BootstrapEnrollmentPending("root-reviewed setup capabilities are absent or malformed")
@@ -1246,7 +1263,7 @@ def _validate_selection_receipt(receipt: VerifiedRootSetupPrincipalSelection, re
             or not _CREDENTIAL_REF.fullmatch(receipt.actor_credential_ref)
             or receipt.principal_id != "authentik:" + hashlib.sha256(receipt.authentik_subject_id.encode()).hexdigest()
             or not _ID.fullmatch(receipt.service_profile_id) or not _ID.fullmatch(receipt.namespace_id)
-            or not isinstance(receipt.capabilities, tuple) or not 1 <= len(receipt.capabilities) <= 64
+            or not isinstance(receipt.capabilities, tuple) or not 0 <= len(receipt.capabilities) <= 64
             or any(not _ID.fullmatch(item) for item in receipt.capabilities)
             or len(set(receipt.capabilities)) != len(receipt.capabilities)
             or not _HANDLE.fullmatch(receipt.identity_receipt_handle)
