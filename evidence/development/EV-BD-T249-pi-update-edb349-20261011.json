@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "change": "installer-bootstrap-desktop",
+  "tasks": ["BD-T249.1", "LC-T249.2", "VD-T249.3"],
+  "candidate_git_sha": "edb3493867a26974d01c057c705711f14eea0d64",
+  "target": "authorized Raspberry Pi Connect root shell",
+  "target_execution": {
+    "source_update_reached_exact_candidate_prompt": true,
+    "candidate_selected": true,
+    "failure": "NameError: MAX_RECEIPT_BYTES is not defined in _verify_update_predecessor_snapshot",
+    "published_candidate_after_failure": false,
+    "current_pointer_git_sha_after_failure": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "current_pointer_sha256_after_failure": "4fb20b47f759986696cb23ee9752c04a08a91e43bbc0025990c1b14062f5ee9e",
+    "current_pointer_size_bytes": 542,
+    "current_pointer_matches_before": true
+  },
+  "host_contracts": {"passed": 2030, "skipped": 163, "excluded": 0, "runtime_acceptance": false},
+  "fix_commit": "16275bfde7bb7d6de3a98b814cebc7dc90727df2",
+  "fix_review": {
+    "changes": "Import existing receipt-size bound and protected pointer reader at the snapshot boundary",
+    "root_focused_contracts_passed": 75,
+    "root_focused_contracts_skipped": 13,
+    "genuine_arm64_fixture": "Old cc81 installed release; TTY selects published edb349; local launcher passes both missing imports but re-executes immutable published source and ends with InstallerReleaseBuildError; predecessor pointer retained"
+  },
+  "acceptance": "open",
+  "limitations": ["No successful Pi candidate update yet", "No live Desktop, model conversation, Gateway or installer-managed tunnel acceptance", "Source/journal staging may have occurred; unchanged pointer does not imply zero writes"]
+}

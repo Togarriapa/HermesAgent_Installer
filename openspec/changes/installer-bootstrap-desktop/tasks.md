@@ -353,3 +353,5 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 - [x] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
 - [x] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
 - [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.
+
+Actual edb349 Pi update evidence: `evidence/development/EV-BD-T249-pi-update-edb349-20261011.json`. Historical verification reached the candidate prompt; snapshot verification then failed on a missing import. Current pointer remained cc81. Bounded fix16275bf passed75 root-focused contracts/13 skips; actual published-candidate Pi update and VD-T249.3 remain OPEN.
