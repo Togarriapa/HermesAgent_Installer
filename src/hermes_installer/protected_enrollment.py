@@ -1365,7 +1365,7 @@ class FixedBuildOutputSpec:
     relative_path: str
     kind: str
     maximum_bytes: int
-    executable_role: str
+    executable_role: str | None
     target_facts: Mapping[str, Any]
 
 
@@ -1446,7 +1446,9 @@ class FixedBuildProfile:
                     "toolchain_sha256", "builder_artifact_id", "builder_sha256", "argv_recipe", "environment",
                     "max_lifetime_seconds", "output_root_id", "output_root", "output_owner_uid", "output_specs",
                     "build_service_enrollment_id", "build_service_generation"}
-        if set(item) != required or item.get("target_id") not in {"coral-cpython-build:start", "colibri-source-build:start"}:
+        known_targets = {"coral-cpython-build:start", "colibri-source-build:start",
+                         "xpra-root-xauthority-transform:start"}
+        if set(item) != required or item.get("target_id") not in known_targets:
             raise EnrollmentDenied("fixed native build profile is unknown or malformed")
         for name in ("source_sha256", "toolchain_sha256", "builder_sha256"):
             if not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name]):
@@ -1473,7 +1475,8 @@ class FixedBuildProfile:
                     or path.as_posix() != relative or relative in output_specs
                     or not isinstance(kind, str) or kind not in {"file", "tree"} or type(maximum) is not int
                     or not 1 <= maximum <= 2 * 1024**3
-                    or not isinstance(role, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", role)
+                    or (role is not None and (not isinstance(role, str)
+                        or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", role)))
                     or not isinstance(facts, Mapping) or not facts):
                 raise EnrollmentDenied("fixed build output constraints are malformed")
             output_specs[relative] = FixedBuildOutputSpec(
@@ -1487,7 +1490,7 @@ class FixedBuildProfile:
                         "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags",
                     }},
             }
-        else:
+        elif item["target_id"] == "coral-cpython-build:start":
             expected_specs = {
                 "runtime/bin/python3.9": {"kind": "file", "maximum_bytes": 67108864,
                     "executable_role": "coral-cpython39", "target_facts": {
@@ -1499,6 +1502,20 @@ class FixedBuildProfile:
                     "executable_role": "cpython-stdlib-and-extension-closure", "target_facts": {
                         "python_version": "3.9.25", "target": "linux-aarch64",
                         "all_native_extensions": "ELF64EM_AARCH64, actual dependency closure verified",
+                    }},
+            }
+        else:
+            expected_specs = {
+                "xpra-overlay.tar": {"kind": "file", "maximum_bytes": 134217728,
+                    "executable_role": "data", "target_facts": {
+                        "encoding": "deterministic tar emitted by pinned module",
+                        "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+                        "source_manifest_sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+                        "manifest_member": "hermes-installer-xpra-root-xauthority-overlay-v1.json",
+                        "required_observed_facts": [
+                            "source_tree_digest", "transform_module_sha256", "patched_file_sha256s",
+                            "transformed_tree_sha256", "output_archive_sha256", "patch_manifest_sha256",
+                        ],
                     }},
             }
         if set(output_specs) != set(expected_specs) or any(
@@ -1529,7 +1546,8 @@ class FixedBuildProfile:
 class ProtectedBuildCatalog:
     """The only startable hardware build targets and their fixed root recipes."""
 
-    REQUIRED_TARGETS = frozenset({"coral-cpython-build:start", "colibri-source-build:start"})
+    REQUIRED_TARGETS = frozenset({"coral-cpython-build:start", "colibri-source-build:start",
+                                  "xpra-root-xauthority-transform:start"})
 
     def __init__(self, profiles: Mapping[tuple[str, str], FixedBuildProfile], *,
                  service_generation_digest: str = ""):
