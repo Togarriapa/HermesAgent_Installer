@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T132",
+    "SK-T144"
+  ],
+  "why": "Actual v144 toolchain implementation declares but does not call artifact_source_observer and independently fetches into CAS; this is not selected-plan source evidence. Existing generic catalog metadata observer256KiB must not widen globally.",
+  "owner": "application toolchain source producer with artifact broker source verification/CAS conventions",
+  "module": "hermes_installer.authority.application_toolchain_sources",
+  "class": "RootSelectedApplicationToolchainSourceObserver",
+  "constructor": "from_root_setup(selected_installation_binding,verified_installer_release,root_setup_choice_registry,root_journal,selected_toolchain_source_catalog)",
+  "selection": "Consumes genuine early application runtime input selection/source-lock/qualification choice currentness, not final build/output result. Catalog is exact held v144 source policy plus selected actual installed catalog/plan rows; caller tool ID must match finite selected toolchain choice. No worker URL/path/schema/size/hash accepted.",
+  "catalog_ids": [
+    {
+      "artifact_id": "application-node-26.7.0-linux-arm64",
+      "tool_id": "application-node-26.7.0-linux-arm64",
+      "source": "Exact v144 Node26.7 official archive SHA/size/path; actual descriptor must be allowed by selected setup plan source policy"
+    },
+    {
+      "artifact_id": "application-bun-1.4.3-linux-arm64",
+      "tool_id": "application-bun-1.4.3-linux-arm64",
+      "source": "Exact v144 official Bun asset SHA/size/path; actual selected plan/source policy with Bun-only scoped official redirect rule"
+    }
+  ],
+  "observe_call": "observe_selected_toolchain_source(preparation_input_selection_handle,tool_id)->VerifiedApplicationToolchainSourceObservation",
+  "observation_fields": [
+    "schema",
+    "observation_handle",
+    "artifact_id",
+    "tool_id",
+    "source_policy_artifact_id",
+    "source_policy_sha256",
+    "source_url_sha256",
+    "archive_kind",
+    "sha256",
+    "size_bytes",
+    "file_device",
+    "file_inode",
+    "file_uid",
+    "file_gid",
+    "file_mode",
+    "setup_session_id",
+    "transaction_handle",
+    "plan_sha256",
+    "preparation_input_selection_handle",
+    "source_preparation_selection_handle",
+    "qualification_choice_handle",
+    "choice_epoch",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "held_observation": "Genuine root registry membership, exclusive atomic nofollow root0 CAS write/open, held archive FD and exact actual hash/size/type/single-link/stat before/after read. Observation identity binds actual source policy/selected plan/current qualification phase and source-lock, no raw URL exposed to worker. Immutable retained source evidence until stable setup deadline; fresh current<=30s source proof each build/resolve. Actual choice issuer signs intent only, not forged artifact facts.",
+  "limits": "Source-specific cap64MiB compressed; exact v144 sizes32581212/41786424 required. No arbitrary large observer or global generic cap change. Download TLS/source URL/port/hash/size and Bun official redirect bounded exactlyv144; no credentials/headers/proxy/latest/globalinstall. Missing catalog/plan/source choice or changed bytes denies.",
+  "methods": [
+    "verify_current(observation,preparation_input_selection_handle)->same current held observation",
+    "open_blob(observation)->duplicate held FD only after verify_current"
+  ],
+  "consumer": "RootApplicationToolchainRegistry.from_root_setup receives this concrete artifact_source_observer and MUST call observe/verify_current/open_blob; remove independent unobserved _acquire HTTP/CAS producer. It extracts only that verified held archive under root-selected private toolchain tree, validates path/types/modes/member executable/source notices and emits actual isolated toolchain observation. Existing generic source small metadata observer unaffected.",
+  "provenance": "Toolchain observation retains genuine source observation_handle/SHA/size and exact selected policy/artifact identity. Source archive proof not runtime execution/ABI/source-license eligibility; actual runtime executable/root/member manifest and observed version/probe separate. No source observation from arbitrary private CAS bytes alone.",
+  "tasks": [
+    {
+      "id": "SK-T150.1",
+      "owner": "toolchain producer/artifact broker",
+      "work": "Implement finite selected-plan-bound64MiB source observer/held FD and actual exact catalog/plan source rows; require current explicit package acquisition choice and exactNode/Bunpolicy."
+    },
+    {
+      "id": "SK-T150.2",
+      "owner": "toolchain registry/application build",
+      "work": "Use genuine observer result instead of disconnected HTTP/CAS path; source/member/plan mismatch negatives and actual isolated executable/version/notice observation."
+    }
+  ],
+  "acceptance": "No toolchain install/runtime compatibility or app acceptance from source observer; baseline/allAC unchanged."
+}

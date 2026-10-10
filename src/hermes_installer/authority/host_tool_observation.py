@@ -18,6 +18,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import threading
 import time
 from datetime import timezone
 from email.utils import parsedate_to_datetime
@@ -665,6 +666,8 @@ class HostToolObservationRegistry:
         self._journal = root_journal
         self._allow_fixture_release = allow_fixture_release
         self._observations: dict[str, VerifiedHostToolPackageObservation] = {}
+        self._resolved_tools: dict[str, list[RootResolvedHostTool]] = {}
+        self._lock = threading.RLock()
         self._catalog_fd = -1
         self._closed = False
 
@@ -964,7 +967,8 @@ class HostToolObservationRegistry:
                                   selected_network_binding: Any) -> RootResolvedHostTool:
         from hermes_installer.authority.private_loopback_network import PrivateLoopbackNetwork
 
-        observation = self._observations.get(observation_handle)
+        with self._lock:
+            observation = self._observations.get(observation_handle)
         if (not isinstance(observation, VerifiedHostToolPackageObservation)
                 or not isinstance(selected_network_binding, PrivateLoopbackNetwork)
                 or observation.network_key != (selected_network_binding.network_id,
@@ -983,7 +987,53 @@ class HostToolObservationRegistry:
             observation.executable_device, observation.executable_inode,
             self, observation_handle, observation.network_key,
         )
+        with self._lock:
+            if self._observations.get(observation_handle) is not observation:
+                tool.close()
+                raise HostToolObservationDenied("host_tool.expired", "nft observation changed during resolution")
+            self._resolved_tools.setdefault(observation_handle, []).append(tool)
         return tool
+
+    def verify_resolved_tool(self, tool: RootResolvedHostTool) -> None:
+        """Require the exact registry-issued tool object and its live source closure."""
+        if type(tool) is not RootResolvedHostTool:
+            raise HostToolObservationDenied("host_tool.instance", "root nft tool is not registry-issued")
+        with self._lock:
+            issued = self._resolved_tools.get(tool.observation_handle, ())
+            observation = self._observations.get(tool.observation_handle)
+            if (observation is None or not any(candidate is tool for candidate in issued)
+                    or tool.observation_registry is not self
+                    or tool.selected_network_key != observation.network_key):
+                raise HostToolObservationDenied("host_tool.instance", "root nft tool is not a current issued instance")
+        variant = observation.variant
+        if (tool.variant_id != variant.get("id")
+                or tool.package_name != variant.get("package_name")
+                or tool.version != variant.get("version")
+                or tool.distribution != variant.get("distribution")
+                or tool.release != variant.get("release")
+                or tool.architecture != variant.get("architecture")
+                or tool.package_sha256 != variant.get("package_sha256")
+                or tool.executable_artifact_id != "nft-executable:" + str(variant.get("id"))
+                or tool.executable_sha256 != variant.get("executable_sha256")
+                or tool.dependency_closure_sha256 != observation.dependency_closure_sha256
+                or tool.package_set_receipt_handle != observation.package_set_receipt_handle
+                or tool.expires_monotonic != observation.expires_monotonic
+                or tool.path != INSTALLED_NFT
+                or tool.device != observation.executable_device
+                or tool.inode != observation.executable_inode):
+            raise HostToolObservationDenied("host_tool.instance", "root nft tool differs from its issued observation")
+        self.revalidate_current(tool.observation_handle, observation.network_key)
+
+    def forget_resolved_tool(self, tool: RootResolvedHostTool) -> None:
+        """Drop a closed duplicate FD without revoking the independent observation."""
+        with self._lock:
+            tools = self._resolved_tools.get(tool.observation_handle)
+            if tools is None:
+                return
+            self._resolved_tools[tool.observation_handle] = [candidate for candidate in tools
+                                                            if candidate is not tool]
+            if not self._resolved_tools[tool.observation_handle]:
+                self._resolved_tools.pop(tool.observation_handle, None)
 
     def revalidate_current(self, observation_handle: str,
                            network_key: tuple[str, str, str] | None = None) -> None:
@@ -1054,9 +1104,18 @@ class HostToolObservationRegistry:
             raise HostToolObservationDenied("host_tool.current", "current root nft package or dependency proof changed") from None
 
     def revoke_observation(self, observation_handle: str) -> None:
-        observation = self._observations.pop(observation_handle, None)
+        with self._lock:
+            observation = self._observations.pop(observation_handle, None)
+            tools = self._resolved_tools.pop(observation_handle, ())
         if observation is None:
             return
+        for tool in tools:
+            if tool.executable_fd >= 0:
+                try:
+                    os.close(tool.executable_fd)
+                except OSError:
+                    pass
+                object.__setattr__(tool, "executable_fd", -1)
         os.close(observation.executable_fd)
         for _path, fd, *_rest in observation.held_fds:
             os.close(fd)
