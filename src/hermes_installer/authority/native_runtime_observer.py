@@ -18,6 +18,7 @@ import re
 import secrets
 import time
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -28,6 +29,7 @@ _MAX_PARENT_RECEIPTS = 64
 _MAX_TOOL_CALLS = 128
 _MAX_TOOL_ARGUMENT_BYTES = 65_536
 _INVOCATION_LEASE_SECONDS = 30.0
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +63,57 @@ class ProviderResponseDelivery:
     """Only a non-authoritative lookup token may leave the root gateway."""
 
     response_delivery_handle: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootNativeToolEffectInvocation:
+    """Root-retained one-use invocation resolved from a validated effect."""
+
+    invocation_handle: str
+    observed_call_handle: str
+    response_observation_handle: str
+    response_receipt_handle: str
+    native_request_handle: str
+    turn_handle: str
+    producer_identity: Any
+    producer_pid: int
+    profile_id: str
+    generation: str
+    package_id: str
+    native_package_generation: str
+    service_generation_digest: str
+    adapter_id: str
+    action_id: str
+    tool_name: str
+    arguments_sha256: str
+    source_receipt_handles: tuple[str, ...]
+    operation: str
+    request_digest: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        opaque = (self.invocation_handle, self.observed_call_handle,
+                  self.response_observation_handle, self.response_receipt_handle,
+                  self.native_request_handle, self.turn_handle)
+        if (any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", value)
+                for value in opaque)
+                or type(self.producer_pid) is not int or self.producer_pid <= 0
+                or any(not isinstance(value, str) or not value for value in (
+                    self.profile_id, self.generation, self.package_id,
+                    self.native_package_generation, self.adapter_id, self.action_id,
+                    self.tool_name, self.operation))
+                or not _SHA256.fullmatch(self.service_generation_digest)
+                or not _SHA256.fullmatch(self.arguments_sha256)
+                or not _SHA256.fullmatch(self.request_digest)
+                or not isinstance(self.source_receipt_handles, tuple)
+                or not self.source_receipt_handles or len(self.source_receipt_handles) > 128
+                or any(not isinstance(value, str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", value)
+                       for value in self.source_receipt_handles)
+                or self.producer_identity is None
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.expires_monotonic)):
+            raise ValueError("root native tool invocation record is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -953,13 +1006,33 @@ class NativeRuntimeObserver:
             pairs[key] = observer_id
         self.source_observers = source_observers
         self.effect_observer_ids = pairs
+        self.invocation_registry: Any | None = None
+        self.native_turn_observation_registry: Any | None = None
         self._lock = threading.RLock()
         self._closed = False
+
+    def attach_turn_observation(self, *, invocation_registry: Any,
+                                native_turn_observation_registry: Any) -> None:
+        """Attach the root invocation and turn registries exactly once."""
+        from .native_turn_observation import RootNativeTurnObservationRegistry
+        if (not callable(getattr(invocation_registry, "resolve_invocation_for_effect", None))
+                or type(native_turn_observation_registry) is not RootNativeTurnObservationRegistry
+                or getattr(invocation_registry, "service", None) is not getattr(
+                    native_turn_observation_registry, "service", None)
+                or getattr(invocation_registry, "source_observers", None) is not self.source_observers):
+            raise AuthorityDenied("native.turn.attach", "selected root turn effect bindings are incompatible")
+        with self._lock:
+            if self.invocation_registry is not None or self.native_turn_observation_registry is not None:
+                raise AuthorityDenied("native.turn.attach", "root turn effect bindings are already attached")
+            self.invocation_registry = invocation_registry
+            self.native_turn_observation_registry = native_turn_observation_registry
 
     def observe_effect_result(self, *, service: Any, context: HostContext,
                               authorization: Any, operation: str, target: str,
                               response_status: int, result_payload: bytes, peer_pid: int,
                               peer_pidfd: int,
+                              request_payload: bytes | None = None,
+                              request_sha256: str | None = None,
                               cancelled: Callable[[], bool] = lambda: False) -> str:
         """Issue a receipt for exact result bytes after a root-validated effect.
 
@@ -975,6 +1048,8 @@ class NativeRuntimeObserver:
                 or type(peer_pid) is not int or peer_pid <= 0
                 or type(peer_pidfd) is not int or peer_pidfd < 0
                 or type(response_status) is not int or not 200 <= response_status < 300
+                or (request_payload is not None and not isinstance(request_payload, bytes))
+                or (request_sha256 is not None and not _SHA256.fullmatch(request_sha256))
                 or not callable(cancelled)):
             raise AuthorityDenied("source.observation", "completed successful native result is malformed")
         capability = getattr(authorization, "capability", None)
@@ -989,6 +1064,32 @@ class NativeRuntimeObserver:
                 or getattr(authorization, "native_process_identity", None) != context.native_process_identity
                 or getattr(authorization, "source_receipts", None) != context.source_receipts):
             raise AuthorityDenied("source.binding", "result does not match the completed enrolled effect")
+        with self._lock:
+            invocation_registry = self.invocation_registry
+            turn_registry = self.native_turn_observation_registry
+        invocation = None
+        if invocation_registry is not None or turn_registry is not None:
+            from .native_runtime_observer import RootNativeToolEffectInvocation
+            if (invocation_registry is None or turn_registry is None
+                    or request_payload is None or request_sha256 is None
+                    or hashlib.sha256(request_payload).hexdigest() != request_sha256
+                    or request_sha256 != getattr(authorization, "request_digest", None)):
+                raise AuthorityDenied("native.turn.effect", "validated native action bytes are unavailable")
+            invocation = invocation_registry.resolve_invocation_for_effect(
+                context, authorization, operation, request_sha256)
+            if (type(invocation) is not RootNativeToolEffectInvocation
+                    or invocation.operation != operation
+                    or invocation.request_digest != request_sha256
+                    or invocation.producer_pid != peer_pid
+                    or getattr(invocation.producer_identity, "kernel_uid", None) != context.uid
+                    or getattr(invocation.producer_identity, "profile_id", None) != context.profile_id
+                    or getattr(invocation.producer_identity, "generation", None) != context.generation
+                    or invocation.profile_id != context.profile_id
+                    or invocation.generation != context.generation
+                    or invocation.service_generation_digest != getattr(
+                        service, "service_generation_digest", None)
+                    or invocation.expires_monotonic <= time.monotonic()):
+                raise AuthorityDenied("native.turn.effect", "validated effect does not join a current observed call")
         observer_id = self.effect_observer_ids.get((capability, operation, target))
         observer = self.source_observers.observers.get(observer_id) if observer_id else None
         if (observer is None or getattr(observer, "profile_id", None) != context.profile_id
@@ -1009,6 +1110,12 @@ class NativeRuntimeObserver:
             observer_id, event_id, result_payload, parent_receipt_handles=parent_handles)
         if not isinstance(receipt_handle, str) or len(receipt_handle) < 32:
             raise AuthorityDenied("source.issuer", "root observer returned no opaque result handle")
+        if invocation is not None:
+            turn_registry.record_tool_result(
+                invocation.turn_handle, str(receipt_handle),
+                live_producer_identity=invocation.producer_identity,
+                observed_call_handle=invocation.observed_call_handle,
+            )
         return str(receipt_handle)
 
     def close(self) -> None:

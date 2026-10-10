@@ -10,6 +10,10 @@ from hermes_installer.managed_process_custodian import ManagedTaskHandle
 from hermes_installer.authority.task_native_observation import (
     RootTaskNativeObservationRegistry,
 )
+from hermes_installer.authority.native_input_observer import RootNativeInputObserver
+from hermes_installer.authority.source_observers import (
+    RootNativeExecutionSelectionRegistry, SourceObserverRegistry,
+)
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.registry.resource_jobs import (
     ResourceJobDenied, RootTaskInitialInputReceipt, RootTaskNativeExecutionReceipt,
@@ -144,6 +148,74 @@ def test_stdin_write_receipt_must_join_exact_initial_input_and_terminal():
     wrong_input = replace(write, initial_input_receipt_handle="j" * 40)
     with pytest.raises(AuthorityDenied):
         registry._validate_stdin_write_receipt(run, terminal, write.receipt_handle, wrong_input, 6.0)
+
+
+def test_stdin_write_lookup_requires_stable_manager_retained_object():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    handle = object()
+    receipt = object()
+    calls = []
+    registry.process_custody = SimpleNamespace(
+        resolve_task_stdin_write=lambda task, receipt_handle:
+            calls.append((task, receipt_handle)) or receipt)
+
+    assert registry._resolve_exact_stdin_write_receipt(handle, "w" * 40) is receipt
+    assert calls == [(handle, "w" * 40), (handle, "w" * 40)]
+
+
+def test_stdin_write_lookup_rejects_reconstructed_receipt():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    calls = 0
+
+    def resolve(_task, _receipt_handle):
+        nonlocal calls
+        calls += 1
+        return object()
+
+    registry.process_custody = SimpleNamespace(resolve_task_stdin_write=resolve)
+    with pytest.raises(AuthorityDenied):
+        registry._resolve_exact_stdin_write_receipt(object(), "w" * 40)
+    assert calls == 2
+
+
+def _attachment_graph():
+    source = SourceObserverRegistry.__new__(SourceObserverRegistry)
+    source.service = object()
+    observations = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    observations.source_observers = source
+    observations.input_observer = None
+    observations.selected_execution_registry = None
+    observations._runs = {}
+    observations._closed = False
+    observations._lock = threading.RLock()
+    selections = RootNativeExecutionSelectionRegistry.__new__(RootNativeExecutionSelectionRegistry)
+    selections.task_observations = observations
+    selections.source_observers = source
+    observer = RootNativeInputObserver.__new__(RootNativeInputObserver)
+    observer.selected_execution_registry = selections
+    observer.source_observers = source
+    observer.service = source.service
+    observer._events = {}
+    return observations, selections, observer
+
+
+def test_selected_input_observer_graph_attaches_once_after_cycle_is_built():
+    observations, selections, observer = _attachment_graph()
+    observations.attach_native_input_observer(observer, selections)
+    assert observations.input_observer is observer
+    assert observations.selected_execution_registry is selections
+    with pytest.raises(AuthorityDenied):
+        observations.attach_native_input_observer(observer, selections)
+
+
+def test_selected_input_observer_attachment_rejects_cross_registry_graph():
+    observations, selections, observer = _attachment_graph()
+    other = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    selections.task_observations = other
+    with pytest.raises(AuthorityDenied):
+        observations.attach_native_input_observer(observer, selections)
+    assert observations.input_observer is None
+    assert observations.selected_execution_registry is None
 
 
 def test_issued_receipt_is_identity_bound_and_one_use():
