@@ -166,5 +166,16 @@
     "RT-T251c.1": "Implement source-only packaging intent and deterministic origin-bound normalized inputs receipts/closure with separate tar-byte digest; remove future prepared fields from prebuild.",
     "RT-T251c.2": "Generate true upstream prepared.json through fixed driver after materialization/native effects and retain/reobserve it in actual AppDir joined output.",
     "VD-T251c.3": "Test stale path/source, missing notice/helper/library, normalization/tar hash confusion, forged future prepared proof, link/extra member/selfhash/currentness/cancellation failures and genuine bounded offline prepared packaging effects."
+  },
+  "transport": {
+    "sevenzip_initial_url": "https://github.com/electron-userland/electron-builder-binaries/releases/download/7zip@1.0.0/7zip-linux-arm64.tar.gz",
+    "sevenzip_release_asset_id": 437402708,
+    "redirect_scheme": "https",
+    "redirect_host": "release-assets.githubusercontent.com",
+    "redirect_port": 443,
+    "redirect_path": "/github-production-release-asset/65527128/208750f1-e89c-4761-9b61-da400c3a3d44",
+    "redirect_count_maximum": 1,
+    "redirect_rule": "Only initial exact reviewed GitHub asset request may follow one normal-TLS redirect with exact scheme/host/defaultport/path above, no userinfo or fragment. Dynamic signed query stays ephemeral transport-only, never persisted in policy/receipt/argv/log/evidence. Deny unexpected redirect/path or further redirect. Exact archive SHA/size still independently enforced; source/current request/grant/DNS/public-address/TLS rules remain unchanged. Query does not authorize caller URLs or renew expiry. Changed stable asset redirect identity requires source review, never broad prefix matcher.",
+    "npm": "Exact registry.npmjs.org/wasm-vips/-/wasm-vips-0.0.17.tgz, no redirect/proxy; exact v251SRI/SHA/size and complete member/license proof."
   }
 }
