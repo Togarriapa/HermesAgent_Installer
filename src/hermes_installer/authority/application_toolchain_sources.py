@@ -37,6 +37,15 @@ _PINNED: dict[str, tuple[str, str, int, str, str, tuple[str, ...]]] = {
         "zip", ("release-assets.githubusercontent.com",)),
 }
 
+_BUN_LICENSE_ID = "application-bun-1.4.3-license"
+_BUN_LICENSE_PIN = (
+    "c6da4a4d3010e5553438c60f6bd76d981976867c",
+    "https://raw.githubusercontent.com/oven-sh/bun/c6da4a4d3010e5553438c60f6bd76d981976867c/LICENSE.md",
+    5_807,
+    "056696884250b0d682365260cf1487a6501b1665a343ec60e23a1e647043c572",
+    (),
+)
+
 
 SOURCE_POLICY_ARTIFACT_ID = "installer-application-toolchain-source-policy-v144"
 SOURCE_POLICY_PATH = (
@@ -105,6 +114,7 @@ class VerifiedApplicationToolchainSourceObservation:
     source_policy_artifact_id: str
     source_policy_sha256: str
     source_url_sha256: str
+    source_kind: str
     archive_kind: str
     sha256: str
     size_bytes: int
@@ -198,9 +208,9 @@ class RootSelectedApplicationToolchainSourceObserver:
                 or not isinstance(preparation_input_selection_handle, str)
                 or not _HANDLE.fullmatch(preparation_input_selection_handle)):
             raise ApplicationToolchainSourceDenied("selected toolchain source request is malformed")
-        pin = _PINNED.get(tool_id)
-        if pin is None:
-            raise ApplicationToolchainSourceDenied("toolchain source ID is outside the finite Node/Bun policy")
+        if tool_id not in _PINNED and tool_id != _BUN_LICENSE_ID:
+            raise ApplicationToolchainSourceDenied("source ID is outside the finite Node/Bun/license policy")
+        pin = _BUN_LICENSE_PIN if tool_id == _BUN_LICENSE_ID else _PINNED[tool_id]
         selection, choice, consent, choice_snapshot, spec = self._resolve_selected(preparation_input_selection_handle, tool_id)
         from hermes_installer.artifacts import _fetch_artifact
         opener = self.opener or _open_toolchain_url
@@ -246,6 +256,7 @@ class RootSelectedApplicationToolchainSourceObserver:
                 1, handle, tool_id, tool_id, SOURCE_POLICY_ARTIFACT_ID,
                 SOURCE_POLICY_SHA256,
                 hashlib.sha256(spec.source_url.encode("utf-8")).hexdigest(),
+                "license" if tool_id == _BUN_LICENSE_ID else "archive",
                 spec.archive_format or "", digest, size, info.st_dev, info.st_ino,
                 info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode),
                 selection.setup_session_id, selection.transaction_handle,
@@ -285,6 +296,7 @@ class RootSelectedApplicationToolchainSourceObserver:
             self.release.verify_current()
             self._verify_journal()
             return (observation.artifact_id == spec.artifact_id
+                    and observation.source_kind == ("license" if observation.tool_id == _BUN_LICENSE_ID else "archive")
                     and observation.sha256 == spec.sha256 == digest
                     and observation.size_bytes == size == spec.size_bytes
                     and observation.source_policy_artifact_id == SOURCE_POLICY_ARTIFACT_ID
@@ -348,12 +360,20 @@ class RootSelectedApplicationToolchainSourceObserver:
                 or getattr(consent, "expires_monotonic", 0) <= self.monotonic()):
             raise ApplicationToolchainSourceDenied("fresh exact public source acquisition consent is missing")
         self._verify_source_policy()
-        spec = self.catalog.artifact_catalog._artifact(tool_id, _PINNED[tool_id][3])
-        version, url, size, digest, archive_kind, hosts = _PINNED[tool_id]
+        if tool_id == _BUN_LICENSE_ID:
+            version, url, size, digest, hosts = _BUN_LICENSE_PIN
+            archive_kind = None
+            filename = "LICENSE.md"
+        else:
+            version, url, size, digest, archive_kind, hosts = _PINNED[tool_id]
+            filename = {"tar.xz": ".tar.xz", "zip": ".zip"}[archive_kind]
+        spec = self.catalog.artifact_catalog._artifact(tool_id, digest)
+        filename_matches = (spec.filename == filename if archive_kind is None
+                            else spec.filename.endswith(filename))
         if (spec.version != version or spec.source_url != url or spec.size_bytes != size
                 or spec.sha256 != digest or spec.max_bytes != size
                 or spec.archive_format not in (None, archive_kind)
-                or not spec.filename.endswith({"tar.xz": ".tar.xz", "zip": ".zip"}[archive_kind])
+                or not filename_matches
                 or set(spec.redirect_hosts) != set(hosts)):
             raise ApplicationToolchainSourceDenied("installed catalog row differs from exact v144 source policy")
         self.release.verify_current()
@@ -379,7 +399,11 @@ class RootSelectedApplicationToolchainSourceObserver:
                 or current_consent.expires_monotonic <= self.monotonic()):
             raise ApplicationToolchainSourceDenied("source choice or consent changed before network access")
         self._verify_source_policy()
-        self.catalog.artifact_catalog._artifact(tool_id, _PINNED[tool_id][3])
+        pin = (_BUN_LICENSE_PIN if tool_id == _BUN_LICENSE_ID else _PINNED[tool_id])
+        digest = pin[3]
+        spec = self.catalog.artifact_catalog._artifact(tool_id, digest)
+        if spec.sha256 != digest:
+            raise ApplicationToolchainSourceDenied("selected source catalog identity changed")
         self.release.verify_current()
         self._verify_journal()
 
@@ -408,6 +432,10 @@ class RootSelectedApplicationToolchainSourceObserver:
                         version, url, size, digest, archive_kind):
                     raise ValueError
             if set(selected) != set(_PINNED):
+                raise ValueError
+            bun = selected["application-bun-1.4.3-linux-arm64"]
+            if (bun["license_url"], bun["license_sha256"], bun["license_size_bytes"]) != (
+                    _BUN_LICENSE_PIN[1], _BUN_LICENSE_PIN[3], _BUN_LICENSE_PIN[2]):
                 raise ValueError
         except Exception:
             raise ApplicationToolchainSourceDenied("held toolchain source policy content is malformed or changed") from None

@@ -143,7 +143,7 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                 "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
             "installer-native-source-definitions-module-v137": (
                 "lib/python/hermes_installer/authority/native_source_definitions.py",
-                "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c", 10_311, "module"),
+                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
         }
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
@@ -202,6 +202,15 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "glm52-quantized-readme-6bbb01e": (
                 "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
                 "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17_468, "amendment"),
+            "installer-native-input-capture-profile-v1": (
+                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
+                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837, "amendment"),
+            "installer-native-tool-result-capture-profile-v1": (
+                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
+                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984, "amendment"),
+            "installer-native-provider-result-capture-profile-v1": (
+                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
+                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993, "amendment"),
         }
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS}, expected)

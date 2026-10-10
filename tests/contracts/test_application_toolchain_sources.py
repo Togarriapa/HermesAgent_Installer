@@ -12,6 +12,8 @@ from hermes_installer.authority.application_toolchain_sources import (
     SOURCE_POLICY_BYTES,
     SOURCE_POLICY_PATH,
     SOURCE_POLICY_SHA256,
+    _BUN_LICENSE_ID,
+    _BUN_LICENSE_PIN,
     _PINNED,
 )
 
@@ -31,6 +33,10 @@ class SelectedToolchainSourcePinTests(unittest.TestCase):
             self.assertEqual((row["version"], row["url"], row["size_bytes"],
                               row["sha256"], row["archive_kind"]),
                              (version, url, size, digest, kind))
+        bun = rows["application-bun-1.4.3-linux-arm64"]
+        self.assertEqual((bun["license_url"], bun["license_sha256"], bun["license_size_bytes"]),
+                         (_BUN_LICENSE_PIN[1], _BUN_LICENSE_PIN[3], _BUN_LICENSE_PIN[2]))
+        self.assertEqual(_BUN_LICENSE_ID, "application-bun-1.4.3-license")
         self.assertEqual(SOURCE_POLICY_ARTIFACT_ID,
                          "installer-application-toolchain-source-policy-v144")
 
@@ -46,6 +52,12 @@ class SelectedToolchainSourcePinTests(unittest.TestCase):
                              (version, url, size, size, digest, hosts))
         self.assertTrue(all(row["max_bytes"] <= 64 * 1024 * 1024
                             for row in (rows[item] for item in _PINNED)))
+        license_row = rows[_BUN_LICENSE_ID]
+        self.assertEqual((license_row["version"], license_row["source_url"],
+                          license_row["size_bytes"], license_row["max_bytes"],
+                          license_row["sha256"], tuple(license_row["redirect_hosts"])),
+                         (_BUN_LICENSE_PIN[0], _BUN_LICENSE_PIN[1], _BUN_LICENSE_PIN[2],
+                          _BUN_LICENSE_PIN[2], _BUN_LICENSE_PIN[3], _BUN_LICENSE_PIN[4]))
         self.assertEqual(catalog["packages"], [])
 
     def test_observation_surface_has_only_opaque_handle_and_held_fd(self):
@@ -60,6 +72,8 @@ class SelectedToolchainSourcePinTests(unittest.TestCase):
         self.assertNotIn("source_url", VerifiedApplicationToolchainSourceObservation.__dataclass_fields__)
         self.assertNotIn("path", VerifiedApplicationToolchainSourceObservation.__dataclass_fields__)
         self.assertIn("_fd", VerifiedApplicationToolchainSourceObservation.__dataclass_fields__)
+        self.assertIn("source_kind", VerifiedApplicationToolchainSourceObservation.__dataclass_fields__)
+        self.assertEqual(VerifiedApplicationToolchainSourceObservation.__dataclass_fields__["source_kind"].type, "str")
         self.assertEqual((_TwoHopAllowlistedRedirect.max_redirections,
                           _TwoHopAllowlistedRedirect.max_repeats), (2, 2))
 
