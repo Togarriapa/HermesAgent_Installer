@@ -368,6 +368,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                 compilation_session_handle = session_handle
                 compilation_transaction_handle = transaction_handle
                 plan_sha256 = plan_digest
+                choices_sha256 = "c" * 64
                 expires_monotonic = time.monotonic() + 240
                 _root_journal_root = {
                     "root_id": "installer-authority-journal-v1",
@@ -407,6 +408,11 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                         ("/api/v3/core/users/me/", "/api/v3/core/groups/{root_observed_group_id}/"),
                         30,
                     )
+
+                def resolve_adopted_handoff(self, normal_handle):
+                    if normal_handle != self.handoff.normal_session_handle:
+                        raise ValueError("unknown normal setup session")
+                    return self.handoff
 
             @dataclass(frozen=True)
             class VerifiedIdentityPolicyTemplate:
@@ -462,11 +468,50 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                             session_handle, identity_handle)
                         selected = principal_registry.resolve_selected_principal(
                             selection_handle, session_handle, transaction_handle, plan_digest)
+                        normal_store = _LiveStore(journal)
+
+                        class Handoff:
+                            pass
+
+                        handoff = Handoff()
+                        handoff._initial_session = InitialSession()
+                        handoff.compilation_session_handle = session_handle
+                        handoff.compilation_transaction_handle = transaction_handle
+                        handoff.plan_sha256 = plan_digest
+                        handoff.choices_sha256 = "c" * 64
+                        handoff.principal_selection_receipt_handle = selection_handle
+                        handoff.normal_setup_session_id = normal_store.record["setup_session_id"]
+                        handoff.normal_transaction_handle = normal_store.record["transaction_handle"]
+                        handoff.expires_monotonic = time.monotonic() + 240
+                        handoff.normal_session_handle = normal_store.handle
+                        registry.handoff = handoff
+                        factory_module.RootInitialPublicationHandoff = Handoff
+                        with (patch.object(principal_module, "RootSetupSessionStore", _LiveStore),
+                              patch.object(principal_module.os, "geteuid", return_value=0),
+                              patch.object(principal_module.sys, "platform", "linux")):
+                            normal_observer, normal_identity_handle = intake.rebind_published_policy(
+                                normal_session_store=normal_store,
+                                normal_session_handle=normal_store.handle,
+                                initial_principal_registry=principal_registry,
+                                initial_identity_observer=observer,
+                            )
+                            normal_registry, normal_selection_handle = principal_registry.adopt_initial_publication(
+                                normal_session_store=normal_store,
+                                normal_session_handle=normal_store.handle,
+                                authenticated_identity_receipt_handle=normal_identity_handle,
+                                normal_identity_resolver=normal_observer,
+                            )
+                            adopted = normal_registry.resolve_adopted_initial_principal(
+                                normal_store, normal_store.handle)
                     self.assertEqual(identity.authentik_subject_id, "subject-17")
                     self.assertTrue(identity.system_member)
                     self.assertEqual(selected.principal_id,
                                      "authentik:" + __import__("hashlib").sha256(b"subject-17").hexdigest())
                     self.assertEqual(selected.principal_binding.bind(23001).uid, 23001)
+                    self.assertEqual(adopted.receipt_id, normal_selection_handle)
+                    self.assertEqual(adopted.authentik_subject_id, "subject-17")
+                    self.assertEqual(normal_observer._read_identity_receipt(
+                        normal_identity_handle).setup_session_id, normal_store.record["setup_session_id"])
                     self.assertEqual((vault_root / reference).stat().st_mode & 0o777, 0o600)
                     self.assertNotIn("fixture-only-token",
                                      (journal / "setup-principal-receipts" / f"{identity_handle}.json").read_text())
