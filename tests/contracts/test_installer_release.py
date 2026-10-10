@@ -155,6 +155,8 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                                 "1" * 64, 1, 1, 1, 0o555),
             VerifiedReleaseFile("installer-root-setup-interpreter-v1", ("interpreter",), INTERPRETER_PATH,
                                 "2" * 64, 1, 1, 2, 0o555),
+            VerifiedReleaseFile("runtime-member:python3", ("runtime-member",),
+                                "runtime/bin/python3", "7" * 64, 1, 1, 7, 0o555),
             VerifiedReleaseFile("installer-root-setup-plan-v1", ("plan",), PLAN_PATH,
                                 "3" * 64, 1, 1, 3, 0o444),
             VerifiedReleaseFile("installer-protected-artifact-catalog-v1", ("artifact-catalog",),
