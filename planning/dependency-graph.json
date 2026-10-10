@@ -3060,5 +3060,13 @@
       "VD-T203.2"
     ],
     "state": "OPEN; no expected future source hash/no stage inferred"
+  },
+  "typed_bootstrap_diagnostic_source_review_v204": {
+    "contract": "planning/typed-bootstrap-diagnostic-source-review-v204.json",
+    "tasks": [
+      "BD-T203.1",
+      "VD-T203.2"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }

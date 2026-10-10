@@ -871,3 +871,12 @@ The installer SHALL expose only a reviewed constant stage for exact source-owned
 #### Scenario: Arbitrary RuntimeError or subclass reaches formatter
 - **WHEN** the exception is not the exact validated new diagnostic type
 - **THEN** the previous safe type-only failure behavior remains and no arbitrary message/path/secret is emitted
+
+## ADDED Requirements
+
+### Requirement: Exact typed diagnostic source cohort v204
+The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/typed-bootstrap-diagnostic-source-review-v204.json while preserving v203 fail-closed diagnostics and all other source rows.
+
+#### Scenario: Old expected leaf rejects new source
+- **WHEN** the old pin test rejects the reviewed new bytes
+- **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance

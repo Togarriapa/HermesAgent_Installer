@@ -129,3 +129,5 @@ Existing HI160/197 current core producer and acquisition/effect lease compatibil
 Existing HI160/197 exact remote TTY choice/3role source/build/compiler inputs: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; all OPEN.
 
 Typed bootstrap RuntimeError boundary diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; BD-T203.1/VD-T203.2 OPEN. Exact type/finite stage only; ordinary type-only trust failures and fail-closed exit unchanged. DD00 cause remains unassigned; all AC OPEN.
+
+Typed diagnostic source review v204: plans/amendments/2026-10-10-typed-bootstrap-diagnostic-source-review-v204.md; exact fd09b11d two-leaf replacement, BD-T203.1 / VD-T203.2 open, no DD00 diagnosis/all AC open.

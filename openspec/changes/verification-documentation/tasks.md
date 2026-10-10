@@ -166,3 +166,5 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 
 - [ ] BD-T203.1 Bootstrap owner: exact typed finite-stage diagnostic/redaction/state tests with unchanged trust/failure behavior.
 - [ ] VD-T203.2 Source review/recheck: measured committed future source pins and actual target diagnostic, no inferred DD00 stage/acceptance.
+
+- [ ] BD-T203.1 / VD-T203.2 (v204): Apply only reviewed two leaf tuples, rerun stale-pin test unexcluded and retain actual target diagnostic evidence; no acceptance promotion.
