@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import itertools
 import json
 import math
@@ -17,6 +18,7 @@ MAX_TOOLS = 512
 MAX_TOOL_PAGES = 32
 MAX_SCHEMA_BYTES = 65_536
 MAX_RESULT_BYTES = 262_144
+_CANCEL_CLEANUP_SECONDS = 0.05
 
 
 class MCPError(RuntimeError):
@@ -283,7 +285,11 @@ class MCPClient:
                     pending = request(payload, dispatch_context=self.context, dispatch_authorization=grant)
                 else:
                     pending = request(payload)
-                cancel_budget = min(0.25, remaining / 4) if getattr(self.transport, "cancel_request", None) else 0.0
+                # Reserve half of the remaining aggregate budget for remote
+                # cancellation and cleanup. A quarter was too small under
+                # event-loop scheduling delay and could expire before the
+                # cancellation operation was even issued.
+                cancel_budget = min(0.25, remaining / 2) if getattr(self.transport, "cancel_request", None) else 0.0
                 request_budget = remaining - cancel_budget
                 response = await asyncio.wait_for(pending, request_budget)
             except asyncio.TimeoutError:
@@ -421,15 +427,19 @@ class MCPClient:
     async def _cancel(self, rid: int, grant: DispatchAuthorization, deadline: float) -> None:
         cancel = getattr(self.transport, "cancel_request", None)
         if cancel is not None:
+            # Prefer the original aggregate budget. If scheduler delay has
+            # already consumed it, allow one explicitly bounded cleanup lease
+            # so the remote cancellation notification is not abandoned.
+            remaining = deadline - self.monotonic()
+            budget = remaining if remaining > 0 else _CANCEL_CLEANUP_SECONDS
             try:
                 if getattr(self.transport, "requires_dispatch_grant", False):
                     pending = cancel(rid, dispatch_context=self.context, dispatch_authorization=grant)
                 else:
                     pending = cancel(rid)
-                remaining = deadline - self.monotonic()
-                if remaining <= 0:
+                if not inspect.isawaitable(pending):
                     return
-                await asyncio.wait_for(pending, min(remaining, 0.25))
+                await asyncio.wait_for(pending, min(budget, 0.25))
             except Exception:
                 pass
 
