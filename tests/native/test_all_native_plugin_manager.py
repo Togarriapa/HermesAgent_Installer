@@ -225,8 +225,9 @@ assert effects.calls == [("github", "repo.get", {"repository": "owner/private"})
             env = dict(os.environ)
             env["HERMES_HOME"] = str(root / "home")
             (root / "home").mkdir()
+            fixture_python = env.get("HERMES_NATIVE_PLUGIN_PYTHON", sys.executable)
             completed = subprocess.run(
-                [sys.executable, "-c", script, str(INSTALLER_ROOT / "src"),
+                [fixture_python, "-c", script, str(INSTALLER_ROOT / "src"),
                  str(overlay), str(HERMES_SOURCE), str(root / "home")],
                 env=env, capture_output=True, text=True, timeout=60,
             )
