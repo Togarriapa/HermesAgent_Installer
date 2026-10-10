@@ -552,6 +552,13 @@
             "handoff_signature": "create_for_current_process(distribution_handle,interpreter_receipt_handle,selection:VerifiedRootBootstrapCandidateSelection)->RootBootstrapRuntimeHandoff. Consumes existing registry typed proof exactly once, verifies source receipt candidate match; stores canonical selection snapshot SHA and actual fields in SAME root handoff record. Public handoff DTO uses candidate_selection_sha256, not candidate_selection_handle; after reexec source binding comes retained record, no resurrected in-process seal.",
             "controller": "Handoff retains actual original controller PIDFD and TTY descriptor identity/lease; fixed FD3 transition record binds these facts. Same-PID exec preserves start/session; current source actor root proof remains separate mandatory check after take. No new grant/session/catalog."
           }
+        },
+        "two_stage_driver_interpretation": {
+          "stage_only": "User-authorized reviewed checkout/system Python bootstrap driver may ONLY collect actual root TTY selected candidate and acquire/verify/stage fixed Git SourceCAS plus v76 exact standalone-runtime/PyYAML bytes, safe manifests and protected handoff; no authority session/key/principal/profile/service/provider/account effect or installed policy publication before trusted isolated CAS-source reexec.",
+          "source_origin": "Preexec currently loaded driver modules need not originate physically inside SourceCAS. Their actual regular file bytes/inodes and reviewed current checkout candidate are observed and compared to exact same selected Git source member bytes after fixed TLS SourceCAS verification, before handoff. Missing/changed/untracked/ambient driver module denies transition; system interpreter observation is staging audit only, never installer authority runtime receipt. No purge/reload of issuer seals required before exec.",
+          "handoff_state": "create_for_current_process records pending-staged-unverified source driver/kernel/TTY/choice/runtime observations in existing rootprivate handoff journal and fixedsealedFD3. It does not mint an authority/source-context receipt. v78 wording requiring selected-CAS-loaded module origin before create is superseded. Full authoritative selected CAS module/runtime proof is required ONLY by take_current_reexec_handoff + final RootSourceBootstrapActorVerifier after exec.",
+          "postexec": "Exact CAS-owned entry uses pinned isolated runtime, resolves descriptor/private record, rechecks actual same PID/start/UID/TTY and selected source/runtime/module bytes/closed import origins. Consumes durable candidate snapshot exactly once. Only this actual verified actor may build/publish release, begin compilation/session/key/enrollment. No initial system-Python process authority object survives or becomes proof.",
+          "entrypoint": "Existing root_setup reviewed stage-only path calls fixed acquisition/provision/handoff then samePID exec. No independent signed external bootstrap driver, new download trust root or new authority sessions/grants. Actual initial source driver is constrained by original user authorization and exact reviewed selected code/member hash comparison; source staging itself is not installed acceptance."
         }
       }
     }
@@ -1063,5 +1070,144 @@
       "service_record": "Render unchanged v30 record with actual existing root NSS/principal/roots/transaction bindings; prepared runtime fields null. Existing identity-policy principal binding must exactly match selected actual receipt, no substitute principal.",
       "typed_enum": "receipt_field retains artifact_id|sha256|generation|receipt_handle plus only official-pm-runtime: catalog_executable_path|executable_artifact_id|executable_sha256|runtime_artifact_ids|package_runtime_records; native-compiled-closure: child_artifact_refs. Root phase-aware parser/resolver validates role-specific enum and type, not arbitrary getter/path. field_bindings and receipt_bindings remain exact {field_path,receipt_role,receipt_field}."
     }
+  },
+  "closed_root_plan_template_selection": {
+    "artifact_id": "installer-root-setup-plan-template-v1",
+    "source_relative_path": "plans/amendments/2026-10-10-closed-root-plan-template-selection-v81/root-setup-plan-template-v1.json",
+    "installed_relative_path": "templates/root-setup-plan-template-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",
+    "size_bytes": 920,
+    "template_artifact_ids": [
+      "installer-bootstrap-compiler-template-v1",
+      "installer-authentik-policy-template-v1",
+      "installer-prepared-authority-base-template-v1",
+      "installer-bootstrap-receipt-bindings-template-v1",
+      "installer-composio-whatsapp-catalog-read-policy-v1"
+    ],
+    "projection": "Supersedes v53 two-template selection only, preserves other v53 manifest fields. RootInstalledReleaseBuilder installs these exact latest reviewed template bytes and every referenced actual template artifact/hash in sealed full release manifest/catalog. Initial compiler reads exact list; factory equality uses this literal order. Policy reader/template selection has no effect/account readiness authority. Actual deployed root plan artifact installer-root-setup-plan-v1 remains distinct compiler output from this source template; artifact_selection all-reviewed-verified-release-catalog-ids remains sorted exact currentcatalog IDs, no missing Resources proof or fake runtime output IDs."
+  },
+  "pre_active_native_assembly": {
+    "schema": 1,
+    "tasks": [
+      "HI-T08",
+      "HI-T09",
+      "RB-T09"
+    ],
+    "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+    "type": "RootNativeBootstrapAssemblySelection",
+    "API": "RootSelectedInstallationBinding.resolve_native_bootstrap_assembly(prepared_setup_receipt_handle,native_materialization_receipt_handle)->RootNativeBootstrapAssemblySelection; root-only, no caller definition rows or paths. RootNativeMaterialization.compile_selected(selection)->tuple[RuntimeArtifactReceipt,...] invokes exact five-role writer.",
+    "fields": {
+      "schema": "literal 1",
+      "selection_handle": "root random opaque handle",
+      "setup_session_id": "current sealed setup session",
+      "transaction_handle": "current authorized transaction",
+      "plan_digest": "verified installed plan byte digest",
+      "prepared_generation_id": "actual current prepared EnrollmentReceipt.generation_id",
+      "protected_enrollment_digest": "actual prepared snapshot digest",
+      "enrollment_id": "selected dormant service template enrollment",
+      "service_profile_id": "literal hermes-agent-native-v1",
+      "service_generation": "selected prepared service generation opaque string",
+      "resource_profile_id": "actual selected Resources profile ID; not required equal service_profile_id",
+      "package_id": "literal hermes-agent-native-package-v1",
+      "native_package_generation": "SHA256 canonical selected compilation-input manifest, defined below; not process/service generation",
+      "compiler_artifact_id": "literal installer-module:hermes_installer.authority.native_materialization",
+      "compiler_sha256": "actual verified installed module bytes SHA",
+      "compiler_release_receipt_handle": "actual current installed release receipt",
+      "compiler_module_closure_sha256": "actual complete selected installed import closure manifest digest",
+      "pm_runtime_receipt_handle": "current actual official committed PM environment receipt",
+      "materialization_receipt_handle": "actual completed root materialization receipt",
+      "hermes_source_receipt_handle": "actual pinned Hermes source receipt",
+      "resources_source_receipt_handle": "actual separate pinned Resources source receipt",
+      "definitions_handle": "private root selected definition projection handle",
+      "definitions_sha256": "actual canonical projected definition bytes digest",
+      "issued_monotonic": "root float",
+      "expires_monotonic": "minimum current session/receipt leases"
+    },
+    "definition_registry": "Existing sealed RootSelectedInstallationBinding owns private compilation projections, not a new worker/active catalog. resolve_native_assembly_definitions(selection_handle)->RootNativeAssemblyDefinitions root-private immutable DTO. It reopens exact installed release source/action/schema artifacts, current selected capability/effect enrollments and materialization source members. Uses the SAME strict native package adapter/schema/source issuer/workflow/MCP parsers used for activation; selected missing credential/service/schema/action prerequisites stay unavailable and cannot produce enabled rows. No ambient plugin discovery or inferred source-manifest authority.",
+    "definition_fields": {
+      "adapter_records": "tuple exact native-package-binding-contract.adapter_record_fields parsed from root selected reviewed adapter projections",
+      "native_schema_records": "tuple exact protected native schema rows plus retained actual canonical schema bytes from root schema derivation resolver",
+      "source_issuer_records": "tuple exact selected active-schema source issuer rows, staged and nonexecuting before publication",
+      "native_mcp_tool_bindings": "tuple exact native MCP binding rows; actual authenticated tools/list or packaged schema receipts required",
+      "closure_members": "tuple {relative_path:str,sha256:hex64,size_bytes:int,mode:420|493,artifact_receipt_handle:str}; root resolves actual retained bytes, no request path",
+      "boundary_overlay_receipt_handle": "actual source-pinned reviewed overlay member receipt",
+      "effect_selection_receipt_handles": "tuple actual selected root effect enrollment/credential/consent proofs; compilation does not grant effects",
+      "registration_records": "tuple RootNativeRegistrationProjection from native-package-binding-contract.native_registration_projection; actual source registration/schema/handler/finite selector rows, distinct effect-action catalog",
+      "candidate_records": "tuple one per actual registration, same index schema and source projection digest; all18 coverage retained with precise prerequisite state"
+    },
+    "generation_preimage": "Canonical UTF8 JSON sorted keys compact separators ensure_ascii=false no newline of {schema:1,package_id,service_profile_id,resource_profile_id,resources_revision,resources_content_digest,selected_closure_digest,definitions_sha256,compiler_module_closure_sha256,pm_runtime_receipt_handle}. All values root resolved current receipt fields. SHA256 is native_package_generation. Process/service/prepared/resource generation domains remain separately named.",
+    "compiler_origin": "Installed release module role resolves lib/python/hermes_installer/authority/native_materialization.py plus complete imported registry/native_install and selected component/schema/overlay module closure. Actual current root actor module origins and bytes checked against installed deployment receipt, never source archive SHA as executable proof.",
+    "publication": "Prepared snapshot may retain native_packages=[] throughout compilation. The sealed selection authorizes only root owned bounded source-to-output compilation. Five exact output_cas_selection roles bind same selection/transaction/package generation. Active compiler consumes actual output receipts and atomically publishes native_packages/adapters/schema/issuer/MCP rows in active service_generations; only then launch/mount/dispatch authority can exist. No active package is required to authorize its own initial assembly.",
+    "evidence": "Prepared-to-five-output compilation with native_packages empty; wrong compiler origin, missing source/schema/PM proof, altered staged definition/generation, caller rows, stale/replayed selection and dispatch-before-activation denied. All acceptance remains pending.",
+    "resource_profile_selection": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "owner": "existing sealed RootSelectedInstallationBinding, same prepared setup session; not an independent worker registry",
+      "observe": "RootBootstrapSession.observe_selected_resource_profile()->opaque resource_profile_selection_receipt_handle. AFTER prepared enrollment, root obtains actual packaged Resources source receipt via mint_packaged_resources_source and reads exact verified profile declarations from its full source manifest; current actual root TTY selects a profile from that finite verified list. It may adopt an existing current receipt during same session resume after full source/owner/journal revalidation. No service-profile default/equality, arbitrary request ID or YAML authority.",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "resources_source_receipt_handle",
+        "resources_source_artifact_id",
+        "resources_source_sha256",
+        "resources_revision",
+        "profile_id",
+        "profile_member_path",
+        "profile_member_sha256",
+        "choice_observation_id",
+        "issued_monotonic",
+        "expires_monotonic",
+        "signature"
+      ],
+      "types": "schema1; opaque sealed root lookup; source artifact/revision exact selected Resources source, member path is root-derived actual source manifest member, SHA actual member. profile_id exact declaration identity, <=256 ASCII. Actual root TTY choice observation/session/transaction/source/preparedgeneration. Lease min(current source/session/actor proofs,now+30s) refreshed only by actual session currentness and retained choice revalidation, not old bearer replay. Choice does not grant capability/effect/account authority.",
+      "resolve": "RootSelectedInstallationBinding.resolve_selected_resource_profile(receipt_handle)->RootSelectedResourceProfile (exact above). authorize_native_materialization now resolves this receipt from same session selected installation state; resource_profile_id legacy argument is checked against retained receipt.profile_id only, not accepted as authority. service_profile_id remains fixed actual service enrollment, may differ. NativeMaterializationSelection/assembly generation binds actual source profile receipt/member digest and separate service profile. Current stage0 choices/publication handoff may retain opaque resource selection handle only when already legitimately issued; absent stage0 is normal and selection occurs postprepared, no first-stage cycle.",
+      "evidence": "Real distinct Resources profile/service profile positive; caller unknown ID, altered manifest/receipt/profile, stale session/source and cross transaction denied. Frozen prepared native_packages[] preserved until actual assembly/activation."
+    }
+  },
+  "bootstrap_action_handoff_clarification": {
+    "schema": 1,
+    "tasks": [
+      "BD-T01",
+      "HI-T09"
+    ],
+    "field": "lifecycle_action",
+    "type": "literal enum install|resume|update",
+    "binding": "Actual root TTY RootSetupExplicitChoices observation binds action in candidate selection snapshot and exact protected handoff canonical bytes/digest. Candidate Git SHA is independently selected/verified. Action does not grant capabilities, choose arbitrary argv, or bypass installed actor/ownership policy.",
+    "sequence": "Observe secure fixed deployments/current.json predecessor: absent only after verifying protected parent and no leaf; present requires InstalledRootReleaseVerifier actual full receipt verification. Invalid/inaccessible presence fails closed. First-source path is allowed only typed proven absent. Stage-only source acquisition/runtime staging preserves lifecycle_action in same-PID sealed FD3 handoff. Trusted CAS actor consumes that snapshot, builds/publishes/verifies actual installed release, then same-PID execs exact installed root launcher under isolated interpreter with only the validated finite action. Never call root_setup.main from source as a substitute for installed actor. Installed launcher revalidates actual release/actor/PID/TTY and selected ownership/session before action.",
+    "predecessor_API": "installer_release_build.observe_deployment_predecessor()->VerifiedDeploymentPredecessor root-local; exact fields schema,state(absent|present-verified),parent_device,parent_inode,candidate_git_sha(null if absent),deployment_receipt_sha256(null if absent),deployment_receipt_device(null if absent),deployment_receipt_inode(null if absent),verified_release_receipt_handle(null if absent). Root-held sealed proof, bounded currentness; publication rechecks same predecessor CAS. No caller path or boolean absence proof.",
+    "safe_status": "Unprivileged launcher_status may expose only installed/pending state, candidate digest and exact missing prerequisite/resume action; no root paths, credential refs, handles or authority. Status is not actor admission."
+  },
+  "xpra_output_store_clarification": {
+    "identity": "Reuse actual ContentAddressedBuildStore BuildOutput artifact_id for deterministic non-executable archive: build-output:<actual archive SHA256>:file:d. Only the exact ID returned by root typed held output observation is acceptable, never synthesizing a trusted row from a digest string.",
+    "resolve": "RootXpraOverlayReceiptRegistry resolves the actual BuildOutput through existing protected store, reopens stable root held bytes and verifies SHA/size/type/source transformation. Root active publication copies the verified derived artifact row into selected artifact catalog; source and transformed tree hashes remain distinct from tar SHA. Missing actual source/output observation prevents activation, never a fabricated static catalog hash."
+  },
+  "reviewed_native_capability_selection": {
+    "artifact_id": "installer-reviewed-native-capability-map-v1",
+    "source_path": "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json",
+    "installed_path": "templates/reviewed-native-capability-map-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+    "size_bytes": 2026,
+    "API": "RootSetupPrincipalSelectionRegistry.resolve_reviewed_capability_selection(current_identity_receipt_handle,selected_effect_policy_receipt_handle)->RootReviewedCapabilitySelection root-private. Verifies actual installed source artifact and selected current identity/System group IDs, then exact finite source projection above; no caller capability tuple. Root prepared policy has empty tuple, not active worker authority.",
+    "selection_fields": "principal_id,profile_id,namespace_id,capabilities,identity_receipt_handle,effect_policy_receipt_handle,map_artifact_id,map_sha256,issued_monotonic,expires_monotonic; sealed root only. Active principal binding uses actual selected dedicated NSS UID and exact namespace/profile tuple; must recheck actual current Authentik policy before protected writes.",
+    "release_role": "Release builder includes exact new template artifact bytes/role in verified module/template closure. Deployed plan may reference this policy as separately selected release template; original v81 five-artifact list stays immutable and does not become an unexplained sixth item. Root registry resolves it by explicit artifact ID+SHA in verified installed release, never ambient path."
+  },
+  "official_pm_runtime_store_selection": {
+    "root_id": "installer-official-pm-runtime-store-v1",
+    "journal_root_id": "installer-authority-journal-v1",
+    "relative_path": "pm-runtimes",
+    "owner_uid": 0,
+    "owner_gid": 0,
+    "mode": 448,
+    "resolve": "RootBootstrapSession resolves actual selected held root_journal_roots installer-authority-journal-v1 row (root0/0700/no-follow/dev/inode), securely creates/holds fixed child pm-runtimes, passes its private Path to RootPMRuntimeProvisioner and SAME RootPMRuntimeReceiptRegistry only. No user runtime_root/argv/env/path. Existing provisioner root generation child pm-<root random32hex> and receipts storage remain bounded current transaction; stage source/officialPM tool/env actual receipts re-opened/currentness checked. Artifact input store remains separate bootstrap-artifacts selection; service HERMES_HOME remains selected service_parent_root/home, not this provisioning scratch. Official committed PM venv executable resolved from actual receipt, never system Python or guessed source venv."
   }
 }
