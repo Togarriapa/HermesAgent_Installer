@@ -16,12 +16,13 @@ from .setup_wizard import AdapterResult, PrivateFileCredentialStore
 
 
 def _outcome(result: AdapterResult, *, command: str, resume_command: str,
-             details: Mapping[str, Any] | None = None) -> CommandResult:
+             details: Mapping[str, Any] | None = None,
+             config: Mapping[str, Any] | None = None) -> CommandResult:
     state = {"ready": OutcomeState.READY, "pending": OutcomeState.PENDING,
              "failed": OutcomeState.FAILED}[result.state]
     combined = dict(details or {})
     combined.update({"account_state": result.state, "next_steps": list(result.next_steps),
-                     "config": dict(result.config)})
+                     "config": dict(config if config is not None else result.config)})
     exit_code = 0 if result.state == "ready" else 4 if result.state == "pending" else 1
     return CommandResult(command, state, result.message,
                          (Finding(f"{command}.account", result.message, state, combined),),
@@ -108,14 +109,25 @@ def run_configuration_command(action: str, *, config_data: Mapping[str, Any],
                           if callable(configure_noninteractive) else
                           AdapterResult("pending", "Memory selection has no validated non-interactive setup path.", {},
                               ("Run the guided memory selection in a terminal, then resume.",)))
+        output = dict(current)
+        output_components = dict(output.get("components", {}))
+        output_components["memory"] = False
+        output["components"] = output_components
+        try:
+            validate_config(output)
+        except (ConfigError, TypeError, ValueError) as exc:
+            return CommandResult(action, OutcomeState.FAILED,
+                f"Memory selection did not produce a valid installer configuration: {exc}",
+                exit_code=2)
         return _outcome(result, command=action, resume_command=resume_command,
-                        details={"selected_memory_provider": JournalSetupStateStore(journal, "memory").get_selection("provider_id")})
+                        details={"selected_memory_provider": JournalSetupStateStore(journal, "memory").get_selection("provider_id")},
+                        config=output)
 
     key, adapter = _get_adapter(registered, target, name)
     if adapter is None:
         result = AdapterResult("pending", f"The {key.replace('_', ' ')} adapter is not available.", {},
             (f"Complete protected {key.replace('_', ' ')} enrollment, then run `hermes-installer {action} {target or key}`.",))
-        return _outcome(result, command=action, resume_command=resume_command)
+        return _outcome(result, command=action, resume_command=resume_command, config=current)
 
     if action == "test-connection":
         test = getattr(adapter, "test_connection", None)
@@ -131,7 +143,7 @@ def run_configuration_command(action: str, *, config_data: Mapping[str, Any],
         if not isinstance(result, AdapterResult):
             raise TypeError("connection probe must return a typed AdapterResult")
         return _outcome(result, command=action, resume_command=resume_command,
-                        details={"target": target, "name": name})
+                        details={"target": target, "name": name}, config=current)
 
     if target == "provider" and name and hasattr(adapter, "select_provider"):
         try:
@@ -184,7 +196,8 @@ def run_configuration_command(action: str, *, config_data: Mapping[str, Any],
             f"The setup result did not produce a valid installer configuration: {exc}",
             exit_code=2)
     return _outcome(result, command=action, resume_command=resume_command,
-                    details={"target": target, "name": name, "account_state": result.state})
+                    details={"target": target, "name": name, "account_state": result.state},
+                    config=output)
 
 
 def _component_state_store(journal: Any, key: str) -> JournalSetupStateStore | None:

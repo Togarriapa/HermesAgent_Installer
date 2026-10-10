@@ -26,6 +26,9 @@ from urllib.parse import urlsplit
 from dataclasses import dataclass, field, fields, replace as dataclass_replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
+from .remote_observations import (
+    GatewayBoundaryHTTPFact, GatewayBoundaryObservation, NativeWindowObservation,
+)
 
 
 class RemoteOriginDenied(PermissionError):
@@ -193,6 +196,29 @@ class RootOriginReadinessReceipt:
     service_generation_digest: str
     probe_receipt_handle: str
     observed_assertion_ids: tuple[str, ...]
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: bytes = field(repr=False, compare=False)
+
+    def payload(self) -> bytes:
+        return _canonical({item.name: getattr(self, item.name) for item in fields(self)
+                           if item.name != "signature"})
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootOriginProbeLedgerCapability:
+    """Root-signed, short-lived, non-worker capability for one probe ledger window."""
+    schema: int
+    capability_id: str
+    probe_handle: str
+    remote_enrollment_id: str
+    gateway_identity_digest: str
+    gateway_profile_id: str
+    gateway_generation: str
+    native_enrollment_id: str
+    session_id: str
+    policy_config_digest: str
+    policy_revision: str
     issued_monotonic: float
     expires_monotonic: float
     signature: bytes = field(repr=False, compare=False)
@@ -437,71 +463,6 @@ class OriginProbeActionControlResponse:
                    dict(result), digest)
 
 
-@dataclass(frozen=True, slots=True)
-class GatewayBoundaryHTTPFact:
-    """One root-observed fixed gateway request, with no caller-selected URL/path."""
-    status_code: int
-    application_bytes: int
-    request_sha256: str
-    response_sha256: str
-
-    def __post_init__(self) -> None:
-        if (type(self.status_code) is not int or not 100 <= self.status_code <= 599
-                or type(self.application_bytes) is not int or self.application_bytes < 0
-                or not re.fullmatch(r"[0-9a-f]{64}", self.request_sha256)
-                or not re.fullmatch(r"[0-9a-f]{64}", self.response_sha256)):
-            raise ValueError("root gateway boundary observation is malformed")
-
-
-@dataclass(frozen=True, slots=True)
-class GatewayBoundaryObservation:
-    gateway_identity_digest: str
-    network_namespace_inode: int
-    listener_addresses: tuple[str, ...]
-    requests: Mapping[str, GatewayBoundaryHTTPFact]
-    issued_monotonic: float
-    expires_monotonic: float
-
-    def __post_init__(self) -> None:
-        names = {"unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"}
-        if (not re.fullmatch(r"[0-9a-f]{64}", self.gateway_identity_digest)
-                or type(self.network_namespace_inode) is not int or self.network_namespace_inode <= 0
-                or not self.listener_addresses or set(self.requests) != names
-                or any(not isinstance(value, GatewayBoundaryHTTPFact) for value in self.requests.values())
-                or not _finite_monotonic(self.issued_monotonic)
-                or not _finite_monotonic(self.expires_monotonic)
-                or self.expires_monotonic <= self.issued_monotonic):
-            raise ValueError("root gateway boundary proof is malformed")
-
-
-@dataclass(frozen=True, slots=True)
-class NativeWindowObservation:
-    profile_id: str
-    generation: str
-    uid: int
-    pid: int
-    pid_starttime_ticks: int
-    websocket_observation_id: str
-    window_identity_sha256: str
-    surface_sha256: str
-    issued_monotonic: float
-    expires_monotonic: float
-
-    def __post_init__(self) -> None:
-        if (not isinstance(self.profile_id, str) or not self.profile_id
-                or not isinstance(self.generation, str) or not self.generation
-                or type(self.uid) is not int or self.uid <= 0
-                or type(self.pid) is not int or self.pid <= 0
-                or type(self.pid_starttime_ticks) is not int or self.pid_starttime_ticks <= 0
-                or not re.fullmatch(r"[0-9a-f]{64}", self.websocket_observation_id)
-                or not re.fullmatch(r"[0-9a-f]{64}", self.window_identity_sha256)
-                or not re.fullmatch(r"[0-9a-f]{64}", self.surface_sha256)
-                or not _finite_monotonic(self.issued_monotonic)
-                or not _finite_monotonic(self.expires_monotonic)
-                or self.expires_monotonic <= self.issued_monotonic):
-            raise ValueError("root native window observation is malformed")
-
-
 def aggregate_root_origin_observations(selected: SelectedRemoteOrigin, *,
         asset_get: OriginProbeActionControlResponse,
         asset_head: OriginProbeActionControlResponse,
@@ -511,6 +472,9 @@ def aggregate_root_origin_observations(selected: SelectedRemoteOrigin, *,
         gateway_identity_digest: str,
         gateway_proof: Mapping[str, Any],
         native_proof: Mapping[str, Any],
+        gateway_selection: Any = None,
+        native_selection: Any = None,
+        observer_signer: ReceiptSigner | None = None,
         now: Callable[[], float] = time.monotonic) -> tuple[dict[str, bool], tuple[str, ...], str, str]:
     """Build the readiness map from bounded action bytes and root observations."""
     expected_asset = hashlib.sha256(
@@ -531,29 +495,53 @@ def aggregate_root_origin_observations(selected: SelectedRemoteOrigin, *,
             or not 200 <= asset_head.result["status_code"] < 300
             or not get_body or head_body or not ws_frame):
         raise RemoteOriginDenied("selected Xpra client asset or WebSocket returned no app bytes")
-    if (not isinstance(boundary, GatewayBoundaryObservation)
+    if (not isinstance(getattr(boundary, "gateway_identity_digest", None), str)
             or boundary.gateway_identity_digest != gateway_identity_digest):
         raise RemoteOriginDenied("gateway boundary evidence does not match selected root process")
+    if (getattr(gateway_selection, "remote_enrollment_id", None) != selected.enrollment_id
+            or getattr(gateway_selection, "gateway_profile_id", None) != selected.gateway_profile_id
+            or getattr(gateway_selection, "gateway_generation", None) != selected.gateway_generation
+            or getattr(gateway_selection, "gateway_identity_digest", None) != gateway_identity_digest
+            or getattr(gateway_selection, "policy_config_digest", None) != selected.policy_config_digest
+            or getattr(gateway_selection, "policy_revision", None) != selected.policy_revision
+            or getattr(native_selection, "remote_enrollment_id", None) != selected.enrollment_id
+            or getattr(native_selection, "native_profile_id", None) != selected.native_profile_id
+            or getattr(native_selection, "native_generation", None) != selected.desktop_generation
+            or getattr(native_selection, "native_uid", None) != native_proof.get("uid")):
+        raise RemoteOriginDenied("root observer catalog rows do not match active remote selection")
     now_value = float(now())
+    verify_boundary = getattr(boundary, "verify", None)
+    if (not callable(verify_boundary) or observer_signer is None
+            or not verify_boundary(observer_signer, now=now_value, selected=gateway_selection)):
+        raise RemoteOriginDenied("gateway boundary receipt signature or active catalog join failed")
     if (boundary.issued_monotonic > now_value or boundary.expires_monotonic <= now_value
             or boundary.expires_monotonic - boundary.issued_monotonic > 30.0
             or boundary.network_namespace_inode != gateway_proof.get("network_namespace_inode")):
         raise RemoteOriginDenied("gateway boundary observation is stale or in another namespace")
     try:
-        listeners = tuple(ipaddress.ip_address(address) for address in boundary.listener_addresses)
+        listeners = tuple(address.rsplit(":", 1) for address in boundary.listener_addresses)
+        if any(len(parts) != 2 for parts in listeners):
+            raise ValueError
+        parsed_addresses = tuple((ipaddress.ip_address(host), int(port)) for host, port in listeners)
     except ValueError:
-        raise RemoteOriginDenied("gateway listener binding is not a kernel-observed IP address") from None
-    if not listeners or any(not address.is_loopback for address in listeners):
+        raise RemoteOriginDenied("gateway listener binding is not a kernel-observed loopback socket") from None
+    if (not parsed_addresses or any(not address.is_loopback or type(port) is not int
+                                    or not 1 <= port <= 65535
+                                    for address, port in parsed_addresses)):
         raise RemoteOriginDenied("selected gateway has a non-loopback network listener")
     facts = boundary.requests
     if (not isinstance(facts, Mapping)
             or set(facts) != {"unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"}
-            or facts["unauthenticated"].status_code not in {401, 403}
+            or facts["unauthenticated"].status_code not in {401, 403, 404}
             or any(facts[key].status_code not in {403, 404}
                    for key in ("arbitrary-route", "shell-route", "full-host-desktop"))
             or any(fact.application_bytes != 0 for fact in facts.values())):
         raise RemoteOriginDenied("gateway boundary did not reject unauthorized routes before app bytes")
-    if (not isinstance(native_window, NativeWindowObservation)
+    verify_window = getattr(native_window, "verify", None)
+    if (not isinstance(getattr(native_window, "profile_id", None), str)
+            or not callable(verify_window) or observer_signer is None
+            or not verify_window(observer_signer, now=now_value, selected=native_selection,
+                                 websocket_observation_id=websocket.result["observation_id"])
             or native_window.profile_id != selected.native_profile_id
             or native_window.generation != selected.desktop_generation
             or native_window.uid != native_proof.get("uid")
@@ -573,9 +561,16 @@ def aggregate_root_origin_observations(selected: SelectedRemoteOrigin, *,
         "shell_route_denied": True,
         "full_host_desktop_denied": True,
     }
+    boundary_assertions = tuple(getattr(boundary, "assertion_ids", ()))
+    window_assertions = tuple(getattr(native_window, "assertion_ids", ()))
+    if (not boundary_assertions or not window_assertions
+            or any(not isinstance(item, str) or not item for item in boundary_assertions + window_assertions)):
+        raise RemoteOriginDenied("signed root observer assertion IDs are absent or malformed")
     assertion_ids = tuple(sorted((
         f"asset-get:{asset_get.result_digest}", f"asset-head:{asset_head.result_digest}",
         f"websocket:{websocket.result_digest}",
+        *("gateway-observer:" + item for item in boundary_assertions),
+        *("native-observer:" + item for item in window_assertions),
         "boundary:" + _digest_canonical({key: {
             "status_code": fact.status_code, "application_bytes": fact.application_bytes,
             "request_sha256": fact.request_sha256, "response_sha256": fact.response_sha256}
@@ -807,6 +802,7 @@ class _ProbeHandleRecord:
     result: Mapping[str, bool] | None = None
     action_sequence: int = 0
     action_result_digests: dict[str, str] = field(default_factory=dict, repr=False)
+    observer_capability_id: str | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True, repr=False)
@@ -822,6 +818,7 @@ class _ProbeActionHandleRecord:
     frame_sequence: int = 0
     connector_handle: str | None = field(default=None, repr=False)
     result_digest: str | None = field(default=None, repr=False)
+    result: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 class RootOriginProbeRegistry:
@@ -895,6 +892,60 @@ class RootOriginProbeRegistry:
                 raise RemoteOriginDenied("root setup probe is absent, expired, or inactive")
             return parent
 
+    def issue_observer_capability(self, handle: str) -> RootOriginProbeLedgerCapability:
+        """Mint one root-signed capability for the selected probe's byte ledger."""
+        with self._lock:
+            record = self._handles.get(handle)
+            now = float(self._now())
+            if (record is None or record.state != "running" or now >= record.expires
+                    or record.observer_capability_id is not None):
+                raise RemoteOriginDenied("root probe ledger capability is absent, expired, or already issued")
+            capability_id = secrets.token_urlsafe(24)
+            # The boundary observer performs four independent fixed-route
+            # loopback probes, each with its own short socket timeout. Keep one
+            # bounded window for that concrete operation without making the
+            # capability live for the parent setup transaction.
+            expiry = min(record.expires, math.nextafter(now + 25.0, -math.inf))
+            if expiry <= now:
+                raise RemoteOriginDenied("root probe ledger capability has no live deadline")
+            unsigned = dict(schema=1, capability_id=capability_id, probe_handle=handle,
+                remote_enrollment_id=record.selected.enrollment_id,
+                gateway_identity_digest=record.kernel_evidence.gateway_identity_digest,
+                gateway_profile_id=record.selected.gateway_profile_id,
+                gateway_generation=record.selected.gateway_generation,
+                native_enrollment_id=record.selected.native_enrollment_id,
+                session_id=record.session_id,
+                policy_config_digest=record.selected.policy_config_digest,
+                policy_revision=record.selected.policy_revision,
+                issued_monotonic=now, expires_monotonic=expiry)
+            provisional = RootOriginProbeLedgerCapability(**unsigned, signature=b"")
+            capability = RootOriginProbeLedgerCapability(**unsigned,
+                signature=self._signer.sign(provisional.payload()))
+            record.observer_capability_id = capability_id
+            return capability
+
+    def verify_observer_capability(self, capability: RootOriginProbeLedgerCapability) -> bool:
+        if not isinstance(capability, RootOriginProbeLedgerCapability):
+            return False
+        with self._lock:
+            now = float(self._now())
+            record = self._handles.get(capability.probe_handle)
+            return (record is not None and record.state == "running"
+                    and now < record.expires and now < capability.expires_monotonic
+                    and capability.schema == 1
+                    and capability.capability_id == record.observer_capability_id
+                    and capability.remote_enrollment_id == record.selected.enrollment_id
+                    and capability.gateway_identity_digest == record.kernel_evidence.gateway_identity_digest
+                    and capability.gateway_profile_id == record.selected.gateway_profile_id
+                    and capability.gateway_generation == record.selected.gateway_generation
+                    and capability.native_enrollment_id == record.selected.native_enrollment_id
+                    and capability.session_id == record.session_id
+                    and capability.policy_config_digest == record.selected.policy_config_digest
+                    and capability.policy_revision == record.selected.policy_revision
+                    and record.issued <= capability.issued_monotonic < capability.expires_monotonic
+                    and capability.expires_monotonic - capability.issued_monotonic <= 25.0
+                    and self._signer.verify(capability.payload(), capability.signature))
+
     def action_cancelled(self, handle: str) -> bool:
         with self._lock:
             action = self._action_handles.get(handle)
@@ -945,7 +996,8 @@ class RootOriginProbeRegistry:
             if action is not None:
                 action.state = "cancelled"
 
-    def record_action_result(self, handle: str, result_digest: str) -> None:
+    def record_action_result(self, handle: str, result_digest: str,
+                             result: Mapping[str, Any] | None = None) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", result_digest):
             raise RemoteOriginDenied("private gateway action result digest is malformed")
         with self._lock:
@@ -954,7 +1006,36 @@ class RootOriginProbeRegistry:
                     or action.parent.state != "running" or action.result_digest is not None):
                 raise RemoteOriginDenied("private gateway action was not fully consumed or was replayed")
             action.result_digest = result_digest
+            if result is not None:
+                action.result = dict(result)
             action.parent.action_result_digests[handle] = result_digest
+
+    def resolve_window_stream(self, observation_id: str, *, remote_enrollment_id: str,
+                              native_profile_id: str, native_generation: str) -> Any:
+        """Resolve only a consumed root action's actual bounded WS frame receipt."""
+        if not isinstance(observation_id, str) or not re.fullmatch(r"[0-9a-f]{64}", observation_id):
+            raise RemoteOriginDenied("WebSocket observation ID is malformed")
+        with self._lock:
+            now = float(self._now())
+            for action in self._action_handles.values():
+                selected = action.parent.selected
+                result = action.result
+                if (action.state != "consumed" or action.action != "websocket-attach"
+                        or action.parent.state != "running" or now >= action.expires
+                        or selected.enrollment_id != remote_enrollment_id
+                        or selected.native_profile_id != native_profile_id
+                        or selected.desktop_generation != native_generation
+                        or not isinstance(result, Mapping)
+                        or result.get("observation_id") != observation_id
+                        or result.get("status_code") != 101
+                        or result.get("frame_count") != 1
+                        or result.get("frame_bytes", 0) <= 0):
+                    continue
+                return _RootProbeWebSocketObservation(
+                    observation_id, remote_enrollment_id, native_profile_id, native_generation,
+                    1, result["frame_sha256"], action.expires)
+        raise RemoteOriginDenied("WebSocket observation is not an active selected root action")
+
 
     def consume_action(self, handle: str) -> None:
         with self._lock:
@@ -1024,6 +1105,17 @@ class RootOriginProbeRegistry:
             return receipt, dict(record.result)
 
 
+@dataclass(frozen=True, slots=True)
+class _RootProbeWebSocketObservation:
+    observation_id: str
+    remote_enrollment_id: str
+    native_profile_id: str
+    native_generation: str
+    binary_frame_count: int
+    byte_sha256: str
+    expires_monotonic: float
+
+
 def _selection_digest(selected: SelectedRemoteOrigin) -> str:
     return hashlib.sha256(_canonical({
         "remote_enrollment_id": selected.enrollment_id,
@@ -1066,12 +1158,15 @@ class PrivateGatewayOriginProbe:
                  process_manager: RemoteOriginProcessManager,
                  registry: RootOriginProbeRegistry,
                  current_peer: CurrentRemoteOriginCaller,
+                 catalog: RemoteOriginCatalog,
                  custody: Any,
                  authorize_action: Callable[[str, str, str | None], str],
-                 boundary_observer: Callable[[SelectedRemoteOrigin, str, Mapping[str, Any], float],
+                 boundary_observer: Callable[[SelectedRemoteOrigin, str, Any, float,
+                                             RootOriginProbeLedgerCapability],
                                              GatewayBoundaryObservation] | None = None,
-                 window_observer: Callable[[SelectedRemoteOrigin, Mapping[str, Any], str, float],
+                 window_observer: Callable[[SelectedRemoteOrigin, Any, str, float],
                                            NativeWindowObservation] | None = None,
+                 observer_signer: ReceiptSigner | None = None,
                  now: Callable[[], float] = time.monotonic,
                  peer_credentials: Callable[[socket.socket], tuple[int, int, int]] | None = None,
                  timeout_seconds: float = 5.0):
@@ -1080,9 +1175,11 @@ class PrivateGatewayOriginProbe:
         if not callable(authorize_action):
             raise ValueError("root child-action mint is required")
         self._socket_resolver, self._process_manager = socket_resolver, process_manager
-        self._registry, self._current_peer, self._custody, self._now = registry, current_peer, custody, now
+        self._registry, self._current_peer, self._catalog, self._custody, self._now = (
+            registry, current_peer, catalog, custody, now)
         self._authorize_action = authorize_action
         self._boundary_observer, self._window_observer = boundary_observer, window_observer
+        self._observer_signer = observer_signer
         self._peer_credentials = peer_credentials
         self._timeout = timeout_seconds
 
@@ -1159,7 +1256,7 @@ class PrivateGatewayOriginProbe:
             self._registry.cancel_action(child_handle)
             raise RemoteOriginDenied("private gateway socket changed during action")
         response = OriginProbeActionControlResponse.from_wire(response_wire, request)
-        self._registry.record_action_result(child_handle, response.result_digest)
+        self._registry.record_action_result(child_handle, response.result_digest, response.result)
         return response
 
     def probe_selected_app(self, enrollment: SelectedRemoteOrigin,
@@ -1201,20 +1298,42 @@ class PrivateGatewayOriginProbe:
         window_observer = self._window_observer
         if not callable(boundary_observer) or not callable(window_observer):
             raise RemoteOriginDenied("root gateway boundary and native-window observers are unavailable")
-        deadline = min(record.expires, float(self._now()) + 5.0)
+        boundary_resolver = getattr(self._catalog, "selected_gateway_boundary", None)
+        window_resolver = getattr(self._catalog, "selected_native_window", None)
+        if not callable(boundary_resolver) or not callable(window_resolver):
+            raise RemoteOriginDenied("active catalog lacks protected gateway/window observation rows")
+        try:
+            gateway_selection = boundary_resolver(enrollment.enrollment_id)
+            native_selection = window_resolver(enrollment.enrollment_id)
+            gateway_observer_proof = self._custody.inspect_enrolled_process(
+                enrollment.gateway_profile_id, enrollment.gateway_generation)
+            native_observer_proof = self._custody.inspect_enrolled_process(
+                enrollment.native_profile_id, enrollment.desktop_generation)
+        except Exception:
+            raise RemoteOriginDenied("current root observer selections or custody proofs are unavailable") from None
+        if (_proof_snapshot(gateway_observer_proof) != gateway_proof
+                or _proof_snapshot(native_observer_proof) != native_proof):
+            raise RemoteOriginDenied("root observer process proof changed before observation")
+        deadline = min(record.expires, float(self._now()) + 25.0)
+        observer_capability = self._registry.issue_observer_capability(root_probe_handle)
+        if not self._registry.verify_observer_capability(observer_capability):
+            raise RemoteOriginDenied("root origin-probe ledger capability failed validation")
         boundary = boundary_observer(enrollment, record.kernel_evidence.gateway_identity_digest,
-                                     gateway_proof, deadline)
-        if not isinstance(boundary, GatewayBoundaryObservation):
+                                     gateway_observer_proof, deadline, observer_capability)
+        if not isinstance(getattr(boundary, "gateway_identity_digest", None), str):
             raise RemoteOriginDenied("root gateway boundary observer returned no typed evidence")
         websocket_observation_id = actions[2].result["observation_id"]
-        native_window = window_observer(enrollment, native_proof, websocket_observation_id, deadline)
-        if not isinstance(native_window, NativeWindowObservation):
+        native_window = window_observer(enrollment, native_observer_proof,
+                                        websocket_observation_id, deadline)
+        if not isinstance(getattr(native_window, "websocket_observation_id", None), str):
             raise RemoteOriginDenied("root native-window observer returned no typed evidence")
         observations, assertion_ids, request_digest, result_digest = aggregate_root_origin_observations(
             enrollment, asset_get=actions[0], asset_head=actions[1], websocket=actions[2],
             boundary=boundary, native_window=native_window,
             gateway_identity_digest=record.kernel_evidence.gateway_identity_digest,
-            gateway_proof=gateway_proof, native_proof=native_proof, now=self._now)
+            gateway_proof=gateway_proof, native_proof=native_proof,
+            gateway_selection=gateway_selection, native_selection=native_selection,
+            observer_signer=self._observer_signer, now=self._now)
         result = {"observations": observations, "observed_assertion_ids": assertion_ids,
                   "request_digest": request_digest, "result_digest": result_digest}
         return self._registry.complete(record, result, request_digest)
@@ -1277,6 +1396,17 @@ def _selected_enrolled_process_proof(custody: Any, profile_id: str, generation: 
     return result, float(proof.expires_monotonic)
 
 
+def _proof_snapshot(proof: Any) -> dict[str, Any]:
+    """Take the same strict field snapshot used by root enrolled-process joins."""
+    required = ("process_id", "profile_id", "enrollment_id", "profile_generation", "uid", "gid",
+                "pid", "pid_starttime_ticks", "executable_device", "executable_inode",
+                "executable_sha256", "cgroup_id", "mount_namespace_inode",
+                "network_namespace_inode", "pidfd_registry_handle", "expires_monotonic")
+    if proof is None or any(not hasattr(proof, key) for key in required):
+        raise RemoteOriginDenied("typed root process proof is unavailable")
+    return {key: getattr(proof, key) for key in required}
+
+
 def _digest_canonical(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical(dict(value))).hexdigest()
 
@@ -1291,9 +1421,10 @@ class SelectedRemoteOriginProbeAuthority:
                  resolve_selected_native_principal: Callable[[str, str, str], Any],
                  socket_resolver: RemoteOriginControlSocketResolver,
                  signer: ReceiptSigner,
-                 boundary_observer: Callable[[SelectedRemoteOrigin, str, Mapping[str, Any], float],
+                 connector_ledger: Any = None,
+                 boundary_observer: Callable[[SelectedRemoteOrigin, str, Any, float],
                                              GatewayBoundaryObservation] | None = None,
-                 window_observer: Callable[[SelectedRemoteOrigin, Mapping[str, Any], str, float],
+                 window_observer: Callable[[SelectedRemoteOrigin, Any, str, float],
                                            NativeWindowObservation] | None = None,
                  now: Callable[[], float] = time.monotonic,
                  peer_credentials: Callable[[socket.socket], tuple[int, int, int]] | None = None):
@@ -1307,9 +1438,16 @@ class SelectedRemoteOriginProbeAuthority:
         self._registry = RootOriginProbeRegistry(signer, now=now)
         self._transport = PrivateGatewayOriginProbe(socket_resolver=socket_resolver,
             process_manager=process_manager, registry=self._registry, current_peer=current_peer,
-            custody=custody, authorize_action=self.authorize_probe_action,
+            catalog=catalog, custody=custody, authorize_action=self.authorize_probe_action,
             boundary_observer=boundary_observer, window_observer=window_observer,
+            observer_signer=signer,
             now=now, peer_credentials=peer_credentials)
+        if connector_ledger is not None:
+            if boundary_observer is not None or window_observer is not None:
+                raise ValueError("supply either root observer ledger or test observers, not both")
+            self.install_production_origin_observers(connector_ledger=connector_ledger)
+        elif (boundary_observer is None) != (window_observer is None):
+            raise ValueError("both root observers are required as a pair")
 
     def issue_selected_origin_probe(self, remote_enrollment_id: str,
                                     root_setup_transaction_handle: str) -> str:
@@ -1583,6 +1721,25 @@ class SelectedRemoteOriginProbeAuthority:
             hi12=hi12, boot_epoch=boot_epoch,
             advance_sequence=self.advance_probe_connector_sequence,
             monotonic=self._now)
+
+    def install_production_origin_observers(self, *, connector_ledger: Any) -> None:
+        """Assemble the Linux root observers; do not use caller-supplied flags.
+
+        The ledger must be the active HI07/HI12 effect registry. Observer
+        selection data is re-resolved by the active catalog on every call.
+        Missing Linux/XRes support or protected catalog rows keeps probing
+        unavailable.
+        """
+        try:
+            from .remote_observations import GatewayBoundaryObserver, NativeWindowObserver
+            boundary = GatewayBoundaryObserver(catalog=self._catalog, custody=self._custody,
+                connector_ledger=connector_ledger, signer=self._signer, monotonic=self._now)
+            window = NativeWindowObserver(catalog=self._catalog, custody=self._custody,
+                stream_registry=self._registry, signer=self._signer, monotonic=self._now)
+        except Exception:
+            raise RemoteOriginDenied("root production gateway/native-window observers are unavailable") from None
+        self._transport._boundary_observer = boundary
+        self._transport._window_observer = window
 
     def _verify_current_probe_transaction(self,
             record: _ProbeHandleRecord) -> VerifiedRemoteSetupTransaction:

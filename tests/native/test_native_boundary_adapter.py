@@ -30,6 +30,7 @@ EXPECTED = {
     "agent/__init__.py": "067ee01cbc088b572cbdabbbe4116d9bec0939acc0bd30ac67b287cb5d6743e6",
     "agent/chat_completion_helpers.py": "5654fcd9a03243658b87afecc4a2735a111e314e254f08a5eb326980f057e49c",
     "agent/auxiliary_client.py": "613484e5748c1ab91b0c70ad0c816c1b4cb7c93c3074c9e9f3180697e51a1427",
+    "agent/turn_facade.py": "155f46f54884946113f5a82222ef3ab142c88d8d660a3bf3e30fe9cf6ea1147e",
     "agent/tool_executor.py": "77d8dcf8abab1d548d8874148b5b972feddf0cf31245f1d8064c3b704d613f2b",
     "tools/__init__.py": "cd92cb5947a7ceeff2cce118857e7e6285eafefb2c32a0a119afdc33865b7ffe",
     "tools/mcp_tool_registration.py": "4e9cbd62da220be24e8a2ec9b140f28914642e7968eb59a92a5127875c43af2a",
@@ -64,6 +65,19 @@ class NativeBoundaryAdapterTests(unittest.TestCase):
         self.assertNotIn("args.query = sys.stdin.read()", patched)
         self.assertLess(patched.index("from hermes_installer.native_invocations import read_selected_native_input"),
                         patched.index("args.query = read_selected_native_input(sys.stdin.buffer)"))
+
+    def test_pinned_turn_facade_finishes_only_at_successful_return_and_clears_scope(self):
+        if not UPSTREAM.is_dir():
+            self.skipTest("exact official Hermes source checkout is not available")
+        patched = __import__("hermes_installer.native_boundary_patch", fromlist=["_transform"])._transform(
+            "agent/turn_facade.py", (UPSTREAM / "agent/turn_facade.py").read_bytes()).decode("utf-8")
+        compile(patched, "agent/turn_facade.py", "exec")
+        self.assertEqual(patched.count("finish_selected_native_turn(self, result)"), 1)
+        self.assertLess(patched.index("finish_selected_native_turn(self, result)"),
+                        patched.index("            return result\n", patched.index("finish_selected_native_turn")))
+        self.assertIn("clear_native_turn_scope()", patched)
+        self.assertGreater(patched.index("clear_native_turn_scope()"),
+                           patched.index("        except BaseException as exc:"))
 
     def test_overlay_package_initializers_extend_real_pinned_source_path(self):
         if not UPSTREAM.is_dir():

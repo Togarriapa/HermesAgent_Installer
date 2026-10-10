@@ -121,7 +121,6 @@ class HermesBootstrap:
             raise ValueError("Selected Hermes operation timeout must be between 30 and 600 seconds")
         generation = self.selected_operations.generation_id
         stage_log = f"runtime/logs/hermes-agent/{HERMES_COMMIT[:12]}/selected-stage.log"
-        health_log = f"runtime/logs/hermes-agent/{HERMES_COMMIT[:12]}/selected-health.log"
         self.state.record_owned("hermes-generation", generation, "staged")
         self.state.checkpoint(self.operation, "running:selected-stage", {
             "commit": HERMES_COMMIT, "generation_id": generation,
@@ -165,47 +164,17 @@ class HermesBootstrap:
                 tuple(statuses), False, False,
                 "pending: root stage operation did not complete; user data was preserved",
                 "hermes-installer resume", False)
-        self.state.checkpoint(self.operation, "running:selected-health", {
-            "commit": HERMES_COMMIT, "generation_id": generation,
-            "generation_digest": self.selected_operations.generation_digest,
-            "operation_id": "hermes-agent-health-v1", "resume": "hermes-installer resume",
-        })
-        try:
-            health = self.selected_operations.health(stage, timeout=timeout, cancelled=cancelled)
-        except BaseException as exc:
-            self._record_process_exception(exc, "selected-health")
-            self.state.checkpoint(self.operation,
-                "cancelled:selected-health" if isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError)) else "failed:selected-health", {
-                    "generation_id": generation, "error_type": type(exc).__name__,
-                    "cleanup_verified": getattr(exc, "cleanup_verified", None),
-                    "resume": "hermes-installer resume",
-                })
-            return BootstrapReport(HERMES_COMMIT, generation, "managed service home",
-                tuple(statuses + [StageStatus("selected-health", "failed")]), False, False,
-                "pending: root health operation failed or needs recovery", "hermes-installer resume", False)
-        self._persist_diagnostic(health_log, bytearray(health.result.diagnostic),
-                                 len(health.result.diagnostic) >= 96 * 1024)
-        statuses.append(StageStatus("selected-health",
-            "complete" if health.operation_completed else "failed", health.result.exit_code, health_log))
-        self.state.event(self.operation, "selected-health",
-            "completed" if health.operation_completed else "failed", {
-                "operation_id": health.operation_id, "enrollment_id": health.enrollment_id,
-                "generation_id": generation, "generation_digest": health.generation_digest,
-                "receipt_id": health.result.receipt_id, "process_id": health.result.process_id,
-                "cleanup_verified": health.result.cleanup_verified,
-                "timed_out": health.result.timed_out, "exit_code": health.result.exit_code,
-                "diagnostic": health_log,
-            })
+        statuses.append(StageStatus("selected-health", "pending"))
         self.state.checkpoint(self.operation, "pending:native-health-observation", {
             "generation_id": generation, "generation_digest": self.selected_operations.generation_digest,
-            "health_operation_completed": health.operation_completed,
+            "health_operation_started": False,
             "functional_agent_ready": False, "desktop_built": False,
-            "reason": "HI08/HI11 native registration/request/result receipt is not attached",
+            "reason": "HI08/HI11 observer must own health process and native registration/request/result events",
             "resume": "hermes-installer resume",
         })
         return BootstrapReport(HERMES_COMMIT, generation, "managed service home", tuple(statuses),
             False, False,
-            "pending: root health operation completed but native Agent function evidence is required",
+            "pending: native health observer and functional Agent evidence are required",
             "hermes-installer resume", False)
 
     def _has_fixture_overrides(self) -> bool:
