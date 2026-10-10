@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "id": "web-content-root-receipt-v1",
+  "requirements": [
+    "HI-T08",
+    "HI-T11"
+  ],
+  "why": "v120 bounded native web receipt shape has no actual root captured-content CAS producer. Existing PublicSourceReceipt transport hash/URL/TLS facts are observations, not root artifact or SourceReceipt registry membership.",
+  "owner_module": "hermes_installer.authority.web_content_artifacts",
+  "owner": "artifact broker producer; authority.artifacts may tiny public re-export; root web handler creates observation, native web adapter consumes metadata only.",
+  "API": "RootWebContentArtifactRegistry.from_authority_service(service,root_journal,web_transport_receipt_registry).publish_authorized_response(verified_root_web_response_observation)->RootWebContentArtifactReceipt; resolve_web_content_receipt(source_receipt_handle,*,profile_id,owner_generation,operation_id)->RootWebContentArtifactReceipt; read_selected_content(receipt_handle,verified_current_native_result_binding)->held read-only bounded bytes root-only.",
+  "observation": "VerifiedRootWebResponseObservation is a sealed root-only actual authorized plugin.web.read handler response. Exact native invocation/action/canonical request digest/context/current effect authorization/operation receipt/parent source closure selected profile+owner generation plus actual transport receipt and captured body bytes retained by root handler. Root registry validates service-issued execution membership/currentness and one-use response observation. No worker dictionary or callback boolean mints it; consumed authorization is referenced through retained effect execution receipt, never reused as a fresh effect.",
+  "observation_fields": [
+    "observation_handle",
+    "root_effect_receipt_handle",
+    "native_invocation_handle",
+    "profile_id",
+    "owner_generation",
+    "operation_id",
+    "canonical_request_sha256",
+    "parent_source_receipt_handles",
+    "transport_receipt_handle",
+    "body_sha256",
+    "body_size_bytes",
+    "media_type",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "artifact_id": "web-content:<lowercase64 raw_body_sha256>",
+  "artifact_identity": "Dynamic bounded captured content only, not a static seed ArtifactCatalog row. Existing generic artifact ID regex is not broadened; this dedicated root registry resolves exact namespace and actual held CAS identity. SHA addresses bytes, while receipt handle separately binds per-profile/current invocation/provenance. Equal public bytes never merge private authority/source contexts.",
+  "CAS": "ProtectedRootJournal private root child web-content/<SHA256(profile_id UTF8)>/objects/<raw_body_sha256>; secure owner0 mode0700 parents nofollow, exclusive tmp write/fsync/atomic create or exact existing-byte reopen, immutable0400/0444 file no execute, held FD/dev/inode/size/hash. <=2097152 raw bytes and existing lower fetch cap; quota/lease cleanup under same owner profile, no path crossing worker API. Empty body may be retained transport observation but cannot mint v120 positive-size artifact receipt.",
+  "receipt_fields": [
+    "artifact_id",
+    "sha256",
+    "size_bytes",
+    "media_type",
+    "profile_id",
+    "owner_generation",
+    "operation_id",
+    "source_receipt_handle",
+    "expires_monotonic"
+  ],
+  "retained_private_fields": [
+    "receipt_handle",
+    "boot_id",
+    "CAS_device",
+    "CAS_inode",
+    "root_effect_receipt_handle",
+    "native_invocation_handle",
+    "canonical_request_sha256",
+    "parent_source_receipt_handles",
+    "transport_receipt_handle",
+    "transport_observation_sha256",
+    "captured_body_sha256",
+    "current_service_profile_generation",
+    "issued_monotonic",
+    "expires_monotonic",
+    "revocation_epoch",
+    "signature"
+  ],
+  "source_receipt_domain": "source_receipt_handle is this dedicated registry opaque root observed web-content provenance receipt, not fabricated SourceObserverRegistry ingress token or provider-authority SourceReceipt. Native result validator calls this exact resolver. Root transcript/memory source collector retains and resolves its transport/content/effect/parent ancestry; text remains untrusted-public-source with authority none and original parent sensitivity restrictions. Never promote web dictionary to signed source authority or strip parent private lineage.",
+  "serializer": "Root web handler publishes actual captured raw bytes and joins PublicSourceReceipt actual TLS/peer/status/redirect/request facts to the same authorized fetch. Existing native outer key set url/content_type/content/untrusted_source/authority/redirects/source_receipt unchanged; source_receipt replaced only by genuine resolved v120 metadata. content decoding comes from captured bytes through selected charset/content serializer; raw bytes SHA remains raw bytes, not string re-encoding hash. Root content validator checks this join. No response URL/header/receipt hash from caller accepted as authority.",
+  "currentness": "Cap <=30s by selected effect/native invocation/profile/source leases; validate service/owner generation/current registry/signature/source ancestry/transport/CAS each resolve and before transcript use. Expire/revoke closes FDs and invalidates handles; new boot cannot adopt old monotonic receipt without fresh actual observation. v120 receipt numeric finite expiry and canonical result <=2MiB unchanged. No redirect policy broadened by result schema maxItems32.",
+  "tasks": [
+    "HI-T126.1: broker implement actual bounded dynamic root CAS/response observation/receipt resolver and root handler callpoint, distinct transport versus source/artifact proof.",
+    "HI-T126.2: web/native/turn owners consume exact typed root receipt projection and retained ancestry; no synthesized opaque handles.",
+    "HI-T126.3: test forged effect/native/transport, false CAS hash/inode, profile/owner/expiry mismatch, duplicate bytes across profiles, output limits and untrusted content/source semantics; real account/runtime acceptance open."
+  ]
+}
