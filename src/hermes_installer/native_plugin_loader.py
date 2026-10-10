@@ -1234,12 +1234,6 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 registered = set()
                 setattr(plugin_manager, "_hermes_installer_native_registered_adapters", registered)
             registered.add(_adapter_id)
-            if progress_writer is not None and registered == set(package.adapter_ids):
-                progress_writer.emit(
-                    sequence=1, phase="actions-registered",
-                    registered_action_ids=package.registered_action_ids,
-                )
-
         module.register = register
         prepared[adapter_id] = module
     # Publish atomically after every adapter and key has been validated.
