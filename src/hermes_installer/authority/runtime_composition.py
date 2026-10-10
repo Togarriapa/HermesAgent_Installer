@@ -135,12 +135,68 @@ class _ProtectedNativeActionResolver:
             package = self.bindings.resolve_native_package(package.package_id, package.generation)
         except Exception:
             raise AuthorityDenied("native.action", "producer native package is no longer selected") from None
-        candidates: list[tuple[Any, Mapping[str, Any]]] = []
+        candidates: list[tuple[Any, Mapping[str, Any], Any, Any]] = []
         for adapter in package.adapter_records.values():
             for workflow in adapter.workflow_bindings:
                 if workflow.get("external_tool_name") != tool_name:
                     continue
                 try:
+                    matched_workflows = [
+                        row for row in package.workflow_records.values()
+                        if row.external_argument_schema_id == workflow.get("external_argument_schema_id")
+                        and row.external_result_schema_id == workflow.get("external_result_schema_id")
+                        and row.workflow_artifact_id == workflow.get("workflow_artifact_id")
+                        and row.workflow_sha256 == workflow.get("workflow_sha256")
+                    ]
+                    if len(matched_workflows) != 1:
+                        raise AuthorityDenied(
+                            "native.action", "selected workflow has no unique protected registration join",
+                        )
+                    protected_workflow = matched_workflows[0]
+                    registration = self.bindings.resolve_native_registration_record(
+                        package.package_id, package.generation,
+                        protected_workflow.registration_id,
+                        profile_id=package.profile_id,
+                        process_generation=package.profile_generation,
+                        service_generation_digest=self.service_generation_digest,
+                    )
+                    if (registration.registration_id != protected_workflow.registration_id
+                            or registration.generation != package.generation
+                            or registration.adapter_id != adapter.adapter_id
+                            or registration.native_tool_name != tool_name
+                            or registration.handler_kind != "finite-workflow"
+                            or not any(branch.workflow_id == protected_workflow.workflow_id
+                                       for branch in registration.action_bindings)):
+                        raise AuthorityDenied(
+                            "native.action", "selected registration differs from its protected workflow",
+                        )
+                    workflow_action_ids = set(protected_workflow.step_action_binding_ids)
+                    action_rows = [
+                        action for action in package.action_records.values()
+                        if action.action_binding_id in workflow_action_ids
+                        and action.adapter_id == adapter.adapter_id
+                        and action.action_id == adapter.action_id
+                    ]
+                    if len(action_rows) != 1:
+                        raise AuthorityDenied(
+                            "native.action", "selected workflow does not resolve one exact action binding",
+                        )
+                    protected_action = self.bindings.resolve_native_action_record(
+                        package.package_id, package.generation,
+                        action_rows[0].action_binding_id,
+                        profile_id=package.profile_id,
+                        process_generation=package.profile_generation,
+                        service_generation_digest=self.service_generation_digest,
+                    )
+                    if (protected_workflow.generation != package.generation
+                            or protected_action.generation != package.generation
+                            or protected_action.action_binding_id != action_rows[0].action_binding_id
+                            or protected_action.adapter_id != adapter.adapter_id
+                            or protected_action.action_id != adapter.action_id
+                            or protected_action.operation != adapter.operation):
+                        raise AuthorityDenied(
+                            "native.action", "selected workflow/action differs from its protected package generation",
+                        )
                     schema_id = workflow["external_argument_schema_id"]
                     protected_schema = self.bindings.resolve_native_schema_record(
                         schema_id, package.package_id, package.generation,
@@ -169,10 +225,10 @@ class _ProtectedNativeActionResolver:
                     raise AuthorityDenied(
                         "native.action", "selected workflow argument schema is not source-verified",
                     ) from None
-                candidates.append((adapter, schema))
+                candidates.append((adapter, schema, registration, protected_action))
         if len(candidates) != 1:
             raise AuthorityDenied("native.action", "provider tool name is absent or ambiguous in selected workflows")
-        adapter, schema = candidates[0]
+        adapter, schema, registration, protected_action = candidates[0]
 
         def validate_arguments(raw: bytes) -> bool:
             if not isinstance(raw, bytes) or not 1 <= len(raw) <= 65_536:
@@ -187,8 +243,11 @@ class _ProtectedNativeActionResolver:
 
         return NativeActionSelection(
             package_id=package.package_id, profile_id=package.profile_id,
-            generation=package.generation, adapter_id=adapter.adapter_id,
-            action_id=adapter.action_id, operation=adapter.operation,
+            generation=package.profile_generation, adapter_id=adapter.adapter_id,
+            action_id=protected_action.action_id,
+            registration_id=registration.registration_id,
+            package_generation=package.generation,
+            operation=protected_action.operation,
             validate_arguments=validate_arguments,
         )
 
@@ -423,6 +482,10 @@ class RootAuthorityRuntime:
     resource_controller_registry: Any | None = None
     resource_event_context_issuer: Any | None = None
     resource_scheduler: Any | None = None
+    resource_dag_dispatcher: Any | None = None
+    selected_webhook_ingress: Any | None = None
+    channel_peer_delivery_registry: Any | None = None
+    native_channel_context_store: Any | None = None
     resource_task_authority: Any | None = None
     resource_event_unavailable_reason: str | None = None
     controller_release_receipt: Any | None = None
@@ -523,6 +586,15 @@ class RootAuthorityRuntime:
         if callable(revoke):
             revoke(process_id, generation)
 
+    def publish_captured_channel_event(self, channel_ingress_id: str, event_handle: Any) -> int:
+        """Publish one already root-captured channel event to its unique peer."""
+        registry = self.channel_peer_delivery_registry
+        if registry is None:
+            raise AuthorityDenied("channel.unavailable", "root native channel peer delivery is unavailable")
+        return registry.publish_captured_event(
+            channel_ingress_id=channel_ingress_id, event_handle=event_handle,
+        )
+
     def close(self) -> None:
         """Close attached root observers and stop the active remote lease worker."""
         errors: list[BaseException] = []
@@ -541,6 +613,11 @@ class RootAuthorityRuntime:
             self.root_tty_consent_choices,
             self.private_input_consent_registry,
             self.memory_capture_consent_registry,
+            self.selected_webhook_ingress,
+            self.resource_scheduler,
+            self.resource_dag_dispatcher,
+            self.native_channel_context_store,
+            self.channel_peer_delivery_registry,
             self.native_runtime_observer,
             self.native_invocation_registry,
             self.native_bridge_broker,
@@ -655,7 +732,10 @@ def _compose_selected_resource_events(
     *, service: AuthorityService, enrollment: ProtectedEnrollment,
     bindings: RootRuntimeBindings, jobs: Mapping[tuple[str, str], Any],
     selected_resources: Any, source_observers: Any, job_authority: Any,
-) -> tuple[Any | None, Any | None, Any | None, Any | None, Any | None, tuple[Any, Any] | None, str | None]:
+    vault: RootCredentialVault,
+) -> tuple[Any | None, Any | None, Any | None, Any | None, Any | None,
+           Any | None, Any | None, Any | None, Any | None,
+           tuple[Any, Any] | None, str | None]:
     """Attach the real root controller/event/cron graph for selected Resources.
 
     This path is entered only with materialization-backed selected rows and a
@@ -667,7 +747,7 @@ def _compose_selected_resource_events(
     if (selected_resources is None or source_observers is None or job_authority is None
             or getattr(service, "resource_job_authority", None) is not job_authority
             or getattr(service, "resource_task_runner", None) is None):
-        return None, None, None, None, None, None, (
+        return None, None, None, None, None, None, None, None, None, None, (
             "selected materialized Resources, source observers, or concrete task runtime are unavailable"
         )
     enabled_jobs = tuple(
@@ -681,11 +761,11 @@ def _compose_selected_resource_events(
                 for selected in selected_resources.rows)
     )
     if not enabled_jobs:
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None, None
 
     role_records = getattr(bindings, "resource_controller_role_records", ())
     if not isinstance(role_records, tuple) or not role_records:
-        return None, None, None, None, None, None, (
+        return None, None, None, None, None, None, None, None, None, None, (
             "active selected Resources have no protected controller-role catalog"
         )
     runtime_published = False
@@ -695,6 +775,7 @@ def _compose_selected_resource_events(
         from hermes_installer.authority.resource_controller_runtime import RootControllerRoleRuntime
         from hermes_installer.authority.resource_source_controllers import RootResourceControllerRegistry
         from hermes_installer.authority.resource_event_issuance import ResourceEventContextIssuer
+        from hermes_installer.registry.resource_dispatch import RootResourceDAGDispatcher
         from hermes_installer.registry.resources_runtime import selected_resource_specs_by_generation
         from hermes_installer.registry.resource_producers import (
             CronOccurrenceStore, RootSelectedCronProducer, RootSelectedResourceScheduler,
@@ -708,6 +789,10 @@ def _compose_selected_resource_events(
         resource_task_authority = None
         scheduler = None
         cron_store = None
+        dag_dispatcher = None
+        webhook_ingress = None
+        channel_peer_registry = None
+        native_channel_context = None
         try:
             inspector = SystemdMainPidInspector(monotonic=service.monotonic)
             controller_runtime = RootControllerRoleRuntime.from_root_runtime(
@@ -756,6 +841,43 @@ def _compose_selected_resource_events(
                 ),
             )
 
+            service.attach_resource_event_context_issuer(event_issuer)
+            runtime_published = True
+            if getattr(service, "resource_job_authority", None) is job_authority:
+                from hermes_installer.authority.resource_task_authority import RootResourceTaskAuthority
+                resource_task_authority = RootResourceTaskAuthority.from_authority_service(
+                    service, job_authority, controller_registry,
+                )
+            dag_dispatcher = RootResourceDAGDispatcher(
+                service=service, job_authority=job_authority,
+                controller_registry=controller_registry,
+            )
+
+            # Install the root retained-peer and native-context graph whenever
+            # the active protected catalog selects channel delivery. No peer
+            # is accepted until it binds through the actual RPC credentials,
+            # process custody, and loader proof.
+            if bindings.channel_delivery_binding_records:
+                from hermes_installer.authority.channel_peer_delivery import RootChannelPeerDeliveryRegistry
+                from hermes_installer.authority.native_channel_context import RootNativeChannelContextStore
+                channel_peer_registry = RootChannelPeerDeliveryRegistry(
+                    service=service, runtime_bindings=bindings,
+                    resource_controller_registry=controller_registry,
+                    source_observers=source_observers,
+                    loader_observations=getattr(service, "native_loader_observation_store", None),
+                    monotonic=service.monotonic,
+                )
+                service.attach_channel_peer_delivery_registry(channel_peer_registry)
+                source_observers.attach_channel_delivery_registries(
+                    channel_peer_registry, controller_registry,
+                )
+                native_channel_context = RootNativeChannelContextStore(
+                    service=service, source_observers=source_observers,
+                    channel_peer_registry=channel_peer_registry,
+                    monotonic=service.monotonic,
+                )
+                service.attach_native_channel_context_store(native_channel_context)
+
             cron_candidates: list[tuple[Any, Any, Any, Any]] = []
             selected_cron_count = sum(1 for job in enabled_jobs if job.kind == "crons")
             for job in enabled_jobs:
@@ -795,6 +917,7 @@ def _compose_selected_resource_events(
                         selected_resource=selected, job_enrollment=job,
                         selected_ingress_binding=binding, event_issuer=event_issuer,
                         occurrence_store=cron_store, job_authority=job_authority,
+                        dag_dispatcher=dag_dispatcher,
                         service_generation_digest=service.service_generation_digest,
                         wall_clock=service.wall_clock, monotonic=service.monotonic,
                     )
@@ -806,32 +929,72 @@ def _compose_selected_resource_events(
                 resource_event_reason = (
                     "selected cron resources lack one exact protected backend/controller role join"
                 )
-            elif any(job.kind in {"webhooks", "channels"} for job in enabled_jobs):
-                resource_event_reason = (
-                    "selected webhook/channel events lack an attached authenticated root transport producer"
-                )
             else:
                 resource_event_reason = None
-            if getattr(service, "resource_job_authority", None) is job_authority:
-                from hermes_installer.authority.resource_task_authority import RootResourceTaskAuthority
-                resource_task_authority = RootResourceTaskAuthority.from_authority_service(
-                    service, job_authority, controller_registry,
+            # The authenticated HMAC adapter is an actual source producer and
+            # DAG callpoint. A network listener must still provide raw request
+            # bytes to resolve_controller_for_request before body intake.
+            webhook_jobs = [job for job in enabled_jobs if job.kind == "webhooks"]
+            if webhook_jobs and resource_event_reason is None:
+                from hermes_installer.registry.resource_producers import build_selected_webhook_ingress
+                from hermes_installer.registry.resources_runtime import SQLiteReplayStore
+                selected_bindings: dict[str, Any] = {}
+                for job in webhook_jobs:
+                    rows = [row for row in selected_by_id.get(job.resource_id, ())
+                            if row.identity.kind == "webhooks" and row.generation_digest == job.generation
+                            and row.profile_id == job.profile_id and row.enabled]
+                    node_backend_ids = {node.backend_enrollment_id for node in job.nodes}
+                    backend_rows = [row for row in job.backends.values()
+                                    if row.backend_id in node_backend_ids
+                                    and row.operation == "resource.webhook.deliver"]
+                    role_rows = [role for role in controller_runtime.catalog.rows
+                                 if role.controller_kind == "root-webhook"
+                                 and job.observer_enrollment_id in role.source_observer_enrollment_ids
+                                 and any(row.backend_id in role.allowed_backend_enrollment_ids
+                                         for row in backend_rows)]
+                    if len(rows) != 1 or len(backend_rows) != 1 or len(role_rows) != 1:
+                        selected_bindings.clear()
+                        break
+                    selected_bindings[job.resource_id] = controller_runtime.resolve_selected_ingress_binding(
+                        role_rows[0].id, job.source_issuer_channel_id, backend_rows[0].backend_id,
+                    )
+                if len(selected_bindings) == len(webhook_jobs):
+                    replay_path = _root_resource_job_ledger_path(bindings, enrollment).with_name(
+                        "resource-webhook-replay.sqlite3",
+                    )
+                    webhook_ingress = build_selected_webhook_ingress(
+                        selected_resources=selected_resources, job_enrollments=jobs,
+                        bindings=bindings, credential_vault=vault,
+                        replay_store=SQLiteReplayStore(replay_path),
+                        service_generation_digest=service.service_generation_digest,
+                        expected_uid=vault.expected_uid,
+                    )
+                    webhook_ingress.attach_event_issuer(event_issuer, selected_bindings)
+                    webhook_ingress.dag_dispatcher = dag_dispatcher
+                else:
+                    resource_event_reason = "selected webhook source/controller/backend join is incomplete"
+            if any(job.kind == "channels" for job in enabled_jobs):
+                resource_event_reason = (
+                    "peer-bound native channel delivery is attached, but no authenticated Composio/native source producer is selected"
+                    if channel_peer_registry is not None else
+                    "selected native channels lack protected peer-delivery binding rows or loader custody"
                 )
-                # The factory attaches this issuer directly to AuthorityService.
-                # From this point a later failure is a fatal startup error; the
-                # partially published service must never continue serving.
-                runtime_published = True
-            service.attach_resource_event_context_issuer(event_issuer)
-            runtime_published = True
 
             return (controller_runtime, controller_registry, event_issuer, scheduler,
-                    resource_task_authority, (release_receipt, actor_observation), resource_event_reason)
+                    resource_task_authority, dag_dispatcher, webhook_ingress,
+                    channel_peer_registry, native_channel_context,
+                    (release_receipt, actor_observation), resource_event_reason)
         except BaseException:
-            if controller_registry is not None:
-                try:
-                    controller_registry.close()
-                except BaseException:
-                    pass
+            for component in (
+                webhook_ingress, scheduler, dag_dispatcher, native_channel_context,
+                channel_peer_registry, controller_registry,
+            ):
+                close = getattr(component, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except BaseException:
+                        pass
             if controller_runtime is not None:
                 try:
                     controller_runtime.close()
@@ -843,7 +1006,7 @@ def _compose_selected_resource_events(
     except Exception as exc:
         if runtime_published:
             raise
-        return None, None, None, None, None, None, (
+        return None, None, None, None, None, None, None, None, None, None, (
             f"root controller/event runtime rejected composition ({type(exc).__name__})"
         )
 
@@ -1706,16 +1869,22 @@ def compose_root_authority_runtime(
     resource_controller_registry = None
     resource_event_context_issuer = None
     resource_scheduler = None
+    resource_dag_dispatcher = None
+    selected_webhook_ingress = None
+    channel_peer_delivery_registry = None
+    native_channel_context_store = None
     resource_task_authority = None
     controller_receipts = None
     resource_event_unavailable_reason = None
     if jobs and selected_resources is not None:
         (resource_controller_runtime, resource_controller_registry,
          resource_event_context_issuer, resource_scheduler, resource_task_authority,
+         resource_dag_dispatcher, selected_webhook_ingress,
+         channel_peer_delivery_registry, native_channel_context_store,
          controller_receipts, resource_event_unavailable_reason) = _compose_selected_resource_events(
             service=service, enrollment=enrollment, bindings=bindings, jobs=jobs,
             selected_resources=selected_resources, source_observers=source_observers,
-            job_authority=job_authority,
+            job_authority=job_authority, vault=vault,
         )
         if resource_event_unavailable_reason is not None and job_authority is not None:
             resource_task_unavailable_reason = resource_event_unavailable_reason
@@ -1794,6 +1963,10 @@ def compose_root_authority_runtime(
         resource_controller_registry=resource_controller_registry,
         resource_event_context_issuer=resource_event_context_issuer,
         resource_scheduler=resource_scheduler,
+        resource_dag_dispatcher=resource_dag_dispatcher,
+        selected_webhook_ingress=selected_webhook_ingress,
+        channel_peer_delivery_registry=channel_peer_delivery_registry,
+        native_channel_context_store=native_channel_context_store,
         resource_task_authority=resource_task_authority,
         resource_event_unavailable_reason=resource_event_unavailable_reason,
         controller_release_receipt=(controller_receipts[0] if controller_receipts else None),
