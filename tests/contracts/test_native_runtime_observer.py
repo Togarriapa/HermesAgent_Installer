@@ -135,6 +135,25 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             resolve=lambda adapter_id, action_id: effect
             if (adapter_id, action_id) == ("adapter-a", "action-a") else None,
         )
+        registration_id = "adapter-a:tool:selected_tool"
+        registration = {
+            "registration_id": registration_id,
+            "native_tool_name": "selected_tool", "native_server_name": "hermes-installer",
+            "toolset": "hermes-installer", "family": "adapter-a", "adapter_id": "adapter-a",
+            "argument_schema": argument_schema, "result_schema": result_schema,
+            "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
+            "registration_source_artifact_id": "artifact-adapter-a-source",
+            "registration_source_sha256": digest,
+            "registration_source_receipt_handle": "r" * 40,
+            "handler_kind": "effect-action", "handler_id": "handler-selected-tool",
+            "selector_fields": [],
+            "action_bindings": [{
+                "selector_values": {}, "action_id": "action-a",
+                "argument_projection": [], "workflow_id": None,
+            }],
+            "observer_enrollment_ids": ["observer-a"],
+        }
+        registrations = [registration]
         index = {
             "schema": 1, "package_id": "package-a", "profile_id": "profile-a",
             "generation": "generation-a", "resolver_sha256": "b" * 64,
@@ -145,12 +164,18 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
                 "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
                 "observer_enrollment_ids": ["observer-a"],
                 "native_server_name": "hermes-installer", "description": "Selected tool",
+                "registration_id": registration_id, "toolset": "hermes-installer",
+                "family": "adapter-a", "handler_kind": "effect-action",
             }],
+            "registration_projection_sha256": hashlib.sha256(_canonical(registrations)).hexdigest(),
+            "registrations": registrations,
         }
         candidate_rows = _parse_native_candidate_index(
             _canonical(index), selected=selection,
-            manifest=MappingProxyType({"adapters": [{"adapter_id": "adapter-a",
-                                                       "action_ids": ["action-a"]}]}),
+            manifest=MappingProxyType({
+                "adapters": [{"adapter_id": "adapter-a", "action_ids": ["action-a"]}],
+                "closure_files": [{"sha256": digest}],
+            }),
         )
         module = ModuleType("fixture_selected_adapter")
         adapter = _SelectedAdapter()
