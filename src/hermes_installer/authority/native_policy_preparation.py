@@ -316,6 +316,8 @@ class RootNativePolicyPreparationRegistry:
                                 "target_selection_handles": tuple(target_handles),
                             })).hexdigest())
         self._selections[selection_handle] = selection
+        if callable(bind_selection):
+            bind_selection(selection)
 
         # Read the fixed source map only to retain complete coverage. It never
         # supplies executable action, permission, source, or result records.
