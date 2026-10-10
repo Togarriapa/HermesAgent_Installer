@@ -12,8 +12,10 @@ import secrets
 import stat
 import threading
 import ctypes
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from .bootstrap_enrollment import BootstrapEnrollmentPending
@@ -23,6 +25,7 @@ _RUNTIME_PREFIX = "hermes-installer"
 _AUTHORITY_LEAF = "authority"
 _JOURNAL_DIR = "runtime-root-custody"
 _JOURNAL_FILE = "authority-runtime-root-v1.json"
+_SETUP_JOURNAL_ROOT = Path("/var/lib/hermes-installer/authority-journal")
 _OPEN_DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
 
 
@@ -106,7 +109,10 @@ def _write_journal(journal_dir: Path, document: dict[str, Any]) -> None:
         body = _canonical(document)
         offset = 0
         while offset < len(body):
-            offset += os.write(fd, body[offset:])
+            written = os.write(fd, body[offset:])
+            if written <= 0:
+                raise RuntimeRootCustodyUnavailable("protected runtime-root journal write made no progress")
+            offset += written
         os.fsync(fd)
         os.close(fd)
         fd = -1
@@ -255,9 +261,11 @@ def _open_journal_owned_directory(parent_fd: int, leaf: str, record: dict[str, i
             raise RuntimeRootCustodyUnavailable("new runtime-root staging inode changed")
         os.fchmod(fd, mode)
         info = _directory(fd, mode=mode)
-        document[key] = {"state": "pending", "device": info.st_dev, "inode": info.st_ino,
-                         "staging": staging}
+        pending_record = {"state": "pending", "device": info.st_dev, "inode": info.st_ino,
+                          "staging": staging}
+        document[key] = pending_record
         _write_journal(journal_dir, document)
+        durable_pending = True
         _rename_noreplace(parent_fd, staging, leaf)
         document[key] = {"state": "owned", "device": info.st_dev, "inode": info.st_ino}
         _write_journal(journal_dir, document)
@@ -266,7 +274,13 @@ def _open_journal_owned_directory(parent_fd: int, leaf: str, record: dict[str, i
     except BaseException:
         # Keep a journaled pending staging inode for safe recovery.  Before the
         # intent is durable, remove only the exact private staging inode.
-        durable_pending = document.get(key, {}).get("staging") == staging
+        durable_pending = locals().get("durable_pending", False)
+        if not durable_pending:
+            try:
+                persisted = _read_journal(journal_dir)
+                durable_pending = persisted is not None and persisted.get(key) == document.get(key)
+            except Exception:
+                durable_pending = False
         if not durable_pending:
             try:
                 staged = os.stat(staging, dir_fd=parent_fd, follow_symlinks=False)
@@ -291,6 +305,11 @@ class RootPreparedAuthorityRootReceipt:
     actor_start_time: int
     device: int
     inode: int
+    journal_device: int
+    journal_inode: int
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    expires_monotonic: float
     _binding: Any = field(repr=False)
     _release: Any = field(repr=False)
     _actor: Any = field(repr=False)
@@ -302,9 +321,12 @@ class RootPreparedAuthorityRootReceipt:
     _prefix_identity: tuple[int, int] = field(repr=False)
     _root_identity: tuple[int, int] = field(repr=False)
     _created: tuple[tuple[int, str, int, int], ...] = field(repr=False)
+    _journal_owner: dict[str, Any] = field(repr=False)
+    _issuer: Any = field(repr=False)
     _seal: object = field(repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _closed: bool = field(default=False, repr=False)
+    _adopted_publication: tuple[Any, ...] | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return "RootPreparedAuthorityRootReceipt(<held-root-directory>)"
@@ -315,70 +337,222 @@ class RootPreparedAuthorityRootReceipt:
         return self._root_fd
 
     def verify_current(self) -> None:
+        if self._seal is not _SEAL or self._issuer is None:
+            raise RuntimeRootCustodyUnavailable("held runtime-root receipt has no issuer")
+        self._issuer._verify_receipt(self)
+
+    def _verify_current_local(self, *, allow_activation_transition: bool = False) -> None:
         with self._lock:
             if self._closed or self._seal is not _SEAL:
                 raise RuntimeRootCustodyUnavailable("held runtime-root receipt is closed or invalid")
-            self._binding._session._check_live()
+            session = self._binding._session
+            session._check_live()
             self._actor.verify_current(self._release)
+            if time.monotonic() >= self.expires_monotonic:
+                raise RuntimeRootCustodyUnavailable("prepared authority-root receipt reached its original deadline")
+            if self._adopted_publication is None and not allow_activation_transition:
+                prepared = session._resolve_current_prepared_enrollment()
+                if (prepared.state != "prepared" or prepared.enrollment_ids
+                        or prepared.generation_id != self.prepared_generation_id
+                        or prepared.generation_digest != self.prepared_generation_digest):
+                    raise RuntimeRootCustodyUnavailable("original prepared authority generation is no longer current")
+            elif self._adopted_publication is not None:
+                self._verify_current_active_adoption(session)
+            self._binding.resolve_current_setup_identity()
+            session._refresh_authorization()
+            current_journal = session._authorization.root_journal_root
+            if (not isinstance(current_journal, Mapping)
+                    or current_journal.get("root_id") != self._journal_owner["root_id"]
+                    or current_journal.get("absolute_path") != self._journal_owner["absolute_path"]
+                    or current_journal.get("device") != self._journal_owner["device"]
+                    or current_journal.get("inode") != self._journal_owner["inode"]
+                    or current_journal.get("generation") != self._journal_owner["generation"]):
+                raise RuntimeRootCustodyUnavailable("selected root setup journal changed")
+            from .bootstrap_enrollment import _secure_directory_identity, _verify_root_journal_selection
+            _verify_root_journal_selection(current_journal, _SETUP_JOURNAL_ROOT)
+            selected_info = _secure_directory_identity(_SETUP_JOURNAL_ROOT)
+            if (selected_info.st_dev, selected_info.st_ino) != (
+                    self._journal_owner["device"], self._journal_owner["inode"]):
+                raise RuntimeRootCustodyUnavailable("selected root setup journal inode changed")
+            journal_fd = os.open(self._journal_path, _OPEN_DIR)
+            try:
+                journal_info = _directory(journal_fd, mode=0o700)
+                journal_entry = self._journal_path.lstat()
+                if (stat.S_ISLNK(journal_entry.st_mode)
+                        or (journal_info.st_dev, journal_info.st_ino)
+                        != (self.journal_device, self.journal_inode)
+                        or (journal_entry.st_dev, journal_entry.st_ino)
+                        != (self.journal_device, self.journal_inode)):
+                    raise RuntimeRootCustodyUnavailable("runtime-root journal directory identity changed")
+            finally:
+                os.close(journal_fd)
+            record = _read_journal(self._journal_path)
+            if (record is None or record.get("journal") != self._journal_owner
+                    or record.get("prefix") != {"state": "owned", "device": self._prefix_identity[0],
+                                                  "inode": self._prefix_identity[1]}
+                    or record.get("authority") != {"state": "owned", "device": self._root_identity[0],
+                                                     "inode": self._root_identity[1]}):
+                raise RuntimeRootCustodyUnavailable("protected runtime-root ownership journal changed")
             for fd, expected in ((self._run_fd, self._run_identity),
-                                 (self._prefix_fd, self._prefix_identity),
-                                 (self._root_fd, self._root_identity)):
-                info = _directory(fd)
+                                 (self._prefix_fd, self._prefix_identity), (self._root_fd, self._root_identity)):
+                mode = None if fd == self._run_fd else 0o711
+                info = _directory(fd, mode=mode)
                 if (info.st_dev, info.st_ino) != expected:
                     raise RuntimeRootCustodyUnavailable("held runtime-root directory changed")
             for parent_fd, leaf, expected in ((self._run_fd, _RUNTIME_PREFIX, self._prefix_identity),
                                                (self._prefix_fd, _AUTHORITY_LEAF, self._root_identity)):
                 info = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
                 if (not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != expected
-                        or info.st_uid != 0 or info.st_gid != 0):
+                    or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o711):
                     raise RuntimeRootCustodyUnavailable("runtime-root pathname no longer names its held inode")
+
+    def _verify_current_active_adoption(self, session: Any) -> None:
+        try:
+            publication = session._resolve_current_active_policy_publication()
+            active = session._resolve_current_active_enrollment()
+        except Exception as exc:
+            raise RuntimeRootCustodyUnavailable("active adoption lost current root publication or enrollment") from exc
+        current = self._publication_identity(publication)
+        if (current != self._adopted_publication
+                or active.state != "committed" or not active.enrollment_ids
+                or active.transaction_handle != self.transaction_handle
+                or publication.transaction_handle != self.transaction_handle
+                or publication.prepared_generation_id != self.prepared_generation_id):
+            raise RuntimeRootCustodyUnavailable("active publication no longer adopts this prepared root")
+
+    @staticmethod
+    def _publication_identity(publication: Any) -> tuple[Any, ...]:
+        from .setup_policy_publication import RootSetupPublicationReceipt
+        if type(publication) is not RootSetupPublicationReceipt or publication.state != "active-committed":
+            raise RuntimeRootCustodyUnavailable("active adoption requires an actual active publication receipt")
+        return (publication.transaction_handle, publication.publication_handle,
+                publication.publication_sha256, publication.prepared_generation_id,
+                publication.generation_id, publication.service_generation_digest)
+
+    def adopt_current_active_publication(self) -> None:
+        """Bind the retained prepared root to the actual current active publication."""
+        with self._issuer._lock:
+            with self._lock:
+                if (self._issuer._closed or self._issuer._receipts.get(id(self)) is not self):
+                    raise RuntimeRootCustodyUnavailable("runtime-root receipt is not held by its live issuer")
+                if self._adopted_publication is not None:
+                    self._verify_current_active_adoption(self._binding._session)
+                    return
+                self._verify_current_local(allow_activation_transition=True)
+                session = self._binding._session
+                try:
+                    publication = session._resolve_current_active_policy_publication()
+                    active = session._resolve_current_active_enrollment()
+                except Exception as exc:
+                    raise RuntimeRootCustodyUnavailable("there is no current active root publication to adopt") from exc
+                identity = self._publication_identity(publication)
+                if (publication.transaction_handle != self.transaction_handle
+                        or publication.prepared_generation_id != self.prepared_generation_id
+                        or active.state != "committed" or not active.enrollment_ids
+                        or active.transaction_handle != self.transaction_handle):
+                    raise RuntimeRootCustodyUnavailable("active publication does not join the held prepared generation")
+                self._adopted_publication = identity
+                try:
+                    self.verify_current()
+                except BaseException:
+                    self._adopted_publication = None
+                    raise
+
+    def _duplicate_listener_activation_parent(self) -> "_RootRuntimePrefixFD":
+        """Return only the fixed held prefix parent for the listener-activation owner."""
+        with self._issuer._lock:
+            with self._lock:
+                self.verify_current()
+                fd = os.dup(self._prefix_fd)
+                os.set_inheritable(fd, False)
+                try:
+                    self.verify_current()
+                    return _RootRuntimePrefixFD(fd, self._prefix_identity, self)
+                except BaseException:
+                    os.close(fd)
+                    raise
 
     def open_relative(self, name: str, flags: int, mode: int = 0o600) -> int:
         if (not isinstance(name, str) or not name or name in {".", ".."} or "/" in name
                 or "\\" in name or "\x00" in name):
             raise RuntimeRootCustodyUnavailable("runtime-root child must be one fixed relative component")
-        self.verify_current()
-        try:
-            fd = os.open(name, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
-                         mode, dir_fd=self._root_fd)
-        except OSError as exc:
-            raise RuntimeRootCustodyUnavailable("runtime-root child could not be opened safely") from exc
-        try:
-            self.verify_current()
-        except BaseException:
-            os.close(fd)
-            raise
-        return fd
+        with self._issuer._lock:
+            with self._lock:
+                self.verify_current()
+                try:
+                    fd = os.open(name, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                                 mode, dir_fd=self._root_fd)
+                except OSError as exc:
+                    raise RuntimeRootCustodyUnavailable("runtime-root child could not be opened safely") from exc
+                try:
+                    self.verify_current()
+                except BaseException:
+                    os.close(fd)
+                    raise
+                return fd
 
     def cleanup_created_empty(self) -> None:
         """Remove only this receipt's still-identical empty directories."""
-        self.verify_current()
-        removed: set[tuple[str, tuple[int, int]]] = set()
-        for parent_fd, leaf, device, inode in reversed(self._created):
-            if _remove_same_empty_directory(parent_fd, leaf, device, inode):
-                removed.add((leaf, (device, inode)))
-        if removed:
-            document = _read_journal(self._journal_path)
-            if document is None:
-                raise RuntimeRootCustodyUnavailable("runtime-root ownership journal disappeared during cleanup")
-            for key, leaf in (("prefix", _RUNTIME_PREFIX), ("authority", _AUTHORITY_LEAF)):
-                record = document[key]
-                if isinstance(record, dict) and (leaf, (record.get("device"), record.get("inode"))) in removed:
-                    document[key] = None
-            _write_journal(self._journal_path, document)
+        with self._issuer._lock:
+            with self._lock:
+                self.verify_current()
+                removed: set[tuple[str, tuple[int, int]]] = set()
+                for parent_fd, leaf, device, inode in reversed(self._created):
+                    if _remove_same_empty_directory(parent_fd, leaf, device, inode):
+                        removed.add((leaf, (device, inode)))
+                if removed:
+                    document = _read_journal(self._journal_path)
+                    if document is None:
+                        raise RuntimeRootCustodyUnavailable("runtime-root ownership journal disappeared during cleanup")
+                    for key, leaf in (("prefix", _RUNTIME_PREFIX), ("authority", _AUTHORITY_LEAF)):
+                        record = document[key]
+                        if isinstance(record, dict) and (leaf, (record.get("device"), record.get("inode"))) in removed:
+                            document[key] = None
+                    _write_journal(self._journal_path, document)
 
     def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            for fd in (self._root_fd, self._prefix_fd, self._run_fd):
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
+        with self._issuer._lock:
+            with self._lock:
+                if self._closed:
+                    return
+                self._closed = True
+                self._issuer._release_receipt(self)
+                for fd in (self._root_fd, self._prefix_fd, self._run_fd):
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
 
     def __enter__(self) -> "RootPreparedAuthorityRootReceipt":
+        self.verify_current()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
+
+
+@dataclass(slots=True, repr=False)
+class _RootRuntimePrefixFD:
+    """Private typed borrowed duplicate of the fixed installer runtime prefix."""
+    fd: int
+    identity: tuple[int, int]
+    _receipt: RootPreparedAuthorityRootReceipt = field(repr=False)
+    _closed: bool = False
+
+    def verify_current(self) -> None:
+        if self._closed:
+            raise RuntimeRootCustodyUnavailable("runtime-prefix FD is closed")
+        self._receipt.verify_current()
+        info = _directory(self.fd, mode=0o711)
+        if (info.st_dev, info.st_ino) != self.identity:
+            raise RuntimeRootCustodyUnavailable("runtime-prefix FD identity changed")
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            os.close(self.fd)
+
+    def __enter__(self) -> "_RootRuntimePrefixFD":
         self.verify_current()
         return self
 
@@ -413,7 +587,8 @@ class RootAuthorityRuntimeRootCustodian:
         self._session = session
         self._prepared = prepared
         self._lock = threading.RLock()
-        self._receipts: set[int] = set()
+        self._issuer = object()
+        self._receipts: dict[int, RootPreparedAuthorityRootReceipt] = {}
         self._closed = False
 
     @classmethod
@@ -445,8 +620,14 @@ class RootAuthorityRuntimeRootCustodian:
             if (not stat.S_ISDIR(dir_info.st_mode) or stat.S_ISLNK(dir_info.st_mode)
                     or dir_info.st_uid != 0 or dir_info.st_gid != 0 or stat.S_IMODE(dir_info.st_mode) != 0o700):
                 raise RuntimeRootCustodyUnavailable("runtime-root journal directory conflicts with existing data")
+            journal_fd = os.open(journal_dir, _OPEN_DIR)
+            try:
+                journal_identity = _directory(journal_fd, mode=0o700)
+            finally:
+                os.close(journal_fd)
             owner = {"root_id": journal_selection.root_id, "device": journal_selection.device,
-                     "inode": journal_selection.inode, "generation": journal_selection.generation}
+                     "inode": journal_selection.inode, "generation": journal_selection.generation,
+                     "absolute_path": str(journal_selection.path)}
             document = _read_journal(journal_dir)
             if document is None:
                 document = {"schema": 1, "journal": owner, "prefix": None, "authority": None}
@@ -478,14 +659,24 @@ class RootAuthorityRuntimeRootCustodian:
                     plan_digest=current_binding._session._authorization.plan_digest,
                     release_commit=held_release.release_commit, actor_pid=current_actor.pid,
                     actor_start_time=current_actor.start_time, device=root_info.st_dev, inode=root_info.st_ino,
+                    journal_device=journal_identity.st_dev, journal_inode=journal_identity.st_ino,
+                    prepared_generation_id=self._prepared.generation_id,
+                    prepared_generation_digest=self._prepared.generation_digest,
+                    expires_monotonic=self._prepared.expires_monotonic,
                     _binding=current_binding, _release=held_release, _actor=current_actor,
                     _journal_path=journal_dir, _run_fd=run_fd, _prefix_fd=prefix_fd, _root_fd=root_fd,
                     _run_identity=(run_info.st_dev, run_info.st_ino),
                     _prefix_identity=(prefix_info.st_dev, prefix_info.st_ino),
                     _root_identity=(root_info.st_dev, root_info.st_ino),
-                    _created=tuple(created), _seal=_SEAL)
-                receipt.verify_current()
-                self._receipts.add(id(receipt))
+                    _created=tuple(created), _issuer=self, _seal=_SEAL,
+                    _journal_owner=owner)
+                self._receipts[id(receipt)] = receipt
+                try:
+                    receipt.verify_current()
+                except BaseException:
+                    self._receipts.pop(id(receipt), None)
+                    receipt._closed = True
+                    raise
                 run_fd = prefix_fd = root_fd = -1
                 return receipt
             except BaseException:
@@ -509,7 +700,27 @@ class RootAuthorityRuntimeRootCustodian:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            receipts = tuple(self._receipts.values())
+            self._receipts.clear()
+            for receipt in receipts:
+                receipt.close()
+
+    def _verify_receipt(self, receipt: RootPreparedAuthorityRootReceipt) -> None:
+        with self._lock:
+            if self._closed or self._receipts.get(id(receipt)) is not receipt:
+                raise RuntimeRootCustodyUnavailable("runtime-root receipt is not held by its live issuer")
+            if (receipt._issuer is not self or receipt._binding is not self.binding
+                    or receipt._release is not self.release or receipt._actor is not self.actor):
+                raise RuntimeRootCustodyUnavailable("runtime-root receipt issuer bindings changed")
+            receipt._verify_current_local()
+
+    def _release_receipt(self, receipt: RootPreparedAuthorityRootReceipt) -> None:
+        with self._lock:
+            if self._receipts.get(id(receipt)) is receipt:
+                self._receipts.pop(id(receipt), None)
 
 
 __all__ = ["RootAuthorityRuntimeRootCustodian", "RootPreparedAuthorityRootReceipt",
