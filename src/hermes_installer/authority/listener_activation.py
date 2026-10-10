@@ -19,7 +19,7 @@ import stat
 import struct
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -510,6 +510,30 @@ class RootActiveAuthorityListenerReceipt:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootCurrentAuthorityListenerObservation:
+    """Fresh observation of an already-adopted listener; not a new adoption."""
+    activation_id: str
+    activation_record_sha256: str
+    endpoint_receipt_handle: str
+    publication_receipt_handle: str
+    publication_sha256: str
+    service_generation_digest: str
+    socket_device: int
+    socket_inode: int
+    daemon_unit_id: str
+    daemon_invocation_id: str
+    daemon_pid: int
+    daemon_start_ticks: int
+    observed_monotonic: float
+    expires_monotonic: float
+    _receipt: RootActiveAuthorityListenerReceipt = field(repr=False, compare=False)
+    _issuer: object = field(repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "RootCurrentAuthorityListenerObservation(<fresh active listener>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootVerifiedListenerActivationSelection:
     """Setup-side source selection minted from the committed publication.
 
@@ -672,6 +696,17 @@ def _verify_transferred_listener(fd: int, *, socket_device: int, socket_inode: i
         raise
     except OSError:
         raise ListenerActivationUnavailable("transferred listener could not be inspected") from None
+
+
+def _select_active_worker_row(rows: Any, profile_id: str) -> Mapping[str, Any]:
+    """Select by the actual closed active-row key, process_profile_id."""
+    if not isinstance(rows, (tuple, list)):
+        raise ListenerActivationUnavailable("active worker catalog is unavailable")
+    selected = [row for row in rows if isinstance(row, Mapping)
+                and row.get("process_profile_id") == profile_id]
+    if len(selected) != 1:
+        raise ListenerActivationUnavailable("active worker row is absent or ambiguous")
+    return selected[0]
 
 
 def _ensure_control_root(prefix_fd: int, prefix_identity: tuple[int, int]) -> int:
@@ -1327,6 +1362,9 @@ class RootAuthorityListenerActivationReceiver:
         self._projection = None
         self._nonce: str | None = None
         self._setup_peer_pidfd: int | None = None
+        self._active_receipt: RootActiveAuthorityListenerReceipt | None = None
+        self._active_listener: socket.socket | None = None
+        self._adopted_monotonic: float | None = None
 
     @classmethod
     def from_current_installed_daemon(cls, runtime: Any, activation_id: str,
@@ -1443,10 +1481,14 @@ class RootAuthorityListenerActivationReceiver:
             ack = dict(transfer)
             ack["operation"] = "listener-adopted"
             _send_packet(connection, ack)
-            self._await_adoption(activation_fd, record)
+            adopted_at = self._await_adoption(activation_fd, record)
+            active = replace(active, adopted_monotonic=adopted_at)
             self._verify_local_runtime()
             self._resolve_current_projection(current)
             self.inspector.verify_current(peer, self.selection)
+            self._active_receipt = active
+            self._active_listener = listener
+            self._adopted_monotonic = adopted_at
             return listener, active
         except BaseException:
             if listener is not None:
@@ -1461,6 +1503,116 @@ class RootAuthorityListenerActivationReceiver:
             if setup_peer_pidfd >= 0:
                 os.close(setup_peer_pidfd)
             peer.close()
+
+    def verify_active_current(self, receipt: RootActiveAuthorityListenerReceipt
+                              ) -> RootActiveAuthorityListenerReceipt:
+        """Verify the original one-use adoption receipt while its handshake lease is live."""
+        if (type(receipt) is not RootActiveAuthorityListenerReceipt
+                or receipt._issuer is not _RECEIVER_ISSUER
+                or self._active_receipt is not receipt
+                or self._active_listener is None
+                or receipt.expires_monotonic <= time.monotonic()):
+            raise ListenerActivationUnavailable("active listener receipt is foreign, stale, or unavailable")
+        self.observe_active_current(receipt)
+        return receipt
+
+    def observe_active_current(self, receipt: RootActiveAuthorityListenerReceipt
+                               ) -> RootCurrentAuthorityListenerObservation:
+        """Issue a fresh bounded currentness observation for the adopted FD.
+
+        The original transaction deadline gates adoption only.  A successful
+        timely adopted CAS is retained as provenance; this method then checks
+        the current protected adopted record, daemon incarnation, listener
+        inode and active publication and issues a new short observation.
+        """
+        if (type(receipt) is not RootActiveAuthorityListenerReceipt
+                or receipt._issuer is not _RECEIVER_ISSUER
+                or self._active_receipt is not receipt
+                or self._active_listener is None
+                or self._adopted_monotonic is None):
+            raise ListenerActivationUnavailable("active listener provenance is foreign or unavailable")
+        self._verify_local_runtime()
+        peer = self.inspector.inspect_authority_daemon(self.selection)
+        try:
+            self.inspector.verify_current(peer, self.selection)
+            current = self._read_current_adopted_record()
+            if (current.get("state") != "adopted"
+                    or self._adopted_monotonic > current["expires_monotonic"]
+                    or current.get("activation_id") != receipt.activation_id
+                    or current.get("setup_pid") <= 1
+                    or current.get("publication_receipt_handle") != receipt.publication_receipt_handle
+                    or current.get("publication_sha256") != receipt.publication_sha256
+                    or current.get("service_generation_digest") != receipt.service_generation_digest
+                    or current.get("socket_device") != receipt.socket_device
+                    or current.get("socket_inode") != receipt.socket_inode
+                    or current.get("daemon_invocation_id") != receipt.daemon_invocation_id
+                    or current.get("daemon_pid") != receipt.daemon_pid
+                    or current.get("daemon_start_ticks") != receipt.daemon_start_ticks):
+                raise ValueError("protected adopted record no longer proves timely listener handoff")
+            listener = self._active_listener
+            address = listener.getsockname()
+            named = Path(address).lstat() if isinstance(address, str) else None
+            profile = self.runtime.bindings.process_profiles.get(self._projection.process_profile_id)
+            if (peer.pid != receipt.daemon_pid
+                    or peer.start_ticks != receipt.daemon_start_ticks
+                    or peer.invocation_id != receipt.daemon_invocation_id
+                    or peer.unit_id != receipt.daemon_unit_id
+                    or profile is None
+                    or address != str(_AUTHORITY_SOCKET_ROOT / f"{profile.owner_uid}.sock")
+                    or listener.family != socket.AF_UNIX
+                    or listener.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_STREAM
+                    or listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) != 1
+                    or named is None or not stat.S_ISSOCK(named.st_mode)
+                    or (named.st_dev, named.st_ino) != (receipt.socket_device, receipt.socket_inode)
+                    or receipt.activation_id != self.activation_id):
+                raise ValueError("daemon or adopted listener identity changed")
+            current = self._resolve_current_projection({
+                "profile_id": self._projection.process_profile_id,
+                "publication_receipt_handle": receipt.publication_receipt_handle,
+                "publication_sha256": receipt.publication_sha256,
+                "service_generation_digest": receipt.service_generation_digest,
+                "service_enrollment_id": self._projection.enrollment_id,
+            })
+            if (current.publication_receipt_handle != receipt.publication_receipt_handle
+                    or current.publication_sha256 != receipt.publication_sha256
+                    or current.service_generation_digest != receipt.service_generation_digest
+                    or current.network_id != self._projection.network_id
+                    or current.process_profile_id != self._projection.process_profile_id):
+                raise ValueError("active publication or selected worker changed")
+            observed = time.monotonic()
+            return RootCurrentAuthorityListenerObservation(
+                receipt.activation_id, receipt.activation_record_sha256,
+                receipt.endpoint_receipt_handle, receipt.publication_receipt_handle,
+                receipt.publication_sha256, receipt.service_generation_digest,
+                receipt.socket_device, receipt.socket_inode, receipt.daemon_unit_id,
+                receipt.daemon_invocation_id, receipt.daemon_pid, receipt.daemon_start_ticks,
+                observed, observed + 30.0, receipt, _RECEIVER_ISSUER)
+        except Exception:
+            raise ListenerActivationUnavailable(
+                "same daemon unit and adopted listener are no longer current") from None
+        finally:
+            peer.close()
+
+    def _read_current_adopted_record(self) -> Mapping[str, Any]:
+        root_fd = activation_fd = -1
+        try:
+            root_fd = os.open(_CONTROL_ROOT, _OPEN_DIR)
+            root_info = os.fstat(root_fd)
+            named_root = _CONTROL_ROOT.lstat()
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0
+                    or root_info.st_gid != 0 or stat.S_IMODE(root_info.st_mode) != 0o711
+                    or (root_info.st_dev, root_info.st_ino) != (named_root.st_dev, named_root.st_ino)):
+                raise ValueError("activation root custody changed")
+            activation_fd = os.open(self.activation_id, _OPEN_DIR, dir_fd=root_fd)
+            current, _digest, _identity = _read_record_at(activation_fd)
+            return current
+        except Exception:
+            raise ListenerActivationUnavailable(
+                "protected adopted listener journal is unavailable") from None
+        finally:
+            for fd in (activation_fd, root_fd):
+                if fd >= 0:
+                    os.close(fd)
 
     def _wait_prepared_record(self) -> tuple[int, tuple[int, int], tuple[int, int],
                                                dict[str, Any], str]:
@@ -1555,19 +1707,17 @@ class RootAuthorityListenerActivationReceiver:
         from .active_network_generation import RootActiveNetworkGenerationOwner
         try:
             rows = tuple(self.runtime.bindings.enrollment_catalog.active_network_generation_records)
-            selected = [row for row in rows if row.get("profile_id") == record["profile_id"]]
-            if len(selected) != 1:
-                raise ValueError("no unique active worker row")
+            selected = _select_active_worker_row(rows, record["profile_id"])
             if self._owner is None:
                 self._owner = RootActiveNetworkGenerationOwner.from_root_runtime(self.runtime)
-            projection = self._owner.resolve_selected_worker(selected[0]["network_id"], record["profile_id"])
+            projection = self._owner.resolve_selected_worker(selected["network_id"], record["profile_id"])
             self._owner.verify_current(projection)
             if (projection.publication_receipt_handle != record["publication_receipt_handle"]
                     or projection.publication_sha256 != record["publication_sha256"]
                     or projection.service_generation_digest != record["service_generation_digest"]
                     or projection.enrollment_id != record["service_enrollment_id"]
                     or projection.profile_generation != self.service.profile_generations.get(record["profile_id"])
-                    or projection.source_choice_selection_handle != selected[0].get("source_choice_selection_handle")):
+                    or projection.source_choice_selection_handle != selected.get("source_choice_selection_handle")):
                 raise ValueError("daemon publication/source projection differs from setup selection")
             if self._projection is not None and (
                     self._projection.publication_sha256 != projection.publication_sha256
@@ -1595,17 +1745,20 @@ class RootAuthorityListenerActivationReceiver:
             socket_device=record["socket_device"], socket_inode=record["socket_inode"])
         _verify_packet(message, expected)
 
-    def _await_adoption(self, activation_fd: int, prepared: Mapping[str, Any]) -> None:
+    def _await_adoption(self, activation_fd: int, prepared: Mapping[str, Any]) -> float:
         deadline = min(prepared["expires_monotonic"], time.monotonic() + 3.0)
         while time.monotonic() < deadline:
             current, _digest_value, _identity = _read_record_at(activation_fd)
             if current["state"] == "adopted":
+                adopted_at = time.monotonic()
                 if any(current[key] != prepared[key] for key in (
                         "activation_id", "setup_pid", "setup_start_ticks", "nonce_sha256",
                         "publication_receipt_handle", "publication_sha256", "service_generation_digest",
                         "prepared_endpoint_receipt_handle", "prepared_endpoint_receipt_sha256")):
                     raise ListenerActivationUnavailable("adopted record does not join this receiver transaction")
-                return
+                if adopted_at > prepared["expires_monotonic"]:
+                    raise ListenerActivationUnavailable("supervisor committed listener adoption after its deadline")
+                return adopted_at
             if current["state"] == "cancelled":
                 raise ListenerActivationUnavailable("setup cancelled ambiguous listener adoption")
             time.sleep(0.025)

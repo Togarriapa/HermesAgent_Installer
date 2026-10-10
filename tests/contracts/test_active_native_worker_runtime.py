@@ -11,9 +11,40 @@ from hermes_installer.authority.active_native_worker_runtime import (
     _native_output_relative_parts,
     _read_fd,
     _validate_source_member_catalog,
+    _ProjectionFDCustody,
+    RootActiveNativeWorkerRuntimeProjection,
 )
 from hermes_installer.authority.active_native_worker_runtime import RootActiveNativeWorkerRuntimeRegistry
 from hermes_installer.authority import pm_runtime
+
+
+def test_projection_fd_custody_is_idempotent_after_numeric_fd_reuse():
+    read_fd, write_fd = os.pipe()
+    owner = object.__new__(RootActiveNativeWorkerRuntimeRegistry)
+    owner._issued = {}
+    owner._network_inputs = {}
+    projection = RootActiveNativeWorkerRuntimeProjection(
+        projection_handle="projection", network_projection_handle="network",
+        service_generation_digest="a" * 64, runtime_record_id="runtime",
+        runtime_record_sha256="b" * 64, pm_runtime_receipt_handle="pm",
+        pm_runtime_root_device=1, pm_runtime_root_inode=2,
+        native_output_root_device=3, native_output_root_inode=4,
+        expires_monotonic=float("inf"), member_fds=(read_fd,),
+        _custody=_ProjectionFDCustody((read_fd,)), _owner=owner, _issuer=object(),
+    )
+    owner._issued[projection.projection_handle] = projection
+    owner._network_inputs[projection.projection_handle] = object()
+    projection.close()
+    assert "projection" not in owner._issued
+    assert "projection" not in owner._network_inputs
+    reused_fd = os.open("/dev/null", os.O_RDONLY)
+    try:
+        assert reused_fd == read_fd
+        projection.close()
+        os.fstat(reused_fd)
+    finally:
+        os.close(reused_fd)
+        os.close(write_fd)
 
 
 def test_active_runtime_registry_rejects_untyped_runtime_and_owner():
