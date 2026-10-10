@@ -1025,3 +1025,67 @@ The installer SHALL provide Jarvis as the sole user-facing default profile while
 #### Scenario: Existing unowned identity conflicts
 - **WHEN** migration encounters an unowned Jarvis identity or modified owned state
 - **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
+
+
+### Requirement: Fixture-owned actual NSS subject
+
+The installer SHALL issue the v206 unprivileged fixture subject receipt only from its same child-owned source session, actual NSS identity and scoped protected transaction/controller, separately from normal production setup.
+
+#### Scenario: Actual fixture identity selects discovery subject
+
+- **WHEN** the fixed-suite choice and current child fixture transaction create or own the actual scoped NSS account
+- **THEN** its private issuer may select the observed UID/GID for real discovery custody, with separate process and cleanup evidence
+
+#### Scenario: Production or marker identity is substituted
+
+- **WHEN** an unrelated normal session, production marker, caller UID or copied receipt is offered as fixture authority
+- **THEN** launch denies and preserves unrelated identity/data, without enrollment or acceptance promotion
+
+
+## ADDED Requirements
+
+### Requirement: Exact Raspberry Pi vendor dependency evidence
+The installer SHALL admit vendor provenance only for the v207 exact libc6/u3/arm64 tuple in the reviewed Debian nft closure, using the pinned existing keyring and exact signed index/package/control/installed ELF chain. It SHALL preserve other package provenance, bounded metadata time and concrete per-archive keyring currentness, without mutating packages or trust.
+
+#### Scenario: Exact retained signed vendor row
+- **WHEN** the fixed live or protected cache witnesses verify with the exact primary key and still-valid signed complete index digest, selecting the exact installed package and matching all held ELF bytes
+- **THEN** the registry may issue only the existing short selected host-tool observation, subject to unchanged actual kernel/network proof
+
+#### Scenario: Current metadata selects a different libc package
+- **WHEN** only u4, an unsigned u3 package, expired cache, changed trust anchor or mismatched control/installed bytes is available
+- **THEN** selected network capability remains unavailable without version substitution, host package change or acceptance promotion
+
+## ADDED Requirements
+
+### Requirement: Fresh root TTY handoff after acquisition
+The installer SHALL require the independent explicit same-candidate foreground TTY observation in planning/bootstrap-handoff-tty-reconfirmation-v208.json before delayed bootstrap handoff, without extending an expired proof or widening authority.
+
+#### Scenario: Acquisition outlasts initial TTY proof
+- **WHEN** fixed selected source/runtime staging outlasts the initial60s observation
+- **THEN** a new explicit exact-SHA re-entry and same-controller current proof are required before one-use handoff; original expired lineage is not current authorization
+
+#### Scenario: Reconfirmation drifts or repeats
+- **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
+- **THEN** handoff fails closed and preserves owned staged data without acquiring service authority
+
+## ADDED Requirements
+
+### Requirement: Exact reconfirmation source leaf v211
+The installer SHALL apply only the root_setup source tuple in planning/bootstrap-handoff-reconfirmation-source-review-v211.json, preserving all other reviewed members and v208 authority boundaries.
+
+#### Scenario: Previous root setup source pin differs
+- **WHEN** the previous expected tuple rejects committed reconfirmation bytes
+- **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Current selected Jarvis delegate home custody
+The installer SHALL bind each protected selected delegate task to its current held owned home through planning/jarvis-selected-task-home-custody-v213.json and the existing consumed task effect grant.
+
+#### Scenario: Root discovers inaccessible delegate home
+- **WHEN** root discovery succeeds but serviceUID cannot traverse private host ancestors
+- **THEN** custody mounts only the held selected home at fixed/hermes and verifies actual unprivileged native load without loosening root permissions or granting primary rights
+
+#### Scenario: Home or authorization changes
+- **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
+- **THEN** task start fails closed and sibling/primary homes remain inaccessible

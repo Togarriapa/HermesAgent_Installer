@@ -1111,3 +1111,53 @@ The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/t
 #### Scenario: Old expected leaf rejects new source
 - **WHEN** the old pin test rejects the reviewed new bytes
 - **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance
+
+
+### Requirement: Fixture-owned actual NSS subject
+
+The installer SHALL issue the v206 unprivileged fixture subject receipt only from its same child-owned source session, actual NSS identity and scoped protected transaction/controller, separately from normal production setup.
+
+#### Scenario: Actual fixture identity selects discovery subject
+
+- **WHEN** the fixed-suite choice and current child fixture transaction create or own the actual scoped NSS account
+- **THEN** its private issuer may select the observed UID/GID for real discovery custody, with separate process and cleanup evidence
+
+#### Scenario: Production or marker identity is substituted
+
+- **WHEN** an unrelated normal session, production marker, caller UID or copied receipt is offered as fixture authority
+- **THEN** launch denies and preserves unrelated identity/data, without enrollment or acceptance promotion
+
+## ADDED Requirements
+
+### Requirement: Fresh root TTY handoff after acquisition
+The installer SHALL require the independent explicit same-candidate foreground TTY observation in planning/bootstrap-handoff-tty-reconfirmation-v208.json before delayed bootstrap handoff, without extending an expired proof or widening authority.
+
+#### Scenario: Acquisition outlasts initial TTY proof
+- **WHEN** fixed selected source/runtime staging outlasts the initial60s observation
+- **THEN** a new explicit exact-SHA re-entry and same-controller current proof are required before one-use handoff; original expired lineage is not current authorization
+
+#### Scenario: Reconfirmation drifts or repeats
+- **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
+- **THEN** handoff fails closed and preserves owned staged data without acquiring service authority
+
+## ADDED Requirements
+
+### Requirement: Exact reconfirmation source leaf v211
+The installer SHALL apply only the root_setup source tuple in planning/bootstrap-handoff-reconfirmation-source-review-v211.json, preserving all other reviewed members and v208 authority boundaries.
+
+#### Scenario: Previous root setup source pin differs
+- **WHEN** the previous expected tuple rejects committed reconfirmation bytes
+- **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Current selected Jarvis delegate home custody
+The installer SHALL bind each protected selected delegate task to its current held owned home through planning/jarvis-selected-task-home-custody-v213.json and the existing consumed task effect grant.
+
+#### Scenario: Root discovers inaccessible delegate home
+- **WHEN** root discovery succeeds but serviceUID cannot traverse private host ancestors
+- **THEN** custody mounts only the held selected home at fixed/hermes and verifies actual unprivileged native load without loosening root permissions or granting primary rights
+
+#### Scenario: Home or authorization changes
+- **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
+- **THEN** task start fails closed and sibling/primary homes remain inaccessible
