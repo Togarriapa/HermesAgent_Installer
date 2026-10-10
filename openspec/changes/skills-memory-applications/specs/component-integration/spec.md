@@ -721,3 +721,35 @@ The installer SHALL use v127 actual held root directory/source-member verificati
 
 - **WHEN** no genuine selected owned-directory/source inventory receipt exists
 - **THEN** the registry denies model source observation and does not infer source or deployment proof from a path or served alias
+
+### Requirement: Exact private model protected selection and held directory getters
+
+The installer SHALL resolve v128 exact protected endpoint/model selection records and current owned-directory source getters independently of actual deployment observations.
+
+#### Scenario: A typed caller object lacks registry membership
+
+- **WHEN** a selection object or directory FD is not the exact retained current root selection
+- **THEN** source/model observation is denied even if its fields appear structurally valid
+
+### Requirement: Prepared qualification admission from actual runtime preparation
+
+The installer SHALL admit v130 finite prepared qualification from actual source/lock/environment/discriminated ABI probe/choice/consent/ownedfixture receipts without fabricating an active runtime row.
+
+#### Scenario: Node source has only Python runtime proof
+
+- **WHEN** Hyperframes lacks actual selected Node/Bun environment and Node ABI/import-origin probe evidence
+- **THEN** qualification remains unavailable with the missing prerequisite and cannot pass through a Python probe or RuntimeReview
+
+### Requirement: Source-selected offline application environment builds
+The system SHALL use only the four v132 setup build targets with current genuine source, lock, package closure, runtime, controller, namespace and qualification consent selections before producing an application environment receipt. Python and Bun/Node preparation and probes SHALL remain distinct, and no active app row SHALL be fabricated to prepare its environment.
+
+#### Scenario: Missing immutable package or native toolchain
+- **WHEN** a selected lock dependency, build hook, Bun/Node artifact or native dependency has no verified held source/integrity/license/toolchain proof
+- **THEN** the build denies that phase without network fallback, runtime receipt or functional acceptance.
+
+### Requirement: Setup intent selectors and current private profile proof
+The system SHALL distinguish stable root setup principal/namespace/private-purpose intent from current <=30s authenticated authority snapshots, using the v133 exact source/subject/session/generation joins. It SHALL mint a distinct private-purpose selection only from the actual adopted native principal/profile and verified v91 owner-private namespace source within actual root TTY configuration.
+
+#### Scenario: Identity changes during preparation
+- **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
+- **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.

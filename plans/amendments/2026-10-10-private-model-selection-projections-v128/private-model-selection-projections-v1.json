@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "private-model-selection-projections-v1",
+  "requirements": [
+    "SK-T01",
+    "SK01"
+  ],
+  "endpoint": {
+    "active_key": "service_generations.private_memory_endpoint_selections",
+    "type": "hermes_installer.protected_enrollment.RootSelectedPrivateMemoryEndpointBinding",
+    "row_fields": "Exact v125 endpoint_binding_fields, no added enclosing digest in serialized row.",
+    "getter": "RootRuntimeBindings.resolve_private_memory_endpoint_binding(binding_id)->RootSelectedPrivateMemoryEndpointBinding",
+    "runtime_fields": "Exact row plus verified enclosing service_generation_digest supplied by parser/root resolver, not caller input.",
+    "join": "Unique binding_id; exact selected private profile/namespace/principal/service enrollment/generation/process profile+generation; connector_route_ids unique exact fixed route catalog and recipient/credential scope/current kernel private-network handle; server config/runtime artifact observations. Selected v108 endpoint receipt resolves actual endpoint_binding_id, and equals the exact row under current profile/namespace/private routes. No row synthesized from URI or a receipt handle alone."
+  },
+  "model": {
+    "active_key": "service_generations.private_memory_model_selections",
+    "type": "hermes_installer.protected_enrollment.RootSelectedPrivateMemoryModelBinding",
+    "row_fields": "Exact v125 model_binding_fields, no added enclosing digest in serialized row.",
+    "getter": "RootRuntimeBindings.resolve_private_memory_model_binding(binding_id)->RootSelectedPrivateMemoryModelBinding",
+    "runtime_fields": "Exact row plus verified enclosing service_generation_digest supplied by parser/root resolver.",
+    "join": "Unique binding_id and endpoint_binding_id FK; exact source/revision/license/artifact/tree/runtime/load-config refs, served alias/capability/dimensions. The selected v108 extraction/embedding receipt resolves actual model_binding_id and endpoint binding, capability/model/dimensions match exactly. Text/embed independently verified; no model-list alias promotes source. Existing-tree dynamic artifact requires v127 actual source registry membership/selected root receipt; static source uses ArtifactCatalog observation."
+  },
+  "producer": "Root installer configured existing-service/model selection registry or current verified target/service configuration produces sealed v125 bindings before observation. These protected rows select obligations, not source/deployment facts; actual endpoint and model observation receipts still required. Initial staged definitions are sealed root setup configuration, then validated by active publisher with current actual service/artifact/receipt closure. No requirement for pre-existing active model row to produce staged first observations; root current service/protected source/config bindings independently resolved. Unknown endpoint/model/embed/ownership stays unavailable.",
+  "existing_tree": {
+    "type": "hermes_installer.authority.bootstrap_runtime_factory.RootExistingModelArtifactSelection",
+    "registry": "hermes_installer.authority.bootstrap_runtime_factory.RootExistingModelSelectionRegistry",
+    "constructor": "from_root_setup(selected_installation_binding,root_owned_filesystem_selection_registry,root_journal)",
+    "producer": "observe_existing_model_directory(source_model_selection_handle)->RootExistingModelArtifactSelection; actual normal root TTY configured already-present directory/source/root choice, all v127 fields and held directory identity recorded. No caller model manifest/path passed to model observer.",
+    "resolve": "resolve_selection(selection_handle)->RootExistingModelArtifactSelection; exact retained membership/current source/private profile/principal/controller/root identity lease",
+    "verify": "verify_current(selection:RootExistingModelArtifactSelection)->same current typed selection; exact identity membership and root source/FD/currentness; raise on stale",
+    "open": "open_selected_directory(selection_handle)->RootHeldExistingModelDirectory",
+    "held_fields": [
+      "selection",
+      "directory_fd",
+      "device",
+      "inode",
+      "uid",
+      "gid",
+      "mode",
+      "expires_monotonic"
+    ],
+    "fd_ownership": "Registry retains original nofollow directory FD; each open returns duplicated FD owned/closed by model observer. FD identity must match exact selected root/subpath, source inventory resolution uses fd-relative nofollow opens. No path or FD on worker wire.",
+    "members": "RootExistingModelArtifactObserver.open_member(observation_handle,relative_manifest_member)->held read-only file observation; relative path must be exact verified source inventory member. Registry verifies current held root/observation before every open; no general filesystem read.",
+    "retention": "Existing verified RootJournalSelection from RootRuntimeBindings.resolve_root_journal and secure owned child; no invented journal-child API or key source. Explicit AuthorityService signer dependency remains v127."
+  },
+  "tasks": [
+    "SK-T128.1: host enrollment/runtime owner strict endpoint/model tables/types/getters and exact nonrecursive v108/source/process/route/receipt joins.",
+    "SK-T128.2: factory/owned-root owner actual staged configuration/existing-tree selection registry resolve/verify/open seam; models observer consumes duplicated held directory only.",
+    "SK-T128.3: test forged typed objects/unknown IDs/wrong FK/stale enclosing generation and arbitrary relative member/FD; real private endpoint/model/embedding proof open."
+  ]
+}

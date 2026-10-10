@@ -85,3 +85,11 @@ Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-e
 Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
 
 Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.
+
+Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
+
+Application offline runtime build v132: `plans/amendments/2026-10-10-application-offline-runtime-build-v132.md`; exact four setup-only source/build targets and actual offline package/environment/probe receipts, separate Python versus Bun/Node; reviewed resource ceilings are not measured compatibility. All AC remain open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.

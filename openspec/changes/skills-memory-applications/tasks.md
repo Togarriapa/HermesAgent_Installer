@@ -146,3 +146,31 @@ Existing model tree observation v127: `plans/amendments/2026-10-10-existing-mode
 - [ ] SK-T127.2: factory/owned-root/authority owner implement actual existing-model TTY/root selection retained receipt and finite signer attachment; no arbitrary path/default or copying/download.
 
 - [ ] SK-T127.3: test absent/unowned/writable/missing/hash-changed tree, forged source/selection/member handles, boot/lease/revocation, alias-only load and separately absent embedding; actual pre-existing model/ARM/server proof pending.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.
+
+- [ ] SK-T128.1: host enrollment/runtime owner strict endpoint/model tables/types/getters and exact nonrecursive v108/source/process/route/receipt joins.
+
+- [ ] SK-T128.2: factory/owned-root owner actual staged configuration/existing-tree selection registry resolve/verify/open seam; models observer consumes duplicated held directory only.
+
+- [ ] SK-T128.3: test forged typed objects/unknown IDs/wrong FK/stale enclosing generation and arbitrary relative member/FD; real private endpoint/model/embedding proof open.
+
+Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
+
+- [ ] SK-T130.1: application execution owner implement prepared request/admission path from actual completed preparation/probe/choice/source/lock/fixture, preserve operational active checks.
+
+- [ ] SK-T130.2: runtime preparation owner implement actual isolated source-backed environment producer and fixed installed Python/Node discriminated probe source/receipt; report unavailable toolchain or recipe exactly rather than RuntimeReview substitution.
+
+- [ ] SK-T130.3: factory/source/probe/custody owner wire genuine held runtime/toolchain/root/controller/namespace receipts before request mint; test missing runtime/probe, active-row fabrication, Python-for-Node, stale consent/controller/environment/fixture and arbitrary dispatch denial. All four real workflows/ARM/AC12 open.
+
+- [ ] SK-T132.1 factory: sealed finite runtime preparation/build subject selection and exact template release pin
+
+- [ ] SK-T132.2 build owner: lock-selected genuine offline package closure and finite managed Python/Bun environment build/archive/preparation receipt; preserve missing integrity/toolchain blockers
+
+- [ ] SK-T132.3 build/execution owners: installed independent Python/Node ABI/origin probes, genuine preparation/probe qualification joins, bound/failure/source mismatch tests and actual isolated platform CI; no active row prerequisite
+
+- [ ] HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests
+
+- [ ] SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease
+
+- [ ] SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies
