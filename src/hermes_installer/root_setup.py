@@ -470,13 +470,14 @@ def run_root_setup_action(
         if session is None:
             session = factory.begin(mode, account)
         if selected_action is RootSetupAction.RESUME:
-            # begin(resume) verifies and adopts only an owned, checkpointed
-            # transaction. The actual continuation phases are connected below
-            # once their sealed root APIs are available.
-            return _result(selected_action, RootSetupState.PENDING, "runtime",
-                           "The owned checkpoint is valid; runtime receipt recovery and continuation are not yet connected.",
-                           resume_allowed=True)
-        receipt = session.provision()
+            # Factory.begin("resume") reissues only the exact current empty
+            # prepared checkpoint after checking the current authority snapshot,
+            # unique transaction journal, prior session record, and service
+            # identity marker. Source/runtime/materialization receipts are then
+            # reacquired under this new live session below.
+            receipt = session.selected_installation.resolve_current_prepared_enrollment()
+        else:
+            receipt = session.provision()
         if receipt.state != "prepared" or receipt.enrollment_ids:
             return _result(selected_action, RootSetupState.FAILED, "prepared",
                            "Initial setup did not produce the required empty prepared generation.")
