@@ -929,3 +929,12 @@ The installer SHALL apply only the root_setup source tuple in planning/bootstrap
 #### Scenario: Previous root setup source pin differs
 - **WHEN** the previous expected tuple rejects committed reconfirmation bytes
 - **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Dedicated official Desktop acquisition authority
+The installer SHALL use planning/official-desktop-build-acquisition-v218.json for Desktop-specific locked source acquisition and offline build toolchain receipts without relabelling application consent.
+
+#### Scenario: Existing Node bytes selected for Desktop
+- **WHEN** the exact reviewed Node archive is reused by the Desktop builder
+- **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded

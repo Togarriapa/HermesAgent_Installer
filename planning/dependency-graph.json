@@ -3219,5 +3219,20 @@
       "VD-T213.3"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_build_acquisition_v218": {
+    "contract": "planning/official-desktop-build-acquisition-v218.json",
+    "tasks": {
+      "BD-T218.1": [
+        "HI-T197.2"
+      ],
+      "BD-T218.2": [
+        "BD-T218.1"
+      ],
+      "VD-T218.3": [
+        "BD-T218.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

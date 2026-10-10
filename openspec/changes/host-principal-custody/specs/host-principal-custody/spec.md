@@ -1179,3 +1179,12 @@ The installer SHALL use planning/jarvis-source-profile-task-identity-v215.json t
 #### Scenario: Delegate source differs from task service profile
 - **WHEN** a current protected backend selects an internal source profile
 - **THEN** source_profile_id resolves exact current owned home while service profile/principal/namespace/grant checks remain unchanged and no additional serviceprofile identity is fabricated
+
+## ADDED Requirements
+
+### Requirement: Dedicated official Desktop acquisition authority
+The installer SHALL use planning/official-desktop-build-acquisition-v218.json for Desktop-specific locked source acquisition and offline build toolchain receipts without relabelling application consent.
+
+#### Scenario: Existing Node bytes selected for Desktop
+- **WHEN** the exact reviewed Node archive is reused by the Desktop builder
+- **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded
