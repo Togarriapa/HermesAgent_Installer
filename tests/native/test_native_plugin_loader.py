@@ -57,7 +57,8 @@ class AuthorityFixture:
         return self.resolver
 
 
-def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False):
+def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
+                    toolset: str = "hermes-installer"):
     module = b"def register(ctx, runtime_context):\n    runtime_context.seen = ctx\n"
     closure_root = tmp / "closure"
     closure_root.mkdir()
@@ -83,8 +84,35 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False):
         "observer_enrollment_ids": ["observer-fixture"],
         "native_server_name": "hermes-installer",
         "description": "Protected installer action",
+        "registration_id": "fixture-plugin:tool:fixture_read",
+        "toolset": toolset,
+        "family": "fixture-plugin",
+        "handler_kind": "effect-action",
     }
     candidates = [candidate]
+    registration = {
+        "registration_id": candidate["registration_id"],
+        "native_tool_name": candidate["native_tool_name"],
+        "native_server_name": candidate["native_server_name"],
+        "toolset": candidate["toolset"],
+        "family": candidate["family"],
+        "adapter_id": candidate["adapter_id"],
+        "argument_schema": argument_schema,
+        "result_schema": result_schema,
+        "native_schema_sha256": candidate["native_schema_sha256"],
+        "registration_source_artifact_id": "artifact-fixture-plugin-source",
+        "registration_source_sha256": file_row["sha256"],
+        "registration_source_receipt_handle": "receipt-fixture-source-0001",
+        "handler_kind": candidate["handler_kind"],
+        "handler_id": "handler-fixture-read",
+        "selector_fields": [],
+        "action_bindings": [{
+            "selector_values": {}, "action_id": "fixture.read",
+            "argument_projection": [], "workflow_id": None,
+        }],
+        "observer_enrollment_ids": candidate["observer_enrollment_ids"],
+    }
+    registrations = [registration]
     index = {
         "schema": 1,
         "package_id": "native-package-fixture",
@@ -92,6 +120,8 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False):
         "generation": "generation-fixture",
         "resolver_sha256": "0" * 64,
         "candidates": candidates,
+        "registration_projection_sha256": hashlib.sha256(_canonical(registrations)).hexdigest(),
+        "registrations": registrations,
     }
     # The resolver digest is populated after the resolver preimage below.
     adapter = {
@@ -140,9 +170,33 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False):
             "observer_enrollment_ids": ["observer-fixture-mcp"],
             "native_server_name": "fixture",
             "description": "Read a protected fixture resource",
+            "registration_id": "hermes-installer.native-mcp-dispatch.v1:tool:mcp__fixture__read",
+            "toolset": "mcp-fixture",
+            "family": "native-mcp-dispatch",
+            "handler_kind": "mcp-dispatch",
+        })
+        registrations.append({
+            "registration_id": "hermes-installer.native-mcp-dispatch.v1:tool:mcp__fixture__read",
+            "native_tool_name": "mcp__fixture__read", "native_server_name": "fixture",
+            "toolset": "mcp-fixture", "family": "native-mcp-dispatch",
+            "adapter_id": "hermes-installer.native-mcp-dispatch.v1",
+            "argument_schema": mcp_schema, "result_schema": {"type": "object"},
+            "native_schema_sha256": hashlib.sha256(_canonical(mcp_schema)).hexdigest(),
+            "registration_source_artifact_id": "artifact-fixture-mcp-source",
+            "registration_source_sha256": file_row["sha256"],
+            "registration_source_receipt_handle": "receipt-fixture-mcp-0001",
+            "handler_kind": "mcp-dispatch", "handler_id": "handler-fixture-mcp-read",
+            "selector_fields": [],
+            "action_bindings": [{
+                "selector_values": {}, "action_id": mcp_action,
+                "argument_projection": [{"name": "resource", "source_field": "resource"}],
+                "workflow_id": None,
+            }],
+            "observer_enrollment_ids": ["observer-fixture-mcp"],
         })
     resolver = {**resolver_body, "resolver_sha256": hashlib.sha256(_canonical(resolver_body)).hexdigest()}
     index["resolver_sha256"] = resolver["resolver_sha256"]
+    index["registration_projection_sha256"] = hashlib.sha256(_canonical(registrations)).hexdigest()
     index_bytes = _canonical(index)
     index_path = closure_root / "catalog" / "native-candidates.json"
     index_path.write_bytes(index_bytes)
@@ -308,12 +362,33 @@ class NativePluginLoaderTests(unittest.TestCase):
             self.assertEqual([(row.adapter_id, row.action_id) for row in rows],
                              [("fixture-plugin", "fixture.read")])
             self.assertEqual(rows[0].native_tool_name, "fixture_read")
+            self.assertEqual(rows[0].toolset, "hermes-installer")
+            self.assertEqual(rows[0].registration_id, "fixture-plugin:tool:fixture_read")
 
             tampered = json.loads(index_bytes)
             tampered["candidates"][0]["native_server_name"] = "caller-selected"
             with self.assertRaises(NativePluginLoadUnavailable):
                 _parse_native_candidate_index(_canonical(tampered), selected=selected,
                                               manifest=types.MappingProxyType(manifest))
+
+            tampered = json.loads(index_bytes)
+            tampered["registration_projection_sha256"] = "f" * 64
+            with self.assertRaises(NativePluginLoadUnavailable):
+                _parse_native_candidate_index(_canonical(tampered), selected=selected,
+                                              manifest=types.MappingProxyType(manifest))
+
+    def test_candidate_preserves_actual_non_mcp_source_toolset(self):
+        from hermes_installer.native_plugin_loader import _parse_native_candidate_index
+
+        with tempfile.TemporaryDirectory() as temporary:
+            selected, manifest, _raw, closure, _adapter, _authority = package_fixture(
+                Path(temporary), toolset="github",
+            )
+            rows = _parse_native_candidate_index(
+                (closure / "catalog" / "native-candidates.json").read_bytes(),
+                selected=selected, manifest=types.MappingProxyType(manifest),
+            )
+            self.assertEqual(rows[0].toolset, "github")
 
     def test_fixed_mcp_dispatcher_is_resolver_selected_not_package_module(self):
         from hermes_installer.native_plugin_loader import _parse_native_candidate_index
