@@ -52,21 +52,25 @@ def test_session_service_uses_root_selected_sealed_artifact_and_zeroes_pcm(monke
         AudioIngressSelection, SelectedAudioIngressProducer,
     )
 
-    pcm = bytearray(b"synthetic-pcm!")
+    # One millisecond of mono 16 kHz signed-16 PCM (32 bytes), matching the
+    # selected sealed-artifact schema rather than an arbitrary text fixture.
+    pcm = bytearray(range(32))
     digest = hashlib.sha256(pcm).hexdigest()
     class Observer:
         def observe_selected_audio_ingress(self, selection_handle, root_capture_record): return proof
         def validate_audio_observation(self, selection, observed, *, now_monotonic):
             if observed is not proof: raise PermissionError
             return {"schema":1,"proof_handle":"audio-proof-0001","selection_id":selection.id,
-                "session_handle":"audio-session-0001","consent_receipt_handle":"consent-0001",
-                "capture_receipt_handle":"capture-0001","audio_artifact_id":"artifact-0001",
-                "audio_sha256":digest,"size_bytes":len(pcm),"format_schema_id":selection.sample_format_schema_id,
+                "session_handle":"audio-session-0001","session_id":"audio-session-0001",
+                "consent_receipt_handle":"consent-0001","capture_receipt_handle":"capture-0001",
+                "audio_artifact_id":"artifact-0001","audio_artifact_receipt_handle":"artifact-receipt-0001",
+                "capture_id":"capture-id-0001","audio_sha256":digest,"size_bytes":len(pcm),
+                "duration_milliseconds":1,"format_schema_id":selection.sample_format_schema_id,
                 "controller_identity_digest":"a"*64,"service_generation_digest":"b"*64,
                 "issued_monotonic":95.0,"expires_monotonic":110.0}
     proof = object()
     selection=AudioIngressSelection("audio-selection","audio-channel",1,"profile-001","role-001",
-        "issuer-001","device-001","backend-001","d"*64,"session-policy-001",16384,10,"pcm16-v1")
+        "issuer-001","device-001","backend-001","d"*64,"session-policy-001",16384,10,"pcm16-mono-16000-v1")
     producer=SelectedAudioIngressProducer(selection,"selected-handle-001",Observer(),clock=lambda:100.0)
     class Capture:
         def capture_selected_audio(self, handle, session_handle, *, max_bytes, max_seconds):
