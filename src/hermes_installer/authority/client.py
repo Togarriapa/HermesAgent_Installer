@@ -254,6 +254,46 @@ class AuthorityClient:
             raise AuthorityDenied("native.input.take", "authority returned an expired input delivery")
         return delivery
 
+    def bind_selected_channel_runtime(self, *,
+                                     cancelled: Callable[[], bool] | None = None) -> Any:
+        """Bind this current native Hermes process to its root-selected channel row.
+
+        The request contains no profile, package, account, channel, or PID. The
+        AuthorityService resolves them from this connection's SO_PEERCRED and
+        PIDFD and returns only an opaque lease-bound lookup handle.
+        """
+        from .channel_peer_delivery import ChannelRuntimeBinding
+
+        result = self._rpc("channel.runtime.bind", {"schema": 1},
+                           timeout=min(10.0, self.timeout), cancelled=cancelled)
+        binding = ChannelRuntimeBinding.from_wire(result)
+        if not self.monotonic() < binding.expires_monotonic <= self.monotonic() + 30.0:
+            raise AuthorityDenied("channel.binding", "root returned an expired channel binding")
+        return binding
+
+    def take_selected_channel_event(self, binding: Any, *,
+                                    cancelled: Callable[[], bool] | None = None
+                                    ) -> Any | None:
+        """Take at most one event addressed to this exact bound native peer."""
+        from .channel_peer_delivery import ChannelEventDelivery, ChannelRuntimeBinding
+
+        if type(binding) is not ChannelRuntimeBinding:
+            raise AuthorityDenied("channel.delivery", "a root-issued channel runtime binding is required")
+        if (binding.expires_monotonic <= self.monotonic()
+                or binding.service_generation_digest == ""):
+            raise AuthorityDenied("channel.delivery", "selected channel runtime binding is stale")
+        result = self._rpc("channel.event.take", {
+            "schema": 1, "binding_handle": binding.binding_handle, "max_events": 1,
+        }, timeout=min(30.0, self.timeout), cancelled=cancelled)
+        if result is None:
+            return None
+        delivery = ChannelEventDelivery.from_wire(result)
+        if (delivery.binding_handle != binding.binding_handle
+                or delivery.expires_monotonic <= self.monotonic()
+                or delivery.expires_monotonic > binding.expires_monotonic):
+            raise AuthorityDenied("channel.delivery", "root returned a stale or mismatched channel event")
+        return delivery
+
     def finish_selected_native_turn(
         self, turn_handle: str, final_response_delivery_handle: str,
     ) -> RootCompletedNativeTurnPresentation:

@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "channel-retained-peer-delivery-v1",
+  "requirements": [
+    "RG-F03",
+    "R0060",
+    "HI-T08",
+    "HI-T11"
+  ],
+  "why": "Actual channel_peer_delivery.publish_captured_event creates random unregistered source/context strings. Retained controller event provides signed receipts/context but no current native peer bearer handles. Those placeholders must never be delivered as provenance.",
+  "owner": "channel registry verifies bound target; authority/source issuer derive fresh root peer-bound input delivery; existing native input store registers context; resource controller validates retained event.",
+  "proof_type": "RootRetainedChannelDeliveryProof",
+  "proof_fields": [
+    "proof_handle",
+    "event_handle",
+    "event_payload_sha256",
+    "event_payload_size_bytes",
+    "channel_ingress_id",
+    "source_observer_enrollment_id",
+    "native_binding_handle",
+    "native_profile_id",
+    "native_profile_generation",
+    "native_package_id",
+    "native_package_generation",
+    "namespace_id",
+    "principal_id",
+    "native_process_identity_digest",
+    "native_loaded_role_proof_handle",
+    "original_source_receipt_ids",
+    "original_source_context_digest",
+    "original_controller_binding_handle",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "proof_source": "RootChannelPeerDeliveryRegistry resolves exact RootResourceEventHandle via RootResourceControllerRegistry.resolve_retained_event; genuine current original signed source receipts/root observed transport/source proof/controller, exact canonical payload/protocol schema. Select only current kernel-authenticated bound native peer allowed by protected channel binding/profile/namespace/observer/role record; duplicate target PIDFD retained. No SDK event/caller payload/selected profile/PID/root-as-native identity.",
+  "root_API": "AuthorityService.issue_root_channel_event_delivery(retained_event_handle,channel_ingress_id,verified_native_peer_binding)->RootChannelInputDelivery; fixed root-only delegate registered from RootChannelPeerDeliveryRegistry/source event/controller/native input stores. No worker RPC or arbitrary context/SourceReceipt fields. Root registry may create proof internally; validates exact retained membership on every issuance.",
+  "result_type": "RootChannelInputDelivery",
+  "result_fields": [
+    "delivery_handle",
+    "event_handle",
+    "native_binding_handle",
+    "source_receipt_handle",
+    "producer_context_delivery_handle",
+    "payload_sha256",
+    "sequence",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "mint": "Issue fresh root derived native-input source/context from retained actual source/parent closure, not mutate or retarget prior bearer. New signed SourceReceipt ID records original source receipts as ancestry, exact payload digest/source trust/sensitivity/recipient restrictions, actual original source controller/capture evidence. Register its opaque source_receipt_handle with exact target live native peer delivery binding. Existing source receipt IDs and objects remain immutable. Register new signed producer context in actual NativeInitialInputDelivery/native input store and return its genuine producer_context_delivery_handle. Both handles must resolve issued registry membership before ChannelEventDelivery queue insertion; random syntactic strings forbidden.",
+  "identity_separation": "Original source producer/controller identity remains source provenance; receiving native peer identity comes from current actual PIDFD/loaded role/profile/package and binds delivery/context subject. Never label controller PID as native worker or rewrite a source receipt native_process_identity. Retained store must keep distinct source-producer provenance and delivery-target PIDFD binding; target binding cannot become live historical source proof.",
+  "policy": "Reduce to actual target current principal/profile/namespace/source lineage/sensitivity/operations and intersect original source recipient restrictions with actual current RootPrivateInputConsent/protected private routes. No public/wildcard/budget allowance, no widening from channel auth/JWT/device permission. Missing current consent yields empty provider ceiling or delivery denial per selected input policy, never strip ancestry.",
+  "one_use": "Unique (retained event ID,current native binding ID) issuance and monotonic peer sequence. channel.take authenticates same current peer and takes queued delivery once; source/native take then resolve actual separate root handles for that peer under existing one-use delivery state. A source already bound elsewhere is never retargeted. Atomic reserve\u2192issue/register both\u2192queue; failure rolls back reserved handles/FDs and no fake delivery. Fanout only if protected selection explicitly permits each target, with independent reduced receipts/contexts.",
+  "lease": "Minimum event/source/controller/current native role/PIDFD/private consent leases and <=30s. Every queue/take/source/context resolution rechecks profile/package/process generation/namespace/current role/epoch/revocation. Exit/rebind/generation change removes queued records and closes registry-owned duplicate PIDFDs.",
+  "compatibility": "Existing ChannelEventDelivery wire fields unchanged; source_receipt_handle and producer_context_delivery_handle now real issued separate store receipts. Neither original signed SourceReceipt.id nor event_handle string substitutes for registered bearer handles. publish unavailable unless actual issuers/stores attached; no fixture acceptance claim from bind/take alone.",
+  "tasks": [
+    "HI-T129.1: channel owner replace placeholder publish with actual retained-event/current native peer proof and atomic reduced issuer/store queue join.",
+    "HI-T129.2: source/controller/authority/native-input owner implement fixed root delivery derivation and genuine peer-bound handles with distinct source versus target identity.",
+    "HI-T129.3: test forged syntactic handles, old peer/epoch/generation, source retarget, missing ancestry/consent/store, duplicate publication and partial issuance rollback; actual all-five channel runtime acceptance open."
+  ]
+}

@@ -42,6 +42,8 @@ _PROTOCOL_SCHEMAS = {
     "resource-cron-tick-v1": "7b7292435e8f3cd8010e1be3d678b0eabe6199b4a047782221e91073b02be53a",
     "resource-github-push-v1": "3b27135572adf4392f85b0f37a8dcce0e18dbac2aba811462416807c5e4733c8",
     "resource-registry-update-notice-v1": "01bdc4055a7675038feb5d61bbf36e345315543e3008d22e0e1c4815edb2c278",
+    "channel-http-observed-event-v1": "7626756c12b9020248423114e0df294fc7c2c5c74def36e535244de81bd4452c",
+    "channel-audio-observed-event-v1": "cfbd9c9a41299293776666201298e4cdf3be388e91ec7c8ff05d2931520965fb",
 }
 
 
@@ -443,6 +445,47 @@ class ResourceEventContextIssuer:
                     or selected_repository != data.get("repository")
                     or not re.fullmatch(r"[0-9a-f]{40}", str(data.get("commit", "")))):
                 raise AuthorityDenied("resource.event", "registry notice differs from its selected schema")
+        elif schema == "channel-http-observed-event-v1":
+            if (producer.source_kind != "native-input"
+                    or set(data) != {"text", "session_id", "request_id", "subject_id",
+                                     "raw_body_sha256", "raw_body_size_bytes"}
+                    or not isinstance(data.get("text"), str)
+                    or not 1 <= len(data["text"]) <= 65536
+                    or any(not isinstance(data.get(name), str) or not 1 <= len(data[name]) <= 256
+                           for name in ("session_id", "request_id", "subject_id"))
+                    or not isinstance(data.get("raw_body_sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", data["raw_body_sha256"])
+                    or type(data.get("raw_body_size_bytes")) is not int
+                    or not 1 <= data["raw_body_size_bytes"] <= 262144):
+                raise AuthorityDenied("resource.event", "HTTP channel event differs from its selected schema")
+            replay_key = canonical_digest({
+                "session_id": data["session_id"], "request_id": data["request_id"],
+                "body_sha256": data["raw_body_sha256"],
+            })
+            if replay_key != observation.replay_key_sha256:
+                raise AuthorityDenied("resource.event", "HTTP request replay key changed")
+        elif schema == "channel-audio-observed-event-v1":
+            if (producer.source_kind != "native-input"
+                    or set(data) != {"session_id", "capture_id", "audio_artifact_receipt_handle",
+                                     "audio_sha256", "audio_size_bytes", "format",
+                                     "sample_rate_hz", "duration_milliseconds"}
+                    or any(not isinstance(data.get(name), str) or not 1 <= len(data[name]) <= 256
+                           for name in ("session_id", "capture_id", "audio_artifact_receipt_handle"))
+                    or not isinstance(data.get("audio_sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", data["audio_sha256"])
+                    or type(data.get("audio_size_bytes")) is not int
+                    or not 1 <= data["audio_size_bytes"] <= 33554432
+                    or data.get("format") != "pcm-s16le-mono"
+                    or type(data.get("sample_rate_hz")) is not int or data["sample_rate_hz"] != 16000
+                    or type(data.get("duration_milliseconds")) is not int
+                    or not 1 <= data["duration_milliseconds"] <= 60000):
+                raise AuthorityDenied("resource.event", "audio channel event differs from its selected schema")
+            replay_key = canonical_digest({
+                "session_id": data["session_id"], "capture_id": data["capture_id"],
+                "audio_sha256": data["audio_sha256"],
+            })
+            if replay_key != observation.replay_key_sha256:
+                raise AuthorityDenied("resource.event", "audio capture replay key changed")
         else:
             raise AuthorityDenied("resource.event", "selected protocol schema has no root validator")
 
@@ -678,12 +721,36 @@ class ResourceEventContextIssuer:
         """
         observer = getattr(producer.producer, "observer", None)
         consume = getattr(observer, "consume_source_receipts", None)
-        if not callable(consume):
+        if getattr(producer, "protocol_schema_id", None) in {
+                "channel-http-observed-event-v1", "channel-audio-observed-event-v1"}:
+            # v94 HTTP JWT/session and audio consent/device/capture handles are
+            # actual root-retained ingress proofs, not SourceReceipt DTOs. The
+            # exact typed producer re-reads that same proof from its selected
+            # observer at capture time; a valid first-ingress chain is empty.
+            try:
+                from hermes_installer.components.plugin_channel_provenance import (
+                    AuthenticatedHttpIngressProducer, ObservedChannelIngress,
+                    SelectedAudioIngressProducer,
+                )
+                if (type(producer.producer) not in {
+                        AuthenticatedHttpIngressProducer, SelectedAudioIngressProducer}
+                        or type(proof.verified_provenance) is not ObservedChannelIngress
+                        or not callable(consume)):
+                    raise ValueError("wrong producer proof type")
+                producer.producer._validate(proof.verified_provenance.proof)
+                receipts = consume(proof.verified_provenance)
+            except Exception:
+                raise AuthorityDenied(
+                    "resource.source", "selected HTTP/audio root proof is stale or unavailable") from None
+            if not isinstance(receipts, tuple):
+                raise AuthorityDenied("resource.source", "native source receipt closure is malformed")
+        elif not callable(consume):
             return ()
-        try:
-            receipts = consume(proof.verified_provenance)
-        except Exception:
-            raise AuthorityDenied("resource.source", "native source receipt closure is stale or unavailable") from None
+        else:
+            try:
+                receipts = consume(proof.verified_provenance)
+            except Exception:
+                raise AuthorityDenied("resource.source", "native source receipt closure is stale or unavailable") from None
         from .types import SourceReceipt
         if (not isinstance(receipts, tuple) or len(receipts) > _MAX_RECEIPTS
                 or any(type(item) is not SourceReceipt for item in receipts)):

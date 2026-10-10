@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
+import stat
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -76,6 +79,14 @@ class SelectedProcessOperation:
     service_gid: int
 
 
+def _freeze_application_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_application_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_application_json(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class RootRuntimeBindings:
     """The immutable handler registrations and selectors for one daemon load."""
@@ -136,6 +147,9 @@ class RootRuntimeBindings:
     native_materialization: Any | None = None
     native_registry: Any | None = None
     native_discoveries: Mapping[str, Any] = MappingProxyType({})
+    artifact_staging_directory: Path | None = None
+    application_source_receipts: Any | None = None
+    application_runtime_receipts: Any | None = None
 
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
@@ -398,6 +412,141 @@ class RootRuntimeBindings:
                 raise EnrollmentDenied(f"selected application {label} is absent or changed in the root artifact catalog")
         return selected
 
+    def resolve_selected_application_runtime(
+        self, application_id: str, profile_id: str,
+    ) -> Any:
+        """Resolve a selected app only after current source/runtime proof checks.
+
+        The protected row is selection metadata. Receipt registries reopen their
+        own immutable roots and revalidate the exact service-generation digest;
+        this method never promotes row fields or artifact presence into proof.
+        """
+        selected = self.resolve_selected_application_runtime_record(
+            application_id, profile_id=profile_id,
+        )
+        row = selected.record
+        if row.get("enabled") is not True:
+            raise EnrollmentDenied("selected application is disabled by protected prerequisites")
+        source_registry = self.application_source_receipts
+        runtime_registry = self.application_runtime_receipts
+        if (source_registry is None or runtime_registry is None
+                or not callable(getattr(source_registry, "resolve", None))
+                or not callable(getattr(runtime_registry, "resolve", None))):
+            raise EnrollmentDenied("selected application source/runtime receipt registries are unavailable")
+        try:
+            source_receipt = source_registry.resolve(
+                row["source_generation_receipt_handle"],
+                application_id=application_id,
+                service_generation_digest=selected.service_generation_digest,
+            )
+            runtime_receipt = runtime_registry.resolve(
+                row["runtime_receipt_handle"],
+                application_id=application_id,
+                source_receipt_handle=row["source_generation_receipt_handle"],
+                service_generation_digest=selected.service_generation_digest,
+            )
+        except Exception:
+            raise EnrollmentDenied("selected application source/runtime receipt is absent, expired, or stale") from None
+        if (getattr(source_receipt, "handle", None) != row["source_generation_receipt_handle"]
+                or getattr(source_receipt, "application_id", None) != application_id
+                or getattr(source_receipt, "service_generation_digest", None) != selected.service_generation_digest
+                or getattr(source_receipt, "source_identity", None) != row["source_identity"]
+                or getattr(source_receipt, "source_revision", None) != row["source_revision"]
+                or getattr(source_receipt, "source_tree_sha256", None) != row["source_tree_sha256"]
+                or getattr(source_receipt, "generation_manifest_sha256", None)
+                != row["source_generation_manifest_sha256"]
+                or getattr(runtime_receipt, "handle", None) != row["runtime_receipt_handle"]
+                or getattr(runtime_receipt, "application_id", None) != application_id
+                or getattr(runtime_receipt, "source_receipt_handle", None)
+                != row["source_generation_receipt_handle"]
+                or getattr(runtime_receipt, "service_generation_digest", None)
+                != selected.service_generation_digest
+                or getattr(runtime_receipt, "runtime_id", None) != row["runtime_id"]
+                or getattr(runtime_receipt, "runtime_manifest_sha256", None) != row["runtime_manifest_sha256"]
+                or getattr(runtime_receipt, "lock_sha256", None) != row["lock_sha256"]):
+            raise EnrollmentDenied("selected application receipts do not match the active protected row")
+        request_schema = self._read_selected_application_schema(
+            row["request_schema_id"], row["request_schema_sha256"],
+        )
+        from .application_runtime import RootSelectedApplicationRuntime
+        return RootSelectedApplicationRuntime(
+            application_id=application_id,
+            profile_id=profile_id,
+            profile_generation=row["profile_generation"],
+            principal_id=row["principal_id"],
+            adapter_id=row["adapter_id"],
+            source_identity=row["source_identity"],
+            source_revision=row["source_revision"],
+            source_tree_sha256=row["source_tree_sha256"],
+            source_generation_receipt_handle=row["source_generation_receipt_handle"],
+            source_generation_manifest_sha256=row["source_generation_manifest_sha256"],
+            runtime_id=row["runtime_id"],
+            runtime_receipt_handle=row["runtime_receipt_handle"],
+            runtime_manifest_sha256=row["runtime_manifest_sha256"],
+            lock_sha256=row["lock_sha256"],
+            work_root_id=row["work_root_id"],
+            data_root_id=row["data_root_id"],
+            operation_id=row["operation_id"],
+            process_start_target=row["process_start_target"],
+            request_schema_id=row["request_schema_id"],
+            request_schema_sha256=row["request_schema_sha256"],
+            result_schema_id=row["result_schema_id"],
+            result_validator_artifact_id=row["result_validator_artifact_id"],
+            result_validator_sha256=row["result_validator_sha256"],
+            capability_ids=tuple(row["capability_ids"]),
+            provider_route_ids=tuple(row["provider_route_ids"]),
+            credential_reference_ids=tuple(row["credential_reference_ids"]),
+            account_eligibility_receipt_handle=row["account_eligibility_receipt_handle"],
+            memory_owner_generation=row["memory_owner_generation"],
+            max_lifetime_seconds=row["max_lifetime_seconds"],
+            max_memory_bytes=row["max_memory_bytes"],
+            max_workers=row["max_workers"],
+            metered_budget_usd=str(row["metered_budget_usd"]),
+            enabled=row["enabled"],
+            service_generation_digest=selected.service_generation_digest,
+            source_receipt=source_receipt,
+            runtime_receipt=runtime_receipt,
+            request_schema=request_schema,
+        )
+
+    def _read_selected_application_schema(self, artifact_id: str, expected_sha256: str) -> Mapping[str, Any]:
+        catalog = self.artifact_catalog
+        staging_root = self.artifact_staging_directory
+        if catalog is None or staging_root is None:
+            raise EnrollmentDenied("selected application request schema artifact reader is unavailable")
+        try:
+            artifact = catalog.resolve(artifact_id, expected_sha256, staging_root, expected_uid=0)
+            fd = os.open(artifact.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_size > 1024 * 1024 or info.st_size != artifact.size_bytes):
+                    raise ValueError("schema artifact custody or size is invalid")
+                chunks: list[bytes] = []
+                remaining = info.st_size
+                while remaining:
+                    chunk = os.read(fd, min(65536, remaining))
+                    if not chunk:
+                        raise ValueError("schema artifact changed while reading")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if os.read(fd, 1):
+                    raise ValueError("schema artifact grew while reading")
+            finally:
+                os.close(fd)
+            if hashlib.sha256(raw).hexdigest() != expected_sha256:
+                raise ValueError("schema artifact digest changed while reading")
+            value = json.loads(raw.decode("utf-8"))
+            canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                   ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (not isinstance(value, dict) or canonical != raw
+                    or hashlib.sha256(canonical).hexdigest() != expected_sha256):
+                raise ValueError("schema artifact is not canonical protected JSON")
+            return _freeze_application_json(value)
+        except Exception:
+            raise EnrollmentDenied("selected application request schema artifact is absent or changed") from None
+
     def resolve_channel_delivery_binding(
         self, binding_id: str, profile_id: str, process_generation: str,
         native_package_id: str, native_package_generation: str,
@@ -410,7 +559,7 @@ class RootRuntimeBindings:
         if len(rows) != 1:
             raise EnrollmentDenied("channel delivery binding is absent or ambiguous")
         package = self.resolve_native_package(native_package_id, native_package_generation)
-        if package.profile_id != profile_id or package.generation != process_generation:
+        if package.profile_id != profile_id or package.profile_generation != process_generation:
             raise EnrollmentDenied("channel delivery package does not join the selected process generation")
         row = rows[0]
         for observer_id in row["source_observer_enrollment_ids"]:
@@ -438,32 +587,35 @@ class RootRuntimeBindings:
             # The package resolver verifies the selected immutable workflow
             # artifact ID/SHA pins as well as the active package generation.
             package = self.resolve_native_package(native_package_id, native_package_generation)
-        except Exception:
-            raise EnrollmentDenied("native schema package generation is unavailable") from None
-        adapter = package.adapter_records.get(adapter_id)
-        if adapter is None or adapter.action_id != action_id:
-            raise EnrollmentDenied("native schema does not join an active package adapter action")
-        expected_schema_id = (adapter.argument_schema_id if schema_kind == "arguments"
-                              else adapter.result_schema_id)
-        eligible = schema_id == expected_schema_id
-        # External workflow schemas are selected by the package's strict
-        # adapter_workflow_bindings, whose artifact IDs/SHA pins were checked
-        # by resolve_native_package above. The schema-artifact row remains
-        # bound to the enclosing package adapter action, while the workflow
-        # binding supplies the exact external action/schema association.
+        except (EnrollmentDenied, AttributeError, KeyError, PermissionError, TypeError, ValueError) as exc:
+            raise EnrollmentDenied("native schema package generation is unavailable") from exc
+        actions = [action for action in package.action_records.values()
+                   if action.adapter_id == adapter_id and action.action_id == action_id]
+        eligible = False
+        if len(actions) == 1:
+            action = actions[0]
+            expected_schema_id = (action.argument_schema_id if schema_kind == "arguments"
+                                  else action.result_schema_id)
+            eligible = schema_id == expected_schema_id
+        elif len(actions) > 1:
+            raise EnrollmentDenied("native schema action selection is ambiguous")
         if not eligible:
             workflow_schema_field = ("external_argument_schema_id" if schema_kind == "arguments"
                                      else "external_result_schema_id")
-            matching_workflows = [workflow for workflow in adapter.workflow_bindings
-                                  if workflow.get(workflow_schema_field) == schema_id]
+            matching_workflows = [workflow for workflow in package.workflow_records.values()
+                                  if workflow.registration_id in package.registration_records
+                                  and workflow.registration_id.startswith(f"{adapter_id}:tool:")
+                                  and getattr(workflow, workflow_schema_field) == schema_id]
             if len(matching_workflows) > 1:
                 raise EnrollmentDenied("native workflow schema is ambiguous across selected external actions")
             if len(matching_workflows) == 1:
                 workflow = matching_workflows[0]
-                if not all(workflow.get(name) for name in (
-                    "external_tool_name", "external_action_id", "workflow_artifact_id", "workflow_sha256",
-                )):
-                    raise EnrollmentDenied("native workflow schema lacks its exact selected action binding")
+                registration = package.registration_records[workflow.registration_id]
+                if (registration.adapter_id != adapter_id
+                        or workflow.workflow_id not in {
+                            branch.workflow_id for branch in registration.action_bindings
+                        }):
+                    raise EnrollmentDenied("native workflow schema lacks its exact selected registration")
                 eligible = True
         if not eligible:
             # Native MCP request/result schemas are separately selected by the
@@ -474,8 +626,11 @@ class RootRuntimeBindings:
                 and row.get("native_package_id") == native_package_id
                 and row.get("native_package_generation") == native_package_generation
                 and adapter_id == "hermes-installer.native-mcp-dispatch.v1"
-                and row.get("handler_artifact_id") == adapter.adapter_artifact_id
-                and row.get("handler_artifact_sha256") == adapter.adapter_sha256
+                and any(action.action_id == action_id
+                        and action.adapter_id == adapter_id
+                        and action.adapter_artifact_id == row.get("handler_artifact_id")
+                        and action.adapter_sha256 == row.get("handler_artifact_sha256")
+                        for action in package.action_records.values())
                 and row.get("request_schema_id" if schema_kind == "arguments" else "result_schema_id") == schema_id
                 for row in self.native_mcp_tool_binding_records
             )
@@ -491,6 +646,77 @@ class RootRuntimeBindings:
         if len(matches) != 1:
             raise EnrollmentDenied("native schema artifact is absent or ambiguous in the active generation")
         return matches[0]
+
+    def resolve_native_action_record(
+        self, native_package_id: str, native_package_generation: str,
+        action_binding_id: str, *, profile_id: str, process_generation: str,
+        service_generation_digest: str,
+    ) -> Any:
+        """Resolve one protected v113 child effect binding for a current profile.
+
+        The returned record is selection metadata, not proof that its source
+        bytes, peer, or runtime are live. Dispatch still needs the root-issued
+        grant and artifact/peer verification owned by the effect path.
+        """
+        if service_generation_digest != self.enrollment_catalog.digest:
+            raise EnrollmentDenied("native action belongs to a stale service generation")
+        action = self.enrollment_catalog.resolve_native_action_record(
+            native_package_id, native_package_generation, action_binding_id,
+            profile_id=profile_id, process_generation=process_generation,
+            service_generation_digest=service_generation_digest,
+        )
+        rule = self.protected_rules.get((action.capability, action.operation, action.target_id))
+        if rule is None:
+            raise EnrollmentDenied("native action has no exact current authority effect rule")
+        return action
+
+    def resolve_native_registration_record(
+        self, native_package_id: str, native_package_generation: str,
+        registration_id: str, *, profile_id: str, process_generation: str,
+        service_generation_digest: str,
+    ) -> Any:
+        """Resolve strict v113 dispatch metadata and revalidate child action joins."""
+        if service_generation_digest != self.enrollment_catalog.digest:
+            raise EnrollmentDenied("native registration belongs to a stale service generation")
+        registration = self.enrollment_catalog.resolve_native_registration_record(
+            native_package_id, native_package_generation, registration_id,
+            profile_id=profile_id, process_generation=process_generation,
+            service_generation_digest=service_generation_digest,
+        )
+        package = self.enrollment_catalog.resolve_native_package(
+            native_package_id, native_package_generation,
+        )
+        for branch in registration.action_bindings:
+            action_ids: tuple[str, ...] = ()
+            if branch.action_binding_id is not None:
+                action_ids = (branch.action_binding_id,)
+            elif branch.workflow_id is not None:
+                action_ids = package.workflow_records[branch.workflow_id].step_action_binding_ids
+            for action_binding_id in action_ids:
+                self.resolve_native_action_record(
+                    native_package_id, native_package_generation, action_binding_id,
+                    profile_id=profile_id, process_generation=process_generation,
+                    service_generation_digest=service_generation_digest,
+                )
+        return registration
+
+    def resolve_native_registration_schema_record(
+        self, native_package_id: str, native_package_generation: str,
+        registration_id: str, schema_kind: str, *, profile_id: str,
+        process_generation: str, service_generation_digest: str,
+    ) -> Mapping[str, Any]:
+        """Resolve an external tool schema through its own registration row."""
+        if service_generation_digest != self.enrollment_catalog.digest:
+            raise EnrollmentDenied("native registration schema belongs to a stale service generation")
+        row = self.enrollment_catalog.resolve_native_registration_schema_artifact(
+            native_package_id, native_package_generation, registration_id, schema_kind,
+            profile_id=profile_id, process_generation=process_generation,
+            service_generation_digest=service_generation_digest,
+        )
+        # The protected artifact resolver separately verifies source and
+        # derivation receipts and opens the exact root-owned bytes. This
+        # getter only returns the immutable selected row.
+        return row
 
     def _remote_observation_join(self, remote_enrollment_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
         if not isinstance(remote_enrollment_id, str) or not remote_enrollment_id:
@@ -589,7 +815,7 @@ class RootRuntimeBindings:
         if (service.profile_id != profile_id or service.generation != profile_generation
                 or not any(join.issuer.observer_enrollment_id == observer_enrollment_id
                            and join.package.profile_id == profile_id
-                           and join.package.generation == profile_generation
+                           and getattr(join.package, "profile_generation", None) == profile_generation
                            for join in self.enrollment_catalog.source_observer_joins.values())):
             raise EnrollmentDenied("resource credential binding lacks current native source/package proof join")
         return binding
@@ -648,14 +874,27 @@ class RootRuntimeBindings:
             package = self.enrollment_catalog.resolve_native_package(
                 row["native_package_id"], row["native_package_generation"],
             )
-            if (package.profile_id != profile_id or package.generation != process_generation):
+            if (package.profile_id != profile_id or package.profile_generation != process_generation):
                 raise EnrollmentDenied("native MCP binding package is stale or belongs to another profile")
-            adapter = package.adapter_records.get("hermes-installer.native-mcp-dispatch.v1")
-            if (adapter is None or adapter.action_id != row["id"]
-                    or adapter.generation != row["native_package_generation"]
-                    or adapter.adapter_artifact_id != row["handler_artifact_id"]
-                    or adapter.adapter_sha256 != row["handler_artifact_sha256"]):
-                raise EnrollmentDenied("native MCP handler does not join the selected immutable package adapter")
+            actions = [action for action in package.action_records.values()
+                       if action.adapter_id == "hermes-installer.native-mcp-dispatch.v1"
+                       and action.action_id == row["id"]
+                       and action.generation == package.generation
+                       and action.adapter_artifact_id == row["handler_artifact_id"]
+                       and action.adapter_sha256 == row["handler_artifact_sha256"]
+                       and action.operation == row["effect_operation"]
+                       and action.target_id == row["effect_target"]
+                       and action.capability == row["capability"]
+                       and action.recipient == row["recipient"]]
+            if len(actions) != 1:
+                raise EnrollmentDenied("native MCP handler does not join one selected v113 action record")
+            registrations = [registration for registration in package.registration_records.values()
+                             if registration.handler_kind == "mcp-dispatch"
+                             and registration.handler_id == row["id"]
+                             and registration.native_tool_name == row["native_tool_name"]
+                             and registration.native_server_name == row["native_server_name"]]
+            if len(registrations) != 1:
+                raise EnrollmentDenied("native MCP handler lacks one selected v113 registration record")
             mcp_service = self.mcp_services.get(row["mcp_enrollment_id"])
             if (mcp_service is None or mcp_service.get("id") != row["mcp_enrollment_id"]
                     or row["mcp_tool_name"] not in mcp_service.get("allowed_tools", ())
@@ -766,11 +1005,13 @@ class RootRuntimeBindings:
             raise EnrollmentDenied("native package closure is absent from the protected artifact catalog")
         pins = [(package.entrypoint_artifact_id, package.entrypoint_sha256),
                 (package.resolver_artifact_id, package.resolver_sha256)]
-        pins.extend((adapter.adapter_artifact_id, adapter.adapter_sha256)
-                    for adapter in package.adapter_records.values())
-        pins.extend((workflow["workflow_artifact_id"], workflow["workflow_sha256"])
-                    for adapter in package.adapter_records.values()
-                    for workflow in adapter.workflow_bindings)
+        pins.extend((action.adapter_artifact_id, action.adapter_sha256)
+                    for action in package.action_records.values())
+        pins.extend((registration.registration_source_artifact_id,
+                     registration.registration_source_sha256)
+                    for registration in package.registration_records.values())
+        pins.extend((workflow.workflow_artifact_id, workflow.workflow_sha256)
+                    for workflow in package.workflow_records.values())
         for artifact_id, digest in pins:
             spec = self.artifact_catalog.artifacts.get(artifact_id)
             if spec is None or spec.sha256 != digest:
@@ -792,9 +1033,9 @@ class RootRuntimeBindings:
         for binding in bridge.observer_delivery_bindings:
             join = self.enrollment_catalog.source_observer_joins.get(binding.observer_enrollment_id)
             if (join is None or join.package.profile_id not in peer_profiles
-                    or join.package.generation != peer_profiles[join.package.profile_id]
+                    or join.package.profile_generation != peer_profiles[join.package.profile_id]
                     or join.issuer.producer_profile_id != join.package.profile_id
-                    or join.issuer.generation != join.package.generation):
+                    or join.issuer.generation != join.package.profile_generation):
                 raise EnrollmentDenied("native bridge observer role does not join a protected package")
         # The selected peer role is the protected package entrypoint. Observer
         # rows pin action-adapter roles separately and must not be substituted
@@ -834,7 +1075,7 @@ def _build_native_package_resolver(*, enrollment: Any, catalog: Any,
 
     def resolve(profile_id: str, generation: str) -> Any | None:
         matches = [row for row in raw_records
-                   if row.get("profile_id") == profile_id and row.get("generation") == generation]
+                   if row.get("profile_id") == profile_id and row.get("profile_generation") == generation]
         if not matches:
             if (profile_id, generation) in source_profiles:
                 raise EnrollmentDenied("source issuer has no selected native package closure")
@@ -842,7 +1083,7 @@ def _build_native_package_resolver(*, enrollment: Any, catalog: Any,
         if len(matches) != 1:
             raise EnrollmentDenied("selected profile generation has ambiguous native packages")
         raw = matches[0]
-        package = catalog.resolve_native_package(raw["package_id"], generation)
+        package = catalog.resolve_native_package(raw["package_id"], raw["generation"])
         closure_spec = artifact_catalog.artifacts.get(package.compiled_closure_artifact_id)
         if closure_spec is None or not closure_spec.tree_files:
             raise EnrollmentDenied("native package closure artifact is not a protected tree")
@@ -858,12 +1099,29 @@ def _build_native_package_resolver(*, enrollment: Any, catalog: Any,
             package.resolver_artifact_id, package.resolver_sha256,
             staging_root, expected_uid=expected_uid,
         )
-        adapter_paths = {}
-        for adapter_id, adapter in package.adapter_records.items():
-            adapter_paths[adapter_id] = artifact_catalog.resolve(
-                adapter.adapter_artifact_id, adapter.adapter_sha256,
-                staging_root, expected_uid=expected_uid,
-            )
+        adapter_pins: dict[str, tuple[str, str]] = {}
+        for action in package.action_records.values():
+            pin = (action.adapter_artifact_id, action.adapter_sha256)
+            prior = adapter_pins.setdefault(action.adapter_id, pin)
+            if prior != pin:
+                raise EnrollmentDenied("one native adapter ID maps to conflicting action artifacts")
+        adapter_paths = {
+            adapter_id: artifact_catalog.resolve(artifact_id, digest, staging_root,
+                                                  expected_uid=expected_uid)
+            for adapter_id, (artifact_id, digest) in adapter_pins.items()
+        }
+        # Registration and workflow source bytes are independently pinned by
+        # source receipt handles. Resolve their artifact identities too; a
+        # digest string alone never makes a missing artifact available.
+        selected_artifacts: dict[str, str] = {}
+        for registration in package.registration_records.values():
+            selected_artifacts[registration.registration_source_artifact_id] = registration.registration_source_sha256
+        for workflow in package.workflow_records.values():
+            selected_artifacts[workflow.workflow_artifact_id] = workflow.workflow_sha256
+        for artifact_id, digest in selected_artifacts.items():
+            spec = artifact_catalog.artifacts.get(artifact_id)
+            if spec is None or spec.sha256 != digest:
+                raise EnrollmentDenied("native registration source artifact is not pinned in the root catalog")
         try:
             manifest_bytes = entrypoint.path.read_bytes()
             manifest = json.loads(manifest_bytes.decode("utf-8"),
@@ -876,7 +1134,7 @@ def _build_native_package_resolver(*, enrollment: Any, catalog: Any,
                 or type(manifest["schema"]) is not int or manifest["schema"] != 1
                 or manifest["package_id"] != package.package_id
                 or manifest["profile_id"] != profile_id
-                or manifest["generation"] != generation
+                or manifest["generation"] != package.generation
                 or not isinstance(manifest["dependencies"], list)
                 or len(manifest["dependencies"]) > 256):
             raise EnrollmentDenied("selected native package manifest does not match protected enrollment")
@@ -979,6 +1237,8 @@ def build_root_runtime_bindings(
     native_materialization: Any | None = None,
     native_registry: Any | None = None,
     native_discoveries: Mapping[str, Any] | None = None,
+    application_source_receipts: Any | None = None,
+    application_runtime_receipts: Any | None = None,
 ) -> RootRuntimeBindings:
     """Build root handlers only from service-generation records already verified.
 
@@ -1019,6 +1279,8 @@ def build_root_runtime_bindings(
         memory_enrollments=getattr(enrollment, "memory_enrollments", None),
         parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
         selected_application_runtimes=getattr(enrollment, "selected_application_runtime_records", None),
+        native_schema_artifacts=getattr(enrollment, "native_schema_artifact_records", None),
+        native_mcp_tool_bindings=getattr(enrollment, "native_mcp_tool_binding_records", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(
         builds, service_generation_digest=digest,
@@ -1230,6 +1492,9 @@ def build_root_runtime_bindings(
         native_materialization=native_materialization,
         native_registry=native_registry,
         native_discoveries=MappingProxyType(dict(native_discoveries or {})),
+        artifact_staging_directory=Path(enrollment.artifact_staging_directory),
+        application_source_receipts=application_source_receipts,
+        application_runtime_receipts=application_runtime_receipts,
     )
 
 
@@ -1320,7 +1585,7 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
     result: dict[str, Any] = {}
     for observer_id, join in catalog.source_observer_joins.items():
         issuer, package, adapter = join.issuer, join.package, join.adapter
-        service = catalog.resolve_profile_generation(package.profile_id, package.generation)
+        service = catalog.resolve_profile_generation(package.profile_id, package.profile_generation)
         artifact = artifact_catalog.artifacts.get(adapter.adapter_artifact_id)
         if artifact is None or artifact.sha256 != adapter.adapter_sha256:
             raise EnrollmentDenied("native source observer role is absent from protected artifact catalog")
