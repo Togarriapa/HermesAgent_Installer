@@ -191,7 +191,12 @@ class _Handler:
                 or canonical_digest(payload) != authorization.request_digest):
             raise MCPBrokerError("mcp.binding", "MCP target, identity, or digest does not match its grant")
         method, params = envelope["method"], envelope["params"]
-        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' else 'connect'}"
+        # Native selected schema discovery is a read and must use the observed
+        # result route. Ordinary protocol discovery remains a connect/lifecycle
+        # operation; the purpose is host-issued and included in the intent.
+        is_selected_discovery = (method == "tools/list"
+                                 and context.purpose == "mcp-selected-schema-discovery")
+        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' or is_selected_discovery else 'connect'}"
         expected_intent = mcp_intent(
             service.service_id, service.channel, envelope["request_id"], method,
             envelope["selection"], params,
