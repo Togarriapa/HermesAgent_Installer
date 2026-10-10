@@ -302,3 +302,8 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T163.2 Broker/release/health: exact source asset enrollment, owned seed cleanup and semantic result gate with required actual provider.
 
 - [ ] HI-T164.1 Fixture publisher/host enrollment/authority: exact canonical envelope and held namespace loader, scoped key/signature and wrong-source/currentness negatives.
+
+- [ ] HI-T165.1 Factory/native/compiler/publisher: genuine typed runnable role closure and single atomic activation with truthful durable recovery.
+- [ ] HI-T165.2 Enrollment/authority/health: fresh current committed source/CAS observation without expired setup renewal.
+
+- [ ] HI-T166.1 Fixture key/publisher/authority: restricted prepublication envelope signer and same-key service adoption, source/currentness/domain negatives.
