@@ -499,3 +499,10 @@ The system SHALL wrap source handler passthrough results in the v113 bounded clo
 #### Scenario: Backend data claims authorization
 - **WHEN** returned JSON contains authority-like or readiness fields
 - **THEN** those fields remain untrusted data and cannot affect authorization or acceptance.
+
+### Requirement: Exact catalog compatible local schema identities
+The system SHALL use the v114 literal catalog-compatible schema/artifact IDs for eight local result schemas without widening static catalog grammar or minting aliases.
+
+#### Scenario: Earlier impossible identity
+- **WHEN** a source row contains the superseded colon artifact ID
+- **THEN** selection fails until the corrected exact source map is used.
