@@ -187,9 +187,22 @@ def test_pre_active_source_and_lock_receipts_are_current_and_source_verified(tmp
     with process_lock(registry.store.owned.path("installer.lock")):
         current_selection = registry.resolve_application_source_preparation(
             selection.qualification_choice_handle, "graphify")
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.resolve_current_prepared_source_for_selection(current_selection.selection_handle)
+        assert not registry._sources
         source_receipt = registry.prepare_selected_source(current_selection.selection_handle)
+        source_members = registry.read_current_source_members(
+            current_selection.selection_handle, source_receipt.receipt_handle,
+            ("pyproject.toml",),
+        )
+        assert hashlib.sha256(source_members["pyproject.toml"]).hexdigest() == source_receipt.manifest_member_records[0]["sha256"]
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.read_current_source_members(
+                current_selection.selection_handle, source_receipt.receipt_handle, ("missing.toml",))
         lock_receipt = registry.resolve_application_lock_for_prepared_source(
             current_selection.selection_handle, source_receipt.receipt_handle)
+        assert registry.resolve_current_lock_for_selection(
+            current_selection.selection_handle, source_receipt.receipt_handle) is lock_receipt
         assert source_receipt.source_identity == "Graphify-Labs/graphify"
         assert source_receipt.source_revision == "5b74d7d74911cf435c8f1636b6f96ea202cc6246"
         assert source_receipt.lock_member_records[0]["sha256"] == lock_receipt.lock_sha256
@@ -198,6 +211,10 @@ def test_pre_active_source_and_lock_receipts_are_current_and_source_verified(tmp
             source_receipt.receipt_handle,
         )
         assert isinstance(lock_bytes, bytes) and hashlib.sha256(lock_bytes).hexdigest() == lock_receipt.lock_sha256
+        assert hashlib.sha256(registry.read_current_lock_bytes(
+            lock_receipt.receipt_handle, current_selection.selection_handle,
+            source_receipt.receipt_handle,
+        )).hexdigest() == lock_receipt.lock_sha256
         assert journal.owned("application-source")
         assert registry.record_prepared_verified_generation(
             source_receipt.receipt_handle, current_selection.selection_handle) is source_receipt
