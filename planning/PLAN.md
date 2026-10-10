@@ -156,3 +156,5 @@ Production remote NSS/roots v212: `plans/amendments/2026-10-10-production-remote
 HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md extends MC-R0101/MC-F01 with MC-R0101.5/.6 actual WS metadata and genuine whole-context functional read; no HA exposure mutation, source/runtime/account evidence separate, all AC OPEN.
 
 Jarvis source-home/live-task correction v214: plans/amendments/2026-10-10-jarvis-published-home-live-task-split-v214.md; exact16publishedfacts/live taskcontextjoins, RB-T213.1/HI-T213.2/VD-T213.3 OPEN; all207/postsetup required/allACOPEN.
+
+Jarvis source-profile task identity v215: plans/amendments/2026-10-10-jarvis-source-profile-task-identity-v215.md; actualserviceprofile distinctprotectedsourcehome, typedliveadmission, prepared/publishedclaimjoins; existing213tasks/allACOPEN.
