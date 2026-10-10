@@ -1254,3 +1254,61 @@ The installer SHALL accept literal active/exited for its retained qualification 
 #### Scenario: Active unit is not the retained terminal
 - **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
 - **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority
+
+
+## ADDED Requirements
+
+### Requirement: Preactive remote output receipt pipeline
+The installer SHALL publish and materialize remote build outputs only through the exact v239 executor-retained terminal proof, selected role adapter observation and current owned output/data-root custody, without unrelated enrolled profile substitution.
+
+#### Scenario: Genuine managed role build completes
+- **WHEN** the exact retained role plan and runner terminal prove successful cleanup and independent output readback passes
+- **THEN** the root MAY publish immutable package/attestation and materialization receipts for existing v209/v202 and v225 joins
+
+#### Scenario: Metadata cannot prove a build
+- **WHEN** a caller supplies result fields, output rows or foreign/expired receipt identities without exact current issuer membership
+- **THEN** publication and runnable receipt issuance SHALL deny and preserve owned rollback boundaries
+
+
+### Requirement: Remote enrollment reservation and prepared network source
+The installer SHALL derive the v202 aggregate remote identity and prepared network policy only from the exact v239 root-issued same-transaction reservation and current source/NSS role receipts. Actual v225 kernel lease proof SHALL remain separate and required before startup.
+
+#### Scenario: Prepared network has source authority
+- **WHEN** exact current root choice/config/role definitions and all three role/NSS receipts join the retained reservation and policy source
+- **THEN** the root MAY emit the fixed policy rows for compiler publication without claiming observed kernel namespace or future active generation
+
+#### Scenario: Caller strings are not enrollment proof
+- **WHEN** hostname, supplied IDs or incomplete role/policy evidence replaces the root reservation
+- **THEN** aggregate issuance SHALL deny without creating a runnable network or active identity
+
+
+## ADDED Requirements
+
+### Requirement: Exact reviewed update source application
+The installer SHALL apply only the finite source pin mapping in `planning/candidate-update-source-review-v241.json` while retaining v235 admission, preservation, one-use transition and rollback authority.
+
+#### Scenario: Pointer replace succeeds before fsync reports failure
+- **WHEN** the update publication fails after its exact owned pointer CAS
+- **THEN** the transaction conditionally restores the independently verified predecessor and preserves any newer foreign pointer
+
+#### Scenario: Cold recovery adopts an expired original intent
+- **WHEN** a unique durable transaction matches actual current candidate and retained prior closure
+- **THEN** only fresh samecandidate/sameprior TTY authority may issue a distinct current one-use installed entry, without restoring the old seal or changing its deadline
+
+#### Scenario: Partial replacement fixture passes
+- **WHEN** mocked authority with actual filesystem replacement and rollback succeeds
+- **THEN** evidence remains partial and does not claim genuine complete update or Pi acceptance
+
+
+## ADDED Requirements
+
+### Requirement: Genuine preinstalled source update entry
+The installer SHALL provide only the finite source-update bridge in `planning/preinstalled-source-update-entry-v242.json`, retaining the verified installed predecessor and obtaining current root TTY source selection before isolated source-actor custody gates publication.
+
+#### Scenario: Pre-v235 installed dispatcher cannot select update
+- **WHEN** a reviewed new source launcher receives exactly source-update with a genuine present predecessor
+- **THEN** it uses the separate stage-only source bridge and never claims checkout code is the old installed actor
+
+#### Scenario: Old pointer or source authority fails verification
+- **WHEN** predecessor, selected source, controller or transition proof is absent, changed or foreign
+- **THEN** no update publication occurs and no old immutable release or pointer is removed to force source bootstrap

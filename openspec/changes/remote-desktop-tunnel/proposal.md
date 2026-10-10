@@ -133,3 +133,10 @@ Exact contract: `planning/preactive-native-build-manager-composition-v237.json`;
 Supply the previously absent actual held Xpra native source policy/keyring member from bounded verified official sources, with full dependency/license evidence.
 
 Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.
+
+
+## Remote output receipt pipeline v239
+
+See `planning/preactive-remote-build-output-receipts-v239.json`: executor-owned terminal membership precedes exact adapter observation, immutable CAS/attestation and root-held data-root materialization. Only genuine typed proofs mint v209/v202 runtime receipts; v225 owns publication/restart adoption. Existing scopes/deadlines and all AC remain open.
+
+The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.

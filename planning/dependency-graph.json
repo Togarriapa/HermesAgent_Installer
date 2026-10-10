@@ -3628,5 +3628,54 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "preactive_remote_build_output_receipts_v239": {
+    "contract": "planning/preactive-remote-build-output-receipts-v239.json",
+    "tasks": {
+      "RT-T239.1": [
+        "RT-T209.2",
+        "RT-T237.1"
+      ],
+      "RT-T239.2": [
+        "RT-T239.1",
+        "RT-T212.1"
+      ],
+      "RT-T239.3": [
+        "RT-T239.2",
+        "RT-T222.1"
+      ],
+      "VD-T239.4": [
+        "RT-T239.1",
+        "RT-T239.2",
+        "RT-T239.3"
+      ]
+    },
+    "owner": "luna_remote_receipt_pipeline with central runtime and native executor owners",
+    "acceptance": "All AC OPEN"
+  },
+  "candidate_update_source_review_v241": {
+    "contract": "planning/candidate-update-source-review-v241.json",
+    "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+    "existing_task_dependencies": {
+      "VD-T235.3": [
+        "BD-T235.1",
+        "LC-T235.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "preinstalled_source_update_entry_v242": {
+    "contract": "planning/preinstalled-source-update-entry-v242.json",
+    "task_dependencies": {
+      "BD-T242.1": [
+        "BD-T235.1",
+        "LC-T235.2"
+      ],
+      "VD-T242.2": [
+        "BD-T242.1",
+        "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

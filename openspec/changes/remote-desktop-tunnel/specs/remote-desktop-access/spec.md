@@ -491,3 +491,29 @@ The implementation SHALL acquire only the exact v238 locked official sources thr
 #### Scenario: Missing or mismatched source fact
 - **WHEN** source hash/version/signature/provider/license reference is changed or Debian CP313 would execute as runtime
 - **THEN** the affected closure SHALL remain unavailable without alias receipts or lazy fallback
+
+
+## ADDED Requirements
+
+### Requirement: Preactive remote output receipt pipeline
+The installer SHALL publish and materialize remote build outputs only through the exact v239 executor-retained terminal proof, selected role adapter observation and current owned output/data-root custody, without unrelated enrolled profile substitution.
+
+#### Scenario: Genuine managed role build completes
+- **WHEN** the exact retained role plan and runner terminal prove successful cleanup and independent output readback passes
+- **THEN** the root MAY publish immutable package/attestation and materialization receipts for existing v209/v202 and v225 joins
+
+#### Scenario: Metadata cannot prove a build
+- **WHEN** a caller supplies result fields, output rows or foreign/expired receipt identities without exact current issuer membership
+- **THEN** publication and runnable receipt issuance SHALL deny and preserve owned rollback boundaries
+
+
+### Requirement: Remote enrollment reservation and prepared network source
+The installer SHALL derive the v202 aggregate remote identity and prepared network policy only from the exact v239 root-issued same-transaction reservation and current source/NSS role receipts. Actual v225 kernel lease proof SHALL remain separate and required before startup.
+
+#### Scenario: Prepared network has source authority
+- **WHEN** exact current root choice/config/role definitions and all three role/NSS receipts join the retained reservation and policy source
+- **THEN** the root MAY emit the fixed policy rows for compiler publication without claiming observed kernel namespace or future active generation
+
+#### Scenario: Caller strings are not enrollment proof
+- **WHEN** hostname, supplied IDs or incomplete role/policy evidence replaces the root reservation
+- **THEN** aggregate issuance SHALL deny without creating a runnable network or active identity
