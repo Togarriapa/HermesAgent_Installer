@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -390,9 +391,10 @@ class NativeMCPExecutionTests(unittest.TestCase):
             object_dir.mkdir(parents=True, mode=0o700)
             (object_dir / "schema.json").write_bytes(body)
             os.chmod(object_dir / "schema.json", 0o400)
+        self.schema_artifact_catalog = ArtifactCatalog.from_records(tuple(artifact_specs))
         self.schema_catalog = build_native_mcp_schema_catalog(
             schema_records, authority_service=self.authority,
-            artifact_catalog=ArtifactCatalog.from_records(tuple(artifact_specs)),
+            artifact_catalog=self.schema_artifact_catalog,
             staging_root=stage, expected_uid=os.getuid(),
         )
         service_record = {
@@ -430,43 +432,84 @@ class NativeMCPExecutionTests(unittest.TestCase):
             protected_services={"figma": protected_service},
             current_mcp_generations={"figma": "service-gen-a"},
         )
-        # Root Linux authority tests exercise the protected artifact CAS and
-        # derivation journal. This loopback contract fixture exercises the
-        # typed issuer callsite while retaining/revalidating the real HTTP
-        # response and grants through AuthorityService.
-        from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
-        self.issuer = object.__new__(RootSchemaDerivationReceiptRegistry)
-        self.issuer.mcp_discovery_registry = self.discovery_registry
+        self.issuer_patches = []
+        self.publication_patch = None
+        self.real_schema_issuer = sys.platform.startswith("linux") and os.geteuid() == 0
+        if self.real_schema_issuer:
+            from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
+            from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
+            from hermes_installer.authority.setup_policy_publication import PolicyPublicationReceiptResolver
+            from hermes_installer.protected_enrollment import RootJournalSelection
+            protected_parent = Path("/var/lib/hermes-installer")
+            protected_parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            parent_info = protected_parent.lstat()
+            if parent_info.st_uid != 0 or parent_info.st_mode & 0o022:
+                raise RuntimeError("Linux test root-journal parent is not safely root-owned")
+            self.schema_journal = Path(tempfile.mkdtemp(prefix="mcp-schema-journal-", dir=protected_parent))
+            os.chmod(self.schema_journal, 0o700)
+            import shutil
+            self.addCleanup(shutil.rmtree, self.schema_journal, ignore_errors=True)
+            (self.schema_journal / "bootstrap-receipts").mkdir(mode=0o700)
+            journal_info = self.schema_journal.stat()
+            journal = RootJournalSelection(
+                "installer-authority-journal-v1", self.schema_journal,
+                journal_info.st_dev, journal_info.st_ino, "generation-1",
+                self.authority.service_generation_digest,
+            )
+            package_registry = SimpleNamespace(
+                native_schema_artifact_records=[],
+                resolve_native_package=lambda _package, _generation: SimpleNamespace(),
+            )
+            self.root_schema_rows = package_registry.native_schema_artifact_records
+            self.issuer = RootSchemaDerivationReceiptRegistry.from_root_runtime(
+                self.schema_artifact_catalog,
+                RootArtifactReceiptRegistry(
+                    self.schema_journal / "bootstrap-receipts",
+                    catalog=self.schema_artifact_catalog, artifact_root=self.schema_stage,
+                ),
+                package_registry, self.discovery_registry, journal, expected_uid=0,
+            )
+            self.publication_state = "prepared"
+            self.publication_handles = (self.source_handle,)
+            self.publication_patch = patch.object(
+                PolicyPublicationReceiptResolver, "resolve_current",
+                side_effect=self._fixture_publication,
+            )
+            self.publication_patch.start()
+        else:
+            from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
+            self.issuer = object.__new__(RootSchemaDerivationReceiptRegistry)
+            self.issuer.mcp_discovery_registry = self.discovery_registry
 
-        def observe_fixture(registry, observation):
-            retained = registry.mcp_discovery_registry.resolve_schema_observation({
-                "schema": 1, "artifact_id": observation.artifact_id,
-                "artifact_sha256": observation.artifact_sha256,
-                "size_bytes": observation.size_bytes, "schema_kind": observation.schema_kind,
-                "package_id": observation.package_id,
-                "package_generation": observation.package_generation,
-                "adapter_id": observation.adapter_id, "action_id": observation.action_id,
-                "source_kind": "mcp-tools-list",
-                "parent_receipt_handles": list(observation.parent_receipt_handles),
-                "source_observation_handle": observation.source_observation_handle,
-                "source_member_path": None,
-                "service_generation_digest": observation.service_generation_digest,
-            })
-            if retained != observation:
-                raise AssertionError("fixture issuer did not re-resolve the root witness")
-            return retained
+            def observe_fixture(registry, observation):
+                retained = registry.mcp_discovery_registry.resolve_schema_observation({
+                    "schema": 1, "artifact_id": observation.artifact_id,
+                    "artifact_sha256": observation.artifact_sha256,
+                    "size_bytes": observation.size_bytes, "schema_kind": observation.schema_kind,
+                    "package_id": observation.package_id,
+                    "package_generation": observation.package_generation,
+                    "adapter_id": observation.adapter_id, "action_id": observation.action_id,
+                    "source_kind": "mcp-tools-list",
+                    "parent_receipt_handles": list(observation.parent_receipt_handles),
+                    "source_observation_handle": observation.source_observation_handle,
+                    "source_member_path": None,
+                    "service_generation_digest": observation.service_generation_digest,
+                })
+                if retained != observation:
+                    raise AssertionError("fixture issuer did not re-resolve the root witness")
+                return retained
 
-        def mint_fixture(_registry, observation):
-            return hashlib.sha256((observation.source_observation_handle + ":receipt").encode()).hexdigest()
+            def mint_fixture(_registry, observation):
+                return hashlib.sha256((observation.source_observation_handle + ":receipt").encode()).hexdigest()
 
-        self.issuer_patches = [
-            patch.object(RootSchemaDerivationReceiptRegistry, "observe_mcp_tools_list", observe_fixture,
-                         create=True),
-            patch.object(RootSchemaDerivationReceiptRegistry, "mint_schema_artifact", mint_fixture,
-                         create=True),
-        ]
-        for issuer_patch in self.issuer_patches:
-            issuer_patch.start()
+            self.issuer_patches = [
+                patch.object(RootSchemaDerivationReceiptRegistry, "observe_mcp_tools_list", observe_fixture,
+                             create=True),
+                patch.object(RootSchemaDerivationReceiptRegistry, "mint_schema_artifact", mint_fixture,
+                             create=True),
+            ]
+            for issuer_patch in self.issuer_patches:
+                issuer_patch.start()
         self.discovery_registry.attach_schema_derivation_registry(self.issuer)
         with self.assertRaises(TypeError):
             NativeMCPDispatcher(
@@ -499,6 +542,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
     def tearDown(self):
         for issuer_patch in self.issuer_patches:
             issuer_patch.stop()
+        if self.publication_patch is not None:
+            self.publication_patch.stop()
         self.identity_patch.stop()
         self.discovery_registry.close()
         self.invocation_registry.close()
@@ -558,6 +603,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
         self.assertEqual(observed.schema_bytes, json.dumps(
             ARGUMENT_SCHEMA, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
         ).encode())
+        if sys.platform.startswith("linux") and os.geteuid() == 0:
+            self._verify_real_schema_derivation(retained)
         capture_args = {
             "invocation": retained_record.invocation,
             "peer_uid": retained_record.peer_uid, "peer_pid": retained_record.peer_pid,
@@ -610,6 +657,59 @@ class NativeMCPExecutionTests(unittest.TestCase):
         self.assertEqual(call["params"], {
             "name": "get_metadata", "arguments": {"fileKey": "selected-file"},
         })
+
+    def _verify_real_schema_derivation(self, observation):
+        """Use the retained real tools/list proof to issue and resolve root CAS bytes."""
+        if not self.real_schema_issuer:
+            return
+        retained_record = next(
+            record for record in self.discovery_registry._records.values()
+            if record.observation.source_observation_handle == observation.source_observation_handle
+        )
+        handle = retained_record.derivation_receipt_handle
+        self.assertTrue(handle)
+        row = {
+            "id": "schema-args", "artifact_id": observation.artifact_id,
+            "sha256": observation.artifact_sha256, "schema_kind": "arguments",
+            "native_package_id": observation.package_id,
+            "native_package_generation": observation.package_generation,
+            "adapter_id": observation.adapter_id, "action_id": observation.action_id,
+            "source_receipt_handle": observation.response_receipt_handle,
+            "size_bytes": observation.size_bytes, "derivation_receipt_handle": handle,
+        }
+        self.root_schema_rows.append(row)
+
+        def resolve_schema(*selector):
+            for candidate in self.root_schema_rows:
+                if (candidate["id"], candidate["native_package_id"],
+                        candidate["native_package_generation"], candidate["adapter_id"],
+                        candidate["action_id"], candidate["schema_kind"]) == selector:
+                    return candidate
+            raise LookupError
+
+        self.issuer.native_package_registry.resolve_native_schema_record = resolve_schema
+        self.publication_state = "active"
+        self.publication_handles = (*observation.parent_receipt_handles, handle)
+        binding = self.registration_index.resolve_action(observation.action_id)
+        resolved = self.issuer.resolve_schema_artifact(
+            handle, selected_binding=binding, schema_role="arguments",
+        )
+        self.assertEqual(resolved.canonical_schema_bytes, observation.schema_bytes)
+        self.assertEqual(resolved.source_receipt_handle, observation.response_receipt_handle)
+        self.assertEqual(resolved.derivation_receipt_handle, handle)
+
+    def _fixture_publication(self):
+        from hermes_installer.authority.setup_policy_publication import (
+            RootSetupPublicationReceipt, _SEAL as PUB_SEAL,
+        )
+        info = self.schema_journal.stat()
+        return RootSetupPublicationReceipt(
+            1, "receipt-" + "a" * 32, "transaction-" + "b" * 32,
+            "installer-bootstrap-policy-generation-v1", "c" * 64,
+            self.schema_journal, info.st_dev, info.st_ino, "d" * 64, "e" * 64,
+            "f" * 64, "g" * 64, None, "h" * 64,
+            tuple(self.publication_handles), self.publication_state, PUB_SEAL,
+        )
 
     def test_selected_resource_mismatch_is_denied_before_any_network_request(self):
         with self.assertRaises(NativeMCPExecutionDenied):

@@ -17,7 +17,10 @@ from hermes_installer.authority.artifacts import (
     SchemaDerivationDenied,
     SchemaDerivationPending,
 )
-from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
+from hermes_installer.authority.bootstrap_enrollment import (
+    RootArtifactReceiptRegistry,
+    _read_json_if_owned,
+)
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.protected_enrollment import RootJournalSelection
 
@@ -443,20 +446,58 @@ class RootSourceArtifactReceiptVerifier:
                 or row.get("sha256") != identity["sha256"]
                 or row.get("source_receipt_handle") != handle):
             raise SourceArtifactReceiptDenied("schema receipt handle differs from active protected selection")
-        try:
-            self.derivation_registry.resolve_schema_derivation(
-                handle, artifact_id=row["artifact_id"],
-                artifact_sha256=row["sha256"],
-                size_bytes=self._schema_size(row["artifact_id"], row["sha256"]),
-                service_generation_digest=self.runtime_bindings.enrollment_catalog.digest,
-            )
-        except SchemaDerivationPending as exc:
-            raise SourceArtifactReceiptDenied(str(exc)) from None
-        except SchemaDerivationDenied as exc:
-            raise SourceArtifactReceiptDenied(str(exc)) from None
-        except Exception:
-            raise SourceArtifactReceiptDenied("schema source derivation is unavailable") from None
+        derivation_handle = row.get("derivation_receipt_handle")
+        row_size = row.get("size_bytes")
+        if type(row_size) is not int or not 1 <= row_size <= 256 * 1024:
+            raise SourceArtifactReceiptDenied("schema row has no exact bounded byte size")
+        if derivation_handle is None:
+            self._verify_direct_source_receipt(handle, row["artifact_id"], row["sha256"], row_size)
+        else:
+            try:
+                self.derivation_registry.resolve_schema_derivation(
+                    derivation_handle, artifact_id=row["artifact_id"],
+                    artifact_sha256=row["sha256"], size_bytes=row_size,
+                    service_generation_digest=self.runtime_bindings.enrollment_catalog.digest,
+                )
+                if row["artifact_id"].startswith("native-mcp-schema:"):
+                    # The authenticated tools/list witness binds this source response
+                    # receipt separately from the derived child receipt.
+                    self._read_dynamic_mcp_schema(row["artifact_id"], row["sha256"])
+            except SchemaDerivationPending as exc:
+                raise SourceArtifactReceiptDenied(str(exc)) from None
+            except SchemaDerivationDenied as exc:
+                raise SourceArtifactReceiptDenied(str(exc)) from None
+            except Exception:
+                raise SourceArtifactReceiptDenied("schema source derivation is unavailable") from None
         return True
+
+    def _verify_direct_source_receipt(self, handle: str, artifact_id: str,
+                                     sha256: str, size_bytes: int) -> None:
+        """Validate a direct packaged-schema source receipt against root CAS."""
+        path = self.derivation_registry.artifact_receipt_registry.root / f"{handle}.json"
+        try:
+            record = _read_json_if_owned(path)
+            expected = {
+                "schema", "handle", "receipt_id", "setup_session_id", "transaction_handle",
+                "target_id", "operation_target_id", "plan_digest", "operator_uid",
+                "artifact_role", "artifact_id", "sha256", "size_bytes",
+            }
+            if (not isinstance(record, Mapping) or set(record) != expected
+                    or record.get("schema") != 1 or record.get("handle") != handle
+                    or record.get("artifact_id") != artifact_id
+                    or record.get("artifact_role") != artifact_id
+                    or record.get("sha256") != sha256 or record.get("size_bytes") != size_bytes):
+                raise ValueError
+            spec = self.runtime_bindings.artifact_catalog._artifact(artifact_id, sha256)
+            resolved = self.runtime_bindings.artifact_catalog.resolve(
+                artifact_id, sha256,
+                self.derivation_registry.artifact_receipt_registry.artifact_root,
+                expected_uid=self.expected_uid,
+            )
+            if spec.size_bytes != size_bytes or resolved.size_bytes != size_bytes:
+                raise ValueError
+        except Exception:
+            raise SourceArtifactReceiptDenied("direct schema source receipt is not current in root CAS") from None
 
     def read_artifact(self, artifact_id: str, sha256: str) -> bytes:
         """Read exact, bounded bytes from the selected immutable root CAS."""
@@ -465,6 +506,8 @@ class RootSourceArtifactReceiptVerifier:
         if (not isinstance(artifact_id, str) or not isinstance(sha256, str)
                 or not _SHA.fullmatch(sha256)):
             raise SourceArtifactReceiptDenied("schema artifact selector is malformed")
+        if artifact_id.startswith("native-mcp-schema:"):
+            return self._read_dynamic_mcp_schema(artifact_id, sha256)
         try:
             spec = self.runtime_bindings.artifact_catalog._artifact(artifact_id, sha256)
             if spec.size_bytes is None or not 1 <= spec.size_bytes <= 256 * 1024:
@@ -501,6 +544,55 @@ class RootSourceArtifactReceiptVerifier:
             return body
         except Exception:
             raise SourceArtifactReceiptDenied("schema bytes are absent from protected root CAS") from None
+
+    def _read_dynamic_mcp_schema(self, artifact_id: str, sha256: str) -> bytes:
+        """Resolve a dynamic schema only through the active protected binding and receipt."""
+        from hermes_installer.mcp.native_dispatch import NativeMCPToolBinding
+
+        if artifact_id != f"native-mcp-schema:{sha256}":
+            raise SourceArtifactReceiptDenied("dynamic schema artifact ID is not digest-bound")
+        rows = [row for row in self.runtime_bindings.native_schema_artifact_records
+                if row.get("artifact_id") == artifact_id and row.get("sha256") == sha256
+                and row.get("schema_kind") in {"arguments", "result"}]
+        if len(rows) != 1:
+            raise SourceArtifactReceiptDenied("dynamic schema is not uniquely selected in the active generation")
+        schema_row = rows[0]
+        role = schema_row["schema_kind"]
+        bindings = []
+        for candidate in self.runtime_bindings.native_mcp_tool_binding_records:
+            if (candidate.get("id") != schema_row.get("action_id")
+                    or candidate.get("native_package_id") != schema_row.get("native_package_id")
+                    or candidate.get("native_package_generation") != schema_row.get("native_package_generation")
+                    or candidate.get("handler_artifact_id") != schema_row.get("adapter_id")
+                    or candidate.get("request_schema_id" if role == "arguments" else "result_schema_id")
+                       != schema_row.get("id")):
+                continue
+            try:
+                selected = self.runtime_bindings.resolve_native_mcp_tool_bindings(
+                    candidate["profile_id"], candidate["process_generation"],
+                    self.runtime_bindings.enrollment_catalog.digest,
+                )
+                for selected_row in selected:
+                    if selected_row.get("id") == candidate.get("id"):
+                        bindings.append(NativeMCPToolBinding.from_protected_record(selected_row))
+            except Exception:
+                continue
+        if len(bindings) != 1:
+            raise SourceArtifactReceiptDenied("dynamic schema has no unique current protected MCP binding")
+        try:
+            artifact = self.derivation_registry.resolve_schema_artifact(
+                schema_row["derivation_receipt_handle"], selected_binding=bindings[0], schema_role=role,
+            )
+            if (artifact.artifact_id != artifact_id or artifact.sha256 != sha256
+                    or artifact.size_bytes != schema_row.get("size_bytes")
+                    or artifact.schema_role != role
+                    or artifact.source_receipt_handle != schema_row.get("source_receipt_handle")
+                    or artifact.derivation_receipt_handle != schema_row.get("derivation_receipt_handle")
+                    or artifact.native_binding_id != bindings[0].id):
+                raise ValueError
+            return artifact.canonical_schema_bytes
+        except Exception:
+            raise SourceArtifactReceiptDenied("dynamic schema receipt is stale or differs from active binding") from None
 
     def _schema_size(self, artifact_id: str, sha256: str) -> int:
         spec = self.runtime_bindings.artifact_catalog._artifact(artifact_id, sha256)

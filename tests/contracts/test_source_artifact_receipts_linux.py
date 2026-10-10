@@ -95,7 +95,8 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
                 "sha256": child.sha256, "schema_kind": "arguments",
                 "native_package_id": "package-demo", "native_package_generation": "generation-1",
                 "adapter_id": "adapter-demo", "action_id": "action-demo",
-                "source_receipt_handle": "pending-schema-receipt-handle-000000000000000000000000000000000000",
+                "source_receipt_handle": parent, "size_bytes": len(schema),
+                "derivation_receipt_handle": None,
             }
             package = SimpleNamespace(
                 generation="generation-1", profile_id="profile-demo",
@@ -145,6 +146,28 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
             registry = source_runtime.derivations
             self.assertIs(source_runtime.artifact_receipts.catalog, catalog)
             self.assertEqual(source_runtime.artifact_receipts.root, receipt_root)
+            dynamic_schema = b'{"additionalProperties":false,"type":"object"}'
+            dynamic_sha = hashlib.sha256(dynamic_schema).hexdigest()
+            dynamic_id = f"native-mcp-schema:{dynamic_sha}"
+            registry._write_derived_schema(dynamic_id, dynamic_sha, dynamic_schema)
+            self.assertEqual(
+                registry._read_derived_schema(dynamic_id, dynamic_sha, len(dynamic_schema)),
+                dynamic_schema,
+            )
+            with self.assertRaises(derivation.SchemaDerivationDenied):
+                registry._write_derived_schema("native-mcp-schema:" + "0" * 64,
+                                                "0" * 64, dynamic_schema)
+            external_schema = b'{"$ref":"https://invalid.example/schema.json"}'
+            external_sha = hashlib.sha256(external_schema).hexdigest()
+            with self.assertRaises(derivation.SchemaDerivationDenied):
+                registry._write_derived_schema(
+                    f"native-mcp-schema:{external_sha}", external_sha, external_schema,
+                )
+            dynamic_path = journal_dir / "derived-schemas" / f"{dynamic_sha}.json"
+            os.chmod(dynamic_path, 0o644)
+            with self.assertRaises(derivation.SchemaDerivationDenied):
+                registry._read_derived_schema(dynamic_id, dynamic_sha, len(dynamic_schema))
+            os.chmod(dynamic_path, 0o444)
             observer = RootCatalogArtifactObserver.from_root_runtime(bindings, enrollment)
             held_tree = observer.observe(source.artifact_id, source.sha256, materialize_tree=True)
             try:
@@ -183,7 +206,7 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
                 )
                 handle = registry.mint_schema_artifact(observation)
 
-            schema_row["source_receipt_handle"] = handle
+            schema_row["derivation_receipt_handle"] = handle
             active = self._publication(journal_dir, generation, (parent, handle))
             unlisted_parent = self._publication(journal_dir, generation, (handle,))
             with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
@@ -207,6 +230,39 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
                     handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
                     size_bytes=len(schema), service_generation_digest=generation,
                 )
+                from hermes_installer.authority.source_artifact_receipts import (
+                    RootSourceArtifactReceiptVerifier,
+                )
+                verifier = RootSourceArtifactReceiptVerifier.from_root_runtime(
+                    bindings, registry, expected_uid=0,
+                )
+                identity = {
+                    "schema_id": schema_row["id"], "sha256": child.sha256,
+                    "schema_kind": "arguments", "native_package_id": "package-demo",
+                    "native_package_generation": "generation-1", "adapter_id": "adapter-demo",
+                    "action_id": "action-demo",
+                }
+                self.assertTrue(verifier.verify_source_receipt(parent, identity))
+                with self.assertRaises(SourceArtifactReceiptDenied):
+                    verifier.verify_source_receipt(handle, identity)
+                from hermes_installer.mcp.native_dispatch import NativeMCPToolBinding
+                selected_binding = NativeMCPToolBinding(
+                    id="action-demo", profile_id="profile-demo", process_generation="generation-1",
+                    native_package_id="package-demo", native_package_generation="generation-1",
+                    native_server_name="fixture", native_tool_name="fixture.schema",
+                    native_schema_sha256="a" * 64, mcp_enrollment_id="fixture",
+                    mcp_generation="generation-1", mcp_tool_name="fixture.schema",
+                    request_schema_id=schema_row["id"], result_schema_id="schema-result",
+                    effect_operation="mcp.request", effect_target="mcp:fixture:http",
+                    capability="mcp:fixture:read", recipient=None, scope_bindings=(),
+                    handler_artifact_id="adapter-demo", handler_artifact_sha256="a" * 64,
+                )
+                derived = registry.resolve_schema_artifact(
+                    handle, selected_binding=selected_binding, schema_role="arguments",
+                )
+                self.assertEqual(derived.canonical_schema_bytes, schema)
+                self.assertEqual(derived.source_receipt_handle, parent)
+                self.assertEqual(derived.derivation_receipt_handle, handle)
                 self.assertEqual(receipt.source_kind, "packaged-schema")
                 self.assertEqual(receipt.source_member_path, "schemas/arguments.json")
                 self.assertEqual(receipt.parent_receipt_handles, (parent,))
