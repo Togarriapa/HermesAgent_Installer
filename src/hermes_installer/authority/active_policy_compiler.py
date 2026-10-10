@@ -356,7 +356,8 @@ class RootActivePolicyPrecompile:
 
 
 def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> None:
-    if (not isinstance(claim.policy_bytes, bytes) or _sha(claim.policy_bytes) != claim.compiled_policy_sha256
+    if (type(claim.schema) is not int or claim.schema != 2
+            or not isinstance(claim.policy_bytes, bytes) or _sha(claim.policy_bytes) != claim.compiled_policy_sha256
             or not isinstance(claim.artifact_catalog_bytes, bytes)
             or _sha(claim.artifact_catalog_bytes) != claim.compiled_artifact_catalog_sha256
             or not isinstance(claim.selection_document, Mapping)
@@ -790,7 +791,7 @@ class RootActivePolicyCompilationRegistry:
               for handle in row.source_member_receipt_handles)),
             "active source")
         provisional = RootActivePolicyCompilationClaim(
-            schema=1, plan_artifact_id=session._authorization.plan_artifact_id,
+            schema=2, plan_artifact_id=session._authorization.plan_artifact_id,
             release_commit=session._factory._release.release_commit,
             publication_handle=publication_handle, setup_session_id=setup_session_handle.session_id,
             transaction_handle=session._authorization.transaction_handle,
@@ -1168,7 +1169,7 @@ class RootActivePolicyCompilationRegistry:
             "source_receipt_handles", "choice_adoptions", "issued_monotonic",
             "expires_monotonic",
         }
-        if set(manifest) != expected_manifest_fields:
+        if manifest.get("schema") != 2 or set(manifest) != expected_manifest_fields:
             raise BootstrapEnrollmentPending("durable compiler claim manifest has an invalid schema")
         source_handles = manifest.get("source_receipt_handles")
         runtime_handles = manifest.get("runtime_receipt_handles")
