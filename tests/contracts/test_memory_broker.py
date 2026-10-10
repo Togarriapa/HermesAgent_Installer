@@ -436,6 +436,7 @@ class MemoryBrokerTests(unittest.TestCase):
         self.assertIsNone(runtime["ipc"])
         self.assertEqual(runtime["engines"], {})
         self.assertIsNone(runtime["queue"])
+        self.assertIsNone(runtime["job_resolver"])
         with self.assertRaises(BrokerUnavailable):
             runtime["owner_state"]("p1")
 
