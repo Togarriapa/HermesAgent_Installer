@@ -1,0 +1,365 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-tested-gateway-source-members-v223.md",
+  "extends": [
+    "v209",
+    "v212"
+  ],
+  "requirements": [
+    "R0028",
+    "R0201",
+    "R0202",
+    "R0203",
+    "R0206",
+    "R0211"
+  ],
+  "tasks": [
+    "RT-T223.1",
+    "RT-T223.2",
+    "VD-T223.3"
+  ],
+  "reviewed_base": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0",
+  "reviewed_observer_correction": "f97b35cd40af97d54608079cde9858ee0718587d",
+  "reviewed_tree": "6776a91c3a21907c2e50c9e400eccc0ad9500fbd",
+  "pins": [
+    {
+      "artifact_id": "installer-gateway-source-__init__-py-v223",
+      "relative_path": "src/hermes_installer/__init__.py",
+      "sha256": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
+      "size_bytes": 90,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-authority-__init__-py-v223",
+      "relative_path": "src/hermes_installer/authority/__init__.py",
+      "sha256": "ec5aa9480d329deff464b8d913bb7c26014cbe7bea2c7a1a4780df90469b5221",
+      "size_bytes": 1813,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-authority-remote_sessions-py-v223",
+      "relative_path": "src/hermes_installer/authority/remote_sessions.py",
+      "sha256": "4d5b10bda6cc578517c97ac343e56bb7af85f9240babab84cd4517149a82bdce",
+      "size_bytes": 89468,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-authority-types-py-v223",
+      "relative_path": "src/hermes_installer/authority/types.py",
+      "sha256": "9222cc631dc4c4f5b88e60da3edf3be7bf85b6050608c795ca0945700c306bd6",
+      "size_bytes": 41335,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-network-py-v223",
+      "relative_path": "src/hermes_installer/network.py",
+      "sha256": "f052318b5ab19a049115e5aa35583a9055f981b7a42064dc43f5fcbe2b60a14b",
+      "size_bytes": 5602,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-__init__-py-v223",
+      "relative_path": "src/hermes_installer/remote/__init__.py",
+      "sha256": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
+      "size_bytes": 80,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-client_assets-py-v223",
+      "relative_path": "src/hermes_installer/remote/client_assets.py",
+      "sha256": "b3a915f3fb0d43e443987696e66a18c220c36707002aa6d041c8adf9408f8d36",
+      "size_bytes": 2303,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-cloudflare-py-v223",
+      "relative_path": "src/hermes_installer/remote/cloudflare.py",
+      "sha256": "fa980c65036fade0294121bec3fe269e424be63e068bb34f9511b311a66f79a6",
+      "size_bytes": 6224,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-gateway-py-v223",
+      "relative_path": "src/hermes_installer/remote/gateway.py",
+      "sha256": "4ccc3f8491a3709a8d5bf5a08847998d6c777c324650d3b6228a8c6df6ddb67c",
+      "size_bytes": 9584,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-http_framing-py-v223",
+      "relative_path": "src/hermes_installer/remote/http_framing.py",
+      "sha256": "b6573d7e2df781ad6cdafa1cd684ad8d4bbb1ca6bb426e3fbf9c969abfad5eac",
+      "size_bytes": 9333,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-jwks-py-v223",
+      "relative_path": "src/hermes_installer/remote/jwks.py",
+      "sha256": "088ee6262bff1091b9f917df23e96296dbe8d83869fbae1079ffa3d4740e6f96",
+      "size_bytes": 4327,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-policy-py-v223",
+      "relative_path": "src/hermes_installer/remote/policy.py",
+      "sha256": "d382dfee2bf31d35d07ad1aaea51aa65c1a2eb460567e9b1f0a3a2efe6ce4270",
+      "size_bytes": 13373,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-requirements-arm64-py314-lock-v223",
+      "relative_path": "src/hermes_installer/remote/requirements-arm64-py314.lock",
+      "sha256": "0a183e010a44751c3383ef574a77ac270283cc85671d50dfb38d6df3f168ed13",
+      "size_bytes": 1553,
+      "role": "gateway-lock",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-root_sessions-py-v223",
+      "relative_path": "src/hermes_installer/remote/root_sessions.py",
+      "sha256": "7dbdc3f1bbc6da6af92f160d29f57a8ba28bcd6c4f26a78e8bb35e221246513f",
+      "size_bytes": 9971,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-server-py-v223",
+      "relative_path": "src/hermes_installer/remote/server.py",
+      "sha256": "e0addc5b886fa9a2ff3ad379e0b67068123e67a34d7bd2dc4fa230fcb65cd4ed",
+      "size_bytes": 48063,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-startup_driver-py-v223",
+      "relative_path": "src/hermes_installer/remote/startup_driver.py",
+      "sha256": "4710519ae7f8fda4dbb9b563c5d053c18b1ecffea6f4bab67e0ebf75c9ebac9e",
+      "size_bytes": 4050,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-remote-verifier_ipc-py-v223",
+      "relative_path": "src/hermes_installer/remote/verifier_ipc.py",
+      "sha256": "670635aac829f5ad01cb08da91b8c629cee01c3bd8ee8a45601de23c3ce0f8e0",
+      "size_bytes": 25176,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-source-service_connector-py-v223",
+      "relative_path": "src/hermes_installer/service_connector.py",
+      "sha256": "46322bd4ce0e39ebeca9ff6129037b23b20f36bd7f14b418eb43e37fbb0c2dfd",
+      "size_bytes": 116367,
+      "role": "gateway-source",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-runtime-builder-v223",
+      "relative_path": "src/hermes_installer/authority/gateway_runtime_builder.py",
+      "sha256": "ee8360f3218e430960a622d84f7f0f344074033f2acbd92fe8ae42ed7b688eda",
+      "size_bytes": 29300,
+      "role": "gateway-runtime-builder",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-elf-v223",
+      "relative_path": "src/hermes_installer/authority/gateway_elf.py",
+      "sha256": "f010feff29c2e83f083eb6ec1053db0642cde6095b11588fc474dd14bc73c40d",
+      "size_bytes": 11917,
+      "role": "gateway-runtime-builder",
+      "reviewed_commit": "9ed9ab0ca611f7c2b244a526e792161c2dfc6ee0"
+    },
+    {
+      "artifact_id": "installer-gateway-runtime-observer-v223",
+      "relative_path": "src/hermes_installer/authority/gateway_runtime_observer.py",
+      "sha256": "29407017371702cdf2ce679b3e45e3157d4d92c9c7c86f5497bd41b15cccf575",
+      "size_bytes": 13378,
+      "role": "gateway-output-observer",
+      "reviewed_commit": "f97b35cd40af97d54608079cde9858ee0718587d"
+    }
+  ],
+  "runtime_source_rows": [
+    {
+      "relative_path": "src/hermes_installer/__init__.py",
+      "sha256": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
+      "size_bytes": 90,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/authority/__init__.py",
+      "sha256": "ec5aa9480d329deff464b8d913bb7c26014cbe7bea2c7a1a4780df90469b5221",
+      "size_bytes": 1813,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/authority/remote_sessions.py",
+      "sha256": "4d5b10bda6cc578517c97ac343e56bb7af85f9240babab84cd4517149a82bdce",
+      "size_bytes": 89468,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/authority/types.py",
+      "sha256": "9222cc631dc4c4f5b88e60da3edf3be7bf85b6050608c795ca0945700c306bd6",
+      "size_bytes": 41335,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/network.py",
+      "sha256": "f052318b5ab19a049115e5aa35583a9055f981b7a42064dc43f5fcbe2b60a14b",
+      "size_bytes": 5602,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/__init__.py",
+      "sha256": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
+      "size_bytes": 80,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/client_assets.py",
+      "sha256": "b3a915f3fb0d43e443987696e66a18c220c36707002aa6d041c8adf9408f8d36",
+      "size_bytes": 2303,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/cloudflare.py",
+      "sha256": "fa980c65036fade0294121bec3fe269e424be63e068bb34f9511b311a66f79a6",
+      "size_bytes": 6224,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/gateway.py",
+      "sha256": "4ccc3f8491a3709a8d5bf5a08847998d6c777c324650d3b6228a8c6df6ddb67c",
+      "size_bytes": 9584,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/http_framing.py",
+      "sha256": "b6573d7e2df781ad6cdafa1cd684ad8d4bbb1ca6bb426e3fbf9c969abfad5eac",
+      "size_bytes": 9333,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/jwks.py",
+      "sha256": "088ee6262bff1091b9f917df23e96296dbe8d83869fbae1079ffa3d4740e6f96",
+      "size_bytes": 4327,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/policy.py",
+      "sha256": "d382dfee2bf31d35d07ad1aaea51aa65c1a2eb460567e9b1f0a3a2efe6ce4270",
+      "size_bytes": 13373,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/requirements-arm64-py314.lock",
+      "sha256": "0a183e010a44751c3383ef574a77ac270283cc85671d50dfb38d6df3f168ed13",
+      "size_bytes": 1553,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/root_sessions.py",
+      "sha256": "7dbdc3f1bbc6da6af92f160d29f57a8ba28bcd6c4f26a78e8bb35e221246513f",
+      "size_bytes": 9971,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/server.py",
+      "sha256": "e0addc5b886fa9a2ff3ad379e0b67068123e67a34d7bd2dc4fa230fcb65cd4ed",
+      "size_bytes": 48063,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/startup_driver.py",
+      "sha256": "4710519ae7f8fda4dbb9b563c5d053c18b1ecffea6f4bab67e0ebf75c9ebac9e",
+      "size_bytes": 4050,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/remote/verifier_ipc.py",
+      "sha256": "670635aac829f5ad01cb08da91b8c629cee01c3bd8ee8a45601de23c3ce0f8e0",
+      "size_bytes": 25176,
+      "mode": 420
+    },
+    {
+      "relative_path": "src/hermes_installer/service_connector.py",
+      "sha256": "46322bd4ce0e39ebeca9ff6129037b23b20f36bd7f14b418eb43e37fbb0c2dfd",
+      "size_bytes": 116367,
+      "mode": 420
+    }
+  ],
+  "runtime_source_closure_sha256": "439ad0b9c12154ba1b523c356797e4905611461aa55fc3f6bec495c441e8ac6a",
+  "output_schema": {
+    "artifact_id": "gateway-runtime-output-schema-v223",
+    "relative_path": "plans/amendments/2026-10-10-tested-gateway-source-members-v223/gateway-runtime-output-v1.json",
+    "sha256": "9e7774c54427e9f22d60597d422eeac117cbbd7da7d3a5503fc3b4a759387cba",
+    "size_bytes": 315,
+    "id": "root-selected-gateway-runtime-output-v1"
+  },
+  "config_fields": [
+    "schema",
+    "role",
+    "selection_handle",
+    "source_closure_sha256",
+    "toolchain_receipt_handle",
+    "toolchain_closure_sha256",
+    "python_relative_path",
+    "python_sha256",
+    "python_library_relative_path",
+    "python_library_sha256",
+    "python_library_size_bytes",
+    "lock_member_sha256",
+    "lock_member_size_bytes",
+    "dependency_closure_sha256",
+    "source_members",
+    "wheel_members",
+    "output_schema_id",
+    "output_schema_sha256"
+  ],
+  "toolchain_python_members": [
+    "bin/python3.14",
+    "lib/libpython3.14.so.1.0"
+  ],
+  "gateway_only_directory_link": {
+    "path": "lib64",
+    "target": "lib",
+    "target_sha256": "76b5a357391276b282a516f54f48ef3c207f46d8192dc58c208d5183d38415f8",
+    "target_size_bytes": 3,
+    "policy": "exact same package held directory identity+complete lib descendant closure; not AppDir/generic directory-link allowance"
+  },
+  "fixture_evidence": {
+    "platform": "linux/arm64",
+    "image": "python:3.14.7-slim-bookworm",
+    "repo_digest": "python@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56",
+    "command": "docker run --rm -i --platform linux/arm64 -v /private/tmp/hermes-access-gateway-runtime-20261010:/repo:ro python:3.14.7-slim-bookworm sh -s < /private/tmp/hermes-gateway-arm64-build.sh",
+    "script_sha256": "2198f6490fdaaceea93ede761174c5b4418c5d4a05b7318db3753b7bf99ade99",
+    "log_sha256": "2c4d2a62826c63c8763955b0588d1ea4c322e3e79dc3cca56f34b33e05b45f35",
+    "package_members": 676,
+    "elf_dependencies": 8,
+    "isolated_imports": "passed, pip absent",
+    "authority": "synthetic config/selection/DTO/member issuer; no production setup/CAS/role receipt",
+    "reviewer_tests": "12 focused source contracts passed"
+  },
+  "excluded_pending_source_review": [
+    "gateway_runtime_adapter.py",
+    "gateway_runtime_acquisition.py",
+    "central setup/runtime build producer/custodian/sourcegroup integration",
+    "actual official PM ARM64 toolchain member receipts and signed OS library closure"
+  ],
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}

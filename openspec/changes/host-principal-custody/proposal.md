@@ -374,4 +374,8 @@ OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/so
 SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.
 
 FD3 handoff verification: the fixed re-exec must explicitly clear and read back close-on-exec after descriptor placement, including the source-already-3 case, before passing the sealed transition to the same process image.
+Officialremote roledefinition222: source-only held3roledescriptor→currentchoice/transaction-generated identityselection→actualNSS/roots/runtime/network→strictactiveadoption. planning/official-remote-role-definition-producer-v222.json; no preparedrecords/futureaccountauthority.
+
 CurrentpublishedPMhome runtime221: reuseexistingfreshcommittedPMresolver, exact11keyprojection/currentcore/receipt/venvFDproof; noexpiredsetupseal/newdurablehandle. planning/current-published-pm-home-runtime-v221.json HI-T221.1/.2 VD-T221.3 OPEN.
+
+Active authority aggregate v231: planning/active-authority-receipt-aggregate-v231.json requires retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication. HI-T231.1 and VD-T231.3 remain OPEN; all AC OPEN.

@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "requirements": [
+    "R0028",
+    "R0034",
+    "R0035",
+    "R0036",
+    "R0037",
+    "R0038",
+    "R0202",
+    "R0203",
+    "R0204",
+    "R0205",
+    "R0206",
+    "R0211"
+  ],
+  "refines": [
+    "planning/production-remote-role-nss-roots-v212.json",
+    "planning/concrete-remote-runtime-substrate-v209.json"
+  ],
+  "source_artifact": {
+    "artifact_id": "official-remote-role-definitions-v222",
+    "role": "amendment",
+    "relative_path": "plans/amendments/2026-10-10-official-remote-role-definition-producer-v222/official-remote-role-definitions-v1.json",
+    "sha256": "3662f9fbebfbcf9080a5102fa0b93f80137d0c660e7c35231c11b3ebb686e165",
+    "size_bytes": 1667,
+    "payload_keys": [
+      "schema",
+      "catalog_id",
+      "purpose",
+      "target",
+      "shared_group",
+      "roles"
+    ],
+    "role_row_keys": [
+      "role",
+      "service_user",
+      "primary_group",
+      "shared_reader_group",
+      "operation_id",
+      "recipe_id",
+      "home_root_template",
+      "work_root_template",
+      "data_root_template",
+      "output_schema_id"
+    ],
+    "values": "Exactlycommitteddescriptorbytes/3fixedroles; no profile/enrollment/accountUID/generation/credentialfuturefields. Recipe labels/roottemplates select reviewed finiteproducer operations, not activeauthority."
+  },
+  "source_api": {
+    "module": "hermes_installer.authority.remote_role_definitions",
+    "class": "RootRemoteRoleDefinitionRegistry",
+    "factory": "from_root_setup(binding, held_release, transaction_journal)",
+    "binding_facade": "resolve_remote_role_definition_source()->RootRemoteRoleDefinitionSourceReceipt",
+    "source_receipt": "Dedicated source-only exactheldmember observation/currentread_current; verify currentheldinstallerrelease/currentactor, exactdescriptor artifact/path/role/SHA/size in verifiedrelease.files then open_file/rehash through heldFD. No genericmodule API/RootReleaseModuleReceipt/nativeassemblyrequired or importorigin claim forJSON. No arbitrarycatalog/path/callerpayload.",
+    "resolve": "resolve_selected_role_definition(choice_handle,role)->RootSelectedRemoteRoleDefinition; roleexact display/gateway/desktop/currenttypedrootselectedremotechoice purpose/schema/epochs/principalNS/session/transaction/preparedgeneration/config/sourceproof mustjoin.",
+    "prepare": "prepare_selected_roles(choice)->tuple[RootPreparedRemoteRoleEnrollmentSelection,...] exactly3roles; issuingregistry/private membership and durabletransactionjournal only."
+  },
+  "prepared_fields": [
+    "selection_handle",
+    "definition_source_receipt_handle",
+    "definition_sha256",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "plan_digest",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "principal_selection_handle",
+    "namespace_selection_handle",
+    "role",
+    "profile_id",
+    "service_enrollment_id",
+    "generation",
+    "operation_id",
+    "recipe_id",
+    "home_root_id",
+    "work_root_id",
+    "data_root_id",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "identity_issuance": "ProfileID/serviceenrollmentID/generation/rootIDs are ROOT-generated unique IDs once perrole/transaction/preparedgeneration under actualretainedjournal before212NSS provisioning, not literals guessedfromfuturecatalog or callerIDs. Idempotentreissue returns currentexactrow, collision/foreignmarker denies. Read-onlydefinitionsalone do notprove NSS/serviceaccount/rootownership. Existing212 rootidentityproducer consumes exactsealedselections then observes/creates onlyowned declaredaccounts/roots/sharedgroup under genuine currentchoice and journal; no fixtureIDs/foreignadoption.",
+  "compiler_promotion": "RootSetupSelectedStartupRoleInputs producer joins exact current definition+preparedidentityselection+actual212NSS/root receipt +209runtimebuild/output/source/toolchain+network/config +principalNS/choice/currentcontroller, emits sealed aggregate. Prepared EnrollmentPolicy.records stays empty; neveruse it asactivegeneration. Activecompiler onlypromotes completeactualrows undercurrentpublicationclaim/sourcecore; postpublicationadoption resolves freshNSS/root/source/runtime/policy/network proof. Missingrole source/runtime/identity remains precise pending, not fictionalrow.",
+  "lifetime_restart": "Preparedselections boundoriginalsetupdeadline/freshcurrentchoice/controller; no renewal oldproof. Durabletransaction IDs are lineage only; resume requires freshcurrentidentity/source/config andactualroot/NSSrehash. Afteractivepublication resolve via strictcurrent protectedcatalog/member/claim, noexpiredsetupsession/importsealrestore.",
+  "tasks": [
+    {
+      "id": "RT-T222.1",
+      "owner": "startup workload/factory/sourcebroker",
+      "work": "Enroll exactdescriptorheldsource member/parser/source-onlyreceipt/facade and generate actualtransactionrole selections beforeNSS."
+    },
+    {
+      "id": "RT-T222.2",
+      "owner": "startup workload/identity/compiler",
+      "work": "Wire exactselectedrole definitions to212NSS/roots,209builds, sealedstartup aggregate and genuinecurrent activepromotion/adoption."
+    },
+    {
+      "id": "VD-T222.3",
+      "owner": "verification",
+      "work": "Verify missing/foreign/tampereddescriptor/rolechoice/source/principalNS/NSSroots/runtime/network/claim/currentness/idempotence failures; actualsourcepinsaftertestedcommit and targeteffectsseparate."
+    }
+  ],
+  "acceptance": "AlloriginalofficialDesktop/constrainedgateway/Xpra/Cloudflare/privatepublic/budget/Jarvisscope/AC01..18OPEN; no active service or sourceimplementationacceptance inferred."
+}

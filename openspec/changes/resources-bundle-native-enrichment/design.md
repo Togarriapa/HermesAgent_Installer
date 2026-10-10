@@ -187,3 +187,6 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 Jarvis214 corrects213 source-home/live-task field split: exact16 published facts; task process/resource/profilegen/context epochs are joined only at actual grant. Core/restart/207delegates/mount scope unchanged; planning/jarvis-published-home-live-task-split-v214.json.
 
 Jarvis source-profile task identity v215: distinct protected source_profile_id/home_binding_id mapping, actual serviceprofile_id unchanged; typed live admission deadlines/currentgrant and prepared-vs-published16facts in planning/jarvis-source-profile-task-identity-v215.json.
+
+CurrentpublishedPMhome runtime221: reuseexistingfreshcommittedPMresolver, exact11keyprojection/currentcore/receipt/venvFDproof; noexpiredsetupseal/newdurablehandle. planning/current-published-pm-home-runtime-v221.json HI-T221.1/.2 VD-T221.3 OPEN.
+Active authority receipt aggregate v231: planning/active-authority-receipt-aggregate-v231.json closes the empty-prepared/active-core producer gap through a genuine session-owned retained receipt aggregate, pure prepublication rendering and strict identity-domain active parser; same aggregate generation reaches compiler, publisher and enrollment CAS. No caller core/rows, synthetic runtime or publication dependency cycle. HI-T231.1/BD-T231.2/VD-T231.3 OPEN; all AC OPEN.

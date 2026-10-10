@@ -1203,6 +1203,16 @@ The installer SHALL apply planning/qualification-protected-row-serializer-v224.j
 
 ## ADDED Requirements
 
+### Requirement: Qualification source precedes process custody
+The installer SHALL observe a current source-only owned fixture lease before acquiring source-session PM/NSS/home inputs, and SHALL deny process effects until exact genuine fixture runtime bindings attach once under v230.
+
+#### Scenario: Source lease has no process handler
+- **WHEN** the current installed actor and controller observe the fixed owned fixture
+- **THEN** source acquisition MAY proceed under original bounds while process effects remain denied
+
+#### Scenario: Prepared custody becomes current
+- **WHEN** the same lease has genuine current source, PM, NSS, roots, task recipe and authenticated fixture runtime bindings
+- **THEN** one-time attachment MAY admit only existing selected effects while preserving original deadlines and cleanup
 ### Requirement: Bounded initial pending stage observation
 The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json` to annotate only exact base pending failures at its fixed initial compilation source boundaries, preserving every original authority check and pending exit behavior.
 

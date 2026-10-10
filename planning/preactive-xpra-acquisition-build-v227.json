@@ -1,0 +1,383 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md",
+  "extends": [
+    "v106",
+    "v198",
+    "v202",
+    "v209",
+    "v212",
+    "v219",
+    "v223"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "audit_commits": {
+    "workload": "0e87d36e7adee8c55d9be6b01f190cdfd5173d8c",
+    "xpra": "303629640b0a84e1df79ec923327ff41b6c833eb"
+  },
+  "owners": {
+    "acquisition_policy_and_native_verifier": "luna_xpra_runtime_builder",
+    "dynamic_cas_and_root_setup_joins": "luna_application_workload_wiring",
+    "preactive_transform": "luna_xpra_runtime_builder",
+    "managed_build_custody": "luna_application_execution",
+    "gateway_plan": "luna_access_gateway_runtime"
+  },
+  "policy_type": "RootXpraNativeSourcePolicy",
+  "policy_origin": "Exact held release/source-owned reviewed policy/lock schema member; not caller policy object or dynamic generic catalog row",
+  "policy_requirements": "Fixed HTTPS Debian/RaspberryPi signed repository and PyPI metadata/files origin IDs, exact reviewed keyring/Origin/Label/suite/arch/metadata time/index/pkg/hash/version/dependency/license recipe. Source policy and locked source rows require committed tested review before production admission; metadata exploration/quarantined acquisition is not positive native proof.",
+  "request_type": "RootXpraNativeSourceRequest",
+  "request_fields": [
+    "request_handle",
+    "selection_handle",
+    "choice_handle",
+    "role",
+    "purpose",
+    "policy_member_receipt_handle",
+    "policy_sha256",
+    "object_kind",
+    "fixed_object_id",
+    "origin_id",
+    "url_path",
+    "expected_sha256",
+    "expected_size_bytes",
+    "maximum_bytes",
+    "provenance_receipt_handles",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "request_issuer": "Fixed policy-owned RootXpraNativeBuildAcquisitionRegistry resolver mints exact in-process retained requests; consumers never receive caller URL/origins/hash/byte bounds.",
+  "object_kinds": [
+    "signed-release-metadata",
+    "signed-packages-index",
+    "native-deb",
+    "pypi-project-metadata",
+    "locked-python-source"
+  ],
+  "metadata_rules": "Initial signed Release/PyPI metadata may have null expected hash/size only in its exact fixed policy path with cap. All content remains quarantined. Exact package/index/Python artifact requests require complete verified parent metadata/lock and SHA/size. PyPI JSON discovery cannot bless unreviewed mutable package choices. TLS peer hostname/CA checking required; only policy-pinned HTTPS443 origins and bounded fixed DNS resolution; no arbitrary redirects, proxy/env/URL credentials or fallback.",
+  "grant_issuer": "RootXpraSetupHttpsAcquisitionGrantIssuer",
+  "grant_factory": "from_current_setup(binding,identity_registry,pm_registry)",
+  "grant_methods": [
+    "issue(selection,request) -> RootSelectedHttpsAcquisitionGrant",
+    "consume(grant,selection,request) -> RootSelectedHttpsAcquisitionGrant"
+  ],
+  "grant_fields": [
+    "grant_id",
+    "selection_handle",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "controller_binding_handle",
+    "service_identity_receipt_handle",
+    "pm_runtime_receipt_handle",
+    "source_policy_sha256",
+    "request_handle",
+    "request_sha256",
+    "role",
+    "purpose",
+    "origin_id",
+    "url_path",
+    "maximum_bytes",
+    "budget_ledger_handle",
+    "expires_monotonic"
+  ],
+  "grant_rules": "Display-only provisional exact RootSelectedRemoteRuntimeBuildSelection (members not yet finalized) joined to current root-TTY enabled choice, same prepared transaction/generation, v212 observed display NSS, real controller PIDFD/start identity, current officialPM/source/release policy. Retained private issuer/seal/signature, exact one-use ledger; original object/request identity checked at consume. Grant admission <=30s and original setup/choice deadlines. Spent before first network byte, including failure. Cumulative 512MiB/1024 admitted objects/4096 requests,metadata8MiB,index64MiB,individualobject<=512MiB,zero budget; effective stricter policy bounds win. Cancel/revoke/controller death stops owned stream and releases owned quarantine; no blind retry or refreshed actor substitute.",
+  "cas_type": "RootSetupComponentSourceCAS",
+  "cas_factory": "from_current_setup(binding)",
+  "cas_methods": [
+    "acquire_selected_object(grant,selection,request) -> RootQuarantinedSetupSourceObject",
+    "admit_verified_artifact(proof: RootVerifiedXpraAcquiredArtifact) -> RootAcquiredSourceObjectReceipt",
+    "resolve_current_acquired_object(handle,selection) -> RootAcquiredSourceObjectReceipt"
+  ],
+  "quarantined_fields": [
+    "object_handle",
+    "selection_handle",
+    "request_handle",
+    "grant_id",
+    "sha256",
+    "size_bytes",
+    "device",
+    "inode",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "verifier_type": "RootVerifiedXpraAcquiredArtifact",
+  "verifier_fields": [
+    "proof_handle",
+    "selection_handle",
+    "choice_handle",
+    "policy_sha256",
+    "object_handle",
+    "object_kind",
+    "artifact_role",
+    "fixed_object_id",
+    "sha256",
+    "size_bytes",
+    "signed_release_receipt_handle",
+    "signed_index_receipt_handle",
+    "locked_python_source_receipt_handle",
+    "dependency_closure_sha256",
+    "license_closure_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "verifier_rules": "Mint only by exact registered native/Python policy verifier after held bytes prove signed current Release->Packages->exact row or reviewed immutable PyPI lock metadata->exact source; whole dependency/license graph and architecture/CP314 requirements mandatory. Nullable provenance slots only for inapplicable branch. Metadata itself never native toolchain/member proof. No generic verify callback or asserted fields/hashes replacing proof.",
+  "acquired_fields": [
+    "receipt_handle",
+    "selection_handle",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "request_handle",
+    "grant_id",
+    "policy_sha256",
+    "provenance_proof_handle",
+    "artifact_role",
+    "fixed_object_id",
+    "sha256",
+    "size_bytes",
+    "device",
+    "inode",
+    "mode",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "cas_storage": "Reuse actual setup artifact_root held by RootArtifactReceiptRegistry with fixed private setup-component-acquisitions subroot, root0700; quarantine separate pertransaction/owned journal disposition, immutable SHA256 objects root0444/nlink1. No change to stagezero RootInstallerDistributionSourceCAS Git semantics or generic RootCatalogArtifactObserver, no fake catalog enrollment. Atomic no-replace publish+file/directory fsync, full reread hash/size, O_NOFOLLOW root/member FDs. Exact registry membership/proof/current original choice/source/policy/PM/identity and FD facts retained privately; copied DTO or digest-only blob cannot become input. Existing bytes must match ownership/content, foreign conflicts preserved.",
+  "cas_binding": "Same binding owns and exposes setup_component_source_cas; attach only once through actual setup factory. v219 acquisition registry consumes that exact instance, native verifier and grant issuer, not caller objects. After proper extract/byte graph observation, issue RootHeldXpraRuntimeMember with concrete originating CAS/proof retained and central remint; no dynamically invented release member or stagezero receipt alias.",
+  "preactive_transform_registry": "RootXpraPreactiveTransformResolver",
+  "preactive_transform_factory": "from_current_setup(binding,xpra_source_registry,pm_registry,transform_build_store,setup_build_executor)",
+  "preactive_transform_method": "resolve_current_transform(selection) -> RootCurrentXpraTransformOutputReceipt",
+  "preactive_transform_fields": [
+    "schema",
+    "receipt_handle",
+    "selection_handle",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "xpra_build_selection_handle",
+    "source_receipt_handle",
+    "source_archive_sha256",
+    "source_manifest_sha256",
+    "source_tree_sha256",
+    "pm_runtime_receipt_handle",
+    "pm_runtime_closure_sha256",
+    "transform_module_receipt_handle",
+    "transform_module_sha256",
+    "recipe_sha256",
+    "build_attestation_handle",
+    "build_attestation_sha256",
+    "output_artifact_id",
+    "output_sha256",
+    "output_size_bytes",
+    "transformed_tree_sha256",
+    "overlay_manifest_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "preactive_transform_rules": "Join current original provisional display selection/choice/source/NSS/PM/controller. Use actual RootXpraBuildSelectionProducer.provision_source/select, current held installed transform module and genuinely prepared fixed build subject from binding.resolve_prepared_build_service. Exact RootXpraSetupBuildGrantIssuer.issue + RootXpraSetupBuildExecutor.execute via existing bind_setup_build_grant_issuer/run_selected_setup_build, then ContentAddressedBuildStore.resolve(profile)/resolve_output_object. Reopen actual output object and independently apply pinned overlay inspector/full transformed archive tree/source/patch/license checks after completed owned manager terminal. May resolve same current already-completed output instead of reexecute; stale/foreign attestation/output denies. Never depend on SelectedStartupSelection/active RootXpraOverlayReceiptRegistry/v198 patch adoption or treat module receipt as transformed output. Actual root actor/release verifier remains mandatory; no actor substitution. v198 active patch adoption remains later after actual v201 publication; preactive receipt is not active acceptance.",
+  "closure_methods": [
+    "remote_build_member_closure_sha256(selection)",
+    "remote_build_recipe_sha256(inputs)",
+    "remote_build_recipe_bound_input_closure_sha256(inputs)"
+  ],
+  "member_projection_fields": [
+    "member_id",
+    "role",
+    "relative_path",
+    "artifact_id",
+    "receipt_handle",
+    "sha256",
+    "size_bytes",
+    "mode",
+    "kind",
+    "target"
+  ],
+  "member_projection": "SHA256 canonical {schema:1,purpose:remote-role-build-members-v1,selection_handle,choice_handle,role,members}; finalize exact held members first, sorted(role,relative_path,member_id), unique IDs and(role,path), includes literal target for links; excludes recipe/config, output/custodyFDs and digest itself. Original source_closure_sha256 remains independently source-only origin proof.",
+  "recipe_projection": "recipe_sha256=SHA256 exact canonical config bytes. Display config and output replace input_closure_sha256 with member_closure_sha256. Never include recipe_bound_input_closure_sha256 in its own config. Unknown/legacy digest field denied under reviewed corrected schema; schema digest remains pending actual source.",
+  "final_projection_fields": [
+    "schema",
+    "purpose",
+    "selection_handle",
+    "choice_handle",
+    "role",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "service_identity_receipt_handle",
+    "member_closure_sha256",
+    "recipe_config_sha256",
+    "output_schema_id",
+    "output_schema_sha256"
+  ],
+  "final_projection": "SHA256 canonical exact listed fields, schema1 purpose remote-role-build-input-v1, derived from original sealed current selection/input. Add member_closure_sha256 and recipe_bound_input_closure_sha256 to central RootSelectedRemoteRoleBuildInputs fields, retained sealed issuer computes them after config. Existing remote_build_input_closure_sha256 delegates final recipe-bound function for existing grant/attestation consumers; never compare that final hash to display driver member-only envelope field. Observer recomputes both from current held members/config, final grant/build/CAS binds recipe-bound digest and display output binds member digest. No caller digest setter or skipped recipe binding.",
+  "plan_module": "hermes_installer.authority.remote_role_build_executor",
+  "plan_type": "RootRemoteRoleBuildPlan",
+  "plan_method": "role_adapter.resolve_managed_build_plan(selection,inputs) -> RootRemoteRoleBuildPlan",
+  "plan_fields": [
+    "schema",
+    "selection_handle",
+    "role",
+    "recipe_sha256",
+    "builder_member_id",
+    "builder_mount_id",
+    "builder_relative_path",
+    "mount_member_ids",
+    "recipe_config_relative_path",
+    "argv_recipe",
+    "environment",
+    "output_specs",
+    "max_lifetime_seconds",
+    "memory_max_bytes",
+    "cpu_quota_percent",
+    "io_weight",
+    "tasks_max"
+  ],
+  "plan_private": "Exact retained _selection/_adapter/_seal; issuer accepts only concrete registered role adapter, rechecks its current source pin/recipe and exact inputs/custody/controller. Immutable closed mappings; no caller config-as-argv, open script/mount/output specs or generic interface substitute.",
+  "custody_api": [
+    "binding.create_remote_role_build_output_root(selection) -> RootRemoteRoleBuildOutputRoot",
+    "ManagedBuildJobRunner.prepare_remote_role_build_custody(selection) -> RootRemoteRoleBuildCustody",
+    "ManagedBuildJobRunner.bind_remote_role_build_grant_issuer(issuer)",
+    "ManagedBuildJobRunner.run_selected_remote_role_build(inputs,*,selection,grant,timeout,cancelled)"
+  ],
+  "role_plans": {
+    "gateway": {
+      "mounts": [
+        "source",
+        "toolchain",
+        "packages",
+        "python-runtime",
+        "recipe"
+      ],
+      "builder_mount_id": "python-runtime",
+      "builder_relative_path": "bin/python3.14",
+      "argv_recipe": [
+        {
+          "build_path": {
+            "mount_id": "builder",
+            "relative_path": ""
+          }
+        },
+        {
+          "literal": "-I"
+        },
+        {
+          "build_path": {
+            "mount_id": "toolchain",
+            "relative_path": "src/hermes_installer/authority/gateway_runtime_builder.py"
+          }
+        }
+      ],
+      "recipe_config_relative_path": "access-gateway-build-input.json",
+      "max_lifetime_seconds": 600,
+      "memory_max_bytes": 2147483648,
+      "cpu_quota_percent": 100,
+      "io_weight": 100,
+      "tasks_max": 128,
+      "outputs": {
+        "gateway-runtime": {
+          "kind": "tree",
+          "maximum_bytes": 2147483648
+        },
+        "HERMES-GATEWAY-RUNTIME-BUILD.json": {
+          "kind": "file",
+          "maximum_bytes": 8388608
+        }
+      },
+      "source_requirements": "Actual v223 runtime+lock/toolchain builder+ELF, complete PM bin/lib/stdlib and separate pip runner, exact held wheels; selected executable same origin member at python-runtime. Special builder token denotes that executable, no duplicated builder descriptor/mount. Direct -I script must have actual source-reviewed sibling ELF import bootstrap, not ambient PYTHONPATH; old reviewed driver bytes do not prove repaired script."
+    },
+    "display": {
+      "mounts": [
+        "source",
+        "transform",
+        "toolchain",
+        "dependencies",
+        "recipe"
+      ],
+      "builder_mount_id": "toolchain",
+      "builder_relative_path": "python/bin/python3.14",
+      "argv_recipe": [
+        {
+          "build_path": {
+            "mount_id": "builder",
+            "relative_path": ""
+          }
+        },
+        {
+          "literal": "-I"
+        },
+        {
+          "build_path": {
+            "mount_id": "toolchain",
+            "relative_path": "src/hermes_installer/remote/xpra_runtime_builder.py"
+          }
+        }
+      ],
+      "recipe_config_relative_path": "xpra-runtime-build-input.json",
+      "max_lifetime_seconds": 1200,
+      "memory_max_bytes": 2147483648,
+      "cpu_quota_percent": 100,
+      "io_weight": 100,
+      "tasks_max": 128,
+      "outputs": {
+        "usr": {
+          "kind": "tree",
+          "maximum_bytes": 2147483648
+        },
+        "xpra-runtime-build-result.json": {
+          "kind": "file",
+          "maximum_bytes": 8388608
+        }
+      },
+      "source_requirements": "Exact genuine source+preactive transformed output+PM314/backend/signed compiler/X11/Xvfb/HTML5/license members and corrected held driver/schema. Output usr actual install tree, no JSON-only package. Current fixed driver uses toolchain/python/bin/python3.14; full selected PM prefix under toolchain/python is one closed projection, not a second duplicated python-runtime mount. Exact role spelling display-dependency maps to fixed dependencies mount.",
+      "member_mount_roles": {
+        "source": [
+          "display-source"
+        ],
+        "transform": [
+          "display-transform"
+        ],
+        "dependencies": [
+          "display-dependency"
+        ],
+        "toolchain": [
+          "display-toolchain",
+          "display-builder",
+          "display-output-schema"
+        ]
+      }
+    },
+    "desktop": {
+      "max_lifetime_seconds": 1200,
+      "mounts_and_resource_caps": "Pending exact v226 actual native/AppDir measured recipe; no generic8GiB/400percent/256tasks permission. Upstream16GiB heap flag is maximum, not measured memory; measure peak/cgroup before source-owned cap review. Owner must implement actual native build, not leave permanent unresolved placeholder."
+    }
+  },
+  "plan_execution_rules": "All role build stages use owned transient systemd job, PrivateNetwork and AF_UNIX only, fixed sanitized environment, readonly source/toolchain/dependency/recipe mounts, held service-owned output/work roots. No network acquisition in role-build unit. Source field maps exact fixed driver paths, no arbitrary additional mounts. Limits are independent selected role policy, not adjacent app template inheritance. Effective duration min(caller requested, plan cap, actual selection/custody/choice/controller original expiry); consumed30s grant is admission-only, cannot renew authorization. Same exact retained input/choice/session/NSS/member/controller recheck at least every250ms; deadline/revocation/cancel terminates and reaps only owned PIDFD/unit before output/cleanup. A 30s snapshot does not become1200s by naming a plan cap; production longer lease requires actual current authorized source/controller observation, never imported seal/blindTTL. Independent role output observer plus managed terminal+CASSHA before runtime issuance.",
+  "canonical": "UTF8 JSON sort_keys=True,separators comma/colon,ensure_ascii=False,allow_nan=False; duplicate/unknown fields denied. No FD/inode environment path or digest self-reference in hash projections. Exact source schema/model pins pending committed tested source.",
+  "source_pins": null,
+  "acceptance": "All AC01..AC18 OPEN; no source/CAS/build/runtime/active/Pi positive acceptance from this refinement",
+  "failure_tests": [
+    "real setup-owned acquisition request/grant/consume/CAS admit with signed fixture graph",
+    "wrong origin/path/redirect/TLS/proxy/hash/size/cumulative limit/controller/deadline/replay",
+    "quarantine or metadata treated as buildable member",
+    "foreign/copied CAS/proof/receipt and changed file ownership/FD/bytes",
+    "real preactive transform effect independent archive inspector before any active policy",
+    "active overlay dependency or module alias rejected",
+    "member/config/final hash acyclic and recipe/target/link mutation changes correct digest",
+    "actual fixed gateway -I driver and display managed plan mounts/outputs",
+    "role cap exceed/config-as-argv/wrong builder/mount denial",
+    "real unit private network/AF_INET denial/expiry/revocation/cancel owned cleanup"
+  ]
+}

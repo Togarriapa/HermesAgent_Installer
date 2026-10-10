@@ -1201,9 +1201,32 @@ The installer SHALL carry only its previously authorized sealedFD3 through exist
 #### Scenario: Sealed handoff memfd is already descriptor 3
 - **WHEN** the fixed same-process re-exec installs its sealed transition memfd and that source descriptor is already 3 with close-on-exec set
 - **THEN** it explicitly clears and verifies close-on-exec on descriptor 3 before exec, and the child validates the same sealed bytes and journal binding
+## ADDED Requirements
+
+### Requirement: Actual remote role source definition producer
+The installer SHALL use planning/official-remote-role-definition-producer-v222.json to select exact source-held roledefinitions and genuine current role receipts before activepromotion.
+
+#### Scenario: Prepared enrollment has no runnable records
+- **WHEN** initial remote role preparation occurs with empty preparedrecords
+- **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted
+
+## ADDED Requirements
+
 ### Requirement: Fresh current published PM runtime for delegate homes
 The installer SHALL use planning/current-published-pm-home-runtime-v221.json to verify current published PM/home identity through genuine fresh held bytes without extending setup receipts.
+The installer SHALL use planning/current-published-pm-home-runtime-v221.json to verify currentpublishedPM/home identity through genuinefreshheldbytes without extending setup receipts.
 
 #### Scenario: Setup receipt expires before delegate task
+- **WHEN** the installedcurrentpublication remainsvalid aftersetup expiry or daemonrestart
+- **THEN** the existingcommittedPMresolver reopens currentreceipt/executable/fullclosure and issues fresh typedproof matching exacthomeprojection; oldsetupseal is not restored
 - **WHEN** the installed current publication remains valid after setup expiry or daemon restart
 - **THEN** the existing committed PM resolver reopens current receipt, executable and full closure and issues a fresh typed proof matching the exact home projection; an old setup seal is not restored
+
+## ADDED Requirements
+
+### Requirement: Current retained active enrollment projection
+The installer SHALL retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication according to planning/active-authority-receipt-aggregate-v231.json.
+
+#### Scenario: Current source receipts join active compilation
+- **WHEN** the prepared catalog is dormant and a selected worker/local policy is complete
+- **THEN** the pure root renderer derives actual service/process/effect rows and keeps the aggregate nonactive until the same current publication and enrollment CAS commit

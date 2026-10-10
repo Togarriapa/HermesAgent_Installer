@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md",
+  "extends": [
+    "v218",
+    "v226"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "owner": "luna_official_desktop_runtime",
+  "problem": "Actual complete pinned official workspace resolves ws8.21.1 but lacks declaration package for electron/source-backend.test.ts import WebSocket/default class/RawData/event handlers. TS2307 is an upstream dependency omission, not absent ws runtime. Original root lock/source remains unchanged.",
+  "auxiliary_artifact": {
+    "artifact_id": "official-desktop-aux-types-ws-8.18.2-v1",
+    "name": "@types/ws",
+    "version": "8.18.2",
+    "official_url": "https://registry.npmjs.org/@types/ws/-/ws-8.18.2.tgz",
+    "integrity": "sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==",
+    "sha256": "9d774304de5397f58da47b31f68b69cf0ff84ef7b1087cf4fea27729f8db83fe",
+    "size_bytes": 6029,
+    "license": "MIT",
+    "types_publisher_content_hash": "cc5646969f6447ed3bbda0af1afd034a06ea04a46c4e810b2f955450ac935f23",
+    "members": [
+      {
+        "path": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+        "size_bytes": 1141,
+        "mode": 292
+      },
+      {
+        "path": "README.md",
+        "sha256": "fc18937e2cd547b286cd3fe0f12d2b07dc26bd75ca1c1e98f2f240d0590330de",
+        "size_bytes": 810,
+        "mode": 292
+      },
+      {
+        "path": "index.d.mts",
+        "sha256": "41b2a25018200d1deef82999c2f44a23bd4b8618aa788fff90292ce25366fa68",
+        "size_bytes": 19499,
+        "mode": 292
+      },
+      {
+        "path": "index.d.ts",
+        "sha256": "0143cefdb56a076f7f6cc2520a60469e0b349452f7882c5c2688f69032a8424c",
+        "size_bytes": 19189,
+        "mode": 292
+      },
+      {
+        "path": "package.json",
+        "sha256": "f5b7223923b24d17ae264da95d3e35f72c57bc951c63a31c7c5fbd1490fbf94a",
+        "size_bytes": 2072,
+        "mode": 292
+      }
+    ],
+    "archive_prefix": "ws/",
+    "maximum_download_bytes": 16384,
+    "maximum_expanded_bytes": 65536,
+    "maximum_members": 5,
+    "maximum_archive_entries": 6,
+    "status": "Sol independently verified exact normalTLS tarball SHA/SRI/member bytes and declaration API; ARM64 wholeworkspace check separate evidence"
+  },
+  "compatibility": {
+    "runtime_ws_version": "8.21.1",
+    "runtime_ws_lock_path": "node_modules/ws",
+    "runtime_ws_integrity": "sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==",
+    "typescript_version": "6.0.3",
+    "typescript_lock_path": "node_modules/typescript",
+    "types_node_version": "22.20.1",
+    "types_node_lock_path": "node_modules/@types/node",
+    "types_node_integrity": "sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==",
+    "wildcard_rule": "Auxiliary package depends @types/node:*; satisfy ONLY exact already-held originalrootlock22.20.1 receipt. No new wildcard resolution/npm install/fetch/lock edit. Originalworkspace TS6.0.3 accepts declared types minimum5.6 only after actual check."
+  },
+  "api_review": [
+    "default WebSocket constructor(string|URL,options?)",
+    "WebSocket.RawData Buffer|ArrayBuffer|Buffer[]",
+    "once error/open handlers",
+    "on message(data,isBinary) callback signature permits original one-argument handler",
+    "send(string) and terminate()"
+  ],
+  "registry": "Existing RootSelectedOfficialDesktopNativeBuildRegistry from v226",
+  "prepare_method": "prepare_current_native_inputs(choice,selection)",
+  "auxiliary_receipt_type": "RootOfficialDesktopAuxiliaryTypeReceipt",
+  "auxiliary_receipt_fields": [
+    "schema",
+    "receipt_handle",
+    "choice_handle",
+    "build_selection_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "source_revision",
+    "source_lock_sha256",
+    "artifact_id",
+    "archive_sha256",
+    "archive_size_bytes",
+    "integrity",
+    "member_manifest_sha256",
+    "dependency_receipt_handles",
+    "dependency_closure_sha256",
+    "license_closure_sha256",
+    "workspace_projection_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "private_custody": "Exact issuer membership/seal and original acquisition/CAS/source/npm/TS/@typesnode receipts, held immutable five declaration/license/package bytes; no generic callback/maps or copied receipt. Existing normalTLS fixed npm acquisition/parser + actual dynamic sourceCAS admission are reused with separately source-owned auxiliaryartifact policy. Setup selection/deadline/controller and full source/npm lock proofs rechecked. No claimed original-lock membership for this auxiliary.",
+  "native_input_extra_fields": [
+    "auxiliary_toolchain_receipt_handles",
+    "auxiliary_toolchain_closure_sha256"
+  ],
+  "injection": "Fixed source-owned disposable build workspace materialization node_modules/@types/ws only, using five exact held files and safe single ws/ prefix removal. Keep actual upstream commit/member manifest/root package-lock/package.json bytes unchanged. Record auxiliary input overlay and resulting workspace_manifest_sha256/recipe digest in v226 sealed native receipt. No persistent installed workspace edit, generated fake d.ts, declare module ws:any, tsignore/skipcheck or import/runtime substitution. Required upstream compiler files retain exact contents and command.",
+  "script_policy": "No executable/package lifecycle scripts; package scripts{} main empty, only index.d.ts/index.d.mts/types package/README/MIT notice. Type declarations are build-only auxiliarytoolchain; no new runtime ws package/daemon authority or AppDir executable entry. Runtime ws remains exact original8.21.1 held closure. Record whether declarations are omitted or passively carried in final package, never treat as runnable dependency proof.",
+  "validation_commands": [
+    "npm --workspace apps/desktop run typecheck",
+    "npm --workspace apps/desktop run build"
+  ],
+  "qualification": "Use actual current original source/Node/npm/workspace/member receipts in isolated Linux ARM64. Reproduce original TS2307 then exact auxiliary-only repair; complete unmodified original typecheck command (all four compiler checks) without reducing flags. No mocked tsc or inventory test as positive. Typecheck success does not prove native addons/AppDir/sandbox; v226 whole actual build and independent observer remain required.",
+  "source_review": "Artifact five bytes/SRI/license reviewed; producer implementation/source/schema pin remains null pending committed tests and current receipt/CAS joins. No entire1165package cohort/source readiness acceptance.",
+  "producer_source_pins": null,
+  "acceptance": "AC01..AC18 OPEN; types-only repair, whole actual build/native/AppDir/runtime/Pi separate",
+  "failure_tests": [
+    "exact archive/member/SRI/license and MIT notice retained",
+    "wrong version/hash/SRI/extra member/link/path/size denies",
+    "wildcard typesnode fetch or alteredrootlock denies",
+    "preexisting foreign workspace/type declarations preserved",
+    "receipt copied/expired/foreign choice/source/npm/TS/dependency mismatch denies",
+    "actual ARM64 typecheck before/after with originalsourcehashes unchanged",
+    "bad API assignment rejected by original compiler",
+    "auxiliary ignored cannot masquerade as passed typecheck or runtime proof"
+  ],
+  "auxiliary_methods": [
+    "prepare_current_auxiliary_types(choice,selection) -> RootOfficialDesktopAuxiliaryTypeReceipt",
+    "resolve_current_auxiliary_types(handle,choice,selection) -> RootOfficialDesktopAuxiliaryTypeReceipt"
+  ],
+  "auxiliary_methods_scope": "Methods on existing RootSelectedOfficialDesktopNativeBuildRegistry, called by prepare_current_native_inputs; return SAME retained sealed receipt after current source/npm/dependency/member/workspace proof checks. No new generic registry."
+}

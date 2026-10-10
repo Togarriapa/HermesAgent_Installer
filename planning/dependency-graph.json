@@ -3275,9 +3275,217 @@
   "typed_initial_pending_diagnostics_v232": {
     "contract": "planning/typed-initial-pending-diagnostics-v232.json",
     "task_dependencies": {
-      "BD-T232.1": ["BD-F02", "HI-T149.1"],
-      "VD-T232.2": ["BD-T232.1"]
+      "BD-T232.1": [
+        "BD-F02",
+        "HI-T149.1"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "official_remote_role_definition_producer_v222": {
+    "contract": "planning/official-remote-role-definition-producer-v222.json",
+    "tasks": {
+      "RT-T222.1": [
+        "HI-T197.2"
+      ],
+      "RT-T222.2": [
+        "RT-T222.1"
+      ],
+      "VD-T222.3": [
+        "RT-T222.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_native_build_acquisition_v219": {
+    "contract": "planning/xpra-native-build-acquisition-v219.json",
+    "amendment": "plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md",
+    "tasks": {
+      "RT-T219.1": [],
+      "RT-T219.2": [
+        "RT-T219.1"
+      ],
+      "VD-T219.3": [
+        "RT-T219.1",
+        "RT-T219.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "tested_gateway_source_members_v223": {
+    "contract": "planning/tested-gateway-source-members-v223.json",
+    "amendment": "plans/amendments/2026-10-10-tested-gateway-source-members-v223.md",
+    "tasks": {
+      "RT-T223.1": [],
+      "RT-T223.2": [
+        "RT-T223.1"
+      ],
+      "VD-T223.3": [
+        "RT-T223.1",
+        "RT-T223.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "qualification_compiler_terminal_custody_v217": {
+    "contract": "planning/qualification-compiler-terminal-custody-v217.json",
+    "tasks": {
+      "HI-T217.1": [
+        "HI-T173.1"
+      ],
+      "HI-T217.2": [
+        "HI-T217.1"
+      ],
+      "VD-T217.3": [
+        "HI-T217.2",
+        "HI-T197.3"
+      ]
+    },
+    "owners": {
+      "HI-T217.1": "luna_resource_runtime",
+      "HI-T217.2": "luna_resource_runtime",
+      "VD-T217.3": "luna_producer_cohort_integrator"
+    },
+    "order": [
+      "parent current installed journal/launch evidence custody",
+      "child current source/PM/NSS/materialization/discovery",
+      "compiler strict fixture publication/session/runtime",
+      "actual fixed task admission/input/native/terminal/capsule or explicit incomplete",
+      "retain signed typed projections",
+      "actual discovery/NSS cleanup and signed cleanup projection",
+      "child atomic no-replace evidence row",
+      "parent current source/unit/terminal/custody verification",
+      "consume result then collect unit/close key"
+    ],
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "qualification_protected_row_serializer_v224": {
+    "contract": "planning/qualification-protected-row-serializer-v224.json",
+    "tasks": [
+      "HI-T217.1",
+      "HI-T217.2",
+      "VD-T217.3"
+    ],
+    "owner": "luna_resource_runtime",
+    "order": [
+      "current v173/NSS/source",
+      "real fixed task recipe/package",
+      "finite serializer/fixture parser",
+      "strict full index",
+      "actual native task outcome",
+      "parent durable evidence"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "current_remote_identity_adoption_v225": {
+    "contract": "planning/current-remote-identity-adoption-v225.json",
+    "tasks": {
+      "RT-T225.1": [
+        "RT-T212.1",
+        "RT-T222.2"
+      ],
+      "RT-T225.2": [
+        "RT-T225.1"
+      ],
+      "VD-T225.3": [
+        "RT-T225.1",
+        "RT-T225.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_native_build_inputs_v226": {
+    "contract": "planning/official-desktop-native-build-inputs-v226.json",
+    "tasks": {
+      "RT-T226.1": [
+        "BD-T218.1"
+      ],
+      "RT-T226.2": [
+        "RT-T226.1",
+        "BD-T218.2"
+      ],
+      "VD-T226.3": [
+        "RT-T226.1",
+        "RT-T226.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "preactive_xpra_acquisition_build_v227": {
+    "contract": "planning/preactive-xpra-acquisition-build-v227.json",
+    "tasks": {
+      "RT-T227.1": [
+        "RT-T219.1"
+      ],
+      "RT-T227.2": [
+        "RT-T227.1",
+        "RT-T219.2"
+      ],
+      "RT-T227.3": [
+        "RT-T227.2",
+        "RT-T223.2"
+      ],
+      "VD-T227.4": [
+        "RT-T227.1",
+        "RT-T227.2",
+        "RT-T227.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_ws_types_repair_v229": {
+    "contract": "planning/official-desktop-ws-types-repair-v229.json",
+    "tasks": {
+      "RT-T229.1": [
+        "RT-T226.1"
+      ],
+      "RT-T229.2": [
+        "RT-T229.1",
+        "RT-T226.2"
+      ],
+      "VD-T229.3": [
+        "RT-T229.1",
+        "RT-T229.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "qualification_source_before_process_custody_v230": {
+    "contract": "planning/qualification-source-before-process-custody-v230.json",
+    "tasks": [
+      "HI-T230.1",
+      "VD-T230.2"
+    ],
+    "depends_on": [
+      "HI-T197.3",
+      "HI-T217.1",
+      "HI-T217.2"
+    ],
+    "owner": "luna_resource_runtime",
+    "acceptance": "All AC OPEN"
+  },
+  "active_authority_receipt_aggregate_v231": {
+    "contract": "planning/active-authority-receipt-aggregate-v231.json",
+    "changes": [
+      "resources-bundle-native-enrichment",
+      "host-principal-custody",
+      "installer-bootstrap-desktop"
+    ],
+    "tasks": {
+      "HI-T231.1": [
+        "HI-T09",
+        "RB-T213.1"
+      ],
+      "BD-T231.2": [
+        "HI-T231.1"
+      ],
+      "VD-T231.3": [
+        "BD-T231.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN; implementation and target evidence separate"
   }
 }

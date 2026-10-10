@@ -89,3 +89,34 @@ Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-re
 
 
 Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md` / `planning/production-remote-role-nss-roots-v212.json`; genuine three distinct accounts/current descriptors/journal/adoption, preserved foreign state and unchanged native-worker receipt. Finite v209 AppDir target fields corrected; source pins and all AC OPEN.
+
+Officialremote roledefinition222: source-only held3roledescriptor→currentchoice/transaction-generated identityselection→actualNSS/roots/runtime/network→strictactiveadoption. planning/official-remote-role-definition-producer-v222.json; no preparedrecords/futureaccountauthority.
+
+
+Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md` / `planning/xpra-native-build-acquisition-v219.json`; owner implements actual signed native/PM314 backend/transform receipt producers, corrected fixed offline recipe and independent qualification. New source pins and all AC OPEN.
+
+
+Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+
+## Durable remote identity currentness v225
+
+Use the exact schemas/APIs in `planning/current-remote-identity-adoption-v225.json`: source projection precedes publication; immutable signed adoption follows exact committed receipt. Current protected member/core/journal/NSS/root/lease observations issue fresh receipts after restart without restored setup seals. Publication-before-journal crashes deny activation until original authorized transaction completes. Source pins and all runtime/target acceptance remain pending.
+
+
+## Desktop native source/build closure v226
+
+`planning/official-desktop-native-build-inputs-v226.json` fixes owner registry and retained FD receipt fields. Exact Electron ABI/local headers and signed private sysroot feed offline locked rebuild; prepared native degraded=false and complete original workspace prevent lazy staging fallback. Original prepared dir build produces full independently observed AppDir, ELF/library/PTY/sandbox proof, separate from final runtime/active/target acceptance. No guessed header/dependency/schema pins or ambient Mac/global libraries.
+
+
+v225 schema placement is authority.service_generations schema3, exact schema2 fields/validators plus remote_service_identity_source_records; canonical digest includes selectors. No enabled remote means absent member/descriptor null/SHA null/size0; enabled requires complete matching member/core/descriptor/claim/receipt. Existing1/2 do not issue v225 identity receipts. See append-only v225 schema clarification.
+
+
+## Preactive source authority and acyclic build inputs v227
+
+Exact `planning/preactive-xpra-acquisition-build-v227.json` separates quarantined download from signed dependency/license admission and no-egress role build. Actual setup transform grants/manager output precede active patch adoption. Member digest excludes config; config carries member digest; final receipt binds config/member/setup/schema. Concrete sealed role plans enforce actual argv/mount/output/role caps and original controller deadline; no actor substitute, old receipt renewal or generic shared defaults.
+
+
+## Types-only auxiliary workspace input v229
+
+Use exact `planning/official-desktop-ws-types-repair-v229.json` source artifact/member/dependency proofs through existing v226 current native registry. Originalrootlock@types/node22.20.1 satisfies wildcard withoutfetch. Disposable node_modules/@types/ws injection is explicitly digest-bound auxiliary projection, never fictional original lock membership, fake declarations or runtime substitution. Actual original compiler and nativeAppDir qualification remain separate.

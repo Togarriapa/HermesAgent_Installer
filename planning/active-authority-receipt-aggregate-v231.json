@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "id": "active-authority-receipt-aggregate-v231",
+  "status": "specified; implementation and target acceptance OPEN",
+  "refines": [
+    "planning/jarvis-published-home-live-task-split-v214.json",
+    "planning/jarvis-source-profile-task-identity-v215.json",
+    "planning/current-published-pm-home-runtime-v221.json",
+    "planning/current-remote-identity-adoption-v225.json"
+  ],
+  "changes": [
+    "resources-bundle-native-enrichment",
+    "host-principal-custody",
+    "installer-bootstrap-desktop"
+  ],
+  "requirements": [
+    "R0001",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0058",
+    "R0060",
+    "direct-user-2026-10-10-jarvis-sole-user-profile"
+  ],
+  "audit": {
+    "compiler": "RootActivePolicyCompilationRegistry.compile_active_policy creates a claim without authority_core_bytes/SHA/size although _validate_claim_output_hashes requires all three. No caller core may fill this gap.",
+    "prepared": "RootFirstStagePolicyCompiler and v63 prepared authority base deliberately keep authority maps and service rows empty. EnrollmentReceipt and PreparedNativeBundle do not prove active enrollment.",
+    "producer": "Existing RootPreparedNativeServiceGenerationProducer.build_selected produces exactly one selected worker service/process/network/active-network/runtime row from retained signed recipe and materialization. It requires a root factory base_policy containing the selected process profile; empty prepared base cannot supply it.",
+    "parser": "Existing _parse_protected_enrollment_document requires nonempty list principals/rules and list process_profiles plus Authentik policy. A local-owner selection is a distinct identity domain; fabricated Authentik values or treating prepared map schema as active list schema are prohibited.",
+    "cycle": "Current activate_runnable resolves compiled active policy before rendering its generation; active compiler now needs that rendered generation before publishing. Extract pure root rendering from activation; never publish to obtain inputs needed by the same publication."
+  },
+  "producer_api": {
+    "module": "hermes_installer.authority.active_authority_projection (new finite root producer)",
+    "issuer": "RootActiveAuthorityProjectionRegistry.from_root_setup(binding: RootSelectedInstallationBinding, policy_factory: RootSetupPolicyFactory) -> RootActiveAuthorityProjectionRegistry",
+    "composition": "Registry is session-owned, one retained instance. Resolve all actual source/runtime/recipe/identity/choice/journal producers through the same binding/session; constructor does not accept injected callbacks, caller row collections or an EnrollmentPolicy.",
+    "getter": "RootBootstrapSession.resolve_current_active_authority_projection(precompile: RootActivePolicyPrecompile) -> RootPreparedActiveAuthorityProjection",
+    "build": "RootActiveAuthorityProjectionRegistry.resolve_current(precompile) -> RootPreparedActiveAuthorityProjection; verifies compiler-issued current capability, holds exact input receipts, uses pure root render, returns same retained object for unchanged reservation.",
+    "verify": "RootActiveAuthorityProjectionRegistry.verify_current(projection) -> same projection, exact type + issuer object + retained identity and current dependency checks; equality-only DTO copies rejected.",
+    "read": "RootActiveAuthorityProjectionRegistry.read_current_authority_core(projection) -> bytes; root-private compiler API; verify before/after render/read; no public raw-byte input.",
+    "activation": "RootSetupPolicyFactory renders one aggregate generation before publication without enrollment CAS, service startup or authority socket issuance. activate_runnable consumes the same retained projection after publication claim binding and supplies the exact validated policy to existing enrollment CAS. No second random generation or second independent policy render."
+  },
+  "dto": {
+    "name": "RootPreparedActiveAuthorityProjection",
+    "frozen": true,
+    "repr": "root-held, no paths/credential references/FDs in repr",
+    "public_fields": {
+      "schema": "literal 1",
+      "receipt_handle": "issuer-generated opaque handle",
+      "setup_session_id": "exact current setup session ID",
+      "transaction_handle": "same root authorization transaction",
+      "plan_sha256": "same held plan digest",
+      "prepared_generation_id": "same actual prepared receipt ID",
+      "prepared_generation_digest": "same actual prepared CAS digest",
+      "publication_handle": "same precompile reservation publication handle",
+      "reservation_handle": "same compiler-owned reservation",
+      "precompile_output_closure_sha256": "actual reservation closure hash, not publication claim hash",
+      "generation_id": "one root-selected active generation retained for this reservation",
+      "generation_digest": "canonical complete service_generations hash",
+      "principal_id": "actual current selected principal",
+      "namespace_id": "actual current namespace",
+      "principal_identity_kind": "actual authentik-subject-v1 OR linux-local-owner-v1",
+      "source_receipt_handles": "sorted unique exact retained input lineage",
+      "projection_sha256": "canonical prepublication input projection hash",
+      "authority_core_sha256": "hash of actual canonical rendered bytes",
+      "authority_core_size_bytes": "length of actual rendered bytes",
+      "authority_core_schema": "literal 1",
+      "issued_monotonic": "root observed issue instant",
+      "expires_monotonic": "minimum original current source deadlines and now+30 seconds"
+    },
+    "private_refs": [
+      "exact issuer/session/precompile/prepared receipt",
+      "current adopted principal/namespace selectors and actual setup identity",
+      "RootPreparedServiceIdentityReceipt and held root-owned home/work/data roots",
+      "actual PM runtime receipt and complete committed venv/output member identities",
+      "RootSelectedRunnableRoleClosure and RootRunnableRoleReceiptProjection; exact five native CAS outputs",
+      "RootPreparedNativePolicyRecords and current selected package/assembly/registration/schema/effect/source records",
+      "RootPreparedNativeServiceGeneration and its exact issuer/materialization/recipe",
+      "RootPreparedNativeProfileHomeSourceSet (208 actual source/home rows)",
+      "current signed optional remote projection only when selected",
+      "exact current journal root and key receipt",
+      "private rendered EnrollmentPolicy and strict parsed enrollment/identity-domain adapter",
+      "canonical core bytes held only by issuer"
+    ],
+    "no_authority": "Prepublication DTO is validated prepared-to-active output material, not an installed ProtectedEnrollment or runtime grant. Active getters require same current signed publisher descriptor/receipt/core and committed enrollment proof."
+  },
+  "assembly": {
+    "pure_inputs": "Factor RootSetupPolicyFactory active rendering to use strictly parsed root-held newly compiled policy/catalog/selection documents BEFORE publisher CAS. Documents originate only within compiler/registry composition, never public mapping input. Preserve _parse_prepared_base_template and all empty-prepared validators.",
+    "service_identity": "Use actual observe_prepared_service_identity/verify_prepared_service_identity receipt. UID/GID/user belong to isolated service NSS identity; Linux login-owner UID is identity evidence and is not substituted for worker UID. Resolve roots through existing held service-root receipts, no inferred filesystem paths.",
+    "principal": "Bind principal.principal_binding to actual selected service UID, service_profile_id and namespace. Selected capability ceiling intersects actual current selected effect enrollments; source-home count/name does not grant capabilities. Actual identity fields from retained observer; no guessed email/subject/actor credential.",
+    "process_profile": "Derive exact existing 16-field process record from current service row plus selected worker recipe/materialization: profile_id=actual recipe.process_profile_id; owner_uid/gid/user=actual service NSS; executable/artifact_sha256=actual materialized PM executable; artifact_root=held materialized runtime root; data_root=held service data root; generation=recipe.profile_generation; argv_recipe=[actual executable,*reviewed start argv suffix]; child_artifact_refs=exact selected runtime/native CAS closure; limits copied from reviewed selected service recipe. Validate recipe, PM and source closure before existing five-catalog producer. No placeholder process template.",
+    "five_catalogs": "Call existing RootPreparedNativeServiceGenerationProducer.build_selected with this root-rendered typed base policy and exact selected_worker_recipe_handles/current native selection. Retain returned DTO. Replace selected worker service/profile rows using existing exact join rules. Preserve independent profile/service vs container generation domains.",
+    "catalogs": "Render all schema-required service_generations keys through the installed validator. Native packages/actions/registrations/workflows/source issuers/schemas/resource backends/body recipes/controller roles come only from corresponding current sealed source preparation and assembly receipts. Source package/member paths are those retained by verified full source/output member receipts, never documentation paths or artifact archive hash as executable hash. Every selected capability needs its actual prerequisite; absent unselected capabilities have exact empty catalogs. Duplicate/conflicting row IDs or unverifiable selected sources deny entire compilation.",
+    "effect_rules": "Project exact {capability,operation,target,recipient} from current issuer-retained effect enrollment records. No synthetic process.start rule inferred from artifact existence; selected source role/process operation recipes and native child grant policy must supply actual reviewed effect enrollment. Effect authorizer selection and data/privacy/budget policy remain separate and must join exact recipients/targets.",
+    "identity_domain": "Authentik mode serializes actual current enrolled identity and policy references through existing strict parser. Local-owner mode needs a closed local-owner policy projection and matching strict load_published_protected_enrollment branch built from actual selected capability ceiling/local effect enrollments. Use existing local-owner runtime policy adapter if source-verified; if absent, implement finite adapter and strict schema under HI-T231.1, or report exact missing producer. Never fabricate Authentik base_url/group/subject/directory refs, relax Authentik parser, or silently switch mode. Local mode does not enroll homelab/admin/provider/account authority.",
+    "optional_remote": "No selected remote choice => v225 remote_service_identity_source_records empty and its optional member absent/null SHA/size zero; no remote prerequisite. Selected remote choice => exact RootSelectedRemoteServiceIdentityRegistry.prepare_publication_source(role_handles, remote_source_inputs: RootSelectedRemoteStartupSourceInputs) -> RootPreparedRemoteIdentityPublicationSource, only after genuine three-role owned NSS/source/build terminal/CAS/package/executable/materialized runtime proof. This API is specified in v225, not implemented proof; RootSelectedRemoteRuntimeBuildSelection tuple is NOT completed aggregate. Apply v225 schema3 remote identity catalog extension using strict installed validator; selected incomplete source remains pending. No fabricated getter, row or silent omission.",
+    "jarvis": "Crosswalk remains separate exact v214 16-field member, source_profile_id/home_binding_id distinct from actual worker/service profile per v215. Exact same 208 current home source set/PM/principal/namespace/closure lineage retained by aggregate and compiler; no 207 fabricated service enrollments or future task fields.",
+    "validation": "Before issuing DTO/claim validate canonical strict JSON, full _validate_service_generations, real ProtectedEnrollmentCatalog.from_verified_records and complete identity-domain enrollment parser with same rules as published reader. Do not use _validate_authority_base map-shape check as active runtime proof. Perform currentness checks around serialization.",
+    "identity_domain_schema": "Preserve active core schema=1 and existing exact top-level fields. Authentik mode retains existing complete authentik object. Local-owner mode uses authentik=null ONLY when protected signed claim/descriptor identity_kind=linux-local-owner-v1 and current principal_identity_binding/source receipt match the domain. Load path must select branch from current protected publication proof, never null alone/caller label. Local principal rows retain actual local identity facts under a separately closed principal row schema; no fake authentik_subject_id/email/credential. Shared service/process/effect/native catalog validators remain mandatory; parser must reject ambiguous/mixed domains and legacy nonpublication loader cannot accept this variant without equivalent protected domain proof.",
+    "local_policy_contract": "Finite local policy authorizer accepts only issuer-retained selected local effect enrollment whose exact principal/profile/namespace/service generation/operation/target/recipient is bound to current core and fresh consumed grant. Local capability ceiling intersects those exact local grants. Authentik/homelab/admin and provider/account/private-public route authority remain unavailable unless separately genuinely enrolled; no unconditional allow policy or observer metadata as effect authority.",
+    "local_principal_row": {
+      "exact_keys": [
+        "uid",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "capabilities",
+        "identity_kind",
+        "owner_account_binding_sha256",
+        "principal_binding_sha256"
+      ],
+      "projection": "uid=actual isolated service NSS uid; principal_id/profile_id/namespace_id=actual RootLocalOwnerPrincipalSelection fields; capabilities=sorted intersection of selected_capability_ceiling and exact current selected local effect enrollments; identity_kind literal linux-local-owner-v1; owner_account_binding_sha256=actual RootLocalOwnerIdentityReceipt.account_binding_sha256; principal_binding_sha256=actual selected principal binding. Verify same values against current signed principal_identity_binding and retained source receipts. Login observed UID is not uid in this socket principal row. No username/email/subject/actor credential manufactured. Bounds/uniqueness and managed profile UID/GID validation same as existing active parser."
+    }
+  },
+  "digest_domains": {
+    "canonical": "UTF-8 JSON(sort_keys=True,separators=(comma,colon),ensure_ascii=False,allow_nan=False), no newline, duplicate keys rejected, deterministic bounded row order by catalog ID and native manifest rules.",
+    "service_generation": "SHA256 canonical entire service_generations object excluding only generation_digest; no enclosing digest embedded in its own rows.",
+    "projection": "SHA256 canonical explicit DTO public input joins (schema/session/transaction/plan/prepared generation/reservation/output closure/active generation/identity and sorted exact source receipt IDs plus their observed digests). Exclude projection_sha256, core bytes/hash/size, final publication claim digest, seals/FDs/monotonic values.",
+    "core": "authority_core_sha256=SHA256 actual canonical core bytes; size=len(bytes); schema=parsed schema. Container generation hash, executable SHA, source archive SHA, native closure SHA, crosswalk SHA and compiler claim digest remain separate.",
+    "claim": "Compiler derives exact core bytes/SHA/size/schema from current sealed aggregate read; manifest/descriptor/signed receipt bind same core and separate crosswalk. Final source_output_claim_sha256 is postcompile getter-only per v215, never input to own aggregate/core."
+  },
+  "lifetime": {
+    "currentness": "Every resolve/read/compile/retry revalidates original setup session/controller deadline, authorization transaction, prepared CAS, installed release module/member custody, source-choice epochs/revocation, adopted principal/namespace, NSS identity/roots, PM/materialization complete closure, exact five CAS outputs/reservation/roles, native generation and home sources. Changed dependency invalidates cached aggregate and claims; no TTL-only authority.",
+    "retry": "Unchanged reservation returns identical bytes/generation. Failure before publication leaves prepared state intact and no runtime activation. Published claim retry uses exact retained aggregate; changed inputs require normal new selection/precompile path with existing rollback/journal rules.",
+    "restart": "Never reconstruct setup DTO seal from journal JSON. Published core loads through held nofollow publisher member and current descriptor/signed receipt/claim/committed CAS. Existing v221 PM resolver recreates actual fresh runtime proof from committed source, not expired setup receipt."
+  },
+  "failure_tests": [
+    "Positive actual temporary isolated source/NSS/PM/native-output/home-source assembly -> retained aggregate -> compiler -> publication -> exact published reader -> same generation enrollment; no monkeypatched currentness callback or invented core bytes as positive proof.",
+    "Empty prepared base remains empty and cannot be issued/read as active; validate activation sideeffects absent during pure render.",
+    "Copied DTO/foreign issuer/session/reservation, wrong NSS, changed root inode, PM executable/full closure mismatch, any missing five CAS role, tampered native member => no claim/publication/runtime start.",
+    "Changed choice/revocation/controller/original deadline/source epoch or expired minimum lease during rendering/readback => fail with pending producer identity.",
+    "Local-owner path never invokes fabricated Authentik identity; Authentik-dependent selected effect without actual account enrollment unavailable; independent local capability can publish only with real strict local policy projection.",
+    "All schema required catalogs and complete generation hash validated; duplicate/conflicting source role/effect/backend/recipient/service joins fail; source archive SHA cannot satisfy executable hash.",
+    "Jarvis 208 actual distinct source home rows separate member match retained aggregate/current principal/namespace/PM; no 207 synthetic process rows; postclaim getter only after publication.",
+    "Absent optional remote succeeds with empty remote catalogs; selected incomplete remote fails, selected genuine remote binds complete existing v225 producer.",
+    "Identical retry returns exact bytes/generation; failed CAS and rollback preserve prepared/data/credentials; restart held core tamper/stale pointer denied and refreshed PM proof required."
+  ],
+  "owners": {
+    "HI-T231.1": "Luna root setup policy factory/active authority projection owner: pure render, aggregate issuer, strict identity-domain active parser, all actual source joins.",
+    "BD-T231.2": "Luna active policy compiler/publisher owner: consume typed aggregate, derive bytes/hash/size and reuse exact generation at activation; preserve v214 crosswalk/v225 optional remote.",
+    "VD-T231.3": "Luna integration/qualification owner: genuine complete retained producer fixture and failure/currentness/retry/restart tests; target evidence separately OPEN."
+  },
+  "tasks": [
+    "HI-T231.1",
+    "BD-T231.2",
+    "VD-T231.3"
+  ],
+  "acceptance": "All AC01..18 OPEN. This finite source/API refinement is not a code pin, implemented adapter, enrollment or runtime acceptance; no baseline/tag edits, new remote refs, account mutations, privileged Mac installation or outbound test messages."
+}

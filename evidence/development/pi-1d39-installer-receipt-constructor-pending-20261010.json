@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_installer_attempt",
+  "state": "release_stage_finished_receipt_construction_failed",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "verification-documentation"],
+  "task_ids": ["BD-T208.1", "VD-T208.2", "BD-F03"],
+  "target": {"target_name": "PI-HERMES", "executor_uid": 0},
+  "candidate": {
+    "commit": "1d39ff2c94a5f52a62d6ee425c4ff4d7cf42f6c8",
+    "tree": "39b880512fa1752f0b01daf2e24110458054e78b",
+    "source_archive_sha256": "7590ac04ab69ecbfbd14261e606c8aa7c7bd6bc0b2c53aaced1469d4174d9a61",
+    "frozen_annotated_tag_and_source_identity": "reported verified"
+  },
+  "attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "full_candidate_sha_prompts": "both entered, as reported",
+    "cache_admission": "passed, as reported",
+    "release_stage": "reported finished",
+    "failure_location": "bootstrap.py:2656",
+    "failure": "NameError in interpreter_handle receipt construction",
+    "outcome": "root setup returned; no installed release or acceptance result observed"
+  },
+  "not_observed": [
+    "successful receipt construction or installed-stage publication",
+    "installed release, active generation, or current deployment receipt",
+    "account enrollment, runtime launch, or native hardware qualification",
+    "rollback details or complete filesystem effects",
+    "source/resource deletion safety"
+  ],
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "This is an operator-reported candidate attempt that progressed through cache admission and release staging before a NameError at receipt construction. It does not establish installation, runtime, or acceptance; all AC01-AC18 remain open."
+}
