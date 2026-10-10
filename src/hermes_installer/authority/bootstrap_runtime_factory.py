@@ -771,6 +771,18 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
         return self._session._resolve_current_native_bootstrap_assembly(selection_handle)
 
+    def resolve_current_native_bootstrap_assembly_for_bundle(
+            self, bundle: "RootPreparedNativeBundle") -> "RootNativeBootstrapAssemblySelection":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
+        return self._session._resolve_native_bootstrap_assembly_for_bundle(bundle)
+
+    def compile_selected_native_package(
+            self, bundle: "RootPreparedNativeBundle") -> tuple[Any, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native package compiler is not owned by this setup session")
+        return self._session._compile_selected_native_package(bundle)
+
     def resolve_native_assembly_definitions(self, selection_handle: str) -> "RootNativeAssemblyDefinitions":
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
@@ -6519,6 +6531,44 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("prepared native bundle source, profile, runtime or materialization join changed")
         self._verify_current_setup_controller()
         return bundle
+
+    def _resolve_native_bootstrap_assembly_for_bundle(
+            self, bundle: RootPreparedNativeBundle) -> RootNativeBootstrapAssemblySelection:
+        """Resolve the assembly selector from this session's retained bundle.
+
+        The prepared receipt handle and materialization handle never arrive
+        over the public caller boundary; both come from the exact retained
+        root bundle and are rechecked here.
+        """
+        self._check_live()
+        current_bundle = self._resolve_current_prepared_native_bundle(bundle)
+        prepared = self._last_receipt
+        if (prepared is None or not prepared.provision_receipt_handle
+                or current_bundle.materialization_receipt_handle
+                   != current_bundle.materialization_receipt.receipt_handle):
+            raise BootstrapEnrollmentPending("native assembly requires the retained prepared bundle receipts")
+        selection = self._resolve_native_bootstrap_assembly(
+            prepared.provision_receipt_handle,
+            current_bundle.materialization_receipt_handle)
+        if self._resolve_current_prepared_native_bundle(bundle) is not bundle:
+            raise BootstrapEnrollmentPending("prepared native bundle changed during assembly selection")
+        return selection
+
+    def _compile_selected_native_package(
+            self, bundle: RootPreparedNativeBundle) -> tuple[Any, ...]:
+        """Compile only the currently retained native selection and return its five CAS receipts."""
+        selection = self._resolve_native_bootstrap_assembly_for_bundle(bundle)
+        self._resolve_current_native_bootstrap_assembly(selection.selection_handle)
+        from .native_assembler import RootNativePackageAssembler
+        assembler = RootNativePackageAssembler(
+            self._selected_installation, self._root_native_output_receipts())
+        receipts = assembler.compile_selected(selection)
+        if (self._resolve_current_native_bootstrap_assembly(selection.selection_handle) != selection
+                or self._resolve_current_prepared_native_bundle(bundle) is not bundle):
+            raise BootstrapEnrollmentPending("native package selection changed while compiling outputs")
+        if len(receipts) != 5:
+            raise BootstrapEnrollmentPending("native package compiler did not retain the exact five role receipts")
+        return receipts
 
     def _resolve_native_bootstrap_assembly(
             self, prepared_setup_receipt_handle: str,
