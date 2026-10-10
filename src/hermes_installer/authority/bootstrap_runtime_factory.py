@@ -488,6 +488,17 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("namespace selector is not owned by this setup session")
         return self._session.resolve_adopted_namespace_selector()
 
+    def observe_public_web_permission_selection(self,
+                                                native_policy_selection_handle: str) -> str | None:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("public web choice is not owned by this setup session")
+        return self._session.observe_public_web_permission_selection(native_policy_selection_handle)
+
+    def resolve_current_public_web_permission_choice(self, choice_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("public web choice is not owned by this setup session")
+        return self._session.resolve_current_public_web_permission_choice(choice_handle)
+
     def resolve_current_setup_identity(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("current setup identity is not owned by this setup session")
@@ -3842,6 +3853,7 @@ class RootBootstrapSession:
         # Set only by the root-owned source/public-permission composition. The
         # registry itself checks this exact session and source-observer owner.
         self._public_input_disclosure_registry: Any | None = None
+        self._public_web_selection_registry: Any | None = None
         self._durable_memory_choice_handles: dict[str, str] = {}
         self._release_receipt_handle: str | None = None
         self._native_output_receipts: Any | None = None
@@ -3938,6 +3950,44 @@ class RootBootstrapSession:
             return registry.record_observed_choice(actual_root_tty_choice, self._selected_installation)
         except Exception:
             raise BootstrapEnrollmentPending("root TTY choice could not be durably signed and retained") from None
+
+    def attach_public_web_selection_registry(self, registry: Any) -> None:
+        """Attach the public-specific configuration producer during root composition."""
+        self._check_live()
+        from .public_web_selection import RootPublicWebSelectionRegistry
+        targets = getattr(self, "_native_component_target_registry", None)
+        if (type(registry) is not RootPublicWebSelectionRegistry
+                or registry._session is not self or targets is None
+                or registry._targets is not targets
+                or self._public_web_selection_registry is not None):
+            raise BootstrapEnrollmentPending("public web selector is not the exact retained native-target composition")
+        self._public_web_selection_registry = registry
+
+    def observe_public_web_permission_selection(
+            self, native_policy_selection_handle: str,
+    ) -> str | None:
+        """Ask the root TTY to select finite source-derived public scope intent."""
+        self._check_live()
+        from .public_web_selection import RootPublicWebSelectionRegistry
+        registry = self._public_web_selection_registry
+        if (type(registry) is not RootPublicWebSelectionRegistry
+                or registry._session is not self
+                or registry._targets is not getattr(self, "_native_component_target_registry", None)):
+            raise BootstrapEnrollmentPending("public web configuration producer is not composed")
+        try:
+            return registry.observe_public_web_permission_selection(native_policy_selection_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY public web choice is unavailable or was declined") from None
+
+    def resolve_current_public_web_permission_choice(self, choice_handle: str) -> Any:
+        self._check_live()
+        registry = self._public_web_selection_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("public web choice resolver is not composed")
+        try:
+            return registry.resolve_current_public_web_permission_choice(choice_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY public web choice is absent or no longer current") from None
 
     def attach_public_input_disclosure_registry(self, registry: Any) -> None:
         """Attach the single public-specific TTY proof registry during root composition."""
