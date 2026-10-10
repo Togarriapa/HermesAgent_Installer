@@ -33,7 +33,7 @@ def _sealed_distribution(tmp_path):
         source_catalog_sha256="f" * 64,
         files=(release_build.DistributionFile(
             "module.py", hashlib.sha256(body).hexdigest(), len(body), 0o600,
-            info.st_dev, info.st_ino),),
+            info.st_dev, info.st_ino, info.st_ctime_ns),),
         root_fd=fd,
         expected_uid=os.geteuid(),
         handle="h" * 43,
