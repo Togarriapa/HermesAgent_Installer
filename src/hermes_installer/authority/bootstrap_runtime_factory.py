@@ -7957,7 +7957,11 @@ class RootBootstrapSession:
         for relative_path, digest, size_bytes in pins:
             rows = [row for row in release.files if row.relative_path == relative_path
                     and row.sha256 == digest and row.size_bytes == size_bytes
-                    and row.roles == ("module",) and _plan_allows_release_member(plan, row)]
+                    and row.roles == ("module",)
+                    # These five legacy action-schema members are selected by
+                    # their exact release-row IDs; the v180 raw-source map
+                    # covers only the newly source-derived module closure.
+                    and row.artifact_id in plan.allowed_artifact_ids]
             if len(rows) != 1:
                 raise BootstrapEnrollmentPending(
                     "native action schema module is not uniquely pinned in the selected release")
