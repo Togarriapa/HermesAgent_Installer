@@ -202,3 +202,8 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
 
 - [ ] MC-R0101.5 / MC-R0101.6 (v216): Implement exact live HA setup observation signer/journal/private transport capture, real discovery schema receipt and one-use functional call; verify effects/failures without forged SourceReceipt/HostContext or raw secret/body persistence.
+
+
+- [ ] HI-T217.1: Resource owner implements exact retained v173 compiler/source projection and strict fixture policy/catalog issuer.
+- [ ] HI-T217.2: Resource owner implements genuine child runtime/task outcome and source adapter proof; missing native route remains incomplete, never substitute success.
+- [ ] VD-T217.3: Integrator implements current installed journal owner, retained actual unit/PIDFD, signed historical evidence and parent result consumption/cleanup with two-process failure tests.

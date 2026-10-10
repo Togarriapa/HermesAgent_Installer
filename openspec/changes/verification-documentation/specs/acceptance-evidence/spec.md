@@ -1144,3 +1144,17 @@ The installer SHALL implement v216 root-session-owned signed observation receipt
 #### Scenario: Unrelated daemon receipt or forged observation
 - **WHEN** a caller supplies SourceReceipt names, copied journal JSON, raw result maps or expired schema/signature/context
 - **THEN** no live setup grant/functional receipt is issued and raw secrets/HTTP bodies remain absent from persistent evidence
+
+
+## ADDED Requirements
+
+### Requirement: Qualification compiler and terminal custody
+The installer SHALL follow planning/qualification-compiler-terminal-custody-v217.json for internally compiled current fixture policy, actual task outcomes, parent-owned installed journal/unit custody and retained signed terminal evidence without restoring child authority.
+
+#### Scenario: Child has cleaned its live fixture
+- **WHEN** the parent consumes the predetermined result after the actual installed child terminates
+- **THEN** it verifies current parent source/journal/unit custody and signed historical task/publication/cleanup evidence without reconstructing child seals or treating exit as pass
+
+#### Scenario: Genuine native task route is missing
+- **WHEN** discovery/materialization succeeds but no approved real native task route exists
+- **THEN** the child returns a concrete incomplete outcome without provider grants, substituted execution or fabricated terminal/native receipts

@@ -163,3 +163,6 @@ OfficialDesktop buildacquisition218: plans/amendments/2026-10-10-official-deskto
 
 
 HA v216 plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md refines MC-R0101.5/.6 actual setup observation→schema→functional pipeline; no forged daemon receipt/context, all AC OPEN.
+
+
+Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN. HI-T217.1/.2 and VD-T217.3 remain OPEN.

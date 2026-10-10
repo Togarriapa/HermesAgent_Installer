@@ -938,3 +938,17 @@ The installer SHALL use planning/official-desktop-build-acquisition-v218.json fo
 #### Scenario: Existing Node bytes selected for Desktop
 - **WHEN** the exact reviewed Node archive is reused by the Desktop builder
 - **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded
+
+
+## ADDED Requirements
+
+### Requirement: Qualification compiler and terminal custody
+The installer SHALL follow planning/qualification-compiler-terminal-custody-v217.json for internally compiled current fixture policy, actual task outcomes, parent-owned installed journal/unit custody and retained signed terminal evidence without restoring child authority.
+
+#### Scenario: Child has cleaned its live fixture
+- **WHEN** the parent consumes the predetermined result after the actual installed child terminates
+- **THEN** it verifies current parent source/journal/unit custody and signed historical task/publication/cleanup evidence without reconstructing child seals or treating exit as pass
+
+#### Scenario: Genuine native task route is missing
+- **WHEN** discovery/materialization succeeds but no approved real native task route exists
+- **THEN** the child returns a concrete incomplete outcome without provider grants, substituted execution or fabricated terminal/native receipts

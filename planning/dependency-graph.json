@@ -3248,5 +3248,37 @@
       "validated receipt/choice adoption"
     ],
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "qualification_compiler_terminal_custody_v217": {
+    "contract": "planning/qualification-compiler-terminal-custody-v217.json",
+    "tasks": {
+      "HI-T217.1": [
+        "HI-T173.1"
+      ],
+      "HI-T217.2": [
+        "HI-T217.1"
+      ],
+      "VD-T217.3": [
+        "HI-T217.2",
+        "HI-T197.3"
+      ]
+    },
+    "owners": {
+      "HI-T217.1": "luna_resource_runtime",
+      "HI-T217.2": "luna_resource_runtime",
+      "VD-T217.3": "luna_producer_cohort_integrator"
+    },
+    "order": [
+      "parent current installed journal/launch evidence custody",
+      "child current source/PM/NSS/materialization/discovery",
+      "compiler strict fixture publication/session/runtime",
+      "actual fixed task admission/input/native/terminal/capsule or explicit incomplete",
+      "retain signed typed projections",
+      "actual discovery/NSS cleanup and signed cleanup projection",
+      "child atomic no-replace evidence row",
+      "parent current source/unit/terminal/custody verification",
+      "consume result then collect unit/close key"
+    ],
+    "acceptance": "AC01..AC18 OPEN"
   }
 }
