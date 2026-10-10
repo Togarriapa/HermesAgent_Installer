@@ -103,6 +103,12 @@ class RootNativeOutputBinding(Protocol):
 
     def revalidate_native_output(self, selection: NativeOutputSelection) -> bool: ...
 
+    def authorize_prepared_native_output(
+        self, assembly_selection_handle: str, artifact_role: str,
+        output_kind: str, member_tree_sha256: str, output_sha256: str,
+        output_size_bytes: int,
+    ) -> NativeOutputSelection: ...
+
     def resolve_packaged_resources_source(
         self, *, prepared_setup_receipt_handle: str,
         verified_installer_release_receipt: Any,
@@ -145,6 +151,38 @@ class NativeOutputReservation:
     prepared_generation_id: str
     receipt_ids: tuple[str, ...]
     state: str = "reserved"
+
+
+@dataclass(frozen=True, slots=True)
+class RootNativeOutputClaim:
+    """Compiler claim cryptographically joined to its precompile reservation."""
+
+    reservation: NativeOutputReservation
+    compiled_active_policy_handle: str
+    claim_digest: str
+    compiled_policy_sha256: str
+    compiled_artifact_catalog_sha256: str
+    compiled_selection_sha256: str
+    output_closure_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootNativePrecompileOutputReservation:
+    """Durable, path-free reservation made before active policy compilation."""
+
+    schema: int
+    reservation_handle: str
+    publication_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_digest: str
+    prepared_generation_id: str
+    assembly_selection_handle: str
+    assembly_selection_sha256: str
+    receipt_ids: tuple[str, ...]
+    output_closure_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
 
 
 class RootMaterializationReceiptRegistry:
@@ -265,6 +303,210 @@ class RootMaterializationReceiptRegistry:
         if receipt.artifact_id != _RESOURCES_ARTIFACT_ID:
             raise NativeOutputReceiptDenied("Resources source receipt is bound to an unexpected artifact identity")
         return receipt.receipt_id
+
+    def reserve_for_precompile(
+        self, assembly_selection_handle: str, receipt_ids: Sequence[str],
+        publication_handle: str,
+    ) -> RootNativePrecompileOutputReservation:
+        """Atomically hold the five current native outputs before compilation.
+
+        The selection handle and receipt IDs are selectors only. Every output
+        is reopened from this registry's root CAS and reauthorized by the
+        sealed setup binding before the journal transition is committed.
+        """
+        self._require_root()
+        if not _valid_handle(assembly_selection_handle) or not _valid_handle(publication_handle):
+            raise NativeOutputReceiptDenied("precompile reservation selectors are malformed")
+        role_ids = _normalize_reservation_ids(receipt_ids)
+        if len(role_ids) != len(_GENERATED_ROLES):
+            raise NativeOutputReceiptDenied("precompile reservation requires exactly five native outputs")
+        records = [self._get_record(receipt_id) for receipt_id in role_ids]
+        if {record["artifact_role"] for record in records} != _GENERATED_ROLES:
+            raise NativeOutputReceiptDenied("precompile reservation requires the complete fixed native output role set")
+        first = records[0]
+        for record in records:
+            if (record["state"] != "issued"
+                    or record["assembly_selection_handle"] != assembly_selection_handle
+                    or record["transaction_handle"] != first["transaction_handle"]
+                    or record["setup_session_id"] != first["setup_session_id"]
+                    or record["plan_digest"] != first["plan_digest"]
+                    or record["prepared_generation_id"] != first["prepared_generation_id"]
+                    or record["compiled_closure_sha256"] != first["compiled_closure_sha256"]
+                    or record["source_receipt_handles"] != first["source_receipt_handles"]
+                    or record["expires_monotonic"] <= self._monotonic()):
+                raise NativeOutputReceiptDenied("precompile outputs are stale or span selected generations")
+            self._verify_record_current(record)
+        selection = self._selection_for_record(first)
+        if selection.assembly_selection_handle != assembly_selection_handle:
+            raise NativeOutputReceiptDenied("native outputs do not belong to the selected assembly")
+        assembly_resolver = getattr(self._binding, "resolve_current_native_bootstrap_assembly", None)
+        if not callable(assembly_resolver):
+            raise NativeOutputReceiptDenied("root binding cannot re-resolve the selected native assembly")
+        try:
+            assembly = assembly_resolver(assembly_selection_handle)
+        except Exception:
+            raise NativeOutputReceiptDenied("selected native assembly is no longer current") from None
+        assembly_digest = getattr(assembly, "definitions_sha256", None)
+        if not isinstance(assembly_digest, str) or not _HEX.fullmatch(assembly_digest):
+            raise NativeOutputReceiptDenied("selected native assembly has no verified definitions digest")
+        for record in records:
+            payload = self._read_record_payload(record)
+            self._assert_output_relations(selection, record["artifact_role"], payload)
+        closure_digest = _precompile_output_closure_digest(records)
+        now = self._monotonic()
+        expires = min(record["expires_monotonic"] for record in records)
+        reservation_handle = secrets.token_urlsafe(36)
+        reservation = RootNativePrecompileOutputReservation(
+            1, reservation_handle, publication_handle,
+            first["setup_session_id"], first["transaction_handle"],
+            first["plan_digest"], first["prepared_generation_id"],
+            assembly_selection_handle, assembly_digest, role_ids,
+            closure_digest, now, expires,
+        )
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for receipt_id in role_ids:
+                    changed = db.execute(
+                        "UPDATE outputs SET state='reserved' WHERE receipt_id=? AND state='issued' AND expires_monotonic>?",
+                        (receipt_id, self._monotonic()),
+                    ).rowcount
+                    if changed != 1:
+                        raise NativeOutputReceiptDenied("native output changed during precompile reservation")
+                db.execute(
+                    "INSERT INTO precompile_reservations(reservation_handle,publication_handle,setup_session_id,"
+                    "transaction_handle,plan_digest,prepared_generation_id,assembly_selection_handle,"
+                    "assembly_selection_sha256,receipt_ids,output_closure_sha256,issued_monotonic,expires_monotonic,state) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'reserved')",
+                    (reservation_handle, publication_handle, first["setup_session_id"],
+                     first["transaction_handle"], first["plan_digest"],
+                     first["prepared_generation_id"], assembly_selection_handle,
+                     assembly_digest, json.dumps(role_ids), closure_digest, now, expires),
+                )
+            except Exception:
+                db.rollback()
+                raise
+            else:
+                db.commit()
+        return reservation
+
+    def resolve_current_precompile_reservation(
+        self, reservation_handle: str,
+    ) -> RootNativePrecompileOutputReservation:
+        """Reopen one reserved descriptor and verify its current CAS closure."""
+        self._require_root()
+        if not _valid_handle(reservation_handle):
+            raise NativeOutputReceiptDenied("precompile reservation handle is malformed")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM precompile_reservations WHERE reservation_handle=?",
+                (reservation_handle,),
+            ).fetchone()
+        if row is None or row["state"] not in {"reserved", "bound", "completed"}:
+            raise NativeOutputReceiptDenied("precompile reservation is unavailable")
+        if row["expires_monotonic"] <= self._monotonic():
+            raise NativeOutputReceiptDenied("precompile reservation has expired")
+        ids = tuple(json.loads(row["receipt_ids"]))
+        records = [self._get_record(value) for value in ids]
+        expected_state = "consumed" if row["state"] == "completed" else "reserved"
+        if any(record["state"] != expected_state for record in records):
+            raise NativeOutputReceiptDenied("precompile reservation output states disagree")
+        if _precompile_output_closure_digest(records) != row["output_closure_sha256"]:
+            raise NativeOutputReceiptDenied("precompile output closure digest changed")
+        for record in records:
+            if record["assembly_selection_handle"] != row["assembly_selection_handle"]:
+                raise NativeOutputReceiptDenied("precompile output assembly binding changed")
+            self._verify_record_current(record)
+        resolver = getattr(self._binding, "resolve_current_native_bootstrap_assembly", None)
+        try:
+            assembly = resolver(row["assembly_selection_handle"]) if callable(resolver) else None
+        except Exception:
+            assembly = None
+        if getattr(assembly, "definitions_sha256", None) != row["assembly_selection_sha256"]:
+            raise NativeOutputReceiptDenied("precompile assembly selection is no longer current")
+        return RootNativePrecompileOutputReservation(
+            1, row["reservation_handle"], row["publication_handle"],
+            row["setup_session_id"], row["transaction_handle"], row["plan_digest"],
+            row["prepared_generation_id"], row["assembly_selection_handle"],
+            row["assembly_selection_sha256"], ids, row["output_closure_sha256"],
+            row["issued_monotonic"], row["expires_monotonic"],
+        )
+
+    def bind_compiled_policy_claim(
+        self, precompile_reservation_handle: str,
+        compiled_active_policy_handle: str,
+    ) -> RootNativeOutputClaim:
+        """Bind the compiler's durable typed claim to the same reserved outputs."""
+        reservation = self.resolve_current_precompile_reservation(precompile_reservation_handle)
+        if not _valid_handle(compiled_active_policy_handle):
+            raise NativeOutputReceiptDenied("compiled active policy handle is malformed")
+        registry_resolver = getattr(self._binding, "resolve_current_active_policy_compilation_registry", None)
+        try:
+            compiler = registry_resolver() if callable(registry_resolver) else None
+            claim = compiler.resolve_current_active_policy_claim(compiled_active_policy_handle)
+            claim = compiler.verify_current_active_policy_claim(claim)
+        except Exception:
+            raise NativeOutputReceiptDenied("compiled active policy claim is unavailable or stale") from None
+        if (getattr(claim, "publication_handle", None) != reservation.publication_handle
+                or getattr(claim, "_reservation_handle", None) != precompile_reservation_handle
+                or getattr(claim, "setup_session_id", None) != reservation.setup_session_id
+                or getattr(claim, "transaction_handle", None) != reservation.transaction_handle
+                or getattr(claim, "plan_sha256", None) != reservation.plan_digest
+                or getattr(claim, "prepared_generation_id", None) != reservation.prepared_generation_id
+                or tuple(getattr(claim, "materialization_receipt_handles", ())) != reservation.receipt_ids
+                or getattr(claim, "expires_monotonic", 0) <= self._monotonic()):
+            raise NativeOutputReceiptDenied("compiled claim does not bind the exact precompile reservation")
+        claim_digest = getattr(claim, "claim_digest", None)
+        compiled_hashes = tuple(getattr(claim, field, None) for field in (
+            "compiled_policy_sha256", "compiled_artifact_catalog_sha256", "compiled_selection_sha256"))
+        if (not isinstance(claim_digest, str) or not _HEX.fullmatch(claim_digest)
+                or any(not isinstance(value, str) or not _HEX.fullmatch(value) for value in compiled_hashes)):
+            raise NativeOutputReceiptDenied("compiled claim has malformed canonical output digests")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute(
+                    "SELECT * FROM precompile_reservations WHERE reservation_handle=?",
+                    (precompile_reservation_handle,),
+                ).fetchone()
+                if row is None:
+                    raise NativeOutputReceiptDenied("precompile reservation disappeared before claim binding")
+                if row["state"] == "bound":
+                    if (row["compiled_active_policy_handle"] != compiled_active_policy_handle
+                            or row["claim_digest"] != claim_digest):
+                        raise NativeOutputReceiptDenied("precompile reservation is bound to another claim")
+                elif row["state"] != "reserved":
+                    raise NativeOutputReceiptDenied("precompile reservation cannot be bound in its current state")
+                else:
+                    db.execute(
+                        "INSERT INTO reservations(reservation_handle,publication_handle,claim_digest,"
+                        "prepared_generation_id,receipt_ids,transaction_handle,expires_monotonic,state) "
+                        "VALUES(?,?,?,?,?,?,?,'reserved')",
+                        (precompile_reservation_handle, reservation.publication_handle, claim_digest,
+                         reservation.prepared_generation_id, json.dumps(reservation.receipt_ids),
+                         reservation.transaction_handle, reservation.expires_monotonic),
+                    )
+                    changed = db.execute(
+                        "UPDATE precompile_reservations SET state='bound',compiled_active_policy_handle=?,claim_digest=? "
+                        "WHERE reservation_handle=? AND state='reserved'",
+                        (compiled_active_policy_handle, claim_digest, precompile_reservation_handle),
+                    ).rowcount
+                    if changed != 1:
+                        raise NativeOutputReceiptDenied("precompile claim binding changed concurrently")
+            except Exception:
+                db.rollback()
+                raise
+            else:
+                db.commit()
+        native_reservation = NativeOutputReservation(
+            precompile_reservation_handle, reservation.publication_handle,
+            claim_digest, reservation.prepared_generation_id,
+            reservation.receipt_ids, "reserved")
+        return RootNativeOutputClaim(
+            native_reservation, compiled_active_policy_handle, claim_digest,
+            compiled_hashes[0], compiled_hashes[1], compiled_hashes[2],
+            reservation.output_closure_sha256,
+        )
 
     def resolve_for_activation(self, receipt_id: str, *, artifact_role: str,
                                prepared_generation_id: str) -> RuntimeArtifactReceipt:
@@ -507,6 +749,10 @@ class RootMaterializationReceiptRegistry:
                 ).rowcount
                 if changed != 1:
                     raise NativeOutputReceiptDenied("active compilation reservation was already completed")
+                db.execute(
+                    "UPDATE precompile_reservations SET state='completed' WHERE reservation_handle=? AND state='bound'",
+                    (reservation_handle,),
+                )
             except Exception:
                 db.rollback()
                 raise
@@ -540,6 +786,10 @@ class RootMaterializationReceiptRegistry:
                 ).rowcount
                 if changed != 1:
                     raise NativeOutputReceiptDenied("active compilation reservation is no longer held")
+                db.execute(
+                    "UPDATE precompile_reservations SET state='released' WHERE reservation_handle=? AND state='bound'",
+                    (reservation_handle,),
+                )
             except Exception:
                 db.rollback()
                 raise
@@ -558,12 +808,22 @@ class RootMaterializationReceiptRegistry:
         _validate_role_selection_payload(selection, record["artifact_role"], payload)
 
     def _selection_for_record(self, record: Mapping[str, Any]) -> NativeOutputSelection:
-        selection = self._binding.authorize_native_output(
-            artifact_role=record["artifact_role"], output_kind=record["output_kind"],
-            member_tree_sha256=record["member_tree_sha256"],
-            output_sha256=record["sha256"], output_size_bytes=record["size_bytes"],
-            assembly_selection_handle=record.get("assembly_selection_handle"),
-        )
+        if record["artifact_role"] in _GENERATED_ROLES:
+            authorize_prepared = getattr(self._binding, "authorize_prepared_native_output", None)
+            if not callable(authorize_prepared):
+                raise NativeOutputReceiptDenied("root binding cannot authorize prepared native outputs")
+            selection = authorize_prepared(
+                record.get("assembly_selection_handle"), record["artifact_role"],
+                record["output_kind"], record["member_tree_sha256"],
+                record["sha256"], record["size_bytes"],
+            )
+        else:
+            selection = self._binding.authorize_native_output(
+                artifact_role=record["artifact_role"], output_kind=record["output_kind"],
+                member_tree_sha256=record["member_tree_sha256"],
+                output_sha256=record["sha256"], output_size_bytes=record["size_bytes"],
+                assembly_selection_handle=record.get("assembly_selection_handle"),
+            )
         self._validate_selection(selection, record["artifact_role"], record["output_kind"],
                                  record["member_tree_sha256"], record["sha256"],
                                  record["size_bytes"])
@@ -700,9 +960,26 @@ class RootMaterializationReceiptRegistry:
                     transaction_handle TEXT NOT NULL,
                     expires_monotonic REAL NOT NULL,
                     state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS precompile_reservations(
+                    reservation_handle TEXT PRIMARY KEY,
+                    publication_handle TEXT NOT NULL,
+                    setup_session_id TEXT NOT NULL,
+                    transaction_handle TEXT NOT NULL,
+                    plan_digest TEXT NOT NULL,
+                    prepared_generation_id TEXT NOT NULL,
+                    assembly_selection_handle TEXT NOT NULL,
+                    assembly_selection_sha256 TEXT NOT NULL,
+                    receipt_ids TEXT NOT NULL,
+                    output_closure_sha256 TEXT NOT NULL,
+                    issued_monotonic REAL NOT NULL,
+                    expires_monotonic REAL NOT NULL,
+                    state TEXT NOT NULL,
+                    compiled_active_policy_handle TEXT,
+                    claim_digest TEXT);
             """)
             columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(outputs)"))
             reservation_columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(reservations)"))
+            precompile_columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(precompile_reservations)"))
             prior_columns = (
                 "receipt_id", "artifact_id", "artifact_role", "sha256", "size_bytes",
                 "store_id", "setup_session_id", "transaction_handle", "plan_digest",
@@ -728,6 +1005,13 @@ class RootMaterializationReceiptRegistry:
                                    "prepared_generation_id", "receipt_ids", "transaction_handle",
                                    "expires_monotonic", "state"):
             raise NativeOutputReceiptDenied("native output reservation journal schema is not the reviewed version")
+        if precompile_columns != (
+                "reservation_handle", "publication_handle", "setup_session_id", "transaction_handle",
+                "plan_digest", "prepared_generation_id", "assembly_selection_handle",
+                "assembly_selection_sha256", "receipt_ids", "output_closure_sha256",
+                "issued_monotonic", "expires_monotonic", "state",
+                "compiled_active_policy_handle", "claim_digest"):
+            raise NativeOutputReceiptDenied("native precompile reservation journal schema is not the reviewed version")
         self._database.chmod(0o600)
 
     def _connect(self):
@@ -1380,6 +1664,25 @@ def _normalize_reservation_ids(receipt_ids: Sequence[str]) -> tuple[str, ...]:
             or any(not _valid_handle(value) for value in normalized)):
         raise NativeOutputReceiptDenied("active compilation receipt handle set is malformed")
     return normalized
+
+
+def _precompile_output_closure_digest(records: Sequence[Mapping[str, Any]]) -> str:
+    """Digest the exact role/receipt/member join reserved before compilation."""
+    rows = [{
+        "role": record["artifact_role"],
+        "receipt_id": record["receipt_id"],
+        "artifact_id": record["artifact_id"],
+        "sha256": record["sha256"],
+        "size_bytes": record["size_bytes"],
+        "member_tree_sha256": record["member_tree_sha256"],
+        "source_receipt_handles": sorted(set(
+            json.loads(record["source_receipt_handles"])
+            if isinstance(record["source_receipt_handles"], str)
+            else record["source_receipt_handles"])),
+        "assembly_selection_handle": record["assembly_selection_handle"],
+    } for record in sorted(records, key=lambda item: item["artifact_role"])]
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _expected_artifact_id(role: str, package_id: str, generation: str) -> str:
