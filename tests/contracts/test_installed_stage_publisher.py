@@ -235,6 +235,119 @@ class InstalledStagePublicationTests(unittest.TestCase):
                 self.assertEqual(transaction["state"], "publication-prepared")
             self.assertEqual(record_path.read_bytes(), old_raw)
 
+    def test_update_replaces_then_fsync_error_rolls_back_owned_pointer(self):
+        """An error reported after rename still restores the exact retained predecessor."""
+        with tempfile.TemporaryDirectory() as temp:
+            root, receipt, record_path, release, _absent = self._fixture(temp)
+            deploy = record_path.parent
+            old_release = root / "releases" / ("c" * 40)
+            old_release.mkdir(mode=0o555)
+            old_info = old_release.stat()
+            old_record = {
+                "schema": 1, "receipt_id": "r" * 32, "candidate_git_sha": "c" * 40,
+                "release_root": str(old_release), "release_device": old_info.st_dev,
+                "release_inode": old_info.st_ino,
+                "closure_manifest_relative_path": "release-manifest.json",
+                "closure_manifest_sha256": "d" * 64, "baseline_tree_sha256": "e" * 64,
+                "published_monotonic": 1.0,
+            }
+            old_raw = _canonical(old_record)
+            record_path.write_bytes(old_raw)
+            os.chmod(record_path, 0o600)
+            pointer_info, parent_info = record_path.stat(), deploy.stat()
+            predecessor = release_build.DeploymentPredecessor(
+                "present", parent_info.st_dev, parent_info.st_ino, _sha(old_raw),
+                pointer_info.st_dev, pointer_info.st_ino, "c" * 40)
+            snapshot = {
+                "schema": 1, "update_transaction_handle": "u" * 43,
+                "candidate_git_sha": receipt.candidate_git_sha,
+                "selection_choice_sha256": "f" * 64, "lifecycle_action": "update",
+                "pointer": {
+                    "parent_device": predecessor.parent_device,
+                    "parent_inode": predecessor.parent_inode,
+                    "candidate_git_sha": predecessor.candidate_git_sha,
+                    "sha256": predecessor.sha256, "device": predecessor.device,
+                    "inode": predecessor.inode,
+                    "canonical_bytes_b64": __import__("base64").b64encode(old_raw).decode("ascii"),
+                },
+                "release": {
+                    "root_device": old_info.st_dev, "root_inode": old_info.st_ino,
+                    "closure_manifest_sha256": "d" * 64,
+                    "baseline_tree_sha256": "e" * 64,
+                    "amendment_manifest_sha256": "a" * 64,
+                },
+            }
+            transition = release_build.RootAdmittedInstallerUpdate(
+                release_build._UPDATE_TRANSITION_SEAL,
+                update_transaction_handle=snapshot["update_transaction_handle"],
+                candidate_git_sha=receipt.candidate_git_sha,
+                selection_choice_sha256=snapshot["selection_choice_sha256"],
+                predecessor_json=release_build._canonical_json(snapshot),
+            )
+            controller = {
+                "candidate_git_sha": receipt.candidate_git_sha,
+                "lifecycle_action": "update", "controller_pid": os.getpid(),
+                "controller_start_ticks": 1, "expires_monotonic": time.monotonic() + 60,
+            }
+            with tempfile.TemporaryDirectory(dir=root) as tx_temp:
+                tx_root = Path(tx_temp) / "transactions"
+                tx_root.mkdir(mode=0o700)
+                real_replace = __import__(
+                    "hermes_installer.authority.installed_stage_publisher",
+                    fromlist=["_replace_receipt"],
+                )._replace_receipt
+                replace_calls = 0
+
+                def replace_then_fail_after_cas(path, data, uid, prior):
+                    nonlocal replace_calls
+                    replace_calls += 1
+                    real_replace(path, data, uid, prior)
+                    if replace_calls == 1:
+                        raise OSError("injected parent fsync failure after pointer replace")
+
+                class VerifiedOldRelease:
+                    release_commit = "c" * 40
+                    root_device = old_info.st_dev
+                    root_inode = old_info.st_ino
+                    closure_manifest_sha256 = "d" * 64
+                    baseline_tree_sha256 = "e" * 64
+                    amendment_manifest_sha256 = "a" * 64
+
+                    def verify_current(self):
+                        return None
+
+                    def close(self):
+                        return None
+
+                with (
+                    patch.object(release_build.RootAdmittedInstallerUpdate,
+                                 "verify_current", return_value=None),
+                    patch("hermes_installer.authority.installer_release_build._verify_current_selection_snapshot",
+                          return_value=None),
+                    patch("hermes_installer.authority.installed_stage_publisher._replace_receipt",
+                          side_effect=replace_then_fail_after_cas),
+                    patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier._mint_release",
+                          return_value=VerifiedOldRelease()),
+                    patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.verify_installed_release",
+                          return_value=type("Restored", (), {
+                              "release_commit": "c" * 40,
+                              "deployment_receipt_sha256": _sha(old_raw),
+                              "close": lambda self: None,
+                          })()),
+                ):
+                    with self.assertRaisesRegex(OSError, "injected parent fsync failure"):
+                        _publish_retained_build(
+                            receipt=receipt, release_root=release, receipt_path=record_path,
+                            expected_uid=os.getuid(), predecessor=predecessor,
+                            update_transition=transition, controller_snapshot=controller,
+                            update_transaction_root=tx_root,
+                        )
+                self.assertEqual(replace_calls, 2)
+                self.assertEqual(record_path.read_bytes(), old_raw)
+                transaction = json.loads(
+                    (tx_root / (snapshot["update_transaction_handle"] + ".json")).read_bytes())
+                self.assertEqual(transaction["state"], "rolled-back")
+
     def test_update_rollback_never_overwrites_a_concurrent_pointer(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()

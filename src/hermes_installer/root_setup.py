@@ -605,6 +605,10 @@ def run_root_setup_action(
                                   {"PATH": "/usr/bin:/bin", "HOME": "/root",
                                    "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
                     except BaseException:
+                        try:
+                            os.close(3)
+                        except OSError:
+                            pass
                         from .authority.installed_stage_publisher import RootInstalledStagePublisher
                         restored = RootInstalledStagePublisher.rollback_owned_update(recoverable)
                         restored.close()
