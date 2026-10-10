@@ -457,6 +457,23 @@ class RetainedSelectedInputConsent:
 
 
 @dataclass(frozen=True, slots=True)
+class RetainedSelectedPublicInputPermission:
+    """Root-only join from a public input receipt to its current web permission."""
+
+    source_receipt_handle: SourceReceiptHandle
+    selection_handle: str
+    permission_receipt_handle: str
+    consent_id: str
+    revocation_epoch: int
+    selected_execution: Any = field(repr=False, compare=False)
+    selection_registry: Any = field(repr=False, compare=False)
+    permission: Any = field(repr=False, compare=False)
+    observation: RootPublicNativeInputObservation = field(repr=False, compare=False)
+    expires_monotonic: float
+    authority_epoch: str
+
+
+@dataclass(frozen=True, slots=True)
 class RootChannelSourceRegistrationToken:
     """Exact one-use rollback capability for a root-created channel delivery."""
 
@@ -538,6 +555,7 @@ class SourceObserverRegistry:
         self._consumed_selected_input_proofs: dict[str, tuple[int, Any, Any, float, str]] = {}
         self._selected_input_selections: dict[str, tuple[Any, Any, float, str]] = {}
         self._selected_input_consents: dict[str, RetainedSelectedInputConsent] = {}
+        self._selected_public_input_permissions: dict[str, RetainedSelectedPublicInputPermission] = {}
         self._public_input_proofs: dict[str, RootPublicInputSourceMaterial] = {}
         self._public_input_source_nonces: set[str] = set()
         self._channel_peer_registry: Any = None
@@ -1651,6 +1669,7 @@ class SourceObserverRegistry:
         self._forget_invocation_handle_locked(handle)
         self._selected_input_consents.pop(handle, None)
         self._selected_input_selections.pop(handle, None)
+        self._selected_public_input_permissions.pop(handle, None)
         row = self._payload_capsules.pop(handle, None)
         if row is not None:
             self._capsule_bytes -= len(row[2])
@@ -1948,6 +1967,134 @@ class SourceObserverRegistry:
             except Exception:
                 raise AuthorityDenied("source.public_input", "selected public input is no longer current") from None
             return material
+
+    def retain_selected_public_input_permission(
+        self, proof: RootPublicNativeInputObservation, selected_execution: Any,
+        source_receipt_handle: SourceReceiptHandle, permission: Any,
+    ) -> RetainedSelectedPublicInputPermission:
+        """Bind a signed public-input receipt to its exact current permission.
+
+        AuthorityService calls this only after storing the signed receipt and
+        capsule. The permission registry owns the permission object; this
+        registry retains its identity and revalidates it on every dispatch.
+        """
+        if (type(proof) is not RootPublicNativeInputObservation
+                or type(source_receipt_handle) is not SourceReceiptHandle
+                or proof._issuer_token is not self._proof_token):
+            raise AuthorityDenied("source.public_input", "public permission binding is not root-issued")
+        registry = getattr(self.service, "public_input_permission_registry", None)
+        revalidator = getattr(registry, "resolve_current_for_selection", None)
+        if not callable(revalidator):
+            raise AuthorityDenied("source.public_input", "public input permission registry is unavailable")
+        try:
+            from .root_public_input_permission import RootPublicInputPermission
+        except ImportError:
+            RootPublicInputPermission = getattr(registry, "permission_type", None)
+        if RootPublicInputPermission is None or type(permission) is not RootPublicInputPermission:
+            raise AuthorityDenied("source.public_input", "public input permission type is invalid")
+        material = self.resolve_consumed_public_input_source_material(proof)
+        if material.selected_execution is not selected_execution:
+            raise AuthorityDenied("source.public_input", "public permission selection changed")
+        with self._lock:
+            with self.service._lock:
+                receipt = self.service._source_receipt_handles.get(source_receipt_handle)
+            capsule = self._payload_capsules.get(str(source_receipt_handle))
+            if (receipt is None or not isinstance(receipt, SourceReceipt)
+                    or capsule is None or capsule[0] is not receipt
+                    or receipt.monotonic_expires_at <= self.service.monotonic()
+                    or capsule[3] != self.service.authority_epoch
+                    or proof.expires_monotonic <= self.service.monotonic()
+                    or receipt.source_kind != "native-input"
+                    or receipt.sensitivity is not Sensitivity.PUBLIC
+                    or receipt.profile_id != proof.profile_id
+                    or receipt.process_generation != proof.profile_generation
+                    or receipt.payload_digest != proof.input_sha256
+                    or receipt.principal_id != proof.principal_id
+                    or receipt.namespace_id != proof.namespace_id
+                    or receipt.parent_receipt_ids != tuple(item.receipt_id for item in material.parent_receipts)
+                    or any(item.sensitivity is not Sensitivity.PUBLIC for item in material.parent_receipts)
+                    or permission.selection_handle != proof.public_permission_selection_handle
+                    or permission.input_observation_handle != proof.observation_handle
+                    or permission.retained_input_selection_handle != selected_execution.selection_handle
+                    or permission.input_sha256 != proof.input_sha256
+                    or permission.profile_id != proof.profile_id
+                    or permission.profile_generation != proof.profile_generation
+                    or permission.service_generation_digest != proof.service_generation_digest
+                    or permission.public_recipient_ids is None
+                    or not set(permission.public_recipient_ids).issubset(set(receipt.recipient_ceiling))
+                    or not set(permission.web_scope_ids).issubset(
+                        set(self.observers[material.source_proof.observer_enrollment_id].public_web_scope_ids))
+                    or permission.expires_monotonic <= self.service.monotonic()):
+                raise AuthorityDenied("source.public_input", "permission does not match the signed public input")
+            binding = RetainedSelectedPublicInputPermission(
+                source_receipt_handle=source_receipt_handle,
+                selection_handle=selected_execution.selection_handle,
+                permission_receipt_handle=permission.receipt_handle,
+                consent_id=permission.consent_id,
+                revocation_epoch=permission.revocation_epoch,
+                selected_execution=selected_execution,
+                selection_registry=material.selection_registry,
+                permission=permission,
+                observation=proof,
+                expires_monotonic=min(receipt.monotonic_expires_at,
+                                      permission.expires_monotonic, proof.expires_monotonic),
+                authority_epoch=self.service.authority_epoch,
+            )
+            key = str(source_receipt_handle)
+            if key in self._selected_public_input_permissions:
+                raise AuthorityDenied("source.public_input", "public input permission was already retained")
+            self._selected_public_input_permissions[key] = binding
+            self._selected_input_selections[key] = (
+                selected_execution, material.selection_registry, binding.expires_monotonic,
+                self.service.authority_epoch,
+            )
+            return binding
+
+    def resolve_selected_public_input_permission(
+        self, source_receipt_handle: SourceReceiptHandle, selected_execution: Any,
+    ) -> RetainedSelectedPublicInputPermission:
+        """Revalidate the exact public permission, selected input, and receipt."""
+        if type(source_receipt_handle) is not SourceReceiptHandle:
+            raise AuthorityDenied("source.public_input", "public source receipt handle is invalid")
+        with self._lock:
+            binding = self._selected_public_input_permissions.get(str(source_receipt_handle))
+            capsule = self._payload_capsules.get(str(source_receipt_handle))
+            material = self._public_input_proofs.get(
+                binding.observation.observation_handle) if binding is not None else None
+            with self.service._lock:
+                receipt = self.service._source_receipt_handles.get(source_receipt_handle)
+            if (binding is None or binding.selected_execution is not selected_execution
+                    or binding.authority_epoch != self.service.authority_epoch
+                    or binding.expires_monotonic <= self.service.monotonic()
+                    or capsule is None or receipt is None or capsule[0] is not receipt
+                    or capsule[3] != self.service.authority_epoch
+                    or material is None or material.observation is not binding.observation
+                    or not material.consumed):
+                raise AuthorityDenied("source.public_input", "retained public permission binding is stale")
+            try:
+                if binding.selection_registry.resolve_current_execution(selected_execution) is not selected_execution:
+                    raise AuthorityDenied("source.public_input", "selected public input changed")
+            except AuthorityDenied:
+                raise
+            except Exception:
+                raise AuthorityDenied("source.public_input", "selected public input changed") from None
+            registry = getattr(self.service, "public_input_permission_registry", None)
+            revalidator = getattr(registry, "resolve_current_for_selection", None)
+            if not callable(revalidator):
+                raise AuthorityDenied("source.public_input", "public permission registry is unavailable")
+            current = revalidator(
+                binding.permission_receipt_handle,
+                retained_input_selection_handle=binding.selection_handle,
+                expected_consent_id=binding.consent_id,
+                expected_revocation_epoch=binding.revocation_epoch,
+            )
+            if current is not binding.permission:
+                raise AuthorityDenied("source.public_input", "public permission proof changed")
+            # Re-resolve consumed bytes/closure so revocation, capsule expiry,
+            # and a changed retained proof cannot be hidden behind the token.
+            if self.resolve_consumed_public_input_source_material(binding.observation) is not material:
+                raise AuthorityDenied("source.public_input", "public source material changed")
+            return binding
 
     def retain_selected_input_consent(
         self, observation: VerifiedSourceObservation,
@@ -2413,6 +2560,7 @@ class SourceObserverRegistry:
                 self._payload_capsules.pop(handle, None)
                 self._selected_input_consents.pop(handle, None)
                 self._selected_input_selections.pop(handle, None)
+                self._selected_public_input_permissions.pop(handle, None)
                 self._capsule_bytes -= len(payload)
                 payload[:] = b"\x00" * len(payload)
 
@@ -2432,6 +2580,7 @@ class SourceObserverRegistry:
             self._consumed_selected_input_proofs.clear()
             self._selected_input_selections.clear()
             self._selected_input_consents.clear()
+            self._selected_public_input_permissions.clear()
             self._public_input_proofs.clear()
             self._public_input_source_nonces.clear()
             for binding in self._receipt_process_bindings.values():
