@@ -27,6 +27,10 @@ from hermes_installer.authority.memory_lifecycle_evidence import (
     RootMemoryPrestartReceiptRegistry,
     RootMemorySemanticReadinessRegistry,
 )
+from hermes_installer.authority.root_memory_service_enablement import (
+    RootMemoryServiceEnablementRegistry,
+    RootMemoryServiceEnablementSelection,
+)
 
 
 class RootMemoryLifecycleRegistryDenied(PermissionError):
@@ -93,6 +97,9 @@ class RootMemoryLifecycleRegistry:
     * ``source_receipt_registry.resolve_memory_prestart_closure`` returns a
       retained source-closure object for the enrollment's exact prestart
       receipt handles and active service digest.
+    * ``enablement_registry.resolve_selected_enablement`` revalidates the
+      durable root TTY service-enable choice, separately from capture and
+      provider-route choices.
     * ``lifecycle_consent_registry.resolve_current_lifecycle_consent`` returns
       explicit service-start consent for this enrollment and profile.
     * ``controller_proof_resolver.resolve_memory_controller_proof`` returns a
@@ -110,6 +117,7 @@ class RootMemoryLifecycleRegistry:
     def __init__(self, *, bindings: Any, lifecycle: RootMemoryServiceLifecycle,
                  source_receipt_registry: Any, lifecycle_consent_registry: Any,
                  controller_proof_resolver: Any, private_route_resolver: Any,
+                 enablement_registry: Any = None,
                  connector_registry: Any, monotonic: Callable[[], float] = time.monotonic):
         required = (
             (bindings, "resolve_memory_enrollment"),
@@ -123,12 +131,14 @@ class RootMemoryLifecycleRegistry:
                 or not callable(monotonic)
                 or type(source_receipt_registry) is not RootMemoryPrestartReceiptRegistry
                 or type(connector_registry) is not RootMemorySemanticReadinessRegistry
+                or type(enablement_registry) is not RootMemoryServiceEnablementRegistry
                 or any(not callable(getattr(owner, method, None)) for owner, method in required)):
             raise RootMemoryLifecycleRegistryDenied("root memory lifecycle evidence registries are unavailable")
         self.bindings = bindings
         self.lifecycle = lifecycle
         self.source_receipt_registry = source_receipt_registry
         self.lifecycle_consent_registry = lifecycle_consent_registry
+        self.enablement_registry = enablement_registry
         self.controller_proof_resolver = controller_proof_resolver
         self.private_route_resolver = private_route_resolver
         self.connector_registry = connector_registry
@@ -146,6 +156,7 @@ class RootMemoryLifecycleRegistry:
     def from_root_runtime(cls, *, active_bindings: Any, lifecycle: RootMemoryServiceLifecycle,
                           source_receipt_registry: Any, lifecycle_consent_registry: Any,
                           controller_proof_resolver: Any, private_route_resolver: Any,
+                          enablement_registry: Any = None,
                           connector_registry: Any,
                           monotonic: Callable[[], float] = time.monotonic
                           ) -> "RootMemoryLifecycleRegistry":
@@ -156,6 +167,7 @@ class RootMemoryLifecycleRegistry:
             lifecycle_consent_registry=lifecycle_consent_registry,
             controller_proof_resolver=controller_proof_resolver,
             private_route_resolver=private_route_resolver,
+            enablement_registry=enablement_registry,
             connector_registry=connector_registry, monotonic=monotonic,
         )
 
@@ -182,6 +194,21 @@ class RootMemoryLifecycleRegistry:
                 or source_handles != binding.prestart_receipt_handles
                 or not isinstance(source_sha256, str) or len(source_sha256) != 64):
             raise RootMemoryLifecycleRegistryDenied("current verified memory prestart closure is unavailable")
+        selection = self.enablement_registry.resolve_selected_enablement(memory_enrollment_id)
+        if (type(selection) is not RootMemoryServiceEnablementSelection
+                or not self.enablement_registry.is_current(selection)
+                or selection.selection_handle != source.enablement_selection_handle
+                or selection.principal_id != enrollment.principal_id
+                or selection.profile_id != enrollment.profile_id
+                or selection.namespace_id != enrollment.namespace_identity
+                or selection.provider != enrollment.provider
+                or selection.backend_variant != enrollment.backend_variant
+                or selection.service_enrollment_id != enrollment.service_enrollment_id
+                or selection.service_generation != enrollment.service_generation
+                or selection.memory_owner_generation != enrollment.memory_owner_generation
+                or selection.start_operation_id != binding.start_operation_id):
+            raise RootMemoryLifecycleRegistryDenied(
+                "current explicit root memory service enablement is unavailable")
         consent = self.lifecycle_consent_registry.resolve_current_lifecycle_consent(
             consent_handle, enrollment, service_generation_digest=digest)
         if (not callable(getattr(consent, "is_current", None)) or not consent.is_current()
@@ -204,7 +231,7 @@ class RootMemoryLifecycleRegistry:
         from hermes_installer.authority.selected_startup_authority import RootControllerProcessIdentityLease
         if (type(controller) is not RootControllerProcessIdentityLease or not controller.is_current()):
             raise RootMemoryLifecycleRegistryDenied("live root lifecycle controller PIDFD proof is unavailable")
-        return digest, enrollment, source, consent, routes, controller
+        return digest, enrollment, source, consent, routes, controller, selection
 
     def admit_selected_memory(self, memory_enrollment_id: str, consent_handle: str,
                               controller_proof_handle: str) -> str:
@@ -213,7 +240,7 @@ class RootMemoryLifecycleRegistry:
                 memory_enrollment_id, consent_handle, controller_proof_handle)):
             raise RootMemoryLifecycleRegistryDenied("opaque selected memory references are required")
         now = self.monotonic()
-        digest, enrollment, source, consent, routes, controller = self._resolve_evidence(
+        digest, enrollment, source, consent, routes, controller, selection = self._resolve_evidence(
             memory_enrollment_id, consent_handle, controller_proof_handle)
         source_sha256 = source.source_closure_sha256
         source_handles = tuple(source.receipt_handles)
@@ -257,7 +284,9 @@ class RootMemoryLifecycleRegistry:
                         and current[1] == enrollment
                         and current[2] is source and current[3] is consent
                         and current[4] == routes and current[5] is controller
+                        and current[6] == selection
                         and source.is_current() and consent.is_current()
+                        and self.enablement_registry.is_current(selection)
                         and self.private_route_resolver.is_current(routes)
                         and controller.is_current())
             except Exception:
