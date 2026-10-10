@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -91,9 +92,9 @@ class PrivateEngine(Protocol):
     route_class: str
     private: bool
     route_ids: Mapping[str, str]
-    def extract(self, *, text: str, context: HostContext, timeout: float,
+    def extract(self, *, text: str, context: HostContext, job_handle: str, timeout: float,
                 cancelled: Callable[[], bool]) -> list[str]: ...
-    def embed(self, *, facts: list[str], context: HostContext, timeout: float,
+    def embed(self, *, facts: list[str], context: HostContext, job_handle: str, timeout: float,
               cancelled: Callable[[], bool]) -> list[list[float]]: ...
 
 
@@ -748,6 +749,13 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     raise BrokerUnavailable("durable queue is unavailable")
                 return _reply(queue.result(context,_text(body.get("receipt_id"),"receipt",128)))
             if action in {"extract","embed"}:
+                expected_body_fields = ({"schema", "job_handle", "record"} if action == "extract"
+                                        else {"schema", "job_handle", "facts"})
+                if set(body) != expected_body_fields:
+                    raise BrokerDenied("private memory stage payload does not match its fixed schema")
+                job_handle = body.get("job_handle")
+                if not isinstance(job_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", job_handle):
+                    raise BrokerDenied("root durable memory job handle is required")
                 stage = "memory-" + ("extraction" if action == "extract" else "embedding")
                 # A local engine is enrolled per concrete profile target. A
                 # provider-name key would let one profile accidentally reuse
@@ -767,13 +775,15 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     raise BrokerDenied("private engine route differs from the protected profile enrollment")
                 if action == "extract":
                     record = body.get("record")
-                    if not isinstance(record,dict):
-                        raise ValueError("record is required")
+                    if (not isinstance(record,dict)
+                            or set(record) != {"id", "profile", "namespace", "source", "text", "provenance"}):
+                        raise ValueError("record does not match the fixed completed-memory job schema")
                     if record.get("profile",context.profile_id) != context.profile_id or record.get("namespace",context.namespace_id) != context.namespace_id:
                         raise BrokerDenied("record scope differs from signed host scope")
                     if str(record.get("source","")).startswith("memory:"):
                         raise BrokerDenied("recursive memory ingestion denied")
                     facts = engine.extract(text=_text(record.get("text"),"record text",MAX_EVENT),
+                        job_handle=job_handle,
                         context=context,timeout=timeout,cancelled=cancelled)
                     facts = [_text(x,"fact",8192) for x in facts]
                     if not 1 <= len(facts) <= MAX_FACTS:
@@ -782,7 +792,8 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 facts = [_text(x,"fact",8192) for x in body.get("facts",[])]
                 if not 1 <= len(facts) <= MAX_FACTS:
                     raise ValueError("facts are invalid")
-                vectors = _vectors(engine.embed(facts=facts,context=context,timeout=timeout,cancelled=cancelled),len(facts))
+                vectors = _vectors(engine.embed(facts=facts,job_handle=job_handle,
+                    context=context,timeout=timeout,cancelled=cancelled),len(facts))
                 return _reply({"embeddings":vectors,"engine":engine.engine_id})
             if action in {"capture","delete"}:
                 owner,generation = owner_state(context.profile_id)
@@ -1341,10 +1352,12 @@ class MemoryJobWorker:
             record={"id":job["id"],"profile":job["profile_id"],"namespace":job["namespace_id"],
                     "source":"hermes-session:"+str(event.get("session_id",job["id"])),
                     "text":_text(text,"event",MAX_EVENT),"provenance":[source.lineage_hash]}
-            extracted=self._perform(job,source_wire,"extract","memory-extraction",{"schema":1,"record":record})
+            extracted=self._perform(job,source_wire,"extract","memory-extraction",
+                {"schema":1,"job_handle":job["id"],"record":record})
             facts=[_text(x,"fact",8192) for x in extracted.get("facts",[])]
             if not 1<=len(facts)<=MAX_FACTS:raise ValueError("extraction output is invalid")
-            embedded=self._perform(job,source_wire,"embed","memory-embedding",{"schema":1,"facts":facts})
+            embedded=self._perform(job,source_wire,"embed","memory-embedding",
+                {"schema":1,"job_handle":job["id"],"facts":facts})
             vectors=_vectors(embedded.get("embeddings"),len(facts))
             stored=self._perform(job,source_wire,"capture","memory-capture",
                 {"schema":1,"record_id":job["id"],"source":record["source"],
