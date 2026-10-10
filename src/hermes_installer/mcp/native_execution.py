@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 import secrets
 import time
@@ -27,6 +28,7 @@ from ..authority.native_runtime_observer import NativeInvocationRegistry
 from ..authority.service import AuthorityService
 from ..authority.types import strict_json_loads
 from ..authority.native_runtime_observer import RootNativeMCPInvocation
+from ..authority.mcp_discovery_registry import MCPDiscoveryObservationRegistry
 from .broker import ProtectedMCPService, mcp_intent
 from .native_dispatch import NativeMCPRegistrationIndex
 from .native_schema_catalog import NativeMCPProtectedSchemaCatalog
@@ -56,7 +58,10 @@ def _thaw(value: Any, *, depth: int = 0) -> Any:
 
 
 def _canonical_schema(value: Mapping[str, Any]) -> bytes:
-    return canonical_bytes(_thaw(value))
+    return json.dumps(
+        _thaw(value), sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
 
 
 def _bound_schema(value: Any) -> Mapping[str, Any]:
@@ -73,6 +78,8 @@ class NativeMCPExecutionDenied(AuthorityDenied):
 
 def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
                                     artifact_catalog: Any, staging_root: Path,
+                                    registration_index: Any | None = None,
+                                    schema_derivation_registry: Any | None = None,
                                     expected_uid: int = 0) -> Any:
     """Build the schema catalog from CAS bytes and retained signed source receipts.
 
@@ -88,6 +95,12 @@ def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
             or type(expected_uid) is not int or expected_uid < 0
             or not callable(getattr(authority_service, "resolve_retained_source_receipt", None))):
         raise TypeError("root CAS and source receipt services are required")
+    if registration_index is not None and type(registration_index) is not NativeMCPRegistrationIndex:
+        raise TypeError("root native MCP registration index is invalid")
+    if schema_derivation_registry is not None:
+        from ..authority.artifacts import RootSchemaDerivationReceiptRegistry
+        if type(schema_derivation_registry) is not RootSchemaDerivationReceiptRegistry:
+            raise TypeError("root schema derivation receipt registry is invalid")
 
     def read_artifact(artifact_id: str, digest: str) -> bytes:
         resolved = artifact_catalog.resolve(
@@ -108,9 +121,28 @@ def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
             return False
         return True
 
+    def resolve_derived_artifact(record: Mapping[str, Any]) -> Any:
+        if registration_index is None or schema_derivation_registry is None:
+            raise NativeMCPExecutionDenied(
+                "native.mcp.schema", "selected dynamic schema resolver is unavailable",
+            )
+        binding = registration_index.resolve_action(record["action_id"])
+        if (type(binding) is not NativeMCPToolBinding
+                or binding.request_schema_id != record["id"] and binding.result_schema_id != record["id"]):
+            raise NativeMCPExecutionDenied(
+                "native.mcp.schema", "dynamic schema is not joined to a selected action",
+            )
+        return schema_derivation_registry.resolve_schema_artifact(
+            record["derivation_receipt_handle"], selected_binding=binding,
+            schema_role=record["schema_kind"],
+        )
+
     return NativeMCPProtectedSchemaCatalog.from_protected_records(
         records, read_artifact=read_artifact,
         verify_source_receipt=verify_source_receipt,
+        resolve_derived_artifact=(resolve_derived_artifact
+                                  if registration_index is not None
+                                  and schema_derivation_registry is not None else None),
     )
 
 
@@ -134,6 +166,11 @@ class NativeMCPInvocationResolver(Protocol):
 class _MCPResponse:
     value: Mapping[str, Any]
     source_receipt_handle: str | None = None
+    request_payload: bytes | None = None
+    response_payload: bytes | None = None
+    context: HostContext | None = None
+    authorization: EffectAuthorization | None = None
+    parent_receipt_handles: tuple[str, ...] = ()
 
 
 class NativeMCPDispatcher:
@@ -151,6 +188,7 @@ class NativeMCPDispatcher:
                  protected_services: Mapping[str, ProtectedMCPService],
                  current_mcp_generations: Mapping[str, str],
                  invocation_resolver: NativeMCPInvocationResolver,
+                 mcp_discovery_registry: MCPDiscoveryObservationRegistry,
                  monotonic: Callable[[], float] = time.monotonic,
                  timeout: float = _TIMEOUT) -> None:
         if type(service) is not AuthorityService:
@@ -162,6 +200,10 @@ class NativeMCPDispatcher:
                 or not isinstance(current_mcp_generations, Mapping)
                 or type(invocation_resolver) is not NativeInvocationRegistry):
             raise TypeError("root MCP enrollment and one-use invocation resolver are required")
+        if (type(mcp_discovery_registry) is not MCPDiscoveryObservationRegistry
+                or mcp_discovery_registry.service is not service
+                or mcp_discovery_registry.ready is not True):
+            raise TypeError("root authenticated MCP discovery registry is required")
         if not 0 < timeout <= _TIMEOUT:
             raise ValueError("native MCP aggregate timeout must be in (0, 9] seconds")
         services = dict(protected_services)
@@ -178,6 +220,7 @@ class NativeMCPDispatcher:
         self._services = services
         self._generations = generations
         self._invocations = invocation_resolver
+        self._discovery = mcp_discovery_registry
         self._monotonic = monotonic
         self._timeout = float(timeout)
 
@@ -245,12 +288,33 @@ class NativeMCPDispatcher:
                 params={}, deadline=deadline, cancelled=cancelled,
                 lineage_handles=lineage_handles, notification=True,
             )
-            selected_schema = self._discover(
+            selected_schema, discovery_response = self._discover(
                 peer_uid, peer_pid, peer_pidfd, invocation, service, operation, target,
                 selection, deadline, cancelled, lineage_handles, binding.mcp_tool_name,
             )
-            if _canonical_schema(selected_schema.get("inputSchema", {})) != _canonical_schema(request_schema):
-                raise MCPError("MCP discovered schema differs from its protected artifact")
+            for schema_kind, schema_key, expected_schema in (
+                ("arguments", "inputSchema", request_schema),
+                ("result", "outputSchema", result_schema),
+            ):
+                if schema_key not in selected_schema:
+                    raise MCPError(f"MCP selected tool has no {schema_key}")
+                discovered = selected_schema[schema_key]
+                if not isinstance(discovered, Mapping) or (
+                        _canonical_schema(discovered) != _canonical_schema(expected_schema)):
+                    raise MCPError("MCP discovered schema differs from its protected artifact")
+                self._discovery.capture_tools_list(
+                    invocation=invocation, peer_uid=peer_uid, peer_pid=peer_pid,
+                    peer_pidfd=peer_pidfd, service=service, binding=binding,
+                    mcp_generation=self._generations[binding.mcp_enrollment_id],
+                    selection=selection,
+                    request_payload=discovery_response.request_payload,
+                    response_payload=discovery_response.response_payload,
+                    response_receipt_handle=discovery_response.source_receipt_handle,
+                    context=discovery_response.context,
+                    authorization=discovery_response.authorization,
+                    parent_receipt_handles=discovery_response.parent_receipt_handles,
+                    schema_kind=schema_kind,
+                )
             annotations = selected_schema.get("annotations", {})
             if (not isinstance(annotations, Mapping) or annotations.get("readOnlyHint") is not True
                     or annotations.get("destructiveHint") is True):
@@ -396,10 +460,11 @@ class NativeMCPDispatcher:
                   service: ProtectedMCPService, operation: str, target: str,
                   selection: Mapping[str, Any], deadline: float,
                   cancelled: Callable[[], bool], lineage_handles: list[str],
-                  selected_tool: str) -> Mapping[str, Any]:
+                  selected_tool: str) -> tuple[Mapping[str, Any], _MCPResponse]:
         cursor: str | None = None
         seen_cursors: set[str] = set()
         selected: Mapping[str, Any] | None = None
+        selected_response: _MCPResponse | None = None
         for _ in range(_MAX_DISCOVERY_PAGES):
             params = {"cursor": cursor} if cursor is not None else {}
             response = self._rpc_effect(
@@ -418,6 +483,7 @@ class NativeMCPDispatcher:
                     if selected is not None:
                         raise MCPError("MCP selected tool was duplicated across pages")
                     selected = row
+                    selected_response = response
             next_cursor = result.get("nextCursor")
             if next_cursor is None:
                 break
@@ -428,9 +494,9 @@ class NativeMCPDispatcher:
             cursor = next_cursor
         else:
             raise MCPError("MCP discovery exceeded its page limit")
-        if selected is None:
+        if selected is None or selected_response is None:
             raise MCPError("selected MCP tool was not discovered")
-        return selected
+        return selected, selected_response
 
     def _rpc_effect(self, uid: int, pid: int, pidfd: int,
                     invocation: RootNativeMCPInvocation,
@@ -453,11 +519,18 @@ class NativeMCPDispatcher:
         digest = canonical_digest(payload)
         intent = mcp_intent(service.service_id, service.channel, request_id,
                             method, selection, params)
-        purpose = "mcp-selected-resource-read" if method == "tools/call" else "mcp-connection-lifecycle"
+        purpose = ("mcp-selected-resource-read" if method == "tools/call"
+                   else "mcp-selected-schema-discovery" if method == "tools/list"
+                   else "mcp-connection-lifecycle")
+        # Discovery evidence is always derived from the active publication's
+        # original source closure. Earlier protocol pages are dynamic evidence,
+        # not authority to enlarge that closure.
+        parent_handles = (tuple(invocation.source_receipt_handles) if method == "tools/list"
+                          else tuple(lineage_handles))
         context_wire = self.service._issue_context(uid, {
             "purpose": purpose, "intent": intent,
             "trace_id": secrets.token_urlsafe(18), "lease_seconds": min(30.0, remaining),
-            "source_contexts": [], "source_receipt_handles": list(lineage_handles),
+            "source_contexts": [], "source_receipt_handles": list(parent_handles),
             "final_payload_digest": digest, "operation": operation,
         }, peer_pid=pid)
         context = HostContext.from_wire(context_wire)
@@ -465,7 +538,7 @@ class NativeMCPDispatcher:
             f"mcp:{service.service_id}:{'read' if method == 'tools/call' else 'connect'}",
             operation, target,
         ))
-        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' else 'connect'}"
+        capability = f"mcp:{service.service_id}:{'read' if method in {'tools/list', 'tools/call'} else 'connect'}"
         if rule is None or rule.recipient is not None:
             raise NativeMCPExecutionDenied("native.mcp.rule", "selected MCP effect rule is unavailable")
         grant_wire = self.service._authorize_effect(uid, {
@@ -507,6 +580,11 @@ class NativeMCPDispatcher:
                 or "error" in response or "result" not in response):
             raise MCPError("MCP response failed correlation or protocol validation")
         source_handle = result.get("source_receipt_handle")
+        if method == "tools/list" and (not isinstance(source_handle, str)
+                                         or not _OPAQUE.fullmatch(source_handle)):
+            raise NativeMCPExecutionDenied(
+                "native.mcp.discovery", "tools/list result lacks a root-observed source receipt",
+            )
         if source_handle is not None:
             if not isinstance(source_handle, str) or not _OPAQUE.fullmatch(source_handle):
                 raise NativeMCPExecutionDenied("native.mcp.lineage", "MCP result receipt handle is invalid")
@@ -514,4 +592,6 @@ class NativeMCPDispatcher:
                 if len(lineage_handles) >= _MAX_SOURCE_HANDLES:
                     raise NativeMCPExecutionDenied("native.mcp.lineage", "MCP result receipt closure is oversized")
                 lineage_handles.append(source_handle)
-        return _MCPResponse(response, source_handle)
+        return _MCPResponse(
+            response, source_handle, payload, body, context, grant, parent_handles,
+        )

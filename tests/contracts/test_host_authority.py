@@ -62,6 +62,26 @@ class ProfileLaunchEnvelopeContracts(unittest.TestCase):
                 )
 
 
+class SourceRecipientCeilingContracts(unittest.TestCase):
+    def test_derived_tool_result_can_only_keep_the_verified_parent_intersection(self):
+        first = SimpleNamespace(recipient_ceiling=frozenset({"private-a", "private-b"}))
+        second = SimpleNamespace(recipient_ceiling=frozenset({"private-b", "private-c"}))
+        self.assertEqual(
+            AuthorityService._source_recipient_ceiling("tool-result", (first, second)),
+            frozenset({"private-b"}),
+        )
+        empty_parent = SimpleNamespace(recipient_ceiling=frozenset())
+        self.assertEqual(
+            AuthorityService._source_recipient_ceiling("provider-result", (first, empty_parent)),
+            frozenset(),
+        )
+        # Other observed source kinds cannot inherit private egress authority.
+        self.assertEqual(
+            AuthorityService._source_recipient_ceiling("native-input", (first,)),
+            frozenset(),
+        )
+
+
 class FixturePolicy:
     revision = "fixture-17"
 

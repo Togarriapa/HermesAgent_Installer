@@ -175,7 +175,7 @@ class NativeBridgeBroker:
 
     def attach_native_turn_observer(self, registry: Any) -> None:
         """Attach the exact root turn join once the selected input graph exists."""
-        from .native_observer_wiring import RootNativeTurnObservationRegistry
+        from .native_turn_observation import RootNativeTurnObservationRegistry
 
         if type(registry) is not RootNativeTurnObservationRegistry:
             raise AuthorityDenied("native.request_turn", "root native turn observer has an invalid type")

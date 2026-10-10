@@ -126,15 +126,24 @@ PIDFD, executable, namespace, and loaded-role evidence. The registry's
 `capture_selected_ingress` consumes that retained proof and the exact producer
 observation together. The issuer rechecks current resource generation and
 consent, the selected observer and source policy, and the live controller
-proof, then signs the original private `HostContext` and source receipt. The
-HTTP/audio adapter's exact proof-bound receipt handles are resolved once by
-its root observer to actual service-signed `SourceReceipt` objects; the issuer
-rechecks signature, current profile/principal/generation, source-kind policy,
-expiry, and complete parent closure before signing the event receipt with those
-parents. The event context carries the sorted parent receipts and event receipt
-together, so the registry can verify the full signed closure without trusting
-receipt objects supplied in an RPC or event DTO. Missing resolver wiring fails
-closed. The registry atomically retains that signed closure as the root event; child-node
+proof, then signs the original private `HostContext` and source receipt. For
+HTTP and audio ingress, JWT/session and consent/device/capture proofs remain
+typed root-retained transport evidence, not fabricated `SourceReceipt`s. The
+selected observer revalidates and consumes the exact opaque observation at
+capture; a genuine initial event may therefore have an empty parent-receipt
+chain. If an active source policy supplies actual signed parent receipts, the
+issuer verifies their signature, current profile/principal/generation,
+source-kind policy, expiry, and complete closure before including them. The
+v94 HTTP/audio schemas are pinned as `channel-http-observed-event-v1`
+(`7626756c12b9020248423114e0df294fc7c2c5c74def36e535244de81bd4452c`) and
+`channel-audio-observed-event-v1`
+(`cfbd9c9a41299293776666201298e4cdf3be388e91ec7c8ff05d2931520965fb`). Audio
+event payload contains metadata and artifact digests only; captured PCM stays
+in its separately bounded, root-owned artifact and never enlarges the event
+payload ceiling. The event context carries any verified parents and the event
+receipt together, so the registry can verify the full signed closure without
+trusting receipt objects supplied in an RPC or event DTO. Missing resolver
+wiring fails closed. The registry atomically retains that signed closure as the root event; child-node
 issuance separately revalidates the selected backend/body recipe and current
 controller custody.
 
@@ -144,3 +153,14 @@ or timer claims cannot enter this path. A producer without a concrete native
 provenance verifier and the root registry's pre-event custody proof remains
 unavailable. HTTP and audio channel inputs use distinct v40 typed selection
 and observation proofs; they cannot reuse Telegram/Discord or webhook proof.
+
+The selected webhook adapter preserves the exact signed HTTP body separately
+from the parsed protocol fields. It checks the selected GitHub/registry event
+schema and root-selected repository scope before claiming a durable replay key
+bound to resource ID, resource generation, and delivery ID. The returned
+object is retained by identity and can be consumed once by its issuer-registered
+per-route producer while a matching live ingress-controller PIDFD proof is in
+force. The issuer, not this adapter, mints the v67 source proof and canonical
+event envelope. `accept_request` alone still does not create a source receipt,
+admit a job, or dispatch a task; production requires root composition to attach
+the selected bindings, issuer, custody registry, and durable replay store.
