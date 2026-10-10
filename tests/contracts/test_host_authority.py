@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import socket
 import stat
@@ -22,7 +23,7 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle,
+    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, NativeEventHandle,
     NativeResponseMetadata, NativeToolCallBinding, Sensitivity,
     canonical_bytes, canonical_digest,
 )
@@ -531,6 +532,25 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         )
         return context, grant, digest
 
+    def test_native_mcp_dispatch_accepts_safe_content_type_header(self):
+        class Dispatcher:
+            def __init__(self, service):
+                self.service = service
+
+            def dispatch_native_mcp(self, **_kwargs):
+                return {"status": 200, "body": b"{}",
+                        "headers": {"content-type": "application/json"},
+                        "receipt_id": "mcp-receipt"}
+
+        self.service.attach_native_mcp_dispatcher(Dispatcher(self.service))
+        result = self.service._dispatch_native_mcp(
+            os.getuid(), os.getpid(), 0,
+            {"schema": 1, "invocation_handle": "h" * 32,
+             "canonical_arguments_b64": base64.b64encode(b"{}").decode("ascii")},
+            cancelled=lambda: False,
+        )
+        self.assertEqual(result["headers"], {"content-type": "application/json"})
+
     def test_peer_uid_issues_signed_context_and_fixed_broker_performs_effect(self):
         context, grant, digest = self._context_and_grant()
         self.assertEqual(context.uid, os.getuid())
@@ -606,6 +626,58 @@ class HostAuthorityIPCContracts(unittest.TestCase):
 
 
 class NativeEventClientContracts(unittest.TestCase):
+    def test_native_mcp_dispatch_uses_only_lexical_handle_and_canonical_args(self):
+        import base64
+
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"mcp:fixture:read"}))
+        calls = []
+        service = AuthorityService(
+            signing_key=b"m" * 32, key_id="native-mcp-dispatch-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+        )
+
+        class Dispatcher:
+            def __init__(self, authority):
+                self.service = authority
+
+            def dispatch_native_mcp(self, **kwargs):
+                calls.append(kwargs)
+                return BrokeredEffectResponse(200, b'{"result":"ok"}', {}, "receipt-1")
+
+        dispatcher = Dispatcher(service)
+        service.attach_native_mcp_dispatcher(dispatcher)
+        arguments = b'{"query":"hello"}'
+        payload = {
+            "schema": 1, "invocation_handle": "i" * 40,
+            "canonical_arguments_b64": base64.b64encode(arguments).decode("ascii"),
+        }
+        result = service._dispatch(binding.uid, 2345, 99, "native.mcp.dispatch", payload,
+                                   cancelled=lambda: False)
+        self.assertEqual(set(result), {"status", "body", "headers", "receipt_id"})
+        self.assertEqual(base64.b64decode(result["body"]), b'{"result":"ok"}')
+        self.assertEqual(calls, [{
+            "peer_uid": binding.uid, "peer_pid": 2345, "peer_pidfd": 99,
+            "invocation_handle": "i" * 40, "canonical_arguments": arguments,
+            "cancelled": unittest.mock.ANY,
+        }])
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 2345, 99, "native.mcp.dispatch", {
+                **payload, "target": "caller-selected-target",
+            }, cancelled=lambda: False)
+
+        client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
+        requests = []
+        client._rpc = lambda operation, request, **_kwargs: (
+            requests.append((operation, request)) or result
+        )
+        response = client.dispatch_native_mcp("i" * 40, arguments)
+        self.assertEqual(response.body, b'{"result":"ok"}')
+        self.assertEqual(requests[0][0], "native.mcp.dispatch")
+        self.assertEqual(set(requests[0][1]), {"schema", "invocation_handle", "canonical_arguments_b64"})
+        with self.assertRaises(AuthorityDenied):
+            client.dispatch_native_mcp("i" * 40, b'{ "query":"hello"}')
+
     def test_preparation_and_gateway_dispatch_are_distinct_fixed_rpcs(self):
         client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
         client.monotonic = lambda: 50.0
