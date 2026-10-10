@@ -50,6 +50,45 @@ def test_root_runtime_composition_requires_service_records_before_optional_hardw
         )
 
 
+def test_root_runtime_private_memory_getters_forward_only_protected_binding_ids():
+    from types import SimpleNamespace
+    endpoint = SimpleNamespace(binding_id="endpoint-a", service_generation_digest="a" * 64)
+    model = SimpleNamespace(binding_id="model-a", endpoint_binding_id="endpoint-a",
+                            service_generation_digest="a" * 64)
+    catalog = SimpleNamespace(
+        resolve_private_memory_endpoint_binding=lambda binding_id: endpoint if binding_id == "endpoint-a" else None,
+        resolve_private_memory_model_binding=lambda binding_id, endpoint_id=None:
+            model if binding_id == "model-a" and endpoint_id in (None, "endpoint-a") else None,
+    )
+    artifact_catalog = SimpleNamespace(artifacts={
+        "server-config-a": SimpleNamespace(sha256="a" * 64),
+        "server-runtime-a": SimpleNamespace(sha256="b" * 64),
+        "license-a": SimpleNamespace(sha256="c" * 64),
+        "model-runtime-a": SimpleNamespace(sha256="e" * 64),
+        "load-config-a": SimpleNamespace(sha256="f" * 64),
+    })
+    endpoint = SimpleNamespace(
+        binding_id="endpoint-a", service_generation_digest="a" * 64,
+        server_config_artifact_id="server-config-a", server_config_sha256="a" * 64,
+        runtime_artifact_ids=("server-runtime-a",),
+    )
+    model = SimpleNamespace(
+        binding_id="model-a", endpoint_binding_id="endpoint-a",
+        service_generation_digest="a" * 64, license_artifact_id="license-a",
+        license_sha256="c" * 64, model_artifact_id="existing-model:" + "d" * 64,
+        model_artifact_sha256="d" * 64, model_tree_manifest_sha256="d" * 64,
+        runtime_artifact_id="model-runtime-a", runtime_artifact_sha256="e" * 64,
+        load_config_artifact_id="load-config-a", load_config_sha256="f" * 64,
+    )
+    bindings = RootRuntimeBindings(
+        enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=artifact_catalog,
+        build_store=None, service_connector=None,
+    )
+    assert bindings.resolve_private_memory_endpoint_binding("endpoint-a") is endpoint
+    assert bindings.resolve_private_memory_model_binding("model-a", "endpoint-a") is model
+
+
 def test_empty_device_and_build_catalogs_fail_only_when_selected():
     from hermes_installer.protected_enrollment import ProtectedBuildCatalog, ProtectedDeviceCatalog
 
@@ -633,6 +672,7 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
             external_result_schema_id="workflow-result-v1",
             workflow_artifact_id="workflow-artifact-a", workflow_sha256="f" * 64,
         )},
+        process_role_records={},
         entrypoint_artifact_id="entrypoint-a", entrypoint_sha256="c" * 64,
         resolver_artifact_id="resolver-a", resolver_sha256="d" * 64,
         compiled_closure_artifact_id="closure-a",
