@@ -113,3 +113,12 @@ Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-pr
 - [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
 - [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
 - [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.
+
+
+Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md` / `planning/xpra-native-build-acquisition-v219.json`; owner implements actual signed native/PM314 backend/transform receipt producers, corrected fixed offline recipe and independent qualification. New source pins and all AC OPEN.
+
+- [ ] `RT-T219.1` Implement genuine signed native package and isolated CP314 Python backend acquisition/receipt producer under v219; all acceptance OPEN.
+
+- [ ] `RT-T219.2` Wire exact source/transform/PM/member/config joins and corrected offline native build/qualification under v219; all acceptance OPEN.
+
+- [ ] `VD-T219.3` Verify isolated ARM64 real build/session and specified signature/ABI/source/currentness/RPATH/cleanup failures under v219; all acceptance OPEN.

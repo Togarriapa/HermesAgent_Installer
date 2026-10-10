@@ -169,3 +169,6 @@ SealedFD3source review220: plans/amendments/2026-10-10-sealed-bootstrap-fd3-sour
 Officialremote roledefinition222: plans/amendments/2026-10-10-official-remote-role-definition-producer-v222.md; RT-T222.1/.2 VD-T222.3 OPEN; exact3roleheldsource/separateidentitytransaction nofutureactiveclaims/allACOPEN.
 
 CurrentpublishedPMhome runtime221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existingfreshresolver exactprojection/FDcustody nooldseal/all207/allACOPEN.
+
+
+Xpra native source producers v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; RT-T219.1 → RT-T219.2 → VD-T219.3 OPEN, actual signed native+isolatedPM314 acquisition and independent session qualification; no gap-only completion/all AC OPEN.

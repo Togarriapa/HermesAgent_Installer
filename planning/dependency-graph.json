@@ -3286,5 +3286,20 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "xpra_native_build_acquisition_v219": {
+    "contract": "planning/xpra-native-build-acquisition-v219.json",
+    "amendment": "plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md",
+    "tasks": {
+      "RT-T219.1": [],
+      "RT-T219.2": [
+        "RT-T219.1"
+      ],
+      "VD-T219.3": [
+        "RT-T219.1",
+        "RT-T219.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

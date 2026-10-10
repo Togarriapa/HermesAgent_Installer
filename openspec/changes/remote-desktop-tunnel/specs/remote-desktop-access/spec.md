@@ -363,3 +363,15 @@ The installer SHALL use planning/official-remote-role-definition-producer-v222.j
 #### Scenario: Prepared enrollment has no runnable records
 - **WHEN** initial remote role preparation occurs with empty preparedrecords
 - **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted
+
+
+### Requirement: Actual Xpra native dependency and toolchain producer v219
+The installer SHALL implement the exact retained signed-native/isolated-PM314/transform/config/build/qualification producer contract in `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; permanently missing producer handlers SHALL NOT count as completion.
+
+#### Scenario: Native source or transform proof substituted
+- **WHEN** unsigned/stale/wrong-architecture native data, distribution-Python bindings, a transform module alias or caller acquisition/qualification rows replace genuine current owner receipts
+- **THEN** build/runtime issuance SHALL deny without global install, feature weakening, ambient tool fallback or fabricated readiness
+
+#### Scenario: Fixed isolated build qualified
+- **WHEN** exact current source/transform/PM/native dependency/recipe joins and actual manager-observed ELF/server-session effects are verified
+- **THEN** the owner SHALL publish only independently inspected package/build evidence, retaining separate CAS/materialization/role/loaded/target gates
