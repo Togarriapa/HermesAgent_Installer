@@ -106,3 +106,5 @@ Use the separate root-observed Linux-owner identity/principal/snapshot domain, f
 
 
 Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md` replaces unsafe setup-session aliasing with independently current daemon commit/source proof, actual fixed source run/events and one-use authenticated setup health intent. Only consumer-completed same-generation journal witness may enable; ACK is insufficient. All acceptance/source pins remain OPEN.
+
+Predecessor-bound candidate update v235: planning/predecessor-bound-candidate-update-v235.json requires current verified old release admission before exact candidate staging, sealed samecontroller input joins, existing publisher present CAS, durable owned rollback and candidate reexec. Distribution and runtime generation acceptance remain separate. LC-T235.2/VD-T235.3 OPEN; all AC OPEN.

@@ -3257,21 +3257,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "official_remote_role_definition_producer_v222": {
-    "contract": "planning/official-remote-role-definition-producer-v222.json",
-    "tasks": {
-      "RT-T222.1": [
-        "HI-T197.2"
-      ],
-      "RT-T222.2": [
-        "RT-T222.1"
-      ],
-      "VD-T222.3": [
-        "RT-T222.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "current_published_pm_home_runtime_v221": {
     "contract": "planning/current-published-pm-home-runtime-v221.json",
     "tasks": {
@@ -3283,6 +3268,21 @@
       ],
       "VD-T221.3": [
         "HI-T221.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_remote_role_definition_producer_v222": {
+    "contract": "planning/official-remote-role-definition-producer-v222.json",
+    "tasks": {
+      "RT-T222.1": [
+        "HI-T197.2"
+      ],
+      "RT-T222.2": [
+        "RT-T222.1"
+      ],
+      "VD-T222.3": [
+        "RT-T222.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3534,5 +3534,21 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "predecessor_bound_candidate_update_v235": {
+    "contract": "planning/predecessor-bound-candidate-update-v235.json",
+    "tasks": {
+      "BD-T235.1": [
+        "BD-T208.1"
+      ],
+      "LC-T235.2": [
+        "BD-T235.1",
+        "LC-F03"
+      ],
+      "VD-T235.3": [
+        "LC-T235.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN"
   }
 }

@@ -1019,6 +1019,8 @@ The installer SHALL consume only the issuer-current v231 active authority aggreg
 The installer SHALL apply the finite source membership and byte tuples in `planning/jarvis-runtime-source-pin-review-v228.json`, preserving the immutable selected source snapshot, held module custody and unchanged execution authority.
 ### Requirement: Retained oneshot terminal evidence
 The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
+### Requirement: Verified predecessor-bound installer candidate update
+The installer SHALL implement planning/predecessor-bound-candidate-update-v235.json using actual current old release and exact candidate source/runtime/build receipts, atomic owned pointer CAS and conditional rollback; candidate distribution publication SHALL remain distinct from verified compatible active runtime update.
 
 #### Scenario: Delayed module is absent or comes from a checkout
 - **WHEN** any of the three selected fixed module members cannot be imported from the sealed installed release
@@ -1026,6 +1028,9 @@ The installer SHALL accept literal active/exited for its retained qualification 
 #### Scenario: Retained child has exited successfully
 - **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
 - **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
+#### Scenario: Existing verified installer selects a new candidate
+- **WHEN** the root controlling TTY selects an exact compatible descendant candidate while an owned installed predecessor is verified
+- **THEN** the same predecessor is bound before staging and carried through sealed exec/build/publication, the new candidate launcher is verified and reexecuted, and the old release/data/active generation remain recoverable
 
 #### Scenario: Materialization or direct mount fixture succeeds
 - **WHEN** exact source profiles/skills or isolated bind effects pass
@@ -1033,3 +1038,6 @@ The installer SHALL accept literal active/exited for its retained qualification 
 #### Scenario: Active unit is not the retained terminal
 - **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
 - **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority
+#### Scenario: Failed or concurrent publication
+- **WHEN** predecessor/source/controller drift or candidate verification/exec fails
+- **THEN** the old pointer remains intact before CAS and a post-CAS failure restores only the issuer-owned verified predecessor if the exact candidate pointer is still current; unrelated pointer changes and data remain untouched

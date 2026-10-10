@@ -101,3 +101,6 @@ First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-boot
 - [ ] `LC-T181.4` Persist configure-later and resume independent readiness without identity-domain or ownership widening. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
 
 - [ ] HI-T191.3 Preserve one-use intent, crash/resume reconciliation and actual owned cleanup without copied setup authority. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.
+
+- [ ] LC-T235.2: Implement the v235 exact predecessor-bound candidate owned atomic pointer publication/conditional rollback/reexec and runtime update recovery; preserve all existing data/authority and exact pending prerequisites.
+- [ ] VD-T235.3 (v235): Verify genuine installed-predecessor candidate pipeline, pointer/controller/input drift, crash/rollback/preservation failures; target acceptance separate.

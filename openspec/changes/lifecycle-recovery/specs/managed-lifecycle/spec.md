@@ -400,3 +400,16 @@ The installer SHALL enforce the independent daemon commit/source proof and fixed
 #### Scenario: Transport or copied setup proof only
 - **WHEN** only ACK, copied DTO, wrong generation/source, stale intent or incomplete observer/terminal evidence exists
 - **THEN** functional enablement SHALL remain pending with one-use reconciliation and owned cleanup
+
+## ADDED Requirements
+
+### Requirement: Verified predecessor-bound installer candidate update
+The installer SHALL implement planning/predecessor-bound-candidate-update-v235.json using actual current old release and exact candidate source/runtime/build receipts, atomic owned pointer CAS and conditional rollback; candidate distribution publication SHALL remain distinct from verified compatible active runtime update.
+
+#### Scenario: Existing verified installer selects a new candidate
+- **WHEN** the root controlling TTY selects an exact compatible descendant candidate while an owned installed predecessor is verified
+- **THEN** the same predecessor is bound before staging and carried through sealed exec/build/publication, the new candidate launcher is verified and reexecuted, and the old release/data/active generation remain recoverable
+
+#### Scenario: Failed or concurrent publication
+- **WHEN** predecessor/source/controller drift or candidate verification/exec fails
+- **THEN** the old pointer remains intact before CAS and a post-CAS failure restores only the issuer-owned verified predecessor if the exact candidate pointer is still current; unrelated pointer changes and data remain untouched

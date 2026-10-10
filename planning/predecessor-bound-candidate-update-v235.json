@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "id": "predecessor-bound-candidate-update-v235",
+  "status": "specified; implementation/target OPEN",
+  "requirements": [
+    "R0029",
+    "R0055",
+    "R0148",
+    "R0151",
+    "R0153",
+    "R0172",
+    "R0190"
+  ],
+  "refines": [
+    "planning/bootstrap-handoff-tty-reconfirmation-v208.json",
+    "planning/sealed-bootstrap-fd3-source-review-v220.json",
+    "planning/fixed-release-store-source-review-v200.json"
+  ],
+  "audit": {
+    "source": "RootSetupAction.UPDATE currently returns pending; run_root_setup source acquisition runs only if pointer absent, otherwise resolves installed predecessor. Staging another source does not select it for deployment. Audited runtime d319be50534bbbe602b8a2a98e4cc41e8ab895c5 and diagnostic 0b4dae2221ec813231efdf3511b435e49359367e; these are audit identities, not deployment pins.",
+    "existing": "RootInstalledStagePublisher.publish_installed_stage accepts retained build handle and already verifies exact DeploymentPredecessor parent/inode/digest under fixed publication lock; _already_published recovers same-build postreplace/preconsume crash. RootInstalledReleaseBuilder snapshots raw predecessor after staging, and sealed runtime handoff carries no prior release proof. No durable installed-pointer rollback capability exists."
+  },
+  "entry": {
+    "selection": "UPDATE with present-verified predecessor enters explicit candidate TTY selection before consuming/closing predecessor receipt. INSTALL/RESUME retain existing semantics; present-invalid/inaccessible is failure, not absent. Candidate SHA never inferred from source cwd/argv/env/newest remote head. Exact initial selection and v208 delayed same-SHA/controller reconfirmation remain mandatory.",
+    "same_candidate": "If explicitly selected SHA equals installed verified SHA, verify exact installed closure and report same-candidate no stagepointer replacement; continue only the existing genuine runtime recovery path. Never claim update success from a no-op.",
+    "postexec": "One-use protected update transition distinguishes selection/build/published-installed-entry states. Installed candidate entry verifies current pointer and transition candidate/old predecessor receipt/intent and proceeds update recovery without prompting for another candidate or rebuilding recursively. A caller flag or ordinary update argv alone cannot enter postpublication branch."
+  },
+  "api": {
+    "issuer": "RootInstallerUpdateTransitionRegistry.from_root_bootstrap(candidate_selection_registry, distribution_registry, interpreter_registry) retains actual issuer instances, fixed owned journal and controller. No caller path/parsed predecessor/old bytes/authority callbacks.",
+    "admit": "begin_selected_update(selection: VerifiedRootBootstrapCandidateSelection, predecessor: VerifiedDeploymentPredecessor) -> RootAdmittedInstallerUpdate; requires same registry current root TTY choice action=update and present-verified predecessor; stores exact old pointer canonical bytes and fully verified held installed closure before staging.",
+    "handoff": "RootBootstrapRuntimeHandoffRegistry.create_for_current_process(..., update_transition: RootAdmittedInstallerUpdate | None=None); extend strict sealed journal/FD3 handoff schema with update transaction digest/handle and exact predecessor identity projection. Actual journal and memfd owner/nonce/seals/same PID start/boot/root TTY checks unchanged. After exec resolve freshly verified old pointer/closure and compare exact committed predecessor facts; do not recreate historical seal or use process-local old receipt handle alone.",
+    "build": "RootInstalledReleaseBuilder.build_selected(distribution_handle, interpreter_handle, *, update_transition: RootAdmittedInstallerUpdate | None=None) -> existing build handle; validate selected-source actor/current controller and exact transition predecessor before/after staging. Build receipt.deployment_predecessor uses bound original snapshot, never a fresh changed prior. Initial absent path retains current API.",
+    "publish": "RootInstalledStagePublisher.publish_installed_stage(build_handle, *, update_transition=None) -> existing VerifiedInstallerReleaseReceipt; same fixed store/manifest/roles/present CAS. Update path writes durable owned transaction before pointer replace and verifies full candidate before switch.",
+    "rollback": "RootInstalledStagePublisher.rollback_installed_stage(update_transition_handle) -> freshly verified installed predecessor receipt, only for issuer-owned failed transaction and exact candidate pointer CAS. Restore retained canonical predecessor bytes to fixed pointer atomically after revalidating its complete immutable closure. Never accept old SHA/path/bytes from caller.",
+    "resume": "RootInstallerUpdateTransitionRegistry.resolve_current_update_for_installed_entry() returns typed current transition derived only from protected FD3+journal/current installed candidate and original controller; reconstruct fresh observation with exact stored identities, not old DTO seal."
+  },
+  "facts": {
+    "update_subject": [
+      "update_transaction_handle",
+      "candidate_git_sha",
+      "candidate_git_tree_sha1",
+      "candidate_source_tree_sha256",
+      "candidate_amendment_manifest_sha256",
+      "candidate_source_catalog_sha256",
+      "baseline_tag",
+      "baseline_tag_object",
+      "baseline_commit",
+      "baseline_tree_sha256",
+      "selection_choice_sha256",
+      "lifecycle_action",
+      "controller_pid",
+      "controller_start_ticks",
+      "controller_uid",
+      "controller_gid",
+      "session_id",
+      "process_group_id",
+      "tty_device",
+      "tty_inode",
+      "tty_rdevice",
+      "boot_id",
+      "original_issued_monotonic",
+      "original_expires_monotonic"
+    ],
+    "predecessor": [
+      "parent_device",
+      "parent_inode",
+      "candidate_git_sha",
+      "deployment_receipt_sha256",
+      "deployment_receipt_device",
+      "deployment_receipt_inode",
+      "release_root_device",
+      "release_root_inode",
+      "closure_manifest_sha256",
+      "baseline_tree_sha256"
+    ],
+    "private_refs": "issuer-owned original canonical current.json bytes, verified immutable old release FD/member closure and actual source/interpreter/actor/build/update controller proofs. Canonical bytes never supplied externally. Refresh old release from current pointer only while still old; after switch reopen original fixed release root through retained owned transaction and validate exact full closure independent of current-pointer-only verifier."
+  },
+  "source_build": {
+    "verify": "Reuse fixed SOURCE_ORIGIN distribution CAS acquisition and exact 40hex SHA/FETCH_HEAD/HEAD/tree proof, full export/member hashes, annotated BASELINE_TAG_OBJECT/BASELINE_COMMIT and full frozen baseline tree/hash comparison. Amendment/source catalog/pyproject+uv.lock/reviewed builder/isolated interpreter full closure must join same candidate. A staging directory name is not verified candidate input.",
+    "upgrade": "Require source-backed ancestor relation from installed predecessor commit to selected candidate commit using fixed-origin verified Git object metadata, bounded acquisition/timeout; missing history or unrelated/older candidate remains pending exact source proof. Approved rollback is the separately owned transaction predecessor only, not arbitrary downgrade. No tag/ref mutation.",
+    "controller": "Current selected-source actor reobserved after isolated runtime exec; exact same root process controller/PIDFD/start/TTY/boot and original intent. v208 reconfirm creates genuine fresh boundary proof, not TTL mutation; changing old pointer requires new observation and explicit selection.",
+    "effects": "Build stages only candidate installer source/interpreter/release in existing owned bounded CAS; no component install, service start, account/network mutation or DB conversion. Preview candidate config/schema/permission changes from actual protected old/new sources; unknown compatibility or permission expansion pending, preserve user modifications. No global Python downgrade, runtime overwrite or unrelated service replacement."
+  },
+  "publication": {
+    "transaction": "Fixed owned root journal, strict bounded canonical schema, root600 files/root700 directories and nofollow retained FDs; transaction binds original old pointer SHA/full old closure, candidate/build/manifest, controller, phase and outcome. Write+fsync retained rollback record before candidate pointer CAS; no secret values. Acquire same publisher lock to compare and switch.",
+    "states": [
+      "admitted",
+      "source-verified",
+      "runtime-staged",
+      "build-verified",
+      "publication-prepared",
+      "pointer-published",
+      "installed-entry-verified",
+      "runtime-update-pending",
+      "committed",
+      "rolled-back",
+      "quarantined"
+    ],
+    "atomicity": "Stage candidate immutable owned release, validate through existing _mint_release/full installed closure checks, write pointer via present CAS under lock, fsync parent; then verify installed candidate exact commit/manifest/receipt and issuer transaction before exec. Old immutable release remains retained. Publication success is distribution deployment only, not active service/runtime acceptance.",
+    "failure": "Before pointer replace any failure leaves old pointer byte-identical; candidate partial owned staging cleaned/reconciled by existing same-build journal. After pointer switch if installed candidate verification/fixed launcher exec fails, rollback through exact transaction candidate CAS after verifying full old closure; failed rollback leaves durable quarantined state and precise recovery command, never arbitrary unlink.",
+    "collision": "If pointer changed by another publisher, rollback must not overwrite it; preserve both transaction artifacts, report conflict and stop. On rollback old bytes produce new pointer inode; verify new exact old pointer receipt afterward, do not pretend historical inode survived.",
+    "crash": "Same-build _already_published recovery must also match exact owned update transaction/current candidate canonical pointer/build closure. Restart reconstructs phase from protected durable journal plus actual pointer/full release observations; never infers completion from expiry or current candidate SHA alone. Pending controller expiry needs genuine new samecandidate/sameprior TTY adoption, not silent renewal."
+  },
+  "installed_entry": {
+    "exec": "Use existing installed launcher role/open_file hash/device/inode/mode validation, sanitized fixed env and exact selected lifecycle update; transport one-use update intent using sealed protected transition, no secret/caller source path argv. Verify code/interpreter/source/module closure after every exec; do not continue old loaded modules against new pointer.",
+    "runtime": "New candidate launcher may proceed only through genuine update-capable runtime/session/ownership/health adapters. Existing UPDATE pending must state exact missing adapter while keeping old active generation intact; do not relabel install/resume as successful update. Stagepointer switching is not active policy or service generation switching.",
+    "recovery": "Until new compatible generation passes required health/data/schema checks, preserve old working active generation and relevant consistent DB backup/compatible restore. Do not copy huge model/data trees for generic backup. Managed generation mutation requires its existing ownership/adoption/currentness gates; no authenticated account mutation here."
+  },
+  "preservation": "Keep data/config/credential vault/memories/private overlays/models/unrelated services and unowned stage conflicts untouched. Old installed release retained as rollback target. Owned CAS cleanup only with verified transaction/dead writer; no deleting current pointer, moving baseline tag or faking a fresh install.",
+  "failure_tests": [
+    "Real isolated temporary source/interpreter/build receipt and verified present predecessor -> samecontroller sealed handoff -> exact candidate build/pointer/installed exec verification, no fake receipt as positive proof.",
+    "Present-invalid/inaccessible/symlink pointer rejects without source bootstrap; absent initial flow unchanged.",
+    "Staged different source cannot silently run old installer; exact TTY selected SHA/fixed origin/tag/tree/full baseline/lock/source closure join enforced; older/unrelated candidate denied.",
+    "Changed predecessor inode/digest/full release member/controller/TTY/boot after admission, during acquisition/build or immediately before CAS denies; no late fresh-prior adoption.",
+    "Fail pointer write/fsync/preverification => old bytes intact; failed postreplace verification/exec restores exact verified predecessor via owned candidate CAS.",
+    "Concurrent newer pointer prevents rollback overwrite; unowned conflicts preserved/quarantined.",
+    "Crash before/after pointer CAS/build receipt consume and installed exec resumes exact transaction or explicit sameSHA/prior reauthorization; replay/foreign sealed FD3/expired proof denied.",
+    "Installer distribution publication may succeed while runtime update remains pending; all preexisting data/credentials/memories/overlays/services and active generation remain intact; no fabricated health/DB restore evidence."
+  ],
+  "owners": {
+    "BD-T235.1": "Luna bootstrap owner: predecessor-bound candidate admission/source/interpreter/actor sealed transition and exact build input joins.",
+    "LC-T235.2": "Luna installed stage publisher/lifecycle owner: durable old/candidate owned publication and conditional rollback/reexec/recovery; actual runtime update adapter or exact pending.",
+    "VD-T235.3": "Integration owner: genuine present-predecessor pipeline and tamper/failure/crash/preservation tests; target evidence separate."
+  },
+  "tasks": [
+    "BD-T235.1",
+    "LC-T235.2",
+    "VD-T235.3"
+  ],
+  "acceptance": "All AC01..18 OPEN; spec/API audit only, no code/source pins, privileged host run, Pi/account mutation, remote ref or push."
+}
