@@ -861,7 +861,7 @@ class RootSelectedDisplayLaunchAuthority:
             try:
                 return (lease.process_id == control.process_id
                         and lease.generation == control.generation
-                        and not self.monotonic() >= control.status_receipt.expires_monotonic)
+                        and self.monotonic() < process_receipt.expires_monotonic)
             finally:
                 lease.close()
         except Exception:
@@ -876,12 +876,17 @@ class RootSelectedDisplayLaunchAuthority:
             retained = self._started_processes.get((admission.admission_handle, role))
         return bool(
             type(result) is RootSelectedServiceStatusReceipt
+            and result.schema == 1
+            and _OPAQUE.fullmatch(result.receipt_handle)
             and retained is not None
             and result.process_receipt is retained
-            and result.profile_id == admission.role_bindings[role].profile_id
-            and result.generation == admission.role_bindings[role].generation
+            and result.process_receipt.profile_id == admission.role_bindings[role].profile_id
+            and result.process_receipt.generation == admission.role_bindings[role].generation
             and result.service_generation_digest == admission.service_generation_digest
-            and result.observed_monotonic <= self.monotonic() < result.expires_monotonic
+            and result.observed_monotonic <= self.monotonic()
+            and self.monotonic() < result.process_receipt.expires_monotonic
+            and _DIGEST.fullmatch(result.process_identity_digest)
+            and result.process_identity_digest == result.process_receipt.process_identity_digest
             and result.state in {"running", "stopped", "exited"}
             and (result.exit_code is None or type(result.exit_code) is int)
         )

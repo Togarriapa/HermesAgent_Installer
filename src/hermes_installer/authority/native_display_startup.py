@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-from .types import EffectAuthorization, HostContext, canonical_digest
+from .types import (
+    RootSelectedServiceContext, RootSelectedServiceEffectGrant, canonical_digest,
+)
 
 
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
@@ -57,11 +59,12 @@ def selected_start_payload(enrollment_id: str, generation: str,
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RootSelectedStartupGrant:
-    """Authority-issued one-use launch grant for one v65 selected role.
+    """Typed signed v80 intent for one root-selected startup operation.
 
-    Construction does not confer authority: custody must verify/consume the
-    signed context and effect grant with the live root AuthorityService before
-    any process or mount effect.
+    This wrapper is not an authority capability by itself. The exact typed
+    context and grant must still be consumed by AuthorityService, which
+    verifies signatures, retained admission, current policy, and one-use nonce
+    state immediately before custody performs the effect.
     """
     schema: int
     startup_authorization_handle: str
@@ -71,8 +74,9 @@ class RootSelectedStartupGrant:
     operation_id: str
     selection_payload_sha256: str
     controller_proof_handle: str
-    context: HostContext = field(repr=False)
-    effect_authorization: EffectAuthorization = field(repr=False)
+    controller_proof_sha256: str
+    context: RootSelectedServiceContext = field(repr=False)
+    effect_grant: RootSelectedServiceEffectGrant = field(repr=False)
     issued_monotonic: float
     expires_monotonic: float
 
@@ -85,8 +89,9 @@ class RootSelectedStartupGrant:
                 or not _OPAQUE.fullmatch(self.startup_authorization_handle)
                 or not _OPAQUE.fullmatch(self.controller_proof_handle)
                 or not _SHA256.fullmatch(self.selection_payload_sha256)
-                or not isinstance(self.context, HostContext)
-                or not isinstance(self.effect_authorization, EffectAuthorization)
+                or not _SHA256.fullmatch(self.controller_proof_sha256)
+                or type(self.context) is not RootSelectedServiceContext
+                or type(self.effect_grant) is not RootSelectedServiceEffectGrant
                 or isinstance(self.issued_monotonic, bool)
                 or not isinstance(self.issued_monotonic, (int, float))
                 or isinstance(self.expires_monotonic, bool)
@@ -100,24 +105,27 @@ class RootSelectedStartupGrant:
         )
         if canonical_digest(payload) != self.selection_payload_sha256:
             raise NativeDisplayStartupDenied("startup grant selection digest is inconsistent")
-        if (self.context.operation != "process.start"
+        context_wire = self.context.to_wire()
+        context_digest = hashlib.sha256(json.dumps(
+            context_wire, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        if (self.context.action != "start"
+                or self.context.role != self.role
+                or self.context.operation != "process.start"
                 or self.context.enrollment_id != self.service_enrollment_id
-                or self.context.generation != self.generation
-                or self.context.final_payload_digest != self.selection_payload_sha256
-                or self.effect_authorization.operation != "process.start"
-                or self.effect_authorization.enrollment_id != self.service_enrollment_id
-                or self.effect_authorization.generation != self.generation
-                or self.effect_authorization.final_payload_digest != self.selection_payload_sha256
-                or self.effect_authorization.request_digest != self.selection_payload_sha256
-                or self.effect_authorization.context_digest != canonical_digest({
-                    **self.context.claims(), "signature": self.context.signature,
-                })
-                or self.effect_authorization.profile_id != self.context.profile_id
-                or self.effect_authorization.principal_id != self.context.principal_id
-                or self.effect_authorization.namespace_id != self.context.namespace_id
-                or self.effect_authorization.uid != self.context.uid
-                or self.effect_authorization.capability != "hermes-profile-invoke"
-                or "hermes-profile-invoke" not in self.context.capabilities):
+                or self.context.selected_generation != self.generation
+                or self.context.operation_id != self.operation_id
+                or self.context.capability != "hermes-profile-invoke"
+                or self.context.admission_handle != self.startup_authorization_handle
+                or self.context.controller_proof_sha256 != self.controller_proof_sha256
+                or self.effect_grant.admission_handle != self.startup_authorization_handle
+                or self.effect_grant.operation != "process.start"
+                or self.effect_grant.capability != self.context.capability
+                or self.effect_grant.target != self.context.target
+                or self.effect_grant.context_sha256 != context_digest
+                or self.effect_grant.request_sha256 != self.selection_payload_sha256
+                or self.effect_grant.issued_monotonic != self.context.issued_monotonic
+                or self.effect_grant.expires_monotonic != self.context.expires_monotonic):
             raise NativeDisplayStartupDenied("startup grant is not bound to its exact operation and selection")
 
     def __repr__(self) -> str:

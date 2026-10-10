@@ -11,7 +11,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 
-from hermes_installer.artifacts import ArtifactCatalog
+from hermes_installer.artifacts import ArtifactCatalog, TreeFile
 from hermes_installer.authority.artifacts import (
     RootSchemaDerivationReceiptRegistry,
     SchemaDerivationDenied,
@@ -64,6 +64,7 @@ class VerifiedCatalogArtifactObservation:
     size_bytes: int
     version: str
     tree_manifest_sha256: str | None
+    tree_files: tuple[TreeFile, ...]
     _observer_id: str
     _fd: int
     _device: int
@@ -161,7 +162,8 @@ class RootCatalogArtifactObserver:
                 os.close(fd)
                 raise ValueError
             return VerifiedCatalogArtifactObservation(
-                artifact_id, sha256, size, spec.version, tree_sha, self._observer_id,
+                artifact_id, sha256, size, spec.version, tree_sha,
+                tuple(spec.tree_files) if materialize_tree else (), self._observer_id,
                 fd, info.st_dev, info.st_ino, _CATALOG_OBSERVATION_SEAL,
             )
         except SourceArtifactReceiptDenied:
@@ -189,11 +191,12 @@ class RootCatalogArtifactObserver:
                 raise ValueError
             if observation.is_tree:
                 if (spec.tree_manifest_sha256 != observation.tree_manifest_sha256
+                        or tuple(spec.tree_files) != observation.tree_files
                         or not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o555):
                     raise ValueError
                 self._verify_tree_members(observation, spec)
             else:
-                if (spec.tree_files or info.st_size != observation.size_bytes
+                if (spec.tree_files or observation.tree_files or info.st_size != observation.size_bytes
                         or observation.size_bytes != spec.size_bytes
                         or self._hash_fd(observation._fd, spec.max_bytes) != observation.sha256):
                     raise ValueError
