@@ -3034,6 +3034,16 @@
         "VD-T197.4"
       ],
       "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md",
+      "tasks": [
+        "HI-T173.1",
+        "HI-T178.2",
+        "HI-T197.3",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
     }
   ],
   "home_assistant_root_enrollment_mc_r0101": {

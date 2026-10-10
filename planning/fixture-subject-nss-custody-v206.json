@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md",
+  "extends": [
+    "v178",
+    "v199",
+    "v201"
+  ],
+  "tasks": [
+    "HI-T173.1",
+    "HI-T178.2",
+    "HI-T197.3",
+    "VD-T197.4"
+  ],
+  "identity_module": "hermes_installer.authority.qualification_service_identity",
+  "identity_type": "RootQualificationServiceIdentity",
+  "identity_fields": [
+    "selection_handle",
+    "fixture_selection_handle",
+    "fixture_run_id",
+    "fixture_generation_id",
+    "source_session_handle",
+    "source_transaction_handle",
+    "controller_selection_handle",
+    "service_profile_id",
+    "fixture_principal_id",
+    "fixture_namespace_id",
+    "service_name",
+    "service_uid",
+    "service_gid",
+    "nss_receipt_handle",
+    "marker_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "source_getters": [
+    "resolve_qualification_service_identity()",
+    "verify_qualification_service_identity(selection_handle)"
+  ],
+  "subject_name_prefix": "hermes-q-",
+  "marker_schema": 2,
+  "scope": "same child fixture/source transaction/controller only; no normal setup sessions",
+  "source_hashes": "pending committed issuer/discovery module review",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}

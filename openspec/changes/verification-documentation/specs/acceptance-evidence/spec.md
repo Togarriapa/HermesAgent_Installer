@@ -1025,3 +1025,18 @@ The installer SHALL provide Jarvis as the sole user-facing default profile while
 #### Scenario: Existing unowned identity conflicts
 - **WHEN** migration encounters an unowned Jarvis identity or modified owned state
 - **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
+
+
+### Requirement: Fixture-owned actual NSS subject
+
+The installer SHALL issue the v206 unprivileged fixture subject receipt only from its same child-owned source session, actual NSS identity and scoped protected transaction/controller, separately from normal production setup.
+
+#### Scenario: Actual fixture identity selects discovery subject
+
+- **WHEN** the fixed-suite choice and current child fixture transaction create or own the actual scoped NSS account
+- **THEN** its private issuer may select the observed UID/GID for real discovery custody, with separate process and cleanup evidence
+
+#### Scenario: Production or marker identity is substituted
+
+- **WHEN** an unrelated normal session, production marker, caller UID or copied receipt is offered as fixture authority
+- **THEN** launch denies and preserves unrelated identity/data, without enrollment or acceptance promotion
