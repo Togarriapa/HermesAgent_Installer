@@ -106,6 +106,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
+
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,
@@ -332,6 +333,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 os.close(registry._key_fds[receipt.receipt_handle])
                 release_root.chmod(0o700)
                 os.close(release_fd)
+
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
