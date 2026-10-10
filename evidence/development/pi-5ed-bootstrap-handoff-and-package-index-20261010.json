@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_bootstrap_handoff_failure_and_read_only_package_index",
+  "state": "report_only_failed_handoff_and_environment_observation",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery", "verification-documentation"],
+  "task_ids": ["BD-F01", "BD-F03", "LC-F03", "VD-F03"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "executor_uid": 0,
+    "executor_gid": 0
+  },
+  "candidate": {
+    "commit": "5ed1b4af5718085e9b242ee63fb8a0344ced9b29",
+    "tree": "3a6677f8f1ed3707b553501f3d10a45e73c6bf26",
+    "source_archive_sha256": "2eaa51f60866f97092a10a66a571e25f741eb1ddbd2ec2583ec8027daf901494",
+    "frozen_tag": "hermes-installer-plan-2026-10-09-v1",
+    "frozen_tag_object": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",
+    "frozen_tag_peeled_commit": "653ac5fbc7a02613c9951859a7d794599603459b",
+    "frozen_annotated_tag_verified": true
+  },
+  "root_installer_attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "candidate_sha_entered_at_fresh_prompt": true,
+    "prompt_entry_delay": "within seconds, as reported",
+    "source_cas_runtime_provisioning": "reported to have completed minutes later",
+    "observed_output": "Root setup failed at bootstrap.handoff (RuntimeError).",
+    "reached_account_or_enrollment_prompt": false,
+    "failure_stage": "bootstrap.handoff as named in operator output",
+    "inner_cause": "not established",
+    "successful_install_or_rollback": "not established"
+  },
+  "read_only_package_index_observation": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "source": "Pi root-owned cached Raspberry Pi OS APT metadata",
+    "inrelease": {
+      "bytes": 54861,
+      "owner": "root:root",
+      "mode": "0644",
+      "sha256": "aa76d42257ba4eef4065cb0d5f0de077132558647d54979944a57445f4940bcb",
+      "date": "Fri 09 Oct 2026 19:47:47 UTC",
+      "suite": "stable",
+      "codename": "trixie",
+      "architecture": "arm64"
+    },
+    "packages_index": {
+      "bytes": 1684276,
+      "owner": "root:root",
+      "mode": "0644",
+      "sha256": "44e16b6793480488f7d4964b655a93ee41705dc3e06923e68018af97ff83d28c",
+      "reported_equal_to_current_verified_package_indexes": true
+    },
+    "installed_libc6": {
+      "version": "2.41-12+rpt1+deb13u3",
+      "architecture": "arm64",
+      "package_provenance_verified": false
+    },
+    "package_mutation_performed": false
+  },
+  "implementation_context": {
+    "current_published_sol_refinement": "v208 requires fresh TTY reconfirmation at bootstrap handoff under the Luna implementation",
+    "tty_reconfirmation_in_this_attempt": "not established by the reported failure output",
+    "resource_delete_safe": false
+  },
+  "not_observed": [
+    "inner cause of the bootstrap.handoff RuntimeError",
+    "completed installer handoff or installation",
+    "account or enrollment interaction",
+    "fresh TTY reconfirmation success",
+    "installed libc6 provenance for this exact package version",
+    "source/resource deletion safety",
+    "native runtime or full target acceptance"
+  ],
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "This records the exact reported bootstrap handoff failure and a separate read-only cached package-index observation. It does not establish the exception's inner cause, installation, or acceptance. All AC01-AC18 remain open."
+}
