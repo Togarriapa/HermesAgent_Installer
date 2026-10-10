@@ -230,3 +230,5 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T161.2 application builder/source broker: Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts.
 
 - [ ] SK-T168.1 Application builder/materializer/selection/execution: regular held PM interpreter entrypoint, finite source shebang normalization and final manifest/probe joins.
+
+- [ ] SK-T175.1 Broker/factory/execution/wiring/custody: enroll exact effect sources, derive finite stage admissions, observe actual terminal/semantic/cleanup receipts.

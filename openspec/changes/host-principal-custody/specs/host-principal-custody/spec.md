@@ -759,3 +759,10 @@ The installer SHALL require actual fresh foreground input and per-input public d
 #### Scenario: Existing task input is private
 - **WHEN** task stdin already has PRIVATE source ancestry
 - **THEN** the initial public TTY producer SHALL NOT relabel it or issue a public source receipt
+
+### Requirement: Application effect sources v175
+The installer SHALL admit only the source-reviewed fixed qualification effect stages and separately verify runtime ABI.
+
+#### Scenario: Hyperframes qualification runs
+- **WHEN** the selected fixed Hyperframes effect recipe is admitted
+- **THEN** exactly render, ffprobe and framehash stages are allowed with one-use linked grants and actual cleanup evidence

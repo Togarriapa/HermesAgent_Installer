@@ -140,3 +140,5 @@ Backend source observer v157: `plans/amendments/2026-10-10-backend-source-observ
 Application build admission v161: `plans/amendments/2026-10-10-application-build-admission-v161.md`; finite actual setup managed app profile/input/output/grant and fixed source driver recipe, post-terminal output/probe evidence.
 
 Application Python entrypoint relocation v168: `plans/amendments/2026-10-10-application-python-entrypoint-relocation-v168.md`; exact held PM interpreter and finite source script normalization bound final observed tree, no ambient PATH.
+
+Application effect sources v175: `plans/amendments/2026-10-10-application-effect-sources-v175.md`; measured finite source members and exact stage counts remain distinct from ABI and provider acceptance.
