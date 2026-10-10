@@ -190,3 +190,11 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T139.1 factory/release builder: Pin literal root template in genuine release/source descriptor, implement actual root-held filesystem observer and same normal configuration existing-child model selection; absent/unowned/symlink/writable/root/source mismatch denies.
 
 - [ ] SK-T139.2 models/active publisher: Consume actual root/child/source observations and signed durable selection/current adoption, complete model member verification independent deployment; no arbitrary paths/copies/downloads or inferred embedding.
+
+- [ ] SK-T144.1 app build/source broker: Exact finite Node/Bun source/license/notice catalog selection and held isolated toolchain producer; actual digest/member/currentness failures and no global effects.
+
+- [ ] SK-T144.2 application environment build/probe: Actual offline lock-preserving Bun package closure/build and separate Node/Bun/native origin probe; missing artifact/license/cache/native support exact unavailable prerequisites.
+
+- [ ] SK-T145.1 memory lifecycle/selected startup authority/custody: Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD.
+
+- [ ] SK-T145.2 memory lifecycle integration: Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership.
