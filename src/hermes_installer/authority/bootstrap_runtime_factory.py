@@ -1533,9 +1533,9 @@ class RootRunnableRoleProjectionRegistry:
         now = time.monotonic()
         closure = RootSelectedRunnableRoleClosure(
             schema=1, role_closure_handle=secrets.token_urlsafe(36),
-            setup_session_id=claim.setup_session_id,
-            transaction_handle=claim.transaction_handle, plan_digest=claim.plan_sha256,
-            prepared_generation_id=claim.prepared_generation_id,
+            setup_session_id=reservation.setup_session_id,
+            transaction_handle=reservation.transaction_handle, plan_digest=reservation.plan_digest,
+            prepared_generation_id=reservation.prepared_generation_id,
             pm_runtime_receipt_handle=pm_runtime_receipt_handle,
             native_output_claim_handle=native_output_claim_handle,
             role_rows=tuple(rows), role_closure_sha256=digest,
