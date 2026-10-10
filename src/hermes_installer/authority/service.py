@@ -3001,6 +3001,11 @@ class AuthorityService:
         from .root_public_input_permission import (
             RootPublicInputPermission, RootPublicInputPermissionRegistry,
         )
+        try:
+            from .public_web_selection import RootTTYPublicInputDisclosure
+        except ImportError:
+            raise AuthorityDenied(
+                "source.public_input", "root TTY public-input disclosure support is unavailable") from None
 
         source_registry = self.source_observer_registry
         permission_registry = self.public_input_permission_registry
@@ -3038,16 +3043,28 @@ class AuthorityService:
         source_handle = None
         try:
             material = source_registry.resolve_consumed_public_input_source_material(proof)
+            verify_disclosure = getattr(
+                source_registry, "verify_consumed_public_input_disclosure", None)
             if (material.observation is not proof
                     or material.selected_execution is not selected_execution
                     or material.consumed is not True
+                    or type(material.disclosure) is not RootTTYPublicInputDisclosure
+                    or material.disclosure.disclosure_observation_handle
+                       != proof.disclosure_observation_handle
+                    or material.disclosure.input_sha256 != proof.input_sha256
+                    or material.disclosure.input_size_bytes != proof.input_size_bytes
+                    or material.disclosure.public_permission_selection_handle
+                       != proof.public_permission_selection_handle
+                    or material.disclosure.selected_execution_handle
+                       != selected_execution.selection_handle
+                    or not callable(verify_disclosure)
+                    or verify_disclosure(proof, material) is not True
                     or material.source_proof.proof_nonce != proof.source_observation_handle
                     or material.source_proof.selected_execution is not selected_execution
                     or not isinstance(material.payload_bytes, bytes)
                     or hashlib.sha256(material.payload_bytes).hexdigest() != proof.input_sha256
                     or len(material.payload_bytes) != proof.input_size_bytes
                     or tuple(material.parent_receipt_handles) != proof.parent_source_receipt_handles
-                    or not material.parent_receipts
                     or len(material.parent_receipts) != len(material.parent_receipt_handles)
                     or len(set(material.parent_receipt_handles)) != len(material.parent_receipt_handles)
                     or any(item.sensitivity is not Sensitivity.PUBLIC for item in material.parent_receipts)):
