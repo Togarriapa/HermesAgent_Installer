@@ -397,8 +397,7 @@ class RootResourceTaskRunner:
         if (not now < receipt.expires_monotonic
                 or self.service.service_generation_digest != capsule.service_generation_digest
                 or capsule.process_receipt.terminal_receipt_handle != receipt.terminal_receipt_handle
-                or hashlib.sha256(capsule.canonical_body).hexdigest()
-                   != hashlib.sha256(_canonical_json(dict(capsule.result_fields))).hexdigest()):
+                or capsule.canonical_body != _canonical_json(dict(capsule.result_fields))):
             raise AuthorityDenied("resource.task_result", "root result capsule is stale or inconsistent")
         return hashlib.sha256(capsule.canonical_body).hexdigest()
 
