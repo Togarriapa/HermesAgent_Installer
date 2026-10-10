@@ -97,6 +97,9 @@ class EnrollmentPolicy:
     private_loopback_networks: tuple[Mapping[str, Any], ...] = ()
     selected_resource_executions: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtimes: tuple[Mapping[str, Any], ...] = ()
+    # Public network scopes become active only after their source-specific
+    # target configuration receipt is selected and joined by root.
+    public_web_scopes: tuple[Mapping[str, Any], ...] = ()
     native_schema_artifacts: tuple[Mapping[str, Any], ...] = ()
     composio_channel_enrollments: tuple[Mapping[str, Any], ...] = ()
     channel_delivery_bindings: tuple[Mapping[str, Any], ...] = ()
@@ -911,6 +914,14 @@ class RootSetupSessionStore:
             raise BootstrapEnrollmentError("root authority journal directory identity changed")
         return live
 
+    def current_deadline(self, session_handle: RootSetupSessionHandle) -> float:
+        """Return the monotonic expiry of a fully revalidated live setup session."""
+        live = self._live(session_handle)
+        deadline = live.record.get("expires_monotonic")
+        if type(deadline) not in (int, float) or deadline <= time.monotonic():
+            raise BootstrapEnrollmentPending("root setup session deadline is unavailable or expired")
+        return float(deadline)
+
     def _handle_for_session(self, session_id: str) -> RootSetupSessionHandle:
         live = self._sessions.get(session_id)
         if live is None:
@@ -1683,6 +1694,7 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "private_loopback_networks": [dict(row) for row in policy.private_loopback_networks],
              "selected_resource_executions": [dict(row) for row in policy.selected_resource_executions],
              "selected_application_runtimes": [dict(row) for row in policy.selected_application_runtimes],
+             "public_web_scopes": [dict(row) for row in policy.public_web_scopes],
              "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
              "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
              "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings],
@@ -1691,7 +1703,13 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments],
              "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
              "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
-             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings]}
+             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings],
+             # v128 selections exist only after root-verified observation and
+             # explicit selection. Enrollment never infers either from policy
+             # aliases, model lists, or the prepared setup transaction.
+             "private_memory_endpoint_selections": [],
+             "private_memory_model_selections": [],
+             "public_web_scopes": [dict(row) for row in getattr(policy, "public_web_scopes", ())]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:

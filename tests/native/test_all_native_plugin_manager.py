@@ -36,6 +36,9 @@ installer_src, overlay, upstream, home = map(Path, sys.argv[1:])
 sys.path[:0] = [str(overlay), str(installer_src), str(upstream)]
 from hermes_cli.plugins import PluginManager
 from hermes_installer import native_plugin_loader as loader
+from hermes_installer.authority.native_registration_projection import (
+    capture_actual_hermes_registrations,
+)
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.components.native_plugins import (
     _PLUGIN_IDS, _PLUGIN_VERSIONS, resolve_native_plugin_implementation,
@@ -53,6 +56,12 @@ assert len(schemas._schemas) == 61
 source_root = installer_src.parent / "resources/vendor/hermes-agent-resources-2.3.1/plugins"
 manifests = {key: hashlib.sha256((source_root / f"{key}.yaml").read_bytes()).hexdigest()
              for key in _PLUGIN_IDS}
+fixture_result_schema = {
+    "type": "object",
+    "properties": {"fixture_result": {"type": "string", "maxLength": 256}},
+    "required": ["fixture_result"],
+    "additionalProperties": False,
+}
 
 class FixtureAdapter:
     def __init__(self, adapter_id):
@@ -68,6 +77,49 @@ class FixturePackage:
     compiled_closure_sha256 = "b" * 64
     mount_target = Path("/fixture/root-selected-mount")
     adapter_ids = tuple(_PLUGIN_IDS)
+    # This captures each reviewed implementation's real register_tool calls
+    # under an effect-denying context. These rows exercise PluginManager's
+    # candidate interface only; they are not an operational package index or
+    # evidence of enrollment/readiness.
+    captured_registrations = capture_actual_hermes_registrations()
+    _candidate_by_name = {
+        row.native_tool_name: loader.SelectedNativeCandidate(
+            native_tool_name=row.native_tool_name,
+            adapter_id=row.adapter_id,
+            action_id=row.native_tool_name,
+            argument_schema=row.argument_schema,
+            result_schema=fixture_result_schema,
+            native_schema_sha256=row.native_schema_sha256,
+            observer_enrollment_ids=(),
+            native_server_name="hermes-installer",
+            description=row.description,
+            registration_id=f"{row.adapter_id}:tool:{row.native_tool_name}",
+            toolset=row.toolset,
+            family=row.adapter_id,
+            handler_kind="captured-interface-fixture",
+        )
+        for row in captured_registrations
+    }
+    candidate_rows = tuple(_candidate_by_name.values())
+    registered_candidates = set()
+
+    def candidate(self, name):
+        return self._candidate_by_name.get(name)
+
+    def _mark_candidate_registered(self, adapter_id, registration_id):
+        pair = (adapter_id, registration_id)
+        expected = {
+            (candidate.adapter_id, candidate.registration_id)
+            for candidate in self.candidate_rows
+        }
+        if pair not in expected:
+            raise AssertionError("PluginManager registered an unselected captured candidate")
+        self.registered_candidates.add(pair)
+
+    @property
+    def registered_action_ids(self):
+        return tuple(sorted(registration_id for _, registration_id in self.registered_candidates))
+
     def resolve_adapter(self, adapter_id):
         return FixtureAdapter(adapter_id) if adapter_id in self.adapter_ids else None
     def manifest_digest_for_adapter(self, adapter_id):
@@ -144,6 +196,22 @@ assert all(row is not None and row.enabled and row.error is None for row in load
 }
 assert all(row.tools_registered for row in loaded.values())
 assert len(manager._hermes_installer_native_plugin_keys) == 18
+captured_names = {row.native_tool_name for row in package.captured_registrations}
+assert len(package.captured_registrations) == 42 and len(captured_names) == 42
+assert {candidate.native_tool_name for candidate in package.candidate_rows} == captured_names
+assert len(package.registered_candidates) == 42
+assert set(package.registered_action_ids) == {
+    candidate.registration_id for candidate in package.candidate_rows
+}
+for captured in package.captured_registrations:
+    candidate = package.candidate(captured.native_tool_name)
+    assert candidate.adapter_id == captured.adapter_id
+    assert candidate.toolset == captured.toolset
+    assert candidate.argument_schema == captured.argument_schema
+    assert candidate.description == captured.description
+    assert candidate.native_schema_sha256 == captured.native_schema_sha256
+    source_path = installer_src / captured.registration_source_path
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == captured.registration_source_sha256
 
 from tools.registry import registry
 overlay_read = registry.dispatch("resource_overlay_read", {"record_id": "fixture"}, scope=manager.scope_key)
@@ -157,8 +225,9 @@ assert effects.calls == [("github", "repo.get", {"repository": "owner/private"})
             env = dict(os.environ)
             env["HERMES_HOME"] = str(root / "home")
             (root / "home").mkdir()
+            fixture_python = env.get("HERMES_NATIVE_PLUGIN_PYTHON", sys.executable)
             completed = subprocess.run(
-                [sys.executable, "-c", script, str(INSTALLER_ROOT / "src"),
+                [fixture_python, "-c", script, str(INSTALLER_ROOT / "src"),
                  str(overlay), str(HERMES_SOURCE), str(root / "home")],
                 env=env, capture_output=True, text=True, timeout=60,
             )

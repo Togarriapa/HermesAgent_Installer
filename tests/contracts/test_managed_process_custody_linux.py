@@ -36,6 +36,8 @@ from hermes_installer.managed_process_custodian import (
     process_control_target, process_inspect_target, process_start_target,
 )
 
+_NATIVE_ADAPTER_SOURCE = b"def register(ctx):\n    ctx.register_tool('ci-native-registration')\n"
+
 
 class _ControlledCustodyPolicy:
     revision = "ci-controlled-custody-v1"
@@ -393,9 +395,9 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
 
     def _native_mount_probe_source(self) -> str:
         package_id = "ci-native-package-" + self.token[:12]
-        module_digest = hashlib.sha256(b"def register(ctx):\n    return None\n").hexdigest()
+        module_digest = hashlib.sha256(_NATIVE_ADAPTER_SOURCE).hexdigest()
         closure_files = [{"relative_path": "adapter.py", "sha256": module_digest,
-                          "size_bytes": len(b"def register(ctx):\n    return None\n"), "mode": 0o444}]
+                          "size_bytes": len(_NATIVE_ADAPTER_SOURCE), "mode": 0o444}]
         closure_digest = hashlib.sha256(json.dumps(
             closure_files, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")).hexdigest()
@@ -421,26 +423,51 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def _native_loader_progress_source(binding) -> str:
+        target = native_package_mount_target(
+            package_id=binding.package_id, profile_id=binding.profile_id,
+            generation=binding.generation,
+            compiled_closure_sha256=binding.compiled_closure_sha256,
+        )
         return (
-            "import json,socket,struct\n"
+            "import hashlib,importlib.util,json,os,socket,struct,sys\n"
+            "from types import SimpleNamespace\n"
             "_sock=socket.socket(fileno=3)\n"
             "_nonce=b''\n"
             "while len(_nonce)<43:\n"
             "    _part=_sock.recv(43-len(_nonce))\n"
             "    if not _part: raise SystemExit(91)\n"
             "    _nonce+=_part\n"
+            f"_root={str(target)!r}\n"
+            "_module_path=os.path.join(_root,'closure','adapter.py')\n"
+            "_spec=importlib.util.spec_from_file_location('fixture.adapter',_module_path)\n"
+            "if _spec is None or _spec.loader is None: raise SystemExit(92)\n"
+            "_module=importlib.util.module_from_spec(_spec)\n"
+            "sys.modules[_spec.name]=_module\n"
+            "_spec.loader.exec_module(_module)\n"
+            "_stat=os.stat(_module.__file__,follow_symlinks=False)\n"
+            "_module_bytes=open(_module.__file__,'rb').read()\n"
+            "_roles=[{'role_id':'ci-native-role','module_name':_spec.name,"
+            "'closure_member_path':'adapter.py','module_file_sha256':hashlib.sha256(_module_bytes).hexdigest(),"
+            "'module_file_device':_stat.st_dev,'module_file_inode':_stat.st_ino,"
+            "'module_file_size_bytes':len(_module_bytes)}]\n"
             f"_package={binding.package_id!r}\n"
             f"_generation={binding.generation!r}\n"
             f"_entrypoint={binding.entrypoint_sha256!r}\n"
             f"_resolver={binding.resolver_sha256!r}\n"
-            "for _seq,_phase in enumerate(('entrypoint-imported','actions-registered','ready')):\n"
-            "    _actions=[] if _seq==0 else ['ci-native-action']\n"
-            "    _record={'schema':1,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
+            "def _send(_seq,_phase,_registrations):\n"
+            "    _record={'schema':2,'launch_nonce':_nonce.decode('ascii'),'sequence':_seq,"
             "'phase':_phase,'package_id':_package,'generation':_generation,"
+            "'package_generation':_generation,"
             "'entrypoint_sha256':_entrypoint,'resolver_sha256':_resolver,"
-            "'registered_action_ids':_actions}\n"
+            "'registered_registration_ids':_registrations,'loaded_process_roles':_roles}\n"
             "    _body=json.dumps(_record,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')\n"
             "    _sock.sendall(struct.pack('!I',len(_body))+_body)\n"
+            "_send(0,'entrypoint-imported',[])\n"
+            "_registered=[]\n"
+            "_module.register(SimpleNamespace(register_tool=_registered.append))\n"
+            "if _registered!=['ci-native-registration']: raise SystemExit(93)\n"
+            "_send(1,'actions-registered',list(_registered))\n"
+            "_send(2,'ready',list(_registered))\n"
             "_sock.close()\n"
         )
 
@@ -456,9 +483,13 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
             package if profile_id == binding.profile_id and generation == binding.generation else None)
 
         def resolve(owned_handle):
+            from hermes_installer.authority.native_custody_proof import NativeProcessRoleSelection
+
+            role_sha256 = binding.adapter_records["ci-native-adapter"].adapter_sha256
             return NativeLoaderSelection(
                 process_id=owned_handle.process_id, package_id=binding.package_id,
                 profile_id=binding.profile_id, generation=binding.generation,
+                package_generation=binding.generation,
                 compiled_closure_sha256=binding.compiled_closure_sha256,
                 entrypoint_sha256=binding.entrypoint_sha256,
                 resolver_sha256=binding.resolver_sha256,
@@ -466,6 +497,20 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
                 loader_role_artifact_id=binding.entrypoint_artifact_id,
                 loader_role_sha256=binding.entrypoint_sha256,
                 registered_action_ids=("ci-native-action",),
+                registered_registration_ids=("ci-native-registration",),
+                observer_role_action_bindings=((
+                    "ci-native-role", "ci-native-role-artifact", role_sha256, "ci-native-action",
+                ),),
+                process_roles=(NativeProcessRoleSelection(
+                    role_id="ci-native-role", role_artifact_id="ci-native-role-artifact",
+                    role_sha256=role_sha256, profile_generation=binding.generation,
+                    native_package_generation=binding.generation,
+                    role_source_receipt_handle="ci-native-role-source-receipt",
+                    module_name="fixture.adapter", closure_member_path="adapter.py",
+                    role_source_revision="ci-native-role-revision", role_source_tree_sha256="f" * 64,
+                    registration_ids=("ci-native-registration",),
+                    action_binding_ids=("ci-native-action-binding",),
+                ),),
             )
 
         self.handler.set_native_loader_observation_store(RootNativeLoaderObservationStore(
@@ -478,7 +523,7 @@ class ManagedProcessRootAuthorityIntegrationTests(unittest.TestCase):
         closure = root / "closure"
         closure.mkdir(parents=True, mode=0o755)
         module = closure / "adapter.py"
-        module.write_bytes(b"def register(ctx):\n    return None\n")
+        module.write_bytes(_NATIVE_ADAPTER_SOURCE)
         module.chmod(0o444)
         os.chown(module, 0, 0)
         closure.chmod(0o555)

@@ -181,10 +181,47 @@ class NativeMCPExecutionTests(unittest.TestCase):
                 self.events = {}
                 self.current = True
                 self.revoke_after_capture = False
-                self.provider_observer = SimpleNamespace(source_kind="provider-result")
+                self.provider_observer = SimpleNamespace(
+                    source_kind="provider-result", observer_enrollment_id="provider-result-observer",
+                    role_id="role.native", package_id="package-a",
+                    native_package_generation="package-gen-a", profile_id="profile-a",
+                    generation="process-gen-a",
+                    source_registration_ids=("registration.provider",),
+                )
                 self.observers["provider-result-observer"] = self.provider_observer
-                self.package = SimpleNamespace(package_id="package-a")
-                self.loaded_proof = object()
+                binding_id = "binding.native.mcp"
+                self.package = SimpleNamespace(
+                    package_id="package-a", generation="package-gen-a",
+                    profile_id="profile-a", profile_generation="process-gen-a",
+                    action_records={"action-mcp-read": SimpleNamespace(
+                        adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
+                        operation="mcp.request", generation="package-gen-a",
+                        action_binding_id=binding_id,
+                    )},
+                    process_role_records={"role.native": SimpleNamespace(
+                        package_id="package-a", native_package_generation="package-gen-a",
+                        profile_id="profile-a", profile_generation="process-gen-a",
+                        observer_enrollment_ids=("provider-result-observer",),
+                        action_binding_ids=(binding_id,),
+                        registration_ids=("registration.native.mcp", "registration.provider"),
+                        workflow_ids=(),
+                    )},
+                    registration_records={
+                        "registration.native.mcp": SimpleNamespace(
+                            registration_id="registration.native.mcp", generation="package-gen-a",
+                            adapter_id=HANDLER_ARTIFACT_ID,
+                            action_bindings=(SimpleNamespace(action_binding_id=binding_id),),
+                        ),
+                        "registration.provider": SimpleNamespace(
+                            registration_id="registration.provider", generation="package-gen-a",
+                            adapter_id=HANDLER_ARTIFACT_ID, action_bindings=(),
+                        ),
+                    },
+                    workflow_records={},
+                )
+                self.loaded_proof = SimpleNamespace(observed_registration_ids=(
+                    "registration.provider", "registration.native.mcp",
+                ))
 
             def record_observed_event(self, observer_id, **kwargs):
                 if observer_id != "mcp-result-observer":
@@ -298,9 +335,10 @@ class NativeMCPExecutionTests(unittest.TestCase):
         )
         selected_action = NativeActionSelection(
             package_id="package-a", profile_id="profile-a", generation="process-gen-a",
+            package_generation="package-gen-a",
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
-            operation="mcp.request",
-            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}', 
+            registration_id="registration.native.mcp", operation="mcp.request",
+            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
         )
 
         def action_resolver(_bridge, identity, tool_name):
@@ -343,11 +381,13 @@ class NativeMCPExecutionTests(unittest.TestCase):
             producer_pidfd=self.producer_fd, gateway_identity=gateway_identity,
             gateway_pid=4567, gateway_pidfd=self.gateway_fd, package_id="package-a",
             profile_id="profile-a", generation="process-gen-a",
+            package_generation="package-gen-a",
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
+            registration_id="registration.native.mcp",
             tool_name="mcp__figma__read_metadata",
-            operation="mcp.request",
-            canonical_arguments=b'{"fileKey":"selected-file"}',
             arguments_sha256=hashlib.sha256(b'{"fileKey":"selected-file"}').hexdigest(),
+            canonical_arguments=b'{"fileKey":"selected-file"}',
+            operation="mcp.request",
             parent_closure_digest="b" * 64, receipt_handles=(self.source_handle,),
             observer_id="provider-result-observer", loaded_package_proof=self.source_observers.loaded_proof,
             expires_monotonic=time.monotonic() + 30,

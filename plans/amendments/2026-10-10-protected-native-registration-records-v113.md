@@ -1,0 +1,3 @@
+# Protected native registration records v113
+
+HI08/HI11/HI12/RB08/MC-F01 substantive protected storage gap: v99 defines projection but singular adapter_id map cannot represent source42 registrations separately from61 backend effect routes. Add exact package action/registration/workflow arrays and typed joins from actual release module/source/schema/effect/observer/MCP selections BEFORE output/activepublication. Source-backed bounded passthrough result wrapper replaces generic registered tool result, preserves backend data trust and actual operation validators; no fabricated success or authorization. Exact adjacent schema. Source primitive/observer/account constraints unchanged, all18 original scope/AC pending. No fourfixture native mappings. Frozen baseline unchanged.

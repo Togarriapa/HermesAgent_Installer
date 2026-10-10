@@ -90,13 +90,14 @@ class RootSelectedCronProducer:
 
     def __init__(self, *, selected_resource: Any, job_enrollment: Any,
                  selected_ingress_binding: Any, event_issuer: Any,
-                 occurrence_store: Any, job_authority: Any,
+                 occurrence_store: Any, job_authority: Any, dag_dispatcher: Any,
                  service_generation_digest: str,
                  wall_clock: Any = time.time, monotonic: Any = time.monotonic):
         from ..authority.resource_event_issuance import ResourceEventContextIssuer
         from ..authority.resource_source_controllers import RootResourceControllerRegistry
         from ..authority.root_controller_custody import RootSelectedIngressBinding
         from .resource_jobs import ResourceJobEnrollment
+        from .resource_dispatch import RootResourceDAGDispatcher
         from .resources_runtime import SelectedResourceExecution, _validate_cron
 
         if (not isinstance(selected_resource, SelectedResourceExecution)
@@ -108,6 +109,9 @@ class RootSelectedCronProducer:
                 or not isinstance(event_issuer.controller_registry, RootResourceControllerRegistry)
                 or not callable(getattr(occurrence_store, "claim_occurrence", None))
                 or not callable(getattr(job_authority, "admit_root_resource_event", None))
+                or type(dag_dispatcher) is not RootResourceDAGDispatcher
+                or dag_dispatcher.jobs is not job_authority
+                or dag_dispatcher.registry is not event_issuer.controller_registry
                 or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)
                 or not callable(wall_clock) or not callable(monotonic)):
             raise ResourceObservationError("selected root cron producer inputs are unavailable")
@@ -137,6 +141,7 @@ class RootSelectedCronProducer:
         self.selected, self.enrollment, self.binding = selected_resource, job_enrollment, binding
         self.issuer, self.registry = event_issuer, event_issuer.controller_registry
         self.store, self.jobs = occurrence_store, job_authority
+        self.dispatcher = dag_dispatcher
         self.service_generation_digest = service_generation_digest
         self._wall_clock, self._monotonic = wall_clock, monotonic
         self._pending: dict[int, _RetainedCronObservation] = {}
@@ -146,8 +151,10 @@ class RootSelectedCronProducer:
             self, selected_ingress_binding=binding,
         )
 
-    def tick(self) -> Any | None:
-        """Generate, capture, and admit the due minute; no user-controlled inputs."""
+    def tick(self, *, cancelled: Any = lambda: False) -> Any | None:
+        """Generate, capture, admit, and execute one due occurrence under root custody."""
+        if not callable(cancelled):
+            raise ResourceObservationError("root scheduler cancellation probe is invalid")
         from datetime import datetime, timezone
         from ..authority.root_controller_custody import RootIngressControllerProof
         from .resources_runtime import _cron_instant_matches
@@ -219,7 +226,8 @@ class RootSelectedCronProducer:
                 self._capability, controller_proof=proof, raw_observation=observation,
             )
             handle = self.registry.capture_selected_ingress(proof.proof_handle, source_proof)
-            return self.jobs.admit_root_resource_event(handle)
+            admission = self.jobs.admit_root_resource_event(handle)
+            return self.dispatcher.run_admitted(handle, admission, cancelled=cancelled)
         except Exception:
             if handle is not None:
                 try:
@@ -288,10 +296,12 @@ class RootSelectedResourceScheduler:
         self.producers = tuple(producers)
         self.poll_seconds = float(poll_seconds)
 
-    def tick_once(self) -> tuple[Any, ...]:
+    def tick_once(self, *, cancelled: Any = lambda: False) -> tuple[Any, ...]:
         """Poll every selected cron once; failures propagate to the supervisor."""
+        if not callable(cancelled):
+            raise ResourceObservationError("root scheduler cancellation probe is invalid")
         return tuple(result for producer in self.producers
-                     if (result := producer.tick()) is not None)
+                     if (result := producer.tick(cancelled=cancelled)) is not None)
 
     def run(self, stop_event: Any) -> None:
         """Run the selected timer loop under the root daemon's stop event."""
@@ -299,7 +309,7 @@ class RootSelectedResourceScheduler:
         if type(stop_event) is not type(threading.Event()):
             raise TypeError("root scheduler stop event must be a threading.Event")
         while not stop_event.is_set():
-            self.tick_once()
+            self.tick_once(cancelled=stop_event.is_set)
             stop_event.wait(self.poll_seconds)
 
 
@@ -868,6 +878,27 @@ class SelectedWebhookIngress:
             capability, controller_proof=controller, raw_observation=raw_observation,
         )
         return controller_registry.capture_selected_ingress(controller.proof_handle, proof)
+
+    def dispatch_verified_observation(self, raw_observation: object,
+                                     controller_registry: Any, dag_dispatcher: Any, *,
+                                     cancelled: Any = lambda: False) -> Any:
+        """Capture and run one HMAC-verified event through its selected DAG.
+
+        The input must be the exact pending object returned by ``accept_request``;
+        no resource, profile, event, or target selector is accepted here.
+        """
+        from .resource_dispatch import RootResourceDAGDispatcher
+        if type(dag_dispatcher) is not RootResourceDAGDispatcher or not callable(cancelled):
+            raise ResourceObservationError("root webhook dispatcher is unavailable")
+        event = self.capture_verified_observation(raw_observation, controller_registry)
+        try:
+            return dag_dispatcher.run_event(event, cancelled=cancelled)
+        except Exception:
+            try:
+                controller_registry.cancel_event(event)
+            except Exception:
+                pass
+            raise
 
     def resolve_controller_for_request(self, method: str, path: str,
                                        controller_registry: Any) -> Any:

@@ -41,13 +41,74 @@ def test_root_runtime_composition_requires_service_records_before_optional_hardw
         native_schema_artifact_records=(),
         composio_channel_enrollment_records=(), channel_delivery_binding_records=(),
         remote_startup_records=(), private_loopback_network_records=(),
-        selected_resource_execution_records=(), selected_application_runtime_records=(), resource_scope_binding_records=(),
+        selected_resource_execution_records=(), selected_application_runtime_records=(), resource_scope_binding_records=(), public_web_scope_records=(),
     )
     with pytest.raises(EnrollmentDenied, match="service generation records"):
         build_root_runtime_bindings(
             enrollment, vault=None, artifact_catalog=None,
             authorization_check=lambda **_: True,
         )
+
+
+def test_root_runtime_private_memory_getters_forward_only_protected_binding_ids():
+    from types import SimpleNamespace
+    endpoint = SimpleNamespace(binding_id="endpoint-a", service_generation_digest="a" * 64)
+    model = SimpleNamespace(binding_id="model-a", endpoint_binding_id="endpoint-a",
+                            service_generation_digest="a" * 64)
+    catalog = SimpleNamespace(
+        resolve_private_memory_endpoint_binding=lambda binding_id: endpoint if binding_id == "endpoint-a" else None,
+        resolve_private_memory_model_binding=lambda binding_id, endpoint_id=None:
+            model if binding_id == "model-a" and endpoint_id in (None, "endpoint-a") else None,
+    )
+    artifact_catalog = SimpleNamespace(artifacts={
+        "server-config-a": SimpleNamespace(sha256="a" * 64),
+        "server-runtime-a": SimpleNamespace(sha256="b" * 64),
+        "license-a": SimpleNamespace(sha256="c" * 64),
+        "model-runtime-a": SimpleNamespace(sha256="e" * 64),
+        "load-config-a": SimpleNamespace(sha256="f" * 64),
+    })
+    endpoint = SimpleNamespace(
+        binding_id="endpoint-a", service_generation_digest="a" * 64,
+        server_config_artifact_id="server-config-a", server_config_sha256="a" * 64,
+        runtime_artifact_ids=("server-runtime-a",),
+    )
+    model = SimpleNamespace(
+        binding_id="model-a", endpoint_binding_id="endpoint-a",
+        service_generation_digest="a" * 64, license_artifact_id="license-a",
+        license_sha256="c" * 64, model_artifact_id="existing-model:" + "d" * 64,
+        model_artifact_sha256="d" * 64, model_tree_manifest_sha256="d" * 64,
+        runtime_artifact_id="model-runtime-a", runtime_artifact_sha256="e" * 64,
+        load_config_artifact_id="load-config-a", load_config_sha256="f" * 64,
+    )
+    bindings = RootRuntimeBindings(
+        enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=artifact_catalog,
+        build_store=None, service_connector=None,
+        private_memory_endpoint_selection_records=({"id": "endpoint-a"},),
+        private_memory_model_selection_records=({"id": "model-a"},),
+    )
+    assert bindings.private_memory_endpoint_selection_records == ({"id": "endpoint-a"},)
+    assert bindings.private_memory_model_selection_records == ({"id": "model-a"},)
+    assert bindings.resolve_private_memory_endpoint_binding("endpoint-a") is endpoint
+    assert bindings.resolve_private_memory_model_binding("model-a", "endpoint-a") is model
+
+
+def test_public_web_scope_metadata_never_works_without_live_target_registry():
+    scope = SimpleNamespace(
+        enrollment_id="web-scope-a", generation="generation-a",
+        target_selection_handle="target-selection-a",
+    )
+    catalog = SimpleNamespace(
+        digest="a" * 64,
+        resolve_public_web_scope=lambda *_: scope,
+    )
+    bindings = RootRuntimeBindings(
+        enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None,
+    )
+    with pytest.raises(EnrollmentDenied, match="target selection registry is unavailable"):
+        bindings.resolve_public_web_scope("web-scope-a", "generation-a")
 
 
 def test_empty_device_and_build_catalogs_fail_only_when_selected():
@@ -307,6 +368,12 @@ def test_selected_application_runtime_record_joins_recipe_roots_and_artifacts_bu
     assert selected.application_id == "application-a"
     assert selected.service_generation_digest == digest
     assert not hasattr(selected, "effective_spec")
+    # The protected row is only a selector. Even an otherwise valid enabled
+    # row cannot become an executable DTO until current source and runtime
+    # receipts are resolved from retained root registries.
+    row["enabled"] = True
+    with pytest.raises(EnrollmentDenied, match="receipt registries are unavailable"):
+        binding.resolve_selected_application_runtime("application-a", "profile-a")
     with pytest.raises(EnrollmentDenied, match="absent or ambiguous"):
         binding.resolve_selected_application_runtime_record("application-a", profile_id="other-profile")
 
@@ -454,13 +521,20 @@ def test_selected_native_window_fails_closed_without_current_process_binding():
 def test_native_mcp_selection_requires_current_native_adapter_scope_and_effect_rule():
     service = SimpleNamespace(profile_id="profile-a", generation="generation-a",
                               enrollment_id="enrollment-a")
-    adapter = SimpleNamespace(
+    action = SimpleNamespace(
         action_id="binding-a", generation="generation-a",
         adapter_artifact_id="handler-a", adapter_sha256="a" * 64,
+        adapter_id="hermes-installer.native-mcp-dispatch.v1",
+        operation="mcp.request", target_id="mcp:mcp-a:http",
+        capability="mcp:mcp-a:read", recipient=None,
+    )
+    registration = SimpleNamespace(
+        handler_kind="mcp-dispatch", handler_id="binding-a",
+        native_tool_name="query", native_server_name="hermes-installer",
     )
     package = SimpleNamespace(
-        profile_id="profile-a", generation="generation-a",
-        adapter_records={"hermes-installer.native-mcp-dispatch.v1": adapter},
+        profile_id="profile-a", generation="generation-a", profile_generation="generation-a",
+        action_records={"action-a": action}, registration_records={"registration-a": registration},
     )
 
     class Catalog:
@@ -478,6 +552,7 @@ def test_native_mcp_selection_requires_current_native_adapter_scope_and_effect_r
     row = {
         "id": "binding-a", "profile_id": "profile-a", "process_generation": "generation-a",
         "native_package_id": "package-a", "native_package_generation": "generation-a",
+        "native_tool_name": "query", "native_server_name": "hermes-installer",
         "mcp_enrollment_id": "mcp-a", "mcp_tool_name": "search",
         "effect_operation": "mcp.request", "effect_target": "mcp:mcp-a:http",
         "capability": "mcp:mcp-a:read", "recipient": None,
@@ -521,7 +596,8 @@ def test_resource_credential_placeholder_resolves_only_after_backend_profile_and
     ))
     service = SimpleNamespace(profile_id="profile-a", generation="profile-generation-a")
     issuer = SimpleNamespace(observer_enrollment_id="observer-a")
-    package = SimpleNamespace(profile_id="profile-a", generation="profile-generation-a")
+    package = SimpleNamespace(profile_id="profile-a", profile_generation="profile-generation-a",
+                              generation="package-generation-a")
     join = SimpleNamespace(issuer=issuer, package=package)
 
     class Catalog:
@@ -600,7 +676,25 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
         },),
     )
     package = SimpleNamespace(
-        adapter_records={"adapter-a": adapter},
+        profile_id="profile-a", profile_generation="process-generation-a",
+        action_records={"adapter-a:action:action-a": SimpleNamespace(
+            adapter_id="adapter-a", action_id="action-a",
+            argument_schema_id="direct-arguments-v1", result_schema_id="direct-result-v1",
+            adapter_artifact_id="adapter-artifact-a", adapter_sha256="b" * 64,
+        )},
+        registration_records={"adapter-a:tool:lookup": SimpleNamespace(
+            adapter_id="adapter-a", registration_id="adapter-a:tool:lookup",
+            registration_source_artifact_id="registration-artifact-a",
+            registration_source_sha256="e" * 64,
+            action_bindings=(SimpleNamespace(workflow_id="workflow-a"),),
+        )},
+        workflow_records={"workflow-a": SimpleNamespace(
+            workflow_id="workflow-a", registration_id="adapter-a:tool:lookup",
+            external_argument_schema_id="workflow-arguments-v1",
+            external_result_schema_id="workflow-result-v1",
+            workflow_artifact_id="workflow-artifact-a", workflow_sha256="f" * 64,
+        )},
+        process_role_records={},
         entrypoint_artifact_id="entrypoint-a", entrypoint_sha256="c" * 64,
         resolver_artifact_id="resolver-a", resolver_sha256="d" * 64,
         compiled_closure_artifact_id="closure-a",
@@ -625,6 +719,7 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
         "resolver-a": SimpleNamespace(sha256="d" * 64),
         "adapter-artifact-a": SimpleNamespace(sha256="b" * 64),
         "workflow-artifact-a": SimpleNamespace(sha256="f" * 64),
+        "registration-artifact-a": SimpleNamespace(sha256="e" * 64),
     }
 
     runtime = RootRuntimeBindings(
@@ -636,12 +731,15 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
     assert runtime.resolve_native_schema_record(
         "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
     ) is row
-    adapter.workflow_bindings += ({
-        "external_tool_name": "lookup-copy", "external_action_id": "external-lookup-copy",
-        "external_argument_schema_id": "workflow-arguments-v1",
-        "external_result_schema_id": "workflow-result-v1",
-        "workflow_artifact_id": "workflow-artifact-b", "workflow_sha256": "1" * 64,
-    },)
+    package.workflow_records["workflow-b"] = SimpleNamespace(
+        workflow_id="workflow-b", registration_id="adapter-a:tool:lookup",
+        external_argument_schema_id="workflow-arguments-v1",
+        external_result_schema_id="workflow-result-v1",
+        workflow_artifact_id="workflow-artifact-b", workflow_sha256="1" * 64,
+    )
+    package.registration_records["adapter-a:tool:lookup"].action_bindings += (
+        SimpleNamespace(workflow_id="workflow-b"),
+    )
     artifact_specs["workflow-artifact-b"] = SimpleNamespace(sha256="1" * 64)
     with pytest.raises(EnrollmentDenied, match="ambiguous across selected external actions"):
         runtime.resolve_native_schema_record(
@@ -727,8 +825,10 @@ def test_root_native_package_resolver_rejects_ambiguous_selected_profile_generat
     from hermes_installer.authority.runtime_bindings import _build_native_package_resolver
 
     enrollment = SimpleNamespace(native_package_records=[
-        {"profile_id": "profile-a", "generation": "generation-a", "package_id": "package-a"},
-        {"profile_id": "profile-a", "generation": "generation-a", "package_id": "package-b"},
+        {"profile_id": "profile-a", "profile_generation": "generation-a",
+         "generation": "package-generation-a", "package_id": "package-a"},
+        {"profile_id": "profile-a", "profile_generation": "generation-a",
+         "generation": "package-generation-b", "package_id": "package-b"},
     ], source_issuers=())
     resolver = _build_native_package_resolver(
         enrollment=enrollment, catalog=None, artifact_catalog=None,
@@ -757,41 +857,115 @@ def test_root_native_source_issuer_requires_selected_package_closure():
         resolver("profile-a", "generation-a")
 
 
-def test_native_source_observer_metadata_derives_only_from_exact_active_join():
-    from hermes_installer.authority.enrollment import SourceIssuerRecord
+def test_native_source_observer_stays_unavailable_without_protected_process_role_join():
     from hermes_installer.authority.runtime_bindings import _derive_source_observer_enrollments
 
-    issuer = SourceIssuerRecord(
-        "tool-result", "profile-a", "role-artifact", "a" * 64,
-        "result-schema", (), "generation-a", "observer-a", ("registered-tool-result",),
+    catalog = SimpleNamespace(source_observer_joins={})
+    result = _derive_source_observer_enrollments(
+        catalog=catalog, process_profiles={}, artifact_catalog=SimpleNamespace(artifacts={}),
     )
-    adapter = SimpleNamespace(
-        adapter_id="adapter-a", adapter_artifact_id="role-artifact", adapter_sha256="a" * 64,
-        operation="plugin.example.read", target_id="target-a", recipient="recipient-a",
+    assert result == {}
+
+
+def test_native_source_observer_derives_process_role_separately_from_action_adapter():
+    from hermes_installer.authority.runtime_bindings import _derive_source_observer_enrollments
+
+    action = SimpleNamespace(
+        action_id="authenticated-input", action_binding_id="adapter:binding:input",
+        operation="native.input.capture", capability="native-input",
+        target_id="target-input", recipient="local-private", generation="package-generation",
+        observer_enrollment_ids=("observer-input",), adapter_artifact_id="action-adapter",
+        adapter_sha256="a" * 64, argument_schema_id="input-v1", result_schema_id="output-v1",
+        effect_enrollment_id="effect-input",
     )
     package = SimpleNamespace(
-        package_id="package-a", profile_id="profile-a", generation="generation-a",
-        compiled_closure_sha256="b" * 64, adapter_records={"adapter-a": adapter},
+        package_id="package-input", profile_id="profile-input", profile_generation="process-generation",
+        generation="package-generation", compiled_closure_sha256="b" * 64,
     )
+    role = SimpleNamespace(
+        role_id="role-input", role_artifact_id="process-role-module", role_sha256="c" * 64,
+        package_id="package-input", native_package_generation="package-generation",
+        profile_id="profile-input", profile_generation="process-generation",
+        role_source_receipt_handle="role-source", module_name="hermes_installer.runtime.input_role",
+        closure_member_path="roles/input_role.py", role_source_revision="source-rev",
+        role_source_tree_sha256="d" * 64, action_binding_ids=(action.action_binding_id,),
+    )
+    issuer = SimpleNamespace(
+        issuer_channel_id="native-input", producer_profile_id="profile-input",
+        generation="process-generation", allowed_parent_channels=(), capture_schema_id="input-v1",
+        source_action_ids=("authenticated-input",), private_provider_route_ids=(),
+    )
+    join = SimpleNamespace(issuer=issuer, package=package, process_role=role,
+                           actions={action.action_binding_id: action})
     service = SimpleNamespace(
-        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
-        enrollment_id="service-a", generation="generation-a", service_uid=1001,
-        executable_sha256="c" * 64,
+        profile_id="profile-input", principal_id="principal-input", namespace_identity="ns-input",
+        enrollment_id="enrollment-input", service_uid=1200, executable_sha256="e" * 64,
     )
-    join = SimpleNamespace(issuer=issuer, package=package, adapter=adapter)
     catalog = SimpleNamespace(
-        source_observer_joins={"observer-a": join},
-        resolve_profile_generation=lambda *_args: service,
+        source_observer_joins={"observer-input": join},
+        resolve_profile_generation=lambda _profile, _generation: service,
     )
-    artifacts = SimpleNamespace(artifacts={"role-artifact": SimpleNamespace(sha256="a" * 64)})
+    artifact_catalog = SimpleNamespace(artifacts={
+        "process-role-module": SimpleNamespace(sha256="c" * 64),
+    })
+
     result = _derive_source_observer_enrollments(
-        catalog=catalog, process_profiles={}, artifact_catalog=artifacts,
+        catalog=catalog, process_profiles={}, artifact_catalog=artifact_catalog,
     )
-    selected = result["observer-a"]
-    assert (selected.source_kind, selected.source_action_id, selected.role_id) == (
-        "tool-result", "registered-tool-result", "adapter-a")
-    assert (selected.producer_uid, selected.package_sha256, selected.recipient) == (
-        1001, "b" * 64, "recipient-a")
+
+    observer = result["observer-input"]
+    assert observer.role_artifact_id == "process-role-module"
+    assert observer.role_sha256 == "c" * 64
+    assert observer.role_artifact_id != action.adapter_artifact_id
+    assert observer.source_action_binding_id == action.action_binding_id
+    assert observer.generation == "process-generation"
+    assert observer.native_package_generation == "package-generation"
+
+
+def test_native_source_observer_rejects_ambiguous_process_role_actions():
+    from hermes_installer.authority.runtime_bindings import _derive_source_observer_enrollments
+
+    action = SimpleNamespace(
+        action_id="authenticated-input", action_binding_id="adapter:binding:input",
+        operation="native.input.capture", capability="native-input", target_id="target-input",
+        recipient="local-private", generation="package-generation",
+        observer_enrollment_ids=("observer-input",),
+    )
+    duplicate = SimpleNamespace(**{**vars(action), "action_binding_id": "adapter:binding:other"})
+    package = SimpleNamespace(
+        package_id="package-input", profile_id="profile-input", profile_generation="process-generation",
+        generation="package-generation", compiled_closure_sha256="b" * 64,
+    )
+    role = SimpleNamespace(
+        role_id="role-input", role_artifact_id="process-role-module", role_sha256="c" * 64,
+        package_id="package-input", native_package_generation="package-generation",
+        profile_id="profile-input", profile_generation="process-generation",
+        action_binding_ids=(action.action_binding_id, duplicate.action_binding_id),
+    )
+    issuer = SimpleNamespace(
+        issuer_channel_id="native-input", producer_profile_id="profile-input",
+        generation="process-generation", allowed_parent_channels=(), capture_schema_id="input-v1",
+        source_action_ids=("authenticated-input",), private_provider_route_ids=(),
+    )
+    join = SimpleNamespace(issuer=issuer, package=package, process_role=role,
+                           actions={action.action_binding_id: action,
+                                    duplicate.action_binding_id: duplicate})
+    service = SimpleNamespace(
+        profile_id="profile-input", principal_id="principal-input", namespace_identity="ns-input",
+        enrollment_id="enrollment-input", service_uid=1200, executable_sha256="e" * 64,
+    )
+    catalog = SimpleNamespace(
+        source_observer_joins={"observer-input": join},
+        resolve_profile_generation=lambda _profile, _generation: service,
+    )
+    artifact_catalog = SimpleNamespace(artifacts={
+        "process-role-module": SimpleNamespace(sha256="c" * 64),
+    })
+
+    with pytest.raises(EnrollmentDenied, match="one exact process-role action binding"):
+        _derive_source_observer_enrollments(
+            catalog=catalog, process_profiles={}, artifact_catalog=artifact_catalog,
+        )
 
 
 def test_root_native_package_materializer_uses_only_protected_artifact_references(tmp_path):
@@ -805,7 +979,7 @@ def test_root_native_package_materializer_uses_only_protected_artifact_reference
             self.manifest_path = tmp_path / "native-manifest.json"
             self.manifest_path.write_text(json.dumps({
                 "schema": 1, "package_id": "package-a", "profile_id": "profile-a",
-                "generation": "generation-a", "closure_files": [], "adapters": [],
+                    "generation": "native-generation-a", "closure_files": [], "adapters": [],
                 "dependencies": [],
             }), encoding="utf-8")
 
@@ -821,16 +995,18 @@ def test_root_native_package_materializer_uses_only_protected_artifact_reference
             return SimpleNamespace(artifact_id=artifact_id, sha256=sha256, path=path)
 
     package = SimpleNamespace(
-        package_id="package-a", profile_id="profile-a", generation="generation-a",
+        package_id="package-a", profile_id="profile-a", generation="native-generation-a",
+        profile_generation="generation-a",
         compiled_closure_artifact_id="closure-a", compiled_closure_sha256="b" * 64,
         entrypoint_artifact_id="entrypoint-a", entrypoint_sha256="c" * 64,
         resolver_artifact_id="resolver-a", resolver_sha256="d" * 64,
-        adapter_records={},
+        adapter_records={}, action_records={}, registration_records={}, workflow_records={},
     )
     catalog = SimpleNamespace(resolve_native_package=lambda package_id, generation: package)
     artifact_catalog = ArtifactCatalog()
     enrollment = SimpleNamespace(native_package_records=[{
-        "package_id": "package-a", "profile_id": "profile-a", "generation": "generation-a",
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "native-generation-a",
+        "profile_generation": "generation-a",
     }], source_issuers=())
     resolver = _build_native_package_resolver(
         enrollment=enrollment, catalog=catalog, artifact_catalog=artifact_catalog,

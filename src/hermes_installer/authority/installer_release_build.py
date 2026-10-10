@@ -14,6 +14,7 @@ import io
 import json
 import os
 import platform
+import posixpath
 import re
 import secrets
 import stat
@@ -23,7 +24,9 @@ import sysconfig
 import tarfile
 import time
 import threading
+import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, is_dataclass
@@ -65,6 +68,22 @@ COMPOSIO_POLICY_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reade
 COMPOSIO_POLICY_TEMPLATE_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 COMPOSIO_POLICY_TEMPLATE_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 COMPOSIO_POLICY_TEMPLATE_BYTES = 528
+EXISTING_MODEL_STORE_TEMPLATE_PATH = (
+    "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/"
+    "existing-model-store-root-template-v1.json")
+EXISTING_MODEL_STORE_TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
+EXISTING_MODEL_STORE_TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
+EXISTING_MODEL_STORE_TEMPLATE_BYTES = 712
+REVIEWED_SOURCE_MODULES = (
+    ("hermes_installer.components.native_plugins",
+     "src/hermes_installer/components/native_plugins.py",
+     "lib/python/hermes_installer/components/native_plugins.py",
+     "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+    ("hermes_installer.components.public_registries",
+     "src/hermes_installer/components/public_registries.py",
+     "lib/python/hermes_installer/components/public_registries.py",
+     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+)
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
 REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
@@ -108,6 +127,7 @@ STAGED_IDENTITY_TEMPLATE_PATH = "templates/authentik-policy-template-v1.json"
 STAGED_PREPARED_BASE_TEMPLATE_PATH = "templates/prepared-authority-base-template-v1.json"
 STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 STAGED_COMPOSIO_POLICY_TEMPLATE_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
+STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH = "templates/existing-model-store-root-template-v1.json"
 STAGED_REVIEWED_CAPABILITY_MAP_PATH = "templates/reviewed-native-capability-map-v1.json"
 STAGED_CATALOG_PATH = "catalog/artifacts.json"
 ROOT_PLAN_TEMPLATE_ARTIFACT_IDS = (
@@ -899,25 +919,96 @@ def _load_runtime_receipt(handle: str, distribution_handle: str) -> _Provisioned
 
 
 def _download_pinned(url: str, expected_sha: str, expected_size: int, maximum: int) -> bytes:
-    if (url not in {BOOTSTRAP_RUNTIME_ARCHIVE_URL, BOOTSTRAP_PYYAML_URL}
-            or not _SHA256.fullmatch(expected_sha) or expected_size > maximum):
+    runtime_pin = (url == BOOTSTRAP_RUNTIME_ARCHIVE_URL
+                   and expected_sha == BOOTSTRAP_RUNTIME_ARCHIVE_SHA256
+                   and expected_size == BOOTSTRAP_RUNTIME_ARCHIVE_BYTES
+                   and maximum == BOOTSTRAP_RUNTIME_MAX_DOWNLOAD)
+    wheel_pin = (url == BOOTSTRAP_PYYAML_URL
+                 and expected_sha == BOOTSTRAP_PYYAML_SHA256
+                 and expected_size == BOOTSTRAP_PYYAML_BYTES
+                 and maximum == 1_048_576)
+    if not (runtime_pin or wheel_pin) or not _SHA256.fullmatch(expected_sha):
         raise InstallerReleaseBuildError("bootstrap payload source is outside fixed policy")
-    request = urllib.request.Request(url, headers={"Accept-Encoding": "identity", "User-Agent": "HermesInstaller/1"})
+
+    def request_for(target: str) -> urllib.request.Request:
+        return urllib.request.Request(
+            target, headers={"Accept-Encoding": "identity", "User-Agent": "HermesInstaller/1"})
+
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    response: Any = None
+    target: str | None = None
     try:
-        with opener.open(request, timeout=30) as response:
-            if response.status != 200 or response.geturl() != url:
-                raise InstallerReleaseBuildError("pinned bootstrap payload response is not the fixed HTTPS object")
-            if response.headers.get_content_length() not in (None, expected_size):
-                raise InstallerReleaseBuildError("pinned bootstrap payload length differs from the fixed size")
-            body = response.read(maximum + 1)
-            if len(body) > maximum or response.read(1):
-                raise InstallerReleaseBuildError("pinned bootstrap payload exceeds its transfer bound")
+        try:
+            response = opener.open(request_for(url), timeout=30)
+        except urllib.error.HTTPError as redirect:
+            if not runtime_pin or redirect.code != 302 or redirect.url != url:
+                redirect.close()
+                raise InstallerReleaseBuildError("pinned bootstrap payload response is not permitted") from None
+            try:
+                location = redirect.headers.get("Location")
+            finally:
+                redirect.close()
+            target = _validate_runtime_asset_redirect(location)
+            try:
+                response = opener.open(request_for(target), timeout=30)
+            except urllib.error.HTTPError as second_response:
+                second_response.close()
+                raise InstallerReleaseBuildError("pinned runtime asset returned another redirect or HTTP error") from None
+        if response.status != 200 or (runtime_pin and target is None):
+            raise InstallerReleaseBuildError("pinned bootstrap payload response is not successful")
+        if response.geturl() != (target if runtime_pin else url):
+            raise InstallerReleaseBuildError("pinned bootstrap payload response URL changed unexpectedly")
+        if _declared_content_length(response.headers, expected_size) is False:
+            raise InstallerReleaseBuildError("pinned bootstrap payload length differs from the fixed size")
+        body = response.read(maximum + 1)
+        if len(body) > maximum or response.read(1):
+            raise InstallerReleaseBuildError("pinned bootstrap payload exceeds its transfer bound")
     except (OSError, urllib.error.URLError, TimeoutError):
         raise BootstrapEnrollmentPending("pinned bootstrap payload could not be acquired over verified TLS") from None
+    finally:
+        if response is not None:
+            response.close()
     if len(body) != expected_size or hashlib.sha256(body).hexdigest() != expected_sha:
         raise InstallerReleaseBuildError("pinned bootstrap payload bytes do not match the reviewed digest")
     return body
+
+
+def _validate_runtime_asset_redirect(location: str | None) -> str:
+    if not isinstance(location, str) or not location:
+        raise InstallerReleaseBuildError("pinned runtime redirect location is missing or oversized")
+    try:
+        if len(location.encode("utf-8", "strict")) > 8192:
+            raise InstallerReleaseBuildError("pinned runtime redirect location is missing or oversized")
+        location.encode("ascii", "strict")
+        parsed = urllib.parse.urlsplit(location)
+        port = parsed.port
+    except (UnicodeEncodeError, ValueError):
+        raise InstallerReleaseBuildError("pinned runtime redirect location is malformed") from None
+    if (parsed.scheme != "https" or parsed.hostname != "release-assets.githubusercontent.com"
+            or parsed.netloc not in {"release-assets.githubusercontent.com", "release-assets.githubusercontent.com:443"}
+            or port not in (None, 443)
+            or parsed.username is not None or parsed.password is not None or parsed.fragment):
+        raise InstallerReleaseBuildError("pinned runtime redirect authority is outside fixed policy")
+    return location
+
+
+def _declared_content_length(headers: Any, expected_size: int) -> bool | None:
+    """Validate the optional HTTP Content-Length without trusting it as byte count."""
+    try:
+        values = headers.get_all("Content-Length", [])
+    except (AttributeError, TypeError):
+        raise InstallerReleaseBuildError("pinned bootstrap response headers are malformed") from None
+    if not values:
+        return None
+    if len(values) != 1 or not isinstance(values[0], str):
+        return False
+    value = values[0].strip(" \t")
+    if not value or not value.isascii() or not value.isdecimal():
+        return False
+    try:
+        return int(value, 10) == expected_size
+    except ValueError:
+        return False
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -989,12 +1080,7 @@ def _extract_verified_runtime_archive(archive: bytes, destination: Path) -> None
                 if total > BOOTSTRAP_RUNTIME_MAX_EXPANDED:
                     raise InstallerReleaseBuildError("runtime archive exceeds expanded size bound")
             elif member.issym():
-                _validate_relative_path(member.linkname)
-                target = (Path(name).parent / member.linkname)
-                normalized = os.path.normpath(target.as_posix())
-                _validate_relative_path(normalized)
-                if not normalized.startswith("python/"):
-                    raise InstallerReleaseBuildError("runtime archive symlink escapes its fixed prefix")
+                _resolve_runtime_archive_symlink(name, member.linkname)
             else:
                 raise InstallerReleaseBuildError("runtime archive contains a hardlink or special member")
             members[name] = member
@@ -1027,9 +1113,26 @@ def _extract_verified_runtime_archive(archive: bytes, destination: Path) -> None
                 os.symlink(member.linkname, target)
         for name, member in members.items():
             if member.issym():
-                resolved = (destination.parent / name).resolve(strict=True)
+                try:
+                    resolved = (destination.parent / name).resolve(strict=True)
+                except (OSError, RuntimeError):
+                    raise InstallerReleaseBuildError("runtime archive symlink is broken or cyclic") from None
                 if not _is_beneath(resolved, destination.resolve(strict=True)):
                     raise InstallerReleaseBuildError("runtime archive alias resolves outside its prefix")
+
+
+def _resolve_runtime_archive_symlink(member_path: str, link_target: str) -> str:
+    """Allow relative ``..`` components only when their normalized target stays in python/."""
+    _validate_relative_path(member_path)
+    if (not isinstance(link_target, str) or not link_target or link_target.startswith("/")
+            or "\\" in link_target or "\x00" in link_target
+            or any(ord(char) < 32 or ord(char) == 127 for char in link_target)
+            or any(part in {"", "."} for part in link_target.split("/"))):
+        raise InstallerReleaseBuildError("runtime archive symlink target is not a portable relative path")
+    normalized = posixpath.normpath(posixpath.join(posixpath.dirname(member_path), link_target))
+    if normalized == "python" or normalized.startswith("python/"):
+        return normalized
+    raise InstallerReleaseBuildError("runtime archive symlink escapes its fixed prefix")
 
 
 def _write_all(fd: int, body: bytes) -> None:
@@ -1089,11 +1192,15 @@ def _materialize_pyyaml_wheel(wheel: bytes, site_dir: Path) -> None:
             expanded += info.file_size
             if info.file_size > 4 * 1024 * 1024 or expanded > 16 * 1024 * 1024:
                 raise InstallerReleaseBuildError("dependency wheel exceeds member or expanded bounds")
-            if not (name.startswith("yaml/") or name.startswith("PyYAML-6.0.3.dist-info/")):
+            # The pinned Linux ARM64 wheel splits its native extension package
+            # into the reviewed top-level `_yaml` package as well as `yaml`.
+            # Keep this exact package set closed; do not accept arbitrary
+            # top-level wheel payloads merely because the wheel itself is pinned.
+            if not (name.startswith(("yaml/", "_yaml/", "pyyaml-6.0.3.dist-info/"))):
                 raise InstallerReleaseBuildError("dependency wheel contains an unreviewed package path")
             rows[name] = bundle.read(info)
-        record_name = "PyYAML-6.0.3.dist-info/RECORD"
-        wheel_meta = rows.get("PyYAML-6.0.3.dist-info/WHEEL", b"").decode("utf-8", "strict")
+        record_name = "pyyaml-6.0.3.dist-info/RECORD"
+        wheel_meta = rows.get("pyyaml-6.0.3.dist-info/WHEEL", b"").decode("utf-8", "strict")
         if "Tag: cp314-cp314-manylinux_2_28_aarch64" not in wheel_meta and "Tag: cp314-cp314-manylinux2014_aarch64" not in wheel_meta:
             raise InstallerReleaseBuildError("dependency wheel does not carry the reviewed CPython ARM64 tag")
         _verify_wheel_record(rows, record_name)
@@ -1200,6 +1307,10 @@ def _elf_machine(path: Path) -> int:
 
 def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | None]]:
     rows: list[tuple[str, str, int, int, str | None]] = []
+    root_info = root.lstat()
+    if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0 or root_info.st_gid != 0
+            or stat.S_IMODE(root_info.st_mode) != 0o555):
+        raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
     for directory, dirs, files in os.walk(root, topdown=True, followlinks=False):
         base = Path(directory)
         for name in list(dirs):
@@ -1207,6 +1318,11 @@ def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | No
             if path.is_symlink():
                 dirs.remove(name)
                 _append_runtime_member(rows, root, path)
+            else:
+                info = path.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                        or stat.S_IMODE(info.st_mode) != 0o555):
+                    raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
         for name in files:
             _append_runtime_member(rows, root, base / name)
     rows.sort(key=lambda row: row[0])
@@ -1219,11 +1335,17 @@ def _append_runtime_member(rows: list[tuple[str, str, int, int, str | None]], ro
     _validate_relative_path(rel)
     if stat.S_ISLNK(info.st_mode):
         target = os.readlink(path)
-        _validate_relative_path(target)
+        # The official CPython archive uses contained parent-relative aliases.
+        # Validate them against the same closed `python/` prefix rule used by
+        # extraction, rather than rejecting them as stand-alone source paths.
+        _resolve_runtime_archive_symlink(f"python/{rel}", target)
         rows.append((rel, hashlib.sha256(target.encode()).hexdigest(), len(target.encode()), 0o777, target))
-    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0:
+    elif (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0
+          and stat.S_IMODE(info.st_mode) in {0o444, 0o555}):
         digest, size = _hash_path(path, MAX_SOURCE_FILE_BYTES)
         rows.append((rel, digest, size, stat.S_IMODE(info.st_mode), None))
+    elif stat.S_ISREG(info.st_mode):
+        raise InstallerReleaseBuildError("runtime file mode is not read-only sealed")
     else:
         raise InstallerReleaseBuildError("materialized runtime closure contains a hardlink or special member")
 
@@ -1245,7 +1367,7 @@ def _seal_runtime_tree(root: Path) -> None:
                 continue
             info = path.lstat()
             os.chown(path, 0, 0, follow_symlinks=False)
-            os.chmod(path, 0o555 if info.st_mode & 0o111 else 0o444, follow_symlinks=False)
+            os.chmod(path, _sealed_runtime_mode(info.st_mode), follow_symlinks=False)
         for name in dirs:
             path = current / name
             if not path.is_symlink():
@@ -1254,6 +1376,10 @@ def _seal_runtime_tree(root: Path) -> None:
         os.chown(current, 0, 0, follow_symlinks=False)
         os.chmod(current, 0o555, follow_symlinks=False)
         _fsync_dir(current)
+
+
+def _sealed_runtime_mode(mode: int) -> int:
+    return 0o555 if mode & 0o111 else 0o444
 
 
 def _verify_runtime_materialization(root: Path, expected_closure: str) -> None:
@@ -1410,6 +1536,9 @@ class RootInstallerInterpreterRegistry:
                 site_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
                 _materialize_pyyaml_wheel(wheel_bytes, site_dir)
                 runtime_probe = _probe_materialized_runtime(executable, python_dir, site_dir)
+                # The closure ID names the immutable tree we will retain, so
+                # seal modes before calculating its digest and before rename.
+                _seal_runtime_tree(python_dir)
                 runtime_rows = _runtime_archive_rows(python_dir)
                 runtime_closure = hashlib.sha256(_canonical_json([
                     {"path": row[0], "sha256": row[1], "size_bytes": row[2],
@@ -1420,7 +1549,6 @@ class RootInstallerInterpreterRegistry:
                     _verify_runtime_materialization(final / "python", runtime_closure)
                     _remove_tree_no_follow(stage)
                 else:
-                    _seal_runtime_tree(python_dir)
                     os.rename(stage_name, runtime_closure, src_dir_fd=root_fd, dst_dir_fd=root_fd)
                     os.fsync(root_fd)
                 prefix = final if final.exists() else BOOTSTRAP_RUNTIME_ROOT / runtime_closure
@@ -1712,10 +1840,25 @@ class RootSourceBootstrapActorVerifier:
         prefix = interpreter.runtime_prefix.resolve(strict=True)
         stdlib = Path(sysconfig.get_path("stdlib")).resolve(strict=True)
         allowed_paths = {str(prefix), str(root.resolve(strict=True)), str(stdlib)}
+        runtime_members = {item.relative_path for item in interpreter.files}
+        optional_stdlib_zip = prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
         for path in sys.path:
             if not path:
                 raise InstallerReleaseBuildError("bootstrap actor imports from the ambient working directory")
-            resolved = Path(path).resolve(strict=True)
+            candidate = Path(path)
+            try:
+                resolved = candidate.resolve(strict=True)
+            except FileNotFoundError:
+                # CPython includes an optional stdlib zip archive in sys.path
+                # even when the standalone runtime ships the expanded stdlib
+                # directory only. Permit only that exact absent runtime path;
+                # all other missing import roots remain a closed failure.
+                if (candidate == optional_stdlib_zip
+                        and _is_absent_optional_stdlib_zip(candidate, prefix, runtime_members)):
+                    continue
+                raise InstallerReleaseBuildError("bootstrap actor import path is unavailable") from None
+            if candidate == optional_stdlib_zip and optional_stdlib_zip.relative_to(prefix).as_posix() not in runtime_members:
+                raise InstallerReleaseBuildError("optional stdlib archive is absent from the measured runtime closure")
             if not any(_is_beneath(resolved, Path(base)) for base in allowed_paths):
                 raise InstallerReleaseBuildError("bootstrap actor import path is outside selected source/runtime closure")
         for name, module in tuple(sys.modules.items()):
@@ -1904,8 +2047,10 @@ class RootBootstrapRuntimeHandoffRegistry:
                 raise InstallerReleaseBuildError("bootstrap descriptor message exceeds fixed bound")
             _write_all(memfd, message)
             os.fsync(memfd)
-            seals = (fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
-            fcntl.fcntl(memfd, fcntl.F_ADD_SEALS, seals)
+            constants = _memfd_seal_constants()
+            seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                     | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+            fcntl.fcntl(memfd, constants["F_ADD_SEALS"], seals)
             descriptor = os.fstat(memfd)
             record = {
             "schema": 1, "state": "pending", "handoff_handle": handle,
@@ -1972,7 +2117,7 @@ class RootBootstrapRuntimeHandoffRegistry:
                 except OSError:
                     pass
             code = _fixed_reexec_entry_code()
-            argv = [str(runtime.executable), "-I", "-S", "-c", code]
+            argv = _fixed_reexec_argv(runtime.executable)
             os.execve(runtime.executable, argv, {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
                                                  "LC_ALL": "C.UTF-8"})
         except BaseException:
@@ -2211,18 +2356,48 @@ class VerifiedInstallerReleaseBuildReceipt:
             raise InstallerReleaseBuildError("sealed manifest does not describe the retained role closure")
 
     def open_file(self, relative_path: str) -> int:
-        self.verify_current()
+        # The publisher verifies the complete sealed closure before copying and
+        # again before committing its pointer.  Repeating that whole-tree hash
+        # here for every member turns a linear publication into O(files * tree
+        # size).  Keep each copy independently bound to its exact retained row:
+        # a no-follow FD, complete byte hash, metadata identity, and the same
+        # live receipt/root custody checks.  The publisher's final full verify
+        # detects sibling changes and additions before pointer publication.
+        self._verify_live_root()
         row = next((item for item in self.files if item.relative_path == relative_path), None)
         if row is None:
             raise InstallerReleaseBuildError("publisher requested a file outside the sealed output closure")
         fd = _open_relative(self._root_fd, relative_path, os.O_RDONLY)
-        info = os.fstat(fd)
-        digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-        if digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device or info.st_ino != row.inode:
+        try:
+            before = os.fstat(fd)
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            self._verify_live_root()
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or before.st_uid != self._expected_uid or before.st_dev != row.device
+                    or before.st_ino != row.inode or stat.S_IMODE(before.st_mode) != row.mode
+                    or before.st_size != row.size_bytes or digest != row.sha256 or size != row.size_bytes
+                    or (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_nlink,
+                        before.st_uid, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_nlink,
+                        after.st_uid, after.st_mtime_ns, after.st_ctime_ns)):
+                raise InstallerReleaseBuildError("release output changed while opening sealed file")
+            os.lseek(fd, 0, os.SEEK_SET)
+            return fd
+        except BaseException:
             os.close(fd)
-            raise InstallerReleaseBuildError("release output changed while opening sealed file")
-        os.lseek(fd, 0, os.SEEK_SET)
-        return fd
+            raise
+
+    def _verify_live_root(self) -> None:
+        if self._seal is not _SEAL or self._closed or self._consumed or self._root_fd < 0:
+            raise BootstrapEnrollmentPending("release build receipt is absent or already consumed")
+        if time.monotonic() >= self.expires_monotonic:
+            raise BootstrapEnrollmentPending("release build receipt expired before stage publication")
+        root = os.fstat(self._root_fd)
+        if (not stat.S_ISDIR(root.st_mode) or root.st_uid != self._expected_uid
+                or stat.S_IMODE(root.st_mode) & 0o077 or root.st_dev != self._root_device
+                or root.st_ino != self._root_inode):
+            raise InstallerReleaseBuildError("release build output root custody changed")
 
     def open_manifest(self) -> int:
         self.verify_current()
@@ -2371,9 +2546,7 @@ class RootInstalledReleaseBuilder:
         staged.append(self._last_output_row)
         runtime_fd = interpreter.open_executable()
         try:
-            info = os.fstat(runtime_fd)
-            digest, size = _hash_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
-            body = _read_exact_fd(runtime_fd, size)
+            digest, size, body = _hash_and_read_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
             _write_relative(output_fd, STAGED_INTERPRETER_PATH, body, mode=0o555)
             staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555, ("interpreter",)))
         finally:
@@ -2406,6 +2579,8 @@ class RootInstalledReleaseBuilder:
              RECEIPT_BINDINGS_TEMPLATE_SHA256, RECEIPT_BINDINGS_TEMPLATE_BYTES),
             (COMPOSIO_POLICY_TEMPLATE_PATH, STAGED_COMPOSIO_POLICY_TEMPLATE_PATH, "template",
              COMPOSIO_POLICY_TEMPLATE_SHA256, COMPOSIO_POLICY_TEMPLATE_BYTES),
+            (EXISTING_MODEL_STORE_TEMPLATE_PATH, STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH, "template",
+             EXISTING_MODEL_STORE_TEMPLATE_SHA256, EXISTING_MODEL_STORE_TEMPLATE_BYTES),
             (REVIEWED_CAPABILITY_MAP_PATH, STAGED_REVIEWED_CAPABILITY_MAP_PATH, "template",
              REVIEWED_CAPABILITY_MAP_SHA256, REVIEWED_CAPABILITY_MAP_BYTES),
             (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog", None, None),
@@ -2446,6 +2621,16 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
             self._copy_source(source, output_fd, source_rel, target, ("module",))
             staged.append(self._last_output_row)
+        staged_paths = {row[0] for row in staged}
+        for _name, source_rel, target, expected_digest, expected_size in REVIEWED_SOURCE_MODULES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, ("module",))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
         return staged
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
@@ -3135,6 +3320,12 @@ def _hash_fd(fd: int, maximum: int) -> tuple[str, int]:
     return digest.hexdigest(), total
 
 
+def _hash_and_read_fd(fd: int, maximum: int) -> tuple[str, int, bytes]:
+    digest, size = _hash_fd(fd, maximum)
+    os.lseek(fd, 0, os.SEEK_SET)
+    return digest, size, _read_exact_fd(fd, size)
+
+
 def _read_exact_fd(fd: int, size: int) -> bytes:
     chunks = bytearray()
     while len(chunks) < size:
@@ -3350,14 +3541,16 @@ def _runtime_dependency_receipts(prefix: Path,
     packages: list[tuple[str, str]] = []
     handles: list[str] = []
     seen: set[tuple[str, str]] = set()
-    search_paths = [str(Path(sysconfig.get_path(key)).resolve(strict=True))
-                    for key in ("purelib", "platlib") if sysconfig.get_path(key)]
+    search_paths = _runtime_site_search_paths()
     for dist in importlib.metadata.distributions(path=search_paths):
         name = dist.metadata.get("Name")
         version = dist.version
         if not isinstance(name, str) or not isinstance(version, str):
             raise InstallerReleaseBuildError("installed runtime dependency identity is incomplete")
         normalized = _normalize_package_name(name)
+        if normalized == "pip":
+            _verify_bundled_pip_distribution(dist, prefix)
+            continue
         if version not in locked.get(normalized, frozenset()):
             raise InstallerReleaseBuildError("installed runtime dependency is not pinned by selected requirements-runtime.txt")
         identity = (normalized, version)
@@ -3385,6 +3578,71 @@ def _runtime_dependency_receipts(prefix: Path,
     if not packages:
         raise BootstrapEnrollmentPending("selected installer runtime has no verified locked dependencies")
     return packages, tuple(handles)
+
+
+def _runtime_site_search_paths() -> list[str]:
+    paths: list[str] = []
+    for key in ("purelib", "platlib"):
+        value = sysconfig.get_path(key)
+        if not value:
+            continue
+        try:
+            resolved = str(Path(value).resolve(strict=True))
+        except OSError:
+            raise InstallerReleaseBuildError("isolated runtime dependency directory is unavailable") from None
+        if resolved not in paths:
+            paths.append(resolved)
+    return paths
+
+
+def _is_absent_optional_stdlib_zip(path: Path, runtime_prefix: Path,
+                                   runtime_members: set[str] | frozenset[str]) -> bool:
+    """Recognize CPython's one optional archive entry when it is truly absent."""
+    expected = runtime_prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+    if path != expected or expected.relative_to(runtime_prefix).as_posix() in runtime_members:
+        return False
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    else:
+        # Existing files, directories, and even dangling symlinks must go
+        # through normal strict resolution and closure verification.
+        return False
+    try:
+        library_info = os.lstat(path.parent)
+        if not stat.S_ISDIR(library_info.st_mode):
+            return False
+        library_dir = (runtime_prefix / "lib").resolve(strict=True)
+        return path.parent.resolve(strict=True) == library_dir
+    except OSError:
+        return False
+
+
+def _verify_bundled_pip_distribution(dist: Any, prefix: Path) -> None:
+    """Bind the runtime's bundled pip metadata to its fixed CPython closure.
+
+    The pinned standalone CPython archive includes pip; it is not selected from
+    requirements-runtime.txt and receives no separate dependency receipt. Its
+    complete bytes are already covered by the verified runtime closure.
+    """
+    files = dist.files
+    if not files:
+        raise BootstrapEnrollmentPending("bundled runtime pip has no installed file manifest")
+    version = dist.version
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
+        raise InstallerReleaseBuildError("bundled runtime pip version is malformed")
+    site_root = "lib/python3.14/site-packages/"
+    package_root = site_root + "pip/"
+    metadata_root = site_root + "pip-" + version + ".dist-info/"
+    bundled_scripts = {"bin/pip", "bin/pip3", "bin/pip3.14"}
+    for item in files:
+        relative = _relative_below(prefix, Path(dist.locate_file(item)))
+        if not (relative.startswith(package_root) or relative.startswith(metadata_root)
+                or relative in bundled_scripts):
+            raise InstallerReleaseBuildError("bundled runtime pip escaped its fixed CPython site directory")
 
 
 def _runtime_artifact_current_files(
@@ -3478,9 +3736,31 @@ def _pidfd_is_live(pidfd: int) -> bool:
     return not bool(poll.poll(0))
 
 
+def _memfd_seal_constants() -> dict[str, int]:
+    """Return Linux memfd seal commands if CPython omitted their names.
+
+    These values are architecture-independent Linux fcntl UAPI constants.
+    The pinned standalone CPython build omits the Python bindings, although
+    the kernel memfd sealing operations are available.
+    """
+    if not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("sealed bootstrap handoff requires Linux memfd support")
+    uapi = {
+        "F_ADD_SEALS": 1033,
+        "F_GET_SEALS": 1034,
+        "F_SEAL_SEAL": 0x0001,
+        "F_SEAL_SHRINK": 0x0002,
+        "F_SEAL_GROW": 0x0004,
+        "F_SEAL_WRITE": 0x0008,
+    }
+    return {name: int(getattr(fcntl, name, value)) for name, value in uapi.items()}
+
+
 def _decode_sealed_handoff_descriptor(fd: int) -> tuple[dict[str, Any], os.stat_result, bytes]:
-    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
-    required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+    constants = _memfd_seal_constants()
+    seals = fcntl.fcntl(fd, constants["F_GET_SEALS"])
+    required = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
     info = os.fstat(fd)
     if (seals & required != required or not stat.S_ISREG(info.st_mode)
             or info.st_size <= 0 or info.st_size > 4096):
@@ -3649,9 +3929,19 @@ def _handoff_from_record(record: Mapping[str, Any]) -> RootBootstrapRuntimeHando
     return RootBootstrapRuntimeHandoff(_HANDOFF_SEAL, **fields)
 
 
+def _fixed_reexec_argv(executable: Path) -> list[str]:
+    """Start the sealed runtime without bytecode writes to its closure."""
+    return [str(executable), "-B", "-I", "-S", "-c", _fixed_reexec_entry_code()]
+
+
 def _fixed_reexec_entry_code() -> str:
     return '''
 import fcntl, hashlib, json, os, re, stat, sys
+
+seal_uapi = {"F_GET_SEALS": 1034, "F_SEAL_WRITE": 0x0008, "F_SEAL_GROW": 0x0004,
+             "F_SEAL_SHRINK": 0x0002, "F_SEAL_SEAL": 0x0001}
+def seal_constant(name):
+    return int(getattr(fcntl, name, seal_uapi[name]))
 
 def unique(pairs):
     result = {}
@@ -3665,8 +3955,9 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 descriptor = os.fstat(3)
-seals = fcntl.fcntl(3, fcntl.F_GET_SEALS)
-required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+seals = fcntl.fcntl(3, seal_constant("F_GET_SEALS"))
+required = (seal_constant("F_SEAL_WRITE") | seal_constant("F_SEAL_GROW")
+            | seal_constant("F_SEAL_SHRINK") | seal_constant("F_SEAL_SEAL"))
 message = os.read(3, 4097)
 if seals & required != required or len(message) > 4096:
     raise RuntimeError("invalid bootstrap transition descriptor")

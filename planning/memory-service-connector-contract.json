@@ -425,5 +425,928 @@
     "persistence": "Root memory authority_state_root_id selection and owner0 mode0700 nofollow root journal store retains immutable consent record plus mutable revocation/current-owner index under existing transactional protection. Enablement is persistent policy preference, not a long-lived effect grant. Every turn capture resolves actual current consent/owner/service/policy and complete retained turn source closure; then issues fresh per-job BackgroundConsent/context/effect grants bounded by current source/profile/route lease. Persistent opt-in contains no stale source receipts to impersonate later events.",
     "revocation": "Authorized selected owner/root setup revoke atomically increments revocation epoch; current lookup denies immediately; queued/inflight memory reservations and child issuance must recheck epoch before each effect and cancel/wipe payload as existing memory ledger semantics require. Receipt audit retains no transcript or secret. No retroactive erase claim for already committed backend memory without separately authorized delete.",
     "wire": "background_consent_handle is opaque pathless preference lookup only, not SourceReceipt/HostContext/EffectAuthorization. RootMemoryCaptureCoordinator consumes only resolved current registry object plus actual completed turn receipt, never caller consent fields. Authority signature excludes signature field, domain root-memory-capture-consent-v1. Enabled object must resolve current registry state, signature alone cannot bypass revocation."
+  },
+  "private_engine_endpoint_v108": {
+    "schema": 1,
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK-F03"
+    ],
+    "source_facts": [
+      "Official vLLM documents distinct chat completions and embeddings APIs; embeddings requires actual embedding model, chat requires text-generation model/chat template. GLM5.2 official model card shows compatible chat endpoint. These API documents are protocol references, not pinned local server/model artifacts or evidence that a private endpoint is configured."
+    ],
+    "sources": [
+      "https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/",
+      "https://huggingface.co/zai-org/GLM-5.2"
+    ],
+    "protocol_artifact": {
+      "artifact_id": "installer-private-memory-compatible-api-v1",
+      "path": "plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108/private-memory-compatible-api-v1.json",
+      "sha256": "0158fa3c3b8dcc6befb008f3b617ca084f0470b05eb9b99f2f12b27735eca2d4",
+      "size_bytes": 2357
+    },
+    "active_key": "private_memory_engine_selections",
+    "row_fields": [
+      "id",
+      "profile_id",
+      "namespace_id",
+      "memory_provider",
+      "memory_owner_generation",
+      "extract_route_id",
+      "embed_route_id",
+      "extraction_served_model_id",
+      "embedding_served_model_id",
+      "embedding_dimensions",
+      "endpoint_selection_receipt_handle",
+      "extraction_model_deployment_receipt_handle",
+      "embedding_model_deployment_receipt_handle",
+      "protocol_artifact_id",
+      "protocol_sha256",
+      "credential_reference_ids",
+      "private_consent_selection_handle",
+      "policy_revision"
+    ],
+    "join": "Digest-covered service_generations private_memory_engine_selections rows, enclosing verified service-generation digest attached outside row. memory_enrollments.private_extraction_embedding_routes.extract/embed exactly equal selected row route IDs. Each route already protected private eligible capability (text-generation vs embedding), exact recipient endpoint/account/credential/current privacy proof and private consent. profile/namespace/provider/owner generation exact current joins, no root-global engines{} fallback.",
+    "selection_source": "Root setup explicit private endpoint selection consumes existing actual provider endpoint ownership/deployment receipt and current eligible route receipt; no caller model ID, dimensions, privacy bool or endpoint declaration can mint readiness. Required extraction model is GLM-5.2 (zai-org/GLM-5.2 or exact served alias bound by actual deployment artifact). Embedding model separately selected actual immutable model/deployment/license/runtime receipt with exact served model+dimensions; no default invented model or GLM embedding substitution. Missing actual model/deployment/ownership/license/ARM proof keeps selection pending. No model/server/package downloads or new metered service provisioning authorized by this protocol refinement.",
+    "owner_modules": {
+      "provider": "hermes_installer.providers.private_memory",
+      "memory": "hermes_installer.memory.private_engine"
+    },
+    "provider_factory": "RootPrivateMemoryRouteResolver.from_root_runtime(bindings,provider_route_registry,private_consent_registry,model_deployment_registry,root_effect_broker).resolve_selected_memory_engine(memory_enrollment_id,owner_generation) -> RootSelectedPrivateMemoryEngineRoutes",
+    "route_dto_fields": [
+      "selection_id",
+      "profile_id",
+      "namespace_id",
+      "memory_provider",
+      "memory_owner_generation",
+      "service_generation_digest",
+      "extract_route_id",
+      "embed_route_id",
+      "extraction_served_model_id",
+      "embedding_served_model_id",
+      "embedding_dimensions",
+      "protocol_sha256",
+      "endpoint_selection_receipt_handle",
+      "extraction_model_deployment_receipt_handle",
+      "embedding_model_deployment_receipt_handle",
+      "expires_monotonic"
+    ],
+    "memory_factory": "RootPrivateMemoryEngine.from_selected_routes(selected_routes,private_provider_dispatcher); engine registry key(profile_id,namespace_id,provider). Implements existing extract(text,context,timeout,cancelled)->list[str], embed(facts,context,timeout,cancelled)->list[list[float]]. Root dispatcher checks actual current job consent/source ancestry/private route capability/model/dimensions/endpoint on EVERY request and retry then fresh effect; extraction output inherits private source closure and embedding does not declassify.",
+    "lifecycle": "Configured external owned endpoint adapter never manages remote server startup. Local engine starts only through exact v64/v80 lifecycle_binding and preinstalled artifact/config/runtime receipts; no unpinned vllm serve, @latest, lazy iii/OpenViking/embedding install or copied LLM secrets. OpenViking /ready remains readiness only; AgentMemory /agentmemory/livez remains liveness only. Selected semantic extraction/retrieval proof is separate.",
+    "status": "Protocol/producer obligations now exact, no private endpoint/model/account currently proven. Original required engine flows/GLM5.2/semantic memory and all18 acceptance stay open."
+  },
+  "active_lifecycle_closure_v119": {
+    "schema": 1,
+    "id": "memory-lifecycle-active-closure-v1",
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK01",
+      "HI-T03"
+    ],
+    "owner": "hermes_installer.authority.memory_lifecycle",
+    "scope": "Original selected memory process lifecycle only; capture, extraction/embedding and semantic functionality remain separate actual gates.",
+    "enablement": {
+      "source": "Actual root authenticated installer selected service enablement choice already describing exact provider/backend variant/private profile/namespace/service and fixed start operation. Same explicit enable choice records lifecycle purpose; no new repeated approval and no inferred choice from installed bytes, account login, capture consent or non-null handle.",
+      "type": "RootMemoryServiceEnablementSelection",
+      "fields": [
+        "selection_handle",
+        "choice_observation_id",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "provider",
+        "backend_variant",
+        "service_enrollment_id",
+        "service_generation",
+        "memory_owner_generation",
+        "start_operation_id",
+        "policy_revision",
+        "selection_digest",
+        "state",
+        "revocation_epoch"
+      ],
+      "state": "enabled|revoked; default absent disabled",
+      "registry": "Existing root setup choice registry retains source observation; active publisher stores digest-covered memory service enablement selection linkage. RootMemoryServiceLifecycle resolves current selected enablement through root registry before start/restart, not through RootMemoryCaptureConsentRegistry. No separate capture prompt just to start service.",
+      "permissions": "Finite start/status/stop/manual restart and selected bounded restart policy only, zero additional budget; no capture/history scan/extraction/embed/provider egress/account/model install or lazy download. Stop-owned cleanup remains available after revocation; new start/restart denied."
+    },
+    "prestart": {
+      "type": "RootMemoryPrestartReceipt",
+      "producer": "RootMemoryPrestartReceiptRegistry.from_root_runtime(active_bindings,artifact_catalog,managed_process_custody,root_journal).observe_selected_prestart(memory_enrollment_id)->opaque receipt handle",
+      "resolver": "resolve_selected_prestart(receipt_handle,memory_enrollment_id)->RootMemoryPrestartReceipt; root membership/signature/current closure independently rechecked",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "memory_enrollment_id",
+        "provider",
+        "backend_variant",
+        "profile_id",
+        "namespace_id",
+        "principal_id",
+        "service_enrollment_id",
+        "service_generation",
+        "enclosing_service_generation_digest",
+        "memory_owner_generation",
+        "start_operation_id",
+        "operation_recipe_sha256",
+        "artifact_records",
+        "config_records",
+        "source_revision",
+        "runtime_receipt_handles",
+        "enablement_selection_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "artifact_record_fields": [
+        "artifact_id",
+        "sha256",
+        "size_bytes",
+        "role",
+        "relative_member_path",
+        "device",
+        "inode",
+        "uid",
+        "gid",
+        "mode"
+      ],
+      "source": "Exact active ProtectedEnrollmentCatalog process profile/operation recipe and ArtifactCatalog/runtime receipt getter; actual executable/member bytes re-opened nofollow, held file identities and digests verified; all child artifacts/config/engine/model resources referenced by selected recipe. Relative member paths resolved only through selected held roots; source archive hash never executable hash.",
+      "persistent_join": "lifecycle_binding.prestart_receipt_handles refer to protected registry records retaining artifact closure selection, not expiring setup fetch handles. Active publisher validates selected closure and stores durable parent linkage; resolver issues fresh <=30s current snapshot under enclosing active generation and owner epoch. Record may survive setup, but signature alone cannot bypass changed artifacts/current generation/revocation. No prerequisite live setup authorization after activation.",
+      "missing": "Legacy opaque handles without retained active artifact/recipe/config/runtime proof fail closed with exact missing artifact/selection, never promote arbitrary strings. No active row inserted merely to satisfy prestart; actual installed receipt producer and active publication remain required."
+    },
+    "semantic_readiness": {
+      "type": "RootMemorySemanticReadinessReceipt",
+      "producer": "RootMemorySemanticReadinessRegistry.from_root_runtime(active_bindings,managed_process_custody,connector_registry,root_journal).observe_selected_readiness(memory_enrollment_id,owned_process_handle)->opaque receipt handle",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "memory_enrollment_id",
+        "provider",
+        "backend_variant",
+        "profile_id",
+        "namespace_id",
+        "service_enrollment_id",
+        "service_generation",
+        "enclosing_service_generation_digest",
+        "memory_owner_generation",
+        "process_identity_digest",
+        "prestart_receipt_handle",
+        "operation_receipt_handles",
+        "request_schema_ids",
+        "result_schema_ids",
+        "readiness_kind",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "source": "Execute only existing selected source-backed fixed readiness/capability routes through current managed namespace/process and bounded serializers. Bind actual request/result receipt handles and root validator schema/artifact identity; no caller boolean or status stdout promotes readiness.",
+      "readiness_kind": "liveness|backend-semantic; consumers require exact needed kind",
+      "rule": "OpenViking /ready and AgentMemory /agentmemory/livez remain process/backend status, never extraction/retrieval proof. Backend-semantic requires genuine existing selected remember/search or corresponding capability operations validated by exact provider protocol; fixture payload scoped to installer-owned isolated qualification namespace and authorized finite workflow, cleanup where actually supported. No fabricated route or unsupported deletion. If no source-backed semantic operation exists, backend-semantic remains unavailable with the exact missing operation.",
+      "privacy": "No user transcript/history is a readiness fixture. Model/provider operations require actual independent private route/model deployment/consent and budget gate; service enablement is not that consent.",
+      "currentness": "<=30s fresh snapshot and current selected process PIDFD/cgroup/profile/generation/namespace/owner/enablement. Process replacement revokes prior receipt; stop/start does not rewrite old immutable receipts."
+    },
+    "tasks": [
+      "SK-T119.1: lifecycle authority owner implement active closure prestart registry and current semantic readiness registry; no live setup authorization dependency.",
+      "SK-T119.2: factory/active publisher preserve actual same-choice purpose-specific memory service enablement and selected receipt closure linkage.",
+      "SK-T119.3: test stale/revoked enablement, replaced artifact/process, setup expiry, liveness-versus-semantic distinction, unknown engine/route and private provider denial; actual engine semantics/ARM/account acceptance open."
+    ]
+  },
+  "service_enable_choice_v124": {
+    "schema": 1,
+    "id": "memory-service-enable-choice-v1",
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK01"
+    ],
+    "correction": "v119 phrase existing explicit service enablement choice is a required product configuration producer, not implemented source evidence. Current RootSetupChoices lacks it. Define actual producer now; do not infer consent from user-mode select-memory, installed bytes, capture preference or account login.",
+    "owner": "hermes_installer.authority.bootstrap_runtime_factory.RootBootstrapSession",
+    "producer_api": "observe_memory_service_enablement(provider,backend_variant)->RootSelectedMemoryServiceEnablementChoice; root local normal install configuration only, through the existing actual foreground authenticated TTY observer and current setup session/prepared selected installation binding.",
+    "source": "Protected root TTY displays selected provider/backend variant/private profile/namespace, service startup/local data roots and zero budget; asks whether to enable this selected memory service. Explicit yes/no configuration choice recorded once. Default/no/skipped means disabled. No repeated approval after the same choice; this is a new actual configuration field, not a second confirmation of install. Capture and extraction/embed prompts remain purpose-specific distinct optional choices.",
+    "choice_fields": [
+      "choice_handle",
+      "choice_observation_id",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_receipt_handle",
+      "private_profile_selection_receipt_handle",
+      "namespace_selection_receipt_handle",
+      "provider",
+      "backend_variant",
+      "enabled",
+      "controller_binding_handle",
+      "policy_revision",
+      "selection_digest",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "selection": "Provider/backend variant must resolve actual reviewed memory connector/source recipe selection from sealed selected installation definitions; no caller-created profile/service/principal/operation IDs. Actual principal/private profile/namespace receipts must match current owner. Choice may precede installed runtime; it is intent, not process-start or memory functionality authority. Unconfigured source/runtime still pending.",
+    "persistence": "Root setup choice journal retains signed immutable choice plus revocation/current owner index, no secrets/transcript. Stage0 handoff follows current verified principal/private profile choice linkage; normal setup TTY records this memory configuration. Root service enablement registry never trusts user-private Journal choices.",
+    "registry": "RootMemoryServiceEnablementRegistry.from_root_runtime(active_bindings,root_setup_choice_registry,root_journal).resolve_selected_enablement(memory_enrollment_id)->RootMemoryServiceEnablementSelection; revoke_selected_enablement(choice_handle,current_authorized_owner_request) invalidates active index and future starts. Factory/consent owner retains actual choice producer and registry; lifecycle owner consumes only exact current projection.",
+    "active_publication": "Active compiler consumes actual choice and verified selected memory enrollment/process/source/runtime closure; records memory_enrollments[*].lifecycle_binding.enablement_selection_handle as exact retained root choice handle. Separate root active projection maps that same signed choice to actual profile/namespace/principal/provider/backend/service enrollment/process generation/owner epoch/start recipe/policy revision under enclosing active digest. No service generation in the earlier choice fabricated before active assembly.",
+    "projection_fields": [
+      "selection_handle",
+      "choice_observation_id",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "provider",
+      "backend_variant",
+      "service_enrollment_id",
+      "service_generation",
+      "memory_owner_generation",
+      "start_operation_id",
+      "policy_revision",
+      "selection_digest",
+      "state",
+      "revocation_epoch"
+    ],
+    "currentness": "Persistent enabled preference is not a long-lived effect grant. Re-resolve current choice signature/registry/revocation/owner/active projection before each start/restart; snapshot <=30s. Replacement service/profile/owner requires legitimate current publication/owner linkage. Old preference does not authorize arbitrary new provider or namespace. Stop owned cleanup remains allowed after revoke; new start denied.",
+    "separation": "Service lifecycle only; no transcript/history capture, private provider route recipient permission, embedding model selection, metered spending, lazy download or account operations. Existing v119 source and semantic readiness receipts remain mandatory independently.",
+    "tasks": [
+      "SK-T124.1: factory/choice owner implement actual root TTY configuration producer/retained choice and service-enablement registry; no fictitious existing source.",
+      "SK-T124.2: enrollment/active compiler add exact lifecycle enablement handle and current post-activation projection from actual selected service/source/runtime receipt closure.",
+      "SK-T124.3: lifecycle owner consume resolver; test default disabled, false user journal, wrong owner/profile/backend, revoke/service replacement and independence from capture/private consent; actual engine/target acceptance open."
+    ]
+  },
+  "observed_private_deployments_v125": {
+    "schema": 1,
+    "id": "private-memory-observed-deployments-v1",
+    "requirements": [
+      "SK-T01",
+      "SK01",
+      "PV-T01"
+    ],
+    "owner_module": "hermes_installer.models.private_deployment",
+    "existing_sources": {
+      "artifact": "RootCatalogArtifactObserver.from_root_runtime(bindings,verified_protected_enrollment).observe(artifact_id,sha256)->held VerifiedCatalogArtifactObservation; verify_current/open_blob/open_member through exact catalog manifest",
+      "process": "ManagedProcessCustodian.inspect_enrolled_process(profile_id,generation)->actual RemoteOriginKernelProof with process UID/GID/PID/starttime/executable dev/inode/SHA/cgroup/mount+net namespace/PIDFD registry lease",
+      "model": "models.artifacts.ArtifactManifest model_id mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp revision6bbb01ed3e515a8730b694dfae73aadfd6774581; pinned metadata lists149 files with exact LFS SHA256/Git blob IDs, total429276220139 bytes. Source inventory is not installed weights/runtime/load proof. No download authorized; inspect pre-existing selected root-held model files only."
+    },
+    "selection": "Root selected existing model-service process recipe/config/endpoint route and model artifact catalog records from verified runtime bindings or sealed installer configured existing-service selection. RootPrivateMemoryDeploymentRegistry never accepts caller URL/path/model-list/privacy boolean as selection. Existing Colibri colibri-main/colibri-openai-v1 endpoint supplies only text chat until actual independent embedding service/model/capability is selected. No fabricated embedding ID/license/dimensions.",
+    "registry_api": "RootPrivateMemoryDeploymentRegistry.from_root_runtime(bindings,verified_protected_enrollment,artifact_observer,managed_process_custody,selected_endpoint_connector,root_journal); observe_selected_endpoint(selected_service_binding)->opaque endpoint receipt handle; observe_selected_model_deployment(endpoint_receipt_handle,selected_model_binding)->opaque model receipt handle; resolve_selected_private_route/revalidate_private_route and resolve_deployment/revalidate_deployment implement existing providers.private_memory Protocol signatures. selected bindings are typed sealed root record projections, never caller dictionaries.",
+    "endpoint_binding_fields": [
+      "binding_id",
+      "profile_id",
+      "namespace_id",
+      "principal_id",
+      "service_enrollment_id",
+      "service_generation",
+      "process_profile_id",
+      "process_profile_generation",
+      "endpoint_target_id",
+      "connector_route_ids",
+      "recipient_id",
+      "credential_reference_id",
+      "server_config_artifact_id",
+      "server_config_sha256",
+      "runtime_artifact_ids",
+      "network_binding_handle"
+    ],
+    "endpoint_observation_fields": [
+      "schema",
+      "receipt_handle",
+      "receipt_sha256",
+      "boot_id",
+      "endpoint_binding_id",
+      "endpoint_selection_sha256",
+      "profile_id",
+      "namespace_id",
+      "principal_id",
+      "service_enrollment_id",
+      "service_generation",
+      "process_profile_id",
+      "process_profile_generation",
+      "endpoint_target_id",
+      "connector_route_ids",
+      "recipient_id",
+      "credential_reference_id",
+      "server_config_artifact_id",
+      "server_config_sha256",
+      "runtime_artifact_records",
+      "process_identity_digest",
+      "kernel_process_receipt_handle",
+      "private_network_receipt_handle",
+      "listening_endpoint_observation_handle",
+      "ownership_observation_sha256",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "endpoint_rule": "Connector route resolves exact fixed local address/socket/port and kernel observed listener owner in selected held net namespace/process cgroup. Loopback URL alone is insufficient; revalidate private namespace/nft/UID/ports and absence of public proxy/fallback. TLS certificate/hostname and scoped credential reference when selected remote/private connector requires them. Local HTTP allowed only exact kernel-owned selected private-loopback boundary. No generic remote URL enrollment: external endpoint requires existing installer-owned target verifier/current signed target receipt matching actual service/runtime/model evidence; without that concrete target producer, remote mode unavailable. credential_reference_id is opaque root-vault scoped route ref, no secret in receipts/config duplicated by registry.",
+    "model_binding_fields": [
+      "binding_id",
+      "endpoint_binding_id",
+      "served_model_id",
+      "source_model_id",
+      "source_revision",
+      "license_artifact_id",
+      "license_sha256",
+      "model_artifact_id",
+      "model_artifact_sha256",
+      "model_tree_manifest_sha256",
+      "runtime_artifact_id",
+      "runtime_artifact_sha256",
+      "load_config_artifact_id",
+      "load_config_sha256",
+      "capability",
+      "dimensions"
+    ],
+    "model_observation_fields": [
+      "schema",
+      "receipt_handle",
+      "receipt_sha256",
+      "boot_id",
+      "model_binding_id",
+      "model_selection_sha256",
+      "endpoint_receipt_handle",
+      "profile_id",
+      "namespace_id",
+      "service_enrollment_id",
+      "service_generation",
+      "source_model_id",
+      "source_revision",
+      "license_artifact_id",
+      "license_sha256",
+      "model_artifact_id",
+      "model_artifact_sha256",
+      "model_tree_manifest_sha256",
+      "model_member_observation_sha256",
+      "runtime_artifact_id",
+      "runtime_artifact_sha256",
+      "load_config_artifact_id",
+      "load_config_sha256",
+      "served_model_id",
+      "capability",
+      "dimensions",
+      "process_identity_digest",
+      "kernel_process_receipt_handle",
+      "load_observation_handle",
+      "capability_probe_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "model_rule": "Reopen exact root-held model tree manifest/members and verify every required source hash/size/mode against selected artifact. ArtifactManifest.verify_directory applies current GLM pin; archive metadata is not executable/model loading. Exact installed server/runtime source and actual selected load config/process observations must prove the served alias points to those verified weights; selected managed load/start receipt and observed server module/config mappings form load evidence, never /v1/models alias alone. Actual bounded protocol probe validates capability response under same live endpoint/process but cannot by itself establish weight source. If runtime cannot attest source/load identity, deployment remains unavailable. GLM-5.2 exact source required for extraction; embedding separate source/artifact/license/runtime/load/probe/dimensions receipt, no GLM chat-as-embed or synthetic vectors.",
+    "capability": "Closed extraction-text|embedding matching existing provider capability record; dimensions null for text and selected positive1..8192 for embedding. Probe uses only fixed harmless qualification text under explicit configured private route choice and zero additional budget, never user transcript/history; missing provider probe authorization leaves probe pending.",
+    "retention": "Existing ProtectedRootJournal owner0 private child private-memory-deployments, directory0700 nofollow, metadata immutable signed mode0400 or0444 under protected root; retain source artifact observation IDs/member manifests/record hashes and protected selection linkage, no weights copies or credential bytes. Held FDs/PIDFDs stay root-private and are closed on revoke/expiry; receipt DTO pathless. Domain-separated existing authority signatures; signature excludes itself and receipt_sha256 computed canonical record excluding signature/receipt_sha256.",
+    "currentness": "Root boot_id and actual monotonic issue/expiry, <=30s projection lease capped all source/process/network/model evidence. Persisted record cannot cross boot by timestamp alone; reopen/re-observe current exact source and live service/load/network after restart, issue fresh record. Every dispatch/retry resolves original root receipt registry membership, selected v108 row handles and exact profile/namespace/source/capability/dims/recipient/zero budget plus independent current consent. Process replacement/load config/model/kernel/route change revokes previous observation.",
+    "nonrecursive_generation": "Durable observation binds exact process/service generation and closed source/endpoint/model selection digest excluding observation handles. Current resolver returns verified enclosing service_generation_digest only after exact selected v108 row/receipt membership join; enclosing policy digest is not embedded as a self-referential field in its receipt-producing active row. Runtime projection cannot accept caller expected digest without checking current bindings.",
+    "tasks": [
+      "SK-T125.1: models owner implement actual endpoint/model observation registry from held artifacts/config/runtime/live PIDFD/listener/load evidence and existing provider protocols; no model download or alias-only proof.",
+      "SK-T125.2: provider/host/factory owner compose typed selected existing-service/model bindings and exact v108 receipt joins; retain unavailable remote/unselected embedding/absent weights facts.",
+      "SK-T125.3: test wrong alias-to-source mapping, changed config/weights/process/network/boot, false catalog/credential/consent, text-as-embed and probe-only claims; actual weights/ARM/private target/semantic memory acceptance remain open."
+    ]
+  },
+  "existing_model_tree_observation_v127": {
+    "schema": 1,
+    "id": "existing-model-tree-observation-v1",
+    "requirements": [
+      "SK-T01",
+      "SK01"
+    ],
+    "why": "Actual GLM metadata source inventory exists, weights do not; static ArtifactCatalog has no installed weight tree. v125 cannot accept an arbitrary path or manufacture static catalog membership. Observe only explicitly selected pre-existing root-held tree, no copy/download/install.",
+    "owner_module": "hermes_installer.models.private_deployment",
+    "selection_type": "RootExistingModelArtifactSelection",
+    "selection_fields": [
+      "selection_handle",
+      "choice_observation_id",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "model_store_root_id",
+      "model_store_root_receipt_handle",
+      "relative_subpath",
+      "source_model_id",
+      "source_revision",
+      "source_manifest_artifact_id",
+      "source_manifest_sha256",
+      "license_artifact_id",
+      "license_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selection_source": "Actual root installer existing-model configuration uses protected foreground TTY choice and existing root owned filesystem selection observer to open a chosen already-present directory beneath an exact selected held model-store root. Root private record retains directory device/inode/owner/mode and nofollow directory FD, actual TTY/controller/principal/private profile/namespace binding. No default path, worker path, ambient checkout, or arbitrary caller filesystem dictionary accepted. Missing selected held root receipt means no observer entry; selection never creates/copies/downloads/chowns/replaces model data.",
+    "observer_API": "RootExistingModelArtifactObserver.from_root_runtime(bindings,root_journal,authority_service,root_existing_model_selection_registry).observe_selected_tree(selection_handle)->VerifiedExistingModelArtifactObservation; verify_current(observation) reopens exact retained root/members through held directory identity. Registry root-private open_member provides held read-only member, no caller path.",
+    "observation_fields": [
+      "observation_handle",
+      "selection_handle",
+      "artifact_id",
+      "source_model_id",
+      "source_revision",
+      "source_manifest_artifact_id",
+      "source_manifest_sha256",
+      "license_artifact_id",
+      "license_sha256",
+      "tree_manifest_sha256",
+      "member_observation_sha256",
+      "root_device",
+      "root_inode",
+      "root_uid",
+      "root_gid",
+      "root_mode",
+      "member_count",
+      "total_size_bytes",
+      "issued_monotonic",
+      "expires_monotonic",
+      "boot_id",
+      "signature"
+    ],
+    "members": "Exact source model inventory membership/relative path/type/size/source digest algorithm/value plus observed SHA256/device/inode/uid/gid/mode, canonical sorted full manifest. GLM ArtifactManifest.verify_directory verifies all149 required source hashes; source SHA256 or Git blob algorithm honored, additionally observed SHA256 recorded for retained byte identity. Reject missing/extra unreviewed members, special files, links escaping selected tree, writable-by-untrusted-source roots/members, changed opened identities or unverifiable manifest/license. No checksum from filenames or /v1/models. Hold actual observations while load/probe leases active.",
+    "artifact_id": "existing-model:<lower64 canonical observed tree_manifest_sha256>; dedicated root dynamic observation, never pretend ID exists in immutable static ArtifactCatalog. v125 model_artifact_id/hash may refer to this registry observation only with exact selected source/license/tree manifest/current member proof. Root projection discriminates existing-tree receipt versus static catalog observation; no bare string prefix acceptance.",
+    "retention": "Root private journal child existing-model-observations retains signed canonical selection/member metadata and revocation/current index, no weight copies or plaintext secrets. New boot/expiry cannot revive descriptor FD/monotonic lease; reopen/reverify actual selected root tree to issue fresh <=30s snapshot. Selected tree alone is source presence, not server source loading/deployment proof.",
+    "v125_constructor_refinement": "RootPrivateMemoryDeploymentRegistry.from_root_runtime(bindings,verified_protected_enrollment,artifact_observer,managed_process_custody,selected_endpoint_connector,root_journal,*,authority_service,existing_model_artifact_observer=None). Explicit actual AuthorityService signing custody dependency; no locally generated key, no private _sign import or journal-implied signer. Existing source/runtime/config artifacts still use RootCatalogArtifactObserver, selected installed weights optionally use exact existing-tree observer.",
+    "signer_api": "AuthorityService root-local issue_private_memory_observation(observation_kind,verified_root_observation)->signed root observation; verify_private_memory_observation(receipt)->verified canonical root record. Closed kinds existing-model-tree|private-endpoint|private-model-deployment with domain root-existing-model-tree-v1|root-private-endpoint-v1|root-private-model-deployment-v1 and exact corresponding v125/v127 fields/registry/source seal. Finite trusted root producer attachment validates actual observations/membership; no worker RPC/unsigned caller dict/generic arbitrary payload signing endpoint. Existing current authority key source only.",
+    "tasks": [
+      "SK-T127.1: models owner implement existing-root tree observation and explicit service signing injection, source presence separate load/deployment proof.",
+      "SK-T127.2: factory/owned-root/authority owner implement actual existing-model TTY/root selection retained receipt and finite signer attachment; no arbitrary path/default or copying/download.",
+      "SK-T127.3: test absent/unowned/writable/missing/hash-changed tree, forged source/selection/member handles, boot/lease/revocation, alias-only load and separately absent embedding; actual pre-existing model/ARM/server proof pending."
+    ]
+  },
+  "private_model_selection_projections_v128": {
+    "schema": 1,
+    "id": "private-model-selection-projections-v1",
+    "requirements": [
+      "SK-T01",
+      "SK01"
+    ],
+    "endpoint": {
+      "active_key": "service_generations.private_memory_endpoint_selections",
+      "type": "hermes_installer.protected_enrollment.RootSelectedPrivateMemoryEndpointBinding",
+      "row_fields": "Exact v125 endpoint_binding_fields, no added enclosing digest in serialized row.",
+      "getter": "RootRuntimeBindings.resolve_private_memory_endpoint_binding(binding_id)->RootSelectedPrivateMemoryEndpointBinding",
+      "runtime_fields": "Exact row plus verified enclosing service_generation_digest supplied by parser/root resolver, not caller input.",
+      "join": "Unique binding_id; exact selected private profile/namespace/principal/service enrollment/generation/process profile+generation; connector_route_ids unique exact fixed route catalog and recipient/credential scope/current kernel private-network handle; server config/runtime artifact observations. Selected v108 endpoint receipt resolves actual endpoint_binding_id, and equals the exact row under current profile/namespace/private routes. No row synthesized from URI or a receipt handle alone."
+    },
+    "model": {
+      "active_key": "service_generations.private_memory_model_selections",
+      "type": "hermes_installer.protected_enrollment.RootSelectedPrivateMemoryModelBinding",
+      "row_fields": "Exact v125 model_binding_fields, no added enclosing digest in serialized row.",
+      "getter": "RootRuntimeBindings.resolve_private_memory_model_binding(binding_id)->RootSelectedPrivateMemoryModelBinding",
+      "runtime_fields": "Exact row plus verified enclosing service_generation_digest supplied by parser/root resolver.",
+      "join": "Unique binding_id and endpoint_binding_id FK; exact source/revision/license/artifact/tree/runtime/load-config refs, served alias/capability/dimensions. The selected v108 extraction/embedding receipt resolves actual model_binding_id and endpoint binding, capability/model/dimensions match exactly. Text/embed independently verified; no model-list alias promotes source. Existing-tree dynamic artifact requires v127 actual source registry membership/selected root receipt; static source uses ArtifactCatalog observation."
+    },
+    "producer": "Root installer configured existing-service/model selection registry or current verified target/service configuration produces sealed v125 bindings before observation. These protected rows select obligations, not source/deployment facts; actual endpoint and model observation receipts still required. Initial staged definitions are sealed root setup configuration, then validated by active publisher with current actual service/artifact/receipt closure. No requirement for pre-existing active model row to produce staged first observations; root current service/protected source/config bindings independently resolved. Unknown endpoint/model/embed/ownership stays unavailable.",
+    "existing_tree": {
+      "type": "hermes_installer.authority.bootstrap_runtime_factory.RootExistingModelArtifactSelection",
+      "registry": "hermes_installer.authority.bootstrap_runtime_factory.RootExistingModelSelectionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,root_owned_filesystem_selection_registry,root_journal)",
+      "producer": "observe_existing_model_directory(source_model_selection_handle)->RootExistingModelArtifactSelection; actual normal root TTY configured already-present directory/source/root choice, all v127 fields and held directory identity recorded. No caller model manifest/path passed to model observer.",
+      "resolve": "resolve_selection(selection_handle)->RootExistingModelArtifactSelection; exact retained membership/current source/private profile/principal/controller/root identity lease",
+      "verify": "verify_current(selection:RootExistingModelArtifactSelection)->same current typed selection; exact identity membership and root source/FD/currentness; raise on stale",
+      "open": "open_selected_directory(selection_handle)->RootHeldExistingModelDirectory",
+      "held_fields": [
+        "selection",
+        "directory_fd",
+        "device",
+        "inode",
+        "uid",
+        "gid",
+        "mode",
+        "expires_monotonic"
+      ],
+      "fd_ownership": "Registry retains original nofollow directory FD; each open returns duplicated FD owned/closed by model observer. FD identity must match exact selected root/subpath, source inventory resolution uses fd-relative nofollow opens. No path or FD on worker wire.",
+      "members": "RootExistingModelArtifactObserver.open_member(observation_handle,relative_manifest_member)->held read-only file observation; relative path must be exact verified source inventory member. Registry verifies current held root/observation before every open; no general filesystem read.",
+      "retention": "Existing verified RootJournalSelection from RootRuntimeBindings.resolve_root_journal and secure owned child; no invented journal-child API or key source. Explicit AuthorityService signer dependency remains v127."
+    },
+    "tasks": [
+      "SK-T128.1: host enrollment/runtime owner strict endpoint/model tables/types/getters and exact nonrecursive v108/source/process/route/receipt joins.",
+      "SK-T128.2: factory/owned-root owner actual staged configuration/existing-tree selection registry resolve/verify/open seam; models observer consumes duplicated held directory only.",
+      "SK-T128.3: test forged typed objects/unknown IDs/wrong FK/stale enclosing generation and arbitrary relative member/FD; real private endpoint/model/embedding proof open."
+    ]
+  },
+  "setup_selector_private_profile_v133": {
+    "schema": 1,
+    "requirements": [
+      "HI-T03",
+      "SK-F02",
+      "SK-T01",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "Actual setup choice exact-compares ephemeral principal/namespace receipt IDs after long source/runtime phases. v124 also asks a distinct private profile selection without an issuer. v91 already supplies exact owner-private native profile/namespace source; create a genuine purpose selection from it, not Resources or namespace alias.",
+    "identity_owner": "hermes_installer.authority.setup_principal.RootSetupPrincipalSelectionRegistry",
+    "principal_selector_type": "RootSetupPrincipalSelector",
+    "principal_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "principal_id",
+      "authentik_subject_id",
+      "username",
+      "email",
+      "authentik_policy_selection_handle",
+      "policy_selection_sha256",
+      "policy_revision",
+      "direct_group_ids",
+      "effective_group_ids",
+      "system_member",
+      "service_profile_id",
+      "reviewed_capability_map_sha256",
+      "selected_capability_ceiling",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "namespace_selector_type": "RootSetupNamespaceSelector",
+    "namespace_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_handle",
+      "principal_binding_sha256",
+      "target_profile_id",
+      "namespace_id",
+      "namespace_policy",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "selector_API": [
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_principal_selector(normal_session_store,normal_session_handle)->RootSetupPrincipalSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_namespace_selector(normal_session_store,normal_session_handle)->RootSetupNamespaceSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_current_setup_identity(principal_selection_handle,namespace_selection_handle,normal_session_handle)->RootCurrentSetupIdentitySnapshot"
+    ],
+    "snapshot_type": "RootCurrentSetupIdentitySnapshot",
+    "snapshot_fields": [
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_binding_sha256",
+      "namespace_binding_sha256",
+      "principal",
+      "namespace",
+      "identity_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selector_semantics": "Selectors are root-retained immutable setup intent, bound actual adopted current subject and v30 fixed service profile/v91 private namespace source through current normal session deadline only. They confer no authority, no proof that Authentik is currently valid, no System/action permission or persistent receipt lease. Actual policy/vault references remain root-only. Every phase resolves current actual TLS Authentik identity against held selected policy and same subject/email/groups/System/policy/profile/namespace/capability ceiling; change/revocation/unknown response denies rather than auto-widens or silently adopts another subject. Current setup/controller/plan/prepared predecessor must match. New boot/session requires explicit verified adoption linkage/current actor, not saved monotonic lease revival.",
+    "fresh_semantics": "principal and namespace are existing VerifiedRootSetupPrincipalSelection and VerifiedRootNamespaceSelection CURRENT authority snapshots, each <=30s and <=all actual evidence/session deadlines; namespace.principal_selection_receipt_id equals same returned pair principal.receipt_id. Expired snapshots are never extended/reused as authority. Re-observe actual identity before each authorization/phase resolution, issue a new fresh pair or retain a still-current same-evidence pair only within original lease. Returning pair atomically prevents convenience getters independently minting inconsistent IDs. Stable selector binding hashes/IDs remain unchanged. Root snapshot binds real newly observed identity receipt and current selected effect source; no ambient permission.",
+    "consumer_correction": "RootBootstrapSession exposes resolve_adopted_principal_selector/resolve_adopted_namespace_selector and resolve_current_setup_identity() root-only. Root TTY application/memory/model/profile choices and their source/runtime selections add principal_selection_handle and namespace_selection_handle, comparing stable registry membership+binding digest. Existing *_selection_receipt_handle fields refer only actual snapshot evidence for the current phase; initial choice may retain them as historical evidence but never exact-equal a newly refreshed receipt ID or treat history current. Source receipt/probe/admission phases resolve fresh pair using stable selectors before effects/minting and maintain currentness during live effect leases. This is explicit v117/v124/v127/v130 field refinement, not a blanket validator bypass.",
+    "activation": "Prepared capability ceiling remains v91 empty. Active effect selection requires separate verified active publication/current rules and fresh active principal binding, never upgrading a prepared selector into worker effect authority. Purpose intent can project only exact same subject/profile/namespace through verified publication handoff with independent actual selected source/operation/account/consent checks.",
+    "private_profile": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "registry": "RootPrivateProfileSelectionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_journal)",
+      "choice_type": "RootPrivateProfileSelection",
+      "choice_API": "RootBootstrapSession.observe_private_profile_selection(purpose)->RootPrivateProfileSelection; internal root TTY configuration transaction only. Allowed purposes memory-service-enablement and existing-model-selection. May be recorded in SAME explicit v124 enablement or v127 existing-model choice, no additional repeated approval prompt. No caller profile/namespace/receipt/boolean authority.",
+      "choice_fields": [
+        "selection_handle",
+        "choice_observation_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_binding_sha256",
+        "namespace_binding_sha256",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "purpose",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "source_template_receipt_handles",
+        "reviewed_capability_map_sha256",
+        "controller_binding_handle",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic",
+        "revocation_epoch"
+      ],
+      "source": "Resolve actual adopted principal/service_profile_id hermes-agent-native-v1 and independent namespace through current pair/stable selectors, verified installed v30 installer-bootstrap-compiler-template-v1 and v91 installer-reviewed-native-capability-map-v1 (SHA41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565). Namespace policy exactly per-selected-principal-native-profile-v1 and namespace ID v91 SHA recipe; rederive/validate, not caller input. The semantic private-purpose receipt is newly minted from these actual sources/current choice; it is distinct from namespace and Resources selection, although profile ID correctly remains the same native service profile. No phantom private OS/profile ID, no Resources identity reuse.",
+      "private_constraints": "privacy_classification=private; public_egress_allowed=false; additional_metered_budget_usd=0 for this purpose-scoped selection. Enforces owner-private selected namespace and no public/metered fallback for memory/model purpose. Does not globally relabel every tool in the native profile or authorize any new route. Capture opt-in, private input/provider egress consent, service-start enablement and model ownership/loading proofs remain independently required. No account/license/endpoint/model availability inferred.",
+      "resolver_API": "RootPrivateProfileSelectionRegistry.resolve_current_private_profile(selection_handle,purpose)->VerifiedRootPrivateProfileSelection",
+      "snapshot_fields": [
+        "receipt_handle",
+        "selection_handle",
+        "purpose",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_selection_receipt_handle",
+        "namespace_selection_receipt_handle",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "currentness": "Non-consuming resolver verifies exact registry membership/purpose/source/choice/controller/session/prepared binding/revocation and obtains current setup identity pair; <=30s private-purpose snapshot with actual new principal/namespace receipt IDs. Intent is persistent only through session deadline. Disable/selectionchange invalidates purpose projection; no persistent intent alone is start/capture/egress permission.",
+      "consumers": "v124 RootSelectedMemoryServiceEnablementChoice adds private_profile_selection_handle, principal_selection_handle, namespace_selection_handle; historical *_receipt_handle fields remain evidence only. Current phase resolves VerifiedRootPrivateProfileSelection before issuing enablement snapshot. v127 existing-model directory selection adds same stable selector handles and private_profile_selection_handle; source observer privately opens genuine root TTY selected held directory separately, never substitutes profile/namespace receipt for directory/root FD. Active publication projects exact private-purpose choice to actual owner/profile/namespace/generation only with actual enrollment/source/runtime receipts."
+    },
+    "tasks": [
+      "HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests",
+      "SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease",
+      "SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies"
+    ],
+    "status": "All original scope and AC open; no baseline edit, live account/weights/endpoint effect or privileged Mac install."
+  },
+  "glm_source_license_pins_v135": {
+    "schema": 1,
+    "requirements": [
+      "SK-F02",
+      "SK-T125.1",
+      "SK-T127.1",
+      "R0063"
+    ],
+    "why": "Actual model observer requires RootCatalogArtifactObserver membership; source inventory and independent upstream license lacked finite catalog rows. No weights are enrolled by this refinement.",
+    "catalog_rows": [
+      {
+        "artifact_id": "glm52-artifact-metadata-v1",
+        "filename": "glm52-artifact-metadata.json",
+        "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/653ac5fbc7a02613c9951859a7d794599603459b/planning/glm52-artifact-metadata.json",
+        "version": "653ac5fbc7a02613c9951859a7d794599603459b",
+        "sha256": "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+        "size_bytes": 56232,
+        "max_bytes": 56232,
+        "archive_format": null,
+        "archive_root": null,
+        "max_tree_bytes": 1,
+        "tree_files": [],
+        "redirect_hosts": [],
+        "git_blob_id": null
+      },
+      {
+        "artifact_id": "glm52-upstream-mit-license-cf457fa",
+        "filename": "glm52-upstream-MIT-LICENSE.txt",
+        "source_url": "https://huggingface.co/api/resolve-cache/models/zai-org/GLM-5.2/cf457fa734ab149ffef225f80893eb38c6ff5cdc/LICENSE",
+        "version": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+        "sha256": "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+        "size_bytes": 1065,
+        "max_bytes": 1065,
+        "archive_format": null,
+        "archive_root": null,
+        "max_tree_bytes": 1,
+        "tree_files": [],
+        "redirect_hosts": [],
+        "git_blob_id": "e14ce68b0a559601dc936eba5e7c4d1c3d8ffc84"
+      },
+      {
+        "artifact_id": "glm52-quantized-readme-6bbb01e",
+        "filename": "glm52-quantized-README.md",
+        "source_url": "https://huggingface.co/api/resolve-cache/models/mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp/6bbb01ed3e515a8730b694dfae73aadfd6774581/README.md",
+        "version": "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+        "sha256": "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+        "size_bytes": 17468,
+        "max_bytes": 17468,
+        "archive_format": null,
+        "archive_root": null,
+        "max_tree_bytes": 1,
+        "tree_files": [],
+        "redirect_hosts": [],
+        "git_blob_id": "b2fbf0a82a999cee8a52fb6a51f208c05b7878c0"
+      }
+    ],
+    "catalog_row_projection": "Use existing exact ArtifactSpec keys only; git_blob_id is source evidence retained in this contract, not a new ArtifactCatalog parser field. The metadata source is unchanged checked-in planning bytes at the immutable baseline commit. Broker enrolls these three bounded non-executable blob rows and verifies actual packaged release members or verified TLS acquisition against exact SHA/size before observing. No redirects are authorized by these direct endpoints.",
+    "release_members": [
+      {
+        "artifact_id": "glm52-artifact-metadata-v1",
+        "relative_path": "planning/glm52-artifact-metadata.json"
+      },
+      {
+        "artifact_id": "glm52-upstream-mit-license-cf457fa",
+        "relative_path": "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt"
+      },
+      {
+        "artifact_id": "glm52-quantized-readme-6bbb01e",
+        "relative_path": "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md"
+      }
+    ],
+    "selection_join": "RootExistingModelArtifactSelection source_manifest_artifact_id/sha256 resolves glm52-artifact-metadata-v1; license_artifact_id/sha256 resolves glm52-upstream-mit-license-cf457fa. Retain independent quantized README source receipt and its MIT/base_model declaration as additional selected source evidence. Root model observer independently verifies all 149 exact selected model members under held chosen directory FD; cataloging this metadata does not catalog model weights.",
+    "license_scope": "The upstream HuggingFace GLM-5.2 LICENSE is MIT, Copyright 2026 Zhipu AI. The selected quantized repository README independently declares license: mit and base_model: zai-org/GLM-5.2. Preserve copyright/license notices when redistributing actual covered artifacts. Do not substitute the Apache-2.0 license from the separate zai-org/GLM-5 code repository, assert legal eligibility from a /v1/models alias, or interpret either small blob as an actual model deployment.",
+    "source_evidence": {
+      "observed_at": "2026-10-10",
+      "upstream_api": "https://huggingface.co/api/models/zai-org/GLM-5.2?blobs=true",
+      "upstream_revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc",
+      "quantized_revision": "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+      "inventory_files": 149,
+      "inventory_total_bytes": 429276220139,
+      "no_weights_downloaded": true
+    },
+    "tasks": [
+      {
+        "id": "SK-T135.1",
+        "owner": "artifact broker",
+        "work": "Enroll exact three blob catalog/source rows, actual release-member receipt association and held-byte observer tests; no weights rows or broad catalog namespace."
+      },
+      {
+        "id": "SK-T135.2",
+        "owner": "models/factory",
+        "work": "Consume exact source/license/README observations in existing-model selection and current directory verification; preserve absent tree/runtime/load/embedding/account evidence as pending."
+      }
+    ],
+    "acceptance": "All original AC remain open. Small source/license acquisition only; no model download, runtime install or deployment claim."
+  },
+  "supporting_model_source_receipts_v136": {
+    "refines": "v135 source receipt retention in v127 ExistingModelArtifactObservation; member_observation_sha256 remains exact member-only hash.",
+    "added_signed_observation_field": "supporting_source_receipt_sha256",
+    "digest": "SHA256 canonical UTF8 JSON sorted by artifact_id of exact supporting root source observations projected as {artifact_id,sha256,size_bytes,receipt_handle}; includes v135 glm52-quantized-readme-6bbb01e actual catalog receipt. No newline; same canonical sort_keys/separators/ensure_ascii=False. Root-held durable registry record retains the actual observation handles/pins/bytes and verifies current membership on restore; signature includes this digest. No caller supporting rows/active selection fields or model weight evidence is added.",
+    "implementation": "Models observer constructs supporting-source evidence from fixed held v135 contract and actual RootCatalogArtifactObserver. Host authority finite existing model-observation signer/verifier adds this exact claim; no private _sign or new key/source kind."
+  },
+  "existing_model_store_selection_source_v139": {
+    "schema": 1,
+    "requirements": [
+      "SK-T127.2",
+      "SK-T133.2",
+      "SK-F02"
+    ],
+    "why": "v127 names held model-store root without actual finite source root/registry producer. v133 private profile receipt cannot substitute a filesystem observation. Exact fixed source template below authorizes only root-local existing-tree selection, not model install/download.",
+    "template": {
+      "artifact_id": "installer-existing-model-store-root-template-v1",
+      "relative_path": "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json",
+      "sha256": "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
+      "size_bytes": 712,
+      "release_role": "existing-model-store-root-template"
+    },
+    "root_policy": {
+      "schema": 1,
+      "id": "installer-existing-model-store-root-template-v1",
+      "root_id": "installer-existing-model-store-v1",
+      "absolute_path": "/var/lib/hermes-installer/model-store",
+      "owner_uid": 0,
+      "directory_mode": 448,
+      "selection_kind": "existing-model-store",
+      "model_directory_choice": "explicit already-present direct child; no default or prefill",
+      "source_model_id": "mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp",
+      "source_revision": "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+      "source_manifest_artifact_id": "glm52-artifact-metadata-v1",
+      "license_artifact_id": "glm52-upstream-mit-license-cf457fa",
+      "supporting_source_artifact_ids": [
+        "glm52-quantized-readme-6bbb01e"
+      ],
+      "public_egress_allowed": false,
+      "additional_metered_budget_usd": 0
+    },
+    "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+    "registry": "RootOwnedFilesystemSelectionRegistry",
+    "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_journal,authority_service)",
+    "observe_API": "observe_existing_model_store(private_profile_selection_handle)->RootOwnedFilesystemSelection; called only from RootBootstrapSession existing-model configuration source. No caller root path/root record accepted.",
+    "selection_fields": [
+      "selection_handle",
+      "root_id",
+      "selection_kind",
+      "template_artifact_receipt_handle",
+      "template_sha256",
+      "private_profile_selection_handle",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "root_device",
+      "root_inode",
+      "root_uid",
+      "root_gid",
+      "root_mode",
+      "controller_binding_handle",
+      "selection_sha256",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "root_observation": "Open only the fixed template path using root-owned secure /var/lib/hermes-installer parent and nofollow directory traversal/held FDs. Exact root UID0 and0700 mode, no symlinks or writable untrusted ancestor; retain directory FD/device/inode/owner/mode in private registry. Existing absent root is a precise prerequisite; observer never creates/chowns/copies/downloads/replaces root or model data. An administrator may separately populate this explicit managed store under applicable authorization; no ambient checkout/home/cache/default external directory substitute. Template itself is reviewed source only, actual root receipt requires observed directory.",
+    "resolve_API": "resolve_current_root(selection_handle,private_profile_selection_handle)->VerifiedRootOwnedFilesystemSelection; verifies actual registry membership/current installed release/template/current private purpose/identity/controller and reopened same directory identity, issues <=30s current snapshot. open_selected_root(selection_handle)->RootHeldFilesystemDirectory with root selection plus duplicated nofollow directory_fd/device/inode/uid/gid/mode/expiry, caller closes duplicate; registry retains original. No path API or worker filesystem authority.",
+    "configuration_source": "RootBootstrapSession.observe_existing_model_selection(private_profile_selection_handle) first resolves current purpose existing-model-selection through v133 and actual filesystem root selection. Foreground root TTY presents only eligible already-present immediate child directories from held root (max256 candidates, sorted names), selected basename matches ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ excluding . and ..; no default/prefill/model download. Selection remains same actual configuration choice, not another approval loop. Root opens child by dir_fd/nofollow, retains actual identity, verifies root0/no untrusted writes and exact selected metadata/license/README observations v135/v136. Raw TTY basename is intent only until genuine directory/source observations. No caller supplied path or guessed endpoint/model alias can enter model observation.",
+    "model_selection_join": "Existing v127 RootExistingModelArtifactSelection.model_store_root_id is installer-existing-model-store-v1; model_store_root_receipt_handle is actual RootOwnedFilesystemSelection selection handle, relative_subpath exactly observed selected direct basename. Add existing v133 private_profile_selection_handle/principal_selection_handle/namespace_selection_handle source intent joins. RootExistingModelSelectionRegistry.from_root_setup(selected_installation_binding,root_owned_filesystem_selection_registry,root_journal) uses actual resolver and retained child FD; v128 open_selected_directory returns duplicated genuine held child, models observer hashes actual complete source members. Fixed GLM source_manifest/license IDs and actual SHA receipts from v135, supporting README current record perv136; embedding remains no selected source until independently reviewed.",
+    "adoption": "Active publisher retains durable signed actual root selection/source template/current chosen model selector and original principal/profile/namespace binding under installed generation. Subsequent current model observations reopen fixed root+selected child and source members, require exact current profile/policy/choice/epoch and fresh actual authority proof; old setup session or monotonic receipt is not revived. Root selection is access/source provenance only, not deployed source-loaded server, model inference, embedding dimensions, capture or egress consent. Namespace selection does not duplicate shared immutable weights or permit arbitrary private data discovery.",
+    "verification": "Actual root-owned model member scan observes every149 inventory path/digest/size and complete manifest; no429GB weight acquisition/copy or source presence inferred from directory choice. Existing observation issue lease starts only after complete required source verification/currentness, not before an incomplete long scan. Revalidate actual selected controller/profile/source and immutable held file identities during scan/at finish; changed files/cancel/expired setup deny. Production absent store/tree remains exact pending.",
+    "tasks": [
+      {
+        "id": "SK-T139.1",
+        "owner": "factory/release builder",
+        "work": "Pin literal root template in genuine release/source descriptor, implement actual root-held filesystem observer and same normal configuration existing-child model selection; absent/unowned/symlink/writable/root/source mismatch denies."
+      },
+      {
+        "id": "SK-T139.2",
+        "owner": "models/active publisher",
+        "work": "Consume actual root/child/source observations and signed durable selection/current adoption, complete model member verification independent deployment; no arbitrary paths/copies/downloads or inferred embedding."
+      }
+    ],
+    "acceptance": "All original AC open; no root/store/model installation or model bytes accessed by Sol."
+  },
+  "memory_process_control_readmission_v145": {
+    "schema": 1,
+    "requirements": [
+      "SK-T64",
+      "HI-T80",
+      "SK-T119"
+    ],
+    "why": "A real memory service may outlive the initial <=30s start admission. Reusing expired admission denies valid status/stop and must not extend old proof.",
+    "api": {
+      "owner": "existing RootMemoryLifecycleRegistry and selected lifecycle authority/custody",
+      "call": "readmit_selected_control(memory_enrollment_id,owned_process_handle,operation)->fresh RootMemoryLifecycleAdmission",
+      "operations": [
+        "process.status",
+        "process.stop"
+      ],
+      "inputs": "Genuine retained owned process handle/terminal lineage only; no PID/profile/UID/source selector supplied by worker. Root registry independently resolves exact active memory enrollment, original start receipt and selected service/profile/generation/source closure.",
+      "checks": "Fresh actual current installed controller PIDFD, selected enablement choice/adoption and policy/epoch, current selected artifact/prestart/source proof, held process identity/PIDFD/cgroup/mount/network namespace. Current proof expires<=30s and <=original process deadline; old admission immutable/expired. No new start effect or service deadline extension.",
+      "status": "Fresh current same-process status permission; may not imply semantic readiness or model/capture permission.",
+      "stop": "Fresh narrowly scoped same retained process stop authorization using existing fixed shutdown/grace policy. Actual memory enablement revocation prohibits future work and schedules root-owned cleanup using retained original process/PIDFD custody; revocation must not prevent necessary stop cleanup. Root cleanup is separate finite custody obligation, no new caller grant.",
+      "cleanup": "Missing controller/consent/source currentness denies productive operations; retained root cleanup still terminates only exact originally owned live process or proves terminal state with no PID reuse/kill-by-number. Original deadline hard bound remains.",
+      "serialization": "Reuse existing finite selected lifecycle status/stop payload and signer/verify/consume route; no new generic signer/session/worker RPC."
+    },
+    "tasks": [
+      {
+        "id": "SK-T145.1",
+        "owner": "memory lifecycle/selected startup authority/custody",
+        "work": "Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD."
+      },
+      {
+        "id": "SK-T145.2",
+        "owner": "memory lifecycle integration",
+        "work": "Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership."
+      }
+    ],
+    "acceptance": "Meaningful process fixtures and actual target evidence separate. All AC and baseline unchanged."
+  },
+  "model_choice_observation_order_v146": {
+    "schema": 1,
+    "requirements": [
+      "SK-T127",
+      "SK-T139",
+      "HI-T143",
+      "HI-T142"
+    ],
+    "why": "Actual pre-service held release receipt has deployment SHA, not opaque handle; fixed model root observation must precede explicit child choice and model-tree verification without signing incomplete intent. Public scope requires actual retained canonical payload, not only matching config IDs.",
+    "release_identity": {
+      "replacement": "v143 choice record field release_receipt_handle is replaced by release_deployment_receipt_sha256",
+      "source": "Exact VerifiedInstallerReleaseReceipt.deployment_receipt_sha256 after verify_current; held release root/device/inode/manifest and current actor verified separately. This digest is named as digest, never relabeled opaque handle.",
+      "setup_session_handle": "Genuine RootSetupSessionStore normal session identity already adopted from stage-zero. No fabricated release handle/facade required; key bridge still resolves genuine live stage-zero receipt where that type actually has a handle."
+    },
+    "model_sequence": [
+      {
+        "step": 1,
+        "action": "Factory resolves current v133 private-profile selector and actual RootExistingModelStoreTemplateReceipt.read_current; opens only fixed reviewed /var/lib/hermes-installer/model-store securely through root-owned ancestor FDs.",
+        "output": "RootHeldExistingModelStoreObservation: schema, observation_handle, template_artifact_id, template_sha256, template_member_receipt_handle, root_id, root_device, root_inode, root_uid, root_gid, root_mode, private_profile_selection_handle, issued_monotonic, expires_monotonic; registry membership and held directory FD. No signature/consent/model source/deployment assertion."
+      },
+      {
+        "step": 2,
+        "action": "Foreground root TTY lists only bounded actual eligible direct-child basenames from held root and records explicit blank/no-default selection, controller observation and actual selected child device/inode/mode.",
+        "output": "Actual root TTY choice binds held root observation handle, direct child basename/inode, private profile/principal/namespace stable selectors and selected source metadata/license/README member receipt identities. No arbitrary path/default/download/copy/chown."
+      },
+      {
+        "step": 3,
+        "action": "Revalidate root/template/child/controller/current short principal/namespace snapshot, resolve genuine held small v135 metadata/license/README source receipts, then RootSetupChoiceRegistry.record_observed_choice records the completed closed existing-model-selection choice with v143/v146 named deployment digest and actual source receipt membership.",
+        "output": "Signed durable choice intent + opaque selection handle; signing only after actual root TTY selection and source-definition receipts. It is not a verified model tree or deployment and does not require model weights already hashed before the choice."
+      },
+      {
+        "step": 4,
+        "action": "RootExistingModelSelectionRegistry resolves signed choice and current held root/child/source metadata proof into existing RootExistingModelArtifactSelection; RootExistingModelArtifactObserver hashes all exact selected manifest members via retained child FD before issuing actual signed source observation.",
+        "output": "ExistingModelArtifactObservation only after complete actual all149-file verification; current source/private selector linkage, supporting source digest, existing signer. No model-load/private endpoint/embedding proof inferred."
+      }
+    ],
+    "held_root_api": {
+      "registry": "RootOwnedFilesystemSelectionRegistry",
+      "observe": "observe_existing_model_store(private_profile_selection_handle)->RootHeldExistingModelStoreObservation",
+      "current": "resolve_current_root(observation_handle,private_profile_selection_handle)->current held root observation",
+      "open": "open_selected_root(observation_handle)->genuine duplicate held directory FD after currentness",
+      "closure": "Root observation is pre-choice kernel/filesystem fact, not signed completed purpose choice. Source-definition member receipts are distinct from later model-tree observation. Existing fixed root missing or unsafe denies with exact prerequisite; observer never repairs it."
+    },
+    "public_scope_payload": {
+      "capability": "NativeActionRecord remains operation plugin.web.read, capability plugin:web; v142 does not rename existing action capability.",
+      "resolver": "RootNativeComponentTargetRegistry.resolve_current_public_web_scope(target_selection_handle)->root-retained canonical scope payload plus scope_payload_sha256, configuration_observation_handle/configuration_sha256 and exact target-contract source receipt joins.",
+      "payload": "Exactly v142 ten EnrolledPublicWebScope fields with nested targets; SHA canonical rule v142. Resolver reads retained actual typed source configuration observation, revalidates current registry membership and choice/controller/source contract, never accepts row payload as source.",
+      "active_validation": "Publisher/getter compare full canonical payload hash and exact field projection against retained target configuration, in addition to existing target/config IDs/profile/process generation/effect/recipient FKs. Matching configuration SHA/IDs without authenticated named scope member does not prove arbitrary targets."
+    },
+    "tasks": [
+      {
+        "id": "SK-T146.1",
+        "owner": "factory/model selection/consent",
+        "work": "Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately."
+      },
+      {
+        "id": "HI-T146.2",
+        "owner": "native target/factory/enrollment",
+        "work": "Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation."
+      }
+    ],
+    "acceptance": "Ordering/source records only; actual tree/load/route/runtime acceptance separate, all original AC and baseline unchanged."
   }
 }

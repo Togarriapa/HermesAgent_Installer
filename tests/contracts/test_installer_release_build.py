@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import subprocess
+import sys
+import tarfile
 import time
 from pathlib import Path
 
@@ -54,6 +57,20 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
             receipt.verify_current()
     finally:
         receipt.close()
+
+
+def test_release_builder_pins_literal_model_store_template_and_native_source_modules():
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_ID == "installer-existing-model-store-root-template-v1"
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_PATH.endswith(
+        "2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json")
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_SHA256 == (
+        "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f")
+    assert release_build.EXISTING_MODEL_STORE_TEMPLATE_BYTES == 712
+    for _name, source_path, target_path, digest, size in release_build.REVIEWED_SOURCE_MODULES:
+        source = Path(__file__).parents[2] / source_path
+        body = source.read_bytes()
+        assert target_path.startswith("lib/python/hermes_installer/components/")
+        assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
@@ -123,10 +140,116 @@ def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp
         os.close(conflict_fd)
 
 
-def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
+def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path, monkeypatch):
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
     body = b"release module\n"
+    (output / "module.py").write_bytes(body)
+    os.chmod(output / "module.py", 0o444)
+    info = os.stat(output / "module.py", follow_symlinks=False)
+    row = release_build.BuildOutputFile("module.py", hashlib.sha256(body).hexdigest(), len(body), 0o444,
+                                        ("module",), info.st_dev, info.st_ino)
+    sibling_body = b"sealed sibling\n"
+    (output / "sibling.py").write_bytes(sibling_body)
+    os.chmod(output / "sibling.py", 0o444)
+    sibling_info = os.stat(output / "sibling.py", follow_symlinks=False)
+    sibling = release_build.BuildOutputFile(
+        "sibling.py", hashlib.sha256(sibling_body).hexdigest(), len(sibling_body), 0o444,
+        ("module",), sibling_info.st_dev, sibling_info.st_ino)
+    rows = (row, sibling)
+    manifest = release_build._canonical_json({
+        "schema": 1, "candidate_git_sha": "a" * 40,
+        "files": [{"relative_path": item.relative_path, "sha256": item.sha256,
+                   "size_bytes": item.size_bytes, "mode": item.mode, "roles": list(item.roles)}
+                  for item in rows],
+    })
+    (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+    os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+        release_build._SEAL, handle="r" * 43, candidate_git_sha="a" * 40,
+        distribution_receipt_handle="d" * 43, interpreter_receipt_handle="i" * 43,
+        source_tree_sha256="c" * 64, baseline_tree_sha256="b" * 64,
+        amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+        role_closure_manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        root_setup_plan_sha256="0" * 64, builder_artifact_sha256="1" * 64,
+        issued_monotonic=time.monotonic(),
+        deployment_predecessor=release_build.DeploymentPredecessor("absent", info.st_dev, info.st_ino),
+        files=rows, manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
+        expected_uid=os.geteuid())
+    try:
+        receipt.verify_current()
+        hashed_bytes = 0
+        original_hash_fd = release_build._hash_fd
+
+        def count_hash_bytes(fd, maximum):
+            nonlocal hashed_bytes
+            digest, size = original_hash_fd(fd, maximum)
+            hashed_bytes += size
+            return digest, size
+
+        monkeypatch.setattr(release_build, "_hash_fd", count_hash_bytes)
+        opened = receipt.open_file("module.py")
+        try:
+            assert os.read(opened, len(body)) == body
+        finally:
+            os.close(opened)
+        # Copy-time validation hashes only the requested member. A whole closure
+        # hash here would reread every sibling for each of the 938 publication
+        # opens and make the bounded transaction quadratic.
+        assert hashed_bytes == len(body)
+        receipt.consume()
+        with pytest.raises(release_build.BootstrapEnrollmentPending):
+            receipt.verify_current()
+    finally:
+        receipt.close()
+
+
+def test_build_receipt_rejects_expiry_during_copy_and_unsealed_extra_file(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    body = b"sealed bytes\n"
+    (output / "module.py").write_bytes(body)
+    os.chmod(output / "module.py", 0o444)
+    info = os.stat(output / "module.py", follow_symlinks=False)
+    row = release_build.BuildOutputFile("module.py", hashlib.sha256(body).hexdigest(), len(body), 0o444,
+                                        ("module",), info.st_dev, info.st_ino)
+    manifest = release_build._canonical_json({
+        "schema": 1, "candidate_git_sha": "a" * 40,
+        "files": [{"relative_path": row.relative_path, "sha256": row.sha256,
+                   "size_bytes": row.size_bytes, "mode": row.mode, "roles": list(row.roles)}],
+    })
+    (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+    os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    issued = time.monotonic()
+    receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+        release_build._SEAL, handle="r" * 43, candidate_git_sha="a" * 40,
+        distribution_receipt_handle="d" * 43, interpreter_receipt_handle="i" * 43,
+        source_tree_sha256="c" * 64, baseline_tree_sha256="b" * 64,
+        amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+        role_closure_manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        root_setup_plan_sha256="0" * 64, builder_artifact_sha256="1" * 64,
+        issued_monotonic=issued,
+        deployment_predecessor=release_build.DeploymentPredecessor("absent", info.st_dev, info.st_ino),
+        files=(row,), manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
+        expected_uid=os.geteuid())
+    try:
+        monkeypatch.setattr(release_build.time, "monotonic", lambda: receipt.expires_monotonic)
+        with pytest.raises(release_build.BootstrapEnrollmentPending):
+            receipt.open_file("module.py")
+        monkeypatch.undo()
+        (output / "extra.py").write_bytes(b"unsealed")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            receipt.verify_current()
+    finally:
+        receipt.close()
+
+
+def test_build_receipt_checks_copied_member_and_final_closure(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    body = b"sealed bytes\n"
     (output / "module.py").write_bytes(body)
     os.chmod(output / "module.py", 0o444)
     info = os.stat(output / "module.py", follow_symlinks=False)
@@ -152,15 +275,14 @@ def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
         files=(row,), manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
         expected_uid=os.geteuid())
     try:
-        receipt.verify_current()
-        opened = receipt.open_file("module.py")
-        try:
-            assert os.read(opened, len(body)) == body
-        finally:
-            os.close(opened)
-        receipt.consume()
-        with pytest.raises(release_build.BootstrapEnrollmentPending):
+        (output / "extra.py").write_bytes(b"unsealed")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
             receipt.verify_current()
+        (output / "extra.py").unlink()
+        os.chmod(output / "module.py", 0o644)
+        (output / "module.py").write_bytes(b"tampered bytes\n")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            receipt.open_file("module.py")
     finally:
         receipt.close()
 
@@ -174,6 +296,20 @@ def test_enumeration_rejects_unsealed_symlink(tmp_path):
     try:
         with pytest.raises(release_build.InstallerReleaseBuildError):
             release_build._enumerate_regular_files(fd)
+    finally:
+        os.close(fd)
+
+
+def test_hash_then_read_rewinds_a_consumed_descriptor(tmp_path):
+    body = b"sealed interpreter bytes" * 37
+    path = tmp_path / "interpreter"
+    path.write_bytes(body)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        digest, size, copied = release_build._hash_and_read_fd(fd, len(body))
+        assert copied == body
+        assert size == len(body)
+        assert digest == hashlib.sha256(body).hexdigest()
     finally:
         os.close(fd)
 
@@ -211,24 +347,283 @@ def test_runtime_lock_requires_version_and_hash_pins():
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
 
 
+def test_runtime_site_search_paths_deduplicate_purelib_and_platlib(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_build.sysconfig, "get_path", lambda _key: str(tmp_path))
+    assert release_build._runtime_site_search_paths() == [str(tmp_path.resolve())]
+
+
+def test_only_absent_fixed_optional_stdlib_zip_is_ignored(tmp_path):
+    runtime = tmp_path / "runtime"
+    library = runtime / "lib"
+    library.mkdir(parents=True)
+    optional_zip = library / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+
+    assert release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, {
+        optional_zip.relative_to(runtime).as_posix(),
+    })
+    assert not release_build._is_absent_optional_stdlib_zip(library / "python999.zip", runtime, set())
+    assert not release_build._is_absent_optional_stdlib_zip(runtime / "missing.zip", runtime, set())
+
+    optional_zip.symlink_to(library / "missing-target.zip")
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+    optional_zip.unlink()
+    optional_zip.write_bytes(b"unrecorded archive")
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+
+
+def test_bundled_pip_is_bound_to_fixed_cpython_site_directory(tmp_path):
+    relative_files = (
+        Path("pip/__init__.py"),
+        Path("pip-26.2.1.dist-info/METADATA"),
+        Path("../../../bin/pip"),
+        Path("../../../bin/pip3"),
+        Path("../../../bin/pip3.14"),
+    )
+    for relative in relative_files:
+        target = tmp_path / "lib/python3.14/site-packages" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("pinned runtime archive member", encoding="utf-8")
+
+    class Distribution:
+        files = relative_files
+        version = "26.2.1"
+
+        def locate_file(self, item):
+            return tmp_path / "lib/python3.14/site-packages" / item
+
+    release_build._verify_bundled_pip_distribution(Distribution(), tmp_path)
+
+    class EscapingDistribution:
+        files = (Path("../../../bin/pipx"),)
+        version = "26.2.1"
+
+        def locate_file(self, item):
+            target = tmp_path / "lib/python3.14/site-packages" / item
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("unexpected package", encoding="utf-8")
+            return target
+
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="escaped its fixed CPython site directory"):
+        release_build._verify_bundled_pip_distribution(EscapingDistribution(), tmp_path)
+
+
+def test_selected_installer_python_requirement_is_parsed_from_toml():
+    release_build._require_python_requirement(b'[project]\nrequires-python = ">=3.11"\n')
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="valid installer Python requirement"):
+        release_build._require_python_requirement(b'[project\nrequires-python = ">=3.11"\n')
+
+
+def _runtime_archive(entries):
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for name, kind, value in entries:
+            member = tarfile.TarInfo(name)
+            if kind == "file":
+                body = value
+                member.type = tarfile.REGTYPE
+                member.mode = 0o755
+                member.size = len(body)
+                archive.addfile(member, io.BytesIO(body))
+            else:
+                member.type = tarfile.SYMTYPE
+                member.mode = 0o777
+                member.linkname = value
+                archive.addfile(member)
+    return output.getvalue()
+
+
+def _extract_fixture_runtime(monkeypatch, archive_bytes, destination):
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(archive_bytes))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256",
+                        hashlib.sha256(archive_bytes).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_EXPANDED", 1024 * 1024)
+    release_build._extract_verified_runtime_archive(archive_bytes, destination)
+
+
+def test_runtime_archive_accepts_normalized_internal_parent_symlink(monkeypatch, tmp_path):
+    archive = _runtime_archive([
+        ("python/lib/target", "file", b"runtime member"),
+        ("python/lib/alias", "symlink", "../lib/target"),
+    ])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    _extract_fixture_runtime(monkeypatch, archive, destination)
+    assert (destination / "lib/target").read_bytes() == b"runtime member"
+    assert (destination / "lib/alias").is_symlink()
+    assert (destination / "lib/alias").resolve() == (destination / "lib/target")
+
+
+@pytest.mark.parametrize("target", [
+    "../../outside", "/usr/bin/python", ".././target", "../target//file", "..\\outside",
+])
+def test_runtime_archive_rejects_escaping_or_nonportable_symlink_targets(monkeypatch, tmp_path, target):
+    archive = _runtime_archive([("python/lib/escape", "symlink", target)])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        _extract_fixture_runtime(monkeypatch, archive, destination)
+
+
+def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
+    archive = _runtime_archive([("python/lib/cycle", "symlink", "cycle")])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="broken or cyclic"):
+        _extract_fixture_runtime(monkeypatch, archive, destination)
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="runtime closure requires root-owned sealed directories")
+def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_path):
+    root = tmp_path / "python"
+    (root / "bin").mkdir(parents=True)
+    root.chmod(0o555)
+    (root / "bin").chmod(0o555)
+    os.symlink("../lib/target", root / "bin/alias")
+    rows = release_build._runtime_archive_rows(root)
+    assert rows == [("bin/alias", hashlib.sha256(b"../lib/target").hexdigest(),
+                     len(b"../lib/target"), 0o777, "../lib/target")]
+
+    (root / "bin/alias").unlink()
+    os.symlink("../../outside", root / "bin/alias")
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="escapes its fixed prefix"):
+        release_build._runtime_archive_rows(root)
+
+
+def test_runtime_closure_modes_match_the_sealed_tree_modes():
+    assert release_build._sealed_runtime_mode(0o755) == 0o555
+    assert release_build._sealed_runtime_mode(0o644) == 0o444
+    assert release_build._sealed_runtime_mode(0o700) == 0o555
+    assert release_build._sealed_runtime_mode(0o600) == 0o444
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="runtime mode currentness requires a root-owned Linux tree")
+def test_root_runtime_tree_seals_before_closure_and_rejects_writable_mode(tmp_path):
+    root = tmp_path / "runtime"
+    root.mkdir(mode=0o700)
+    executable = root / "bin/python3.14"
+    data = root / "lib/config.dat"
+    executable.parent.mkdir()
+    data.parent.mkdir()
+    executable.write_bytes(b"interpreter")
+    data.write_bytes(b"runtime data")
+    executable.chmod(0o755)
+    data.chmod(0o644)
+
+    release_build._seal_runtime_tree(root)
+    assert executable.stat().st_mode & 0o777 == 0o555
+    assert data.stat().st_mode & 0o777 == 0o444
+    closure = release_build._runtime_closure_digest(root)
+    release_build._verify_runtime_materialization(root, closure)
+
+    data.parent.chmod(0o777)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="directory mode is not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+    data.parent.chmod(0o555)
+
+    executable.chmod(0o666)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+    executable.chmod(0o555)
+
+    root.chmod(0o777)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="directory mode is not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+
+
 def test_wheel_record_rejects_digest_and_unlisted_member_changes():
     import base64
 
     body = b"package bytes"
     record = "yaml/__init__.py,sha256={},{}\n".format(
         base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("="), len(body))
-    record += "PyYAML-6.0.3.dist-info/RECORD,,\n"
-    rows = {"yaml/__init__.py": body, "PyYAML-6.0.3.dist-info/RECORD": record.encode()}
-    release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+    record += "pyyaml-6.0.3.dist-info/RECORD,,\n"
+    rows = {"yaml/__init__.py": body, "pyyaml-6.0.3.dist-info/RECORD": record.encode()}
+    release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
 
     rows["yaml/__init__.py"] = b"changed"
     with pytest.raises(release_build.InstallerReleaseBuildError):
-        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
-
+        release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
     rows["yaml/__init__.py"] = body
     rows["yaml/unlisted.py"] = b"extra"
     with pytest.raises(release_build.InstallerReleaseBuildError):
-        release_build._verify_wheel_record(rows, "PyYAML-6.0.3.dist-info/RECORD")
+        release_build._verify_wheel_record(rows, "pyyaml-6.0.3.dist-info/RECORD")
+
+
+def _fixture_pyyaml_wheel(files, *, symlink_member=None):
+    import base64
+    import csv
+    import io
+    import stat
+    import zipfile
+
+    members = dict(files)
+    record_name = "pyyaml-6.0.3.dist-info/RECORD"
+    output = io.BytesIO()
+    rows = []
+    for name, body in members.items():
+        rows.append((name, "sha256=" + base64.urlsafe_b64encode(
+            hashlib.sha256(body).digest()).decode().rstrip("="), str(len(body))))
+    rows.append((record_name, "", ""))
+    record = io.StringIO(newline="")
+    csv.writer(record, lineterminator="\n").writerows(rows)
+    members[record_name] = record.getvalue().encode()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, body in members.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = ((stat.S_IFLNK | 0o777) if name == symlink_member
+                                  else (stat.S_IFREG | 0o644)) << 16
+            archive.writestr(info, body)
+    return output.getvalue()
+
+
+def test_materialize_pinned_wheel_accepts_only_the_closed_pyyaml_package_set(monkeypatch, tmp_path):
+    import zipfile
+
+    files = {
+        "_yaml/__init__.py": b"# native extension package\n",
+        "yaml/__init__.py": b"__version__ = '6.0.3'\n",
+        "yaml/_yaml.cpython-314-aarch64-linux-gnu.so": b"fixture extension bytes",
+        "pyyaml-6.0.3.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nTag: cp314-cp314-manylinux_2_28_aarch64\n"),
+        "pyyaml-6.0.3.dist-info/METADATA": b"Name: PyYAML\nVersion: 6.0.3\n",
+    }
+    wheel = _fixture_pyyaml_wheel(files)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(wheel).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(wheel))
+    target = tmp_path / "site-packages"
+    target.mkdir()
+    release_build._materialize_pyyaml_wheel(wheel, target)
+    assert (target / "_yaml/__init__.py").read_bytes() == files["_yaml/__init__.py"]
+    assert (target / "yaml/_yaml.cpython-314-aarch64-linux-gnu.so").read_bytes() == files[
+        "yaml/_yaml.cpython-314-aarch64-linux-gnu.so"]
+
+    malicious = _fixture_pyyaml_wheel({**files, "unreviewed/__init__.py": b"no"})
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(malicious).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(malicious))
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="unreviewed package path"):
+        release_build._materialize_pyyaml_wheel(malicious, tmp_path / "other")
+
+    linked = _fixture_pyyaml_wheel(files, symlink_member="_yaml/__init__.py")
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(linked).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(linked))
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="link or special"):
+        release_build._materialize_pyyaml_wheel(linked, tmp_path / "linked")
+
+    for escaped_name in ("_yaml/../evil.py", "../evil.py", "/yaml/evil.py", "yaml\\evil.py"):
+        escaped = _fixture_pyyaml_wheel({**files, escaped_name: b"escape"})
+        monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(escaped).hexdigest())
+        monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(escaped))
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._materialize_pyyaml_wheel(escaped, tmp_path / ("escape-" + str(len(escaped_name))))
+
+    malformed = b"not a zip archive"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_SHA256", hashlib.sha256(malformed).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_PYYAML_BYTES", len(malformed))
+    with pytest.raises(zipfile.BadZipFile):
+        release_build._materialize_pyyaml_wheel(malformed, tmp_path / "malformed")
 
 
 def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
@@ -237,7 +632,7 @@ def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
 
     class Response:
         status = 200
-        headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+        headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
 
         def __enter__(self):
             return self
@@ -258,6 +653,187 @@ def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
                                        len(payload), 1024)
 
 
+def test_runtime_download_follows_only_one_exact_public_asset_redirect(monkeypatch):
+    payload = b"pinned runtime bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    url = release_build.BOOTSTRAP_RUNTIME_ARCHIVE_URL
+    location = "https://release-assets.githubusercontent.com/release/asset?sig=fixture-secret"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256", digest)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_DOWNLOAD", len(payload))
+    requests = []
+
+    class Response:
+        status = 200
+        headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
+
+        def __init__(self):
+            self.offset = 0
+            self.closed = False
+
+        def geturl(self):
+            return location
+
+        def read(self, count=-1):
+            if count < 0:
+                count = len(payload)
+            result = payload[self.offset:self.offset + count]
+            self.offset += len(result)
+            return result
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            assert timeout == 30
+            if len(requests) == 1:
+                from email.message import Message
+                headers = Message()
+                headers["Location"] = location
+                raise release_build.urllib.error.HTTPError(
+                    url, 302, "Found", headers, io.BytesIO())
+            return response
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    assert release_build._download_pinned(
+        url, digest, len(payload), len(payload)) == payload
+    assert len(requests) == 2
+    assert requests[0].full_url == url
+    assert requests[1].full_url == location
+    for request in requests:
+        assert request.get_header("Authorization") is None
+        assert request.get_header("Cookie") is None
+        assert request.get_header("Proxy-authorization") is None
+        assert request.get_header("Referer") is None
+    assert response.closed
+
+
+@pytest.mark.parametrize("location", [
+    None,
+    "https://release-assets.githubusercontent.com.evil.invalid/file?sig=x",
+    "https://release-assets.githubusercontent.com./file?sig=x",
+    "https://user@release-assets.githubusercontent.com/file?sig=x",
+    "http://release-assets.githubusercontent.com/file?sig=x",
+    "https://release-assets.githubusercontent.com:444/file?sig=x",
+    "https://release-assets.githubusercontent.com/file#fragment",
+    "https://reléase-assets.githubusercontent.com/file?sig=x",
+    "//release-assets.githubusercontent.com/file?sig=x",
+    "https://release-assets.githubusercontent.com/" + "x" * 8200,
+])
+def test_runtime_redirect_rejects_unreviewed_locations(location):
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._validate_runtime_asset_redirect(location)
+
+
+def test_runtime_download_rejects_a_second_redirect_and_hash_mismatch(monkeypatch):
+    payload = b"wrong bytes"
+    digest = hashlib.sha256(b"expected bytes").hexdigest()
+    url = release_build.BOOTSTRAP_RUNTIME_ARCHIVE_URL
+    location = "https://release-assets.githubusercontent.com/release/asset?sig=fixture-secret"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256", digest)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_DOWNLOAD", len(payload))
+
+    class Opener:
+        def open(self, request, timeout):
+            from email.message import Message
+            headers = Message()
+            headers["Location"] = location
+            raise release_build.urllib.error.HTTPError(
+                request.full_url, 302, "Found", headers, io.BytesIO())
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(url, digest, len(payload), len(payload))
+
+    class OneRedirectThenWrongBody:
+        calls = 0
+
+        def open(self, request, timeout):
+            from email.message import Message
+            self.calls += 1
+            if self.calls == 1:
+                headers = Message()
+                headers["Location"] = location
+                raise release_build.urllib.error.HTTPError(
+                    request.full_url, 302, "Found", headers, io.BytesIO())
+
+            class Response:
+                status = 200
+                headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
+
+                def __init__(self):
+                    self.offset = 0
+
+                def geturl(self):
+                    return location
+
+                def read(self, count=-1):
+                    if count < 0:
+                        count = len(payload)
+                    result = payload[self.offset:self.offset + count]
+                    self.offset += len(result)
+                    return result
+
+                def close(self):
+                    return None
+
+            return Response()
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: OneRedirectThenWrongBody())
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="bytes do not match"):
+        release_build._download_pinned(url, digest, len(payload), len(payload))
+
+
+def test_pyyaml_download_keeps_no_redirect_policy(monkeypatch):
+    calls = []
+
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request.full_url)
+            from email.message import Message
+            headers = Message()
+            headers["Location"] = "https://release-assets.githubusercontent.com/unreviewed"
+            raise release_build.urllib.error.HTTPError(
+                request.full_url, 302, "Found", headers, io.BytesIO())
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(
+            release_build.BOOTSTRAP_PYYAML_URL,
+            release_build.BOOTSTRAP_PYYAML_SHA256,
+            release_build.BOOTSTRAP_PYYAML_BYTES,
+            1_048_576,
+        )
+    assert calls == [release_build.BOOTSTRAP_PYYAML_URL]
+
+
+def test_declared_content_length_is_optional_but_must_be_unambiguous_and_exact():
+    from email.message import Message
+
+    headers = Message()
+    assert release_build._declared_content_length(headers, 12) is None
+    headers["Content-Length"] = "12"
+    assert release_build._declared_content_length(headers, 12) is True
+    headers["Content-Length"] = "13"
+    assert release_build._declared_content_length(headers, 12) is False
+    headers = Message()
+    headers["Content-Length"] = "12"
+    headers["Content-Length"] = "12"
+    assert release_build._declared_content_length(headers, 12) is False
+    headers = Message()
+    headers["Content-Length"] = "12, 12"
+    assert release_build._declared_content_length(headers, 12) is False
+
+
 def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
     if not hasattr(os, "memfd_create"):
         pytest.skip("sealed memfd is a Linux kernel facility")
@@ -275,6 +851,30 @@ def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
         parsed, info, observed = release_build._decode_sealed_handoff_descriptor(descriptor)
         assert observed == body and info.st_size == len(body)
         assert parsed == {"schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43}
+    finally:
+        os.close(descriptor)
+
+
+def test_bootstrap_handoff_uses_linux_uapi_when_python_omits_seal_names(monkeypatch):
+    if not hasattr(os, "memfd_create") or not sys.platform.startswith("linux"):
+        pytest.skip("Linux sealed memfd is required")
+    for name in ("F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_SEAL", "F_SEAL_SHRINK",
+                 "F_SEAL_GROW", "F_SEAL_WRITE"):
+        monkeypatch.delattr(release_build.fcntl, name, raising=False)
+    descriptor = os.memfd_create("handoff-uapi-test", os.MFD_ALLOW_SEALING)
+    try:
+        body = release_build._canonical_json({
+            "schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43,
+        })
+        os.write(descriptor, body)
+        constants = release_build._memfd_seal_constants()
+        required = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                    | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+        release_build.fcntl.fcntl(descriptor, constants["F_ADD_SEALS"], required)
+        parsed, info, observed = release_build._decode_sealed_handoff_descriptor(descriptor)
+        assert observed == body and info.st_size == len(body)
+        assert parsed["handoff_handle"] == "h" * 43
+        assert release_build.fcntl.fcntl(descriptor, constants["F_GET_SEALS"]) & required == required
     finally:
         os.close(descriptor)
 
@@ -312,7 +912,10 @@ def test_bootstrap_transition_descriptor_rejects_duplicate_and_extra_identity_fi
 
 def test_fixed_reexec_driver_is_static_and_has_no_caller_identity_channel():
     source = release_build._fixed_reexec_entry_code()
+    argv = release_build._fixed_reexec_argv(Path("/fixed/runtime/python"))
     compile(source, "<fixed-reexec-entry>", "exec")
+    assert argv[:5] == ["/fixed/runtime/python", "-B", "-I", "-S", "-c"]
+    assert argv[5] == source
     assert "os.read(3, 4097)" in source
     assert "F_GET_SEALS" in source and "O_NOFOLLOW" in source
     assert "sys.argv" not in source and "os.environ" not in source

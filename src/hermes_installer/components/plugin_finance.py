@@ -171,25 +171,80 @@ def _timestamp(value: object) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _validate_financial_read_result(value: object) -> None:
+    """Enforce the v121 closed result schema and the v120 byte/row bounds."""
+    if not isinstance(value, Mapping) or set(value) != {"observations"}:
+        raise FinanceDenied("financial read result does not match its pinned closed schema")
+    rows = value["observations"]
+    if not isinstance(rows, list) or len(rows) > _MAX_ROWS:
+        raise FinanceDenied("financial read result exceeds its 1000-row bound")
+    row_fields = {"provider", "account_alias", "kind", "observed_at", "source_timestamp", "freshness", "data"}
+    for row in rows:
+        if not isinstance(row, Mapping) or set(row) != row_fields:
+            raise FinanceDenied("financial observation is missing a required v121 field")
+        if (not isinstance(row["provider"], str)
+                or row["provider"] not in {provider.value for provider in DataProvider}):
+            raise FinanceDenied("financial observation provider is outside its source enum")
+        if not isinstance(row["account_alias"], str) or not _ID.fullmatch(row["account_alias"]):
+            raise FinanceDenied("financial observation alias is outside its exact source domain")
+        if not isinstance(row["kind"], str) or len(row["kind"]) > 128:
+            raise FinanceDenied("financial observation kind exceeds its source bound")
+        if not isinstance(row["observed_at"], str) or len(row["observed_at"]) > 64:
+            raise FinanceDenied("financial observation timestamp exceeds its source bound")
+        source_time = row["source_timestamp"]
+        if source_time is not None and (not isinstance(source_time, str) or len(source_time) > 64):
+            raise FinanceDenied("financial provider timestamp exceeds its source bound")
+        if (not isinstance(row["freshness"], str)
+                or row["freshness"] not in {"timestamped", "provider-timestamp-unavailable"}):
+            raise FinanceDenied("financial observation freshness is outside its source enum")
+        data = row["data"]
+        if not isinstance(data, Mapping) or len(data) > 64:
+            raise FinanceDenied("financial observation data exceeds its 64-field bound")
+        for key, item in data.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", key):
+                raise FinanceDenied("financial observation data key is outside its source pattern")
+            if isinstance(item, str):
+                if len(item.encode("utf-8")) > 2048 or any(ord(char) < 32 for char in item):
+                    raise FinanceDenied("financial observation string exceeds its byte or control bound")
+            elif isinstance(item, float) and not math.isfinite(item):
+                raise FinanceDenied("financial observation contains a non-finite number")
+            elif not (item is None or type(item) in {str, int, float, bool}):
+                raise FinanceDenied("financial observation data contains a non-scalar value")
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                             allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError, OverflowError):
+        raise FinanceDenied("financial observations cannot be serialized as bounded UTF-8 JSON") from None
+    if len(encoded) > 2_097_152:
+        raise FinanceDenied("financial read result exceeds the 2 MiB UTF-8 byte bound")
+
+
 def _normalize_observation(provider: DataProvider, operation: DataOperation,
                            alias: str, row: Mapping[str, object], observed: str) -> FinancialObservation:
     # Strip provider account IDs, credential-shaped fields, and arbitrary payload
     # blobs before output reaches profile-visible context.
-    denied = {"authorization", "token", "access_token", "secret", "api_key", "private_key", "seed", "account_id", "iban"}
+    denied = {"authorization", "token", "access_token", "secret", "api_key", "private_key", "seed",
+              "account_id", "account_alias", "account_number", "account_ref", "iban"}
     clean: dict[str, object] = {}
     for key, value in row.items():
-        if not isinstance(key, str) or key.casefold() in denied or "credential" in key.casefold():
+        if not isinstance(key, str):
+            raise FinanceDenied("financial result contains a non-string field name")
+        if key.casefold() in denied or "credential" in key.casefold():
             continue
         if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]{0,63}", key):
-            continue
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            if isinstance(value, float) and not math.isfinite(value):
-                continue
-            if isinstance(value, str) and (len(value.encode("utf-8")) > 2048 or any(ord(c) < 32 for c in value)):
-                continue
-            clean[key] = value
+            raise FinanceDenied("financial result contains a field outside the pinned source schema")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise FinanceDenied("financial result contains a non-finite number")
+        if isinstance(value, str) and (len(value.encode("utf-8")) > 2048 or any(ord(c) < 32 for c in value)):
+            raise FinanceDenied("financial result contains an oversized or controlled string")
+        if not (isinstance(value, (str, int, float, bool)) or value is None):
+            raise FinanceDenied("financial result contains a non-scalar data value")
+        clean[key] = value
     source_time = clean.pop("timestamp", None)
-    if not isinstance(source_time, str) or len(source_time) > 64:
+    if source_time is not None and (not isinstance(source_time, str) or len(source_time) > 64
+                                    or any(ord(c) < 32 for c in source_time)):
+        raise FinanceDenied("financial source timestamp is outside its output bound")
+    if not isinstance(source_time, str):
         source_time = None
     return FinancialObservation(provider.value, alias, operation.value, observed, source_time,
                                 "timestamped" if source_time else "provider-timestamp-unavailable", clean)
@@ -896,15 +951,17 @@ class FinancialDataHubImplementation(_PluginImplementation):
             result = _effect(runtime_context, adapter_id=self.resource_id, action_id=action_id,
                              arguments={"provider": provider.value, "operation": operation.value,
                                         "filters": filters}, write=False)
-            rows = _bounded_rows(result)
-            # Root enrollment fixes account identity. Only non-sensitive public
-            # alias data is accepted back from the protected broker.
-            alias = result.get("account_alias", "selected") if isinstance(result, Mapping) else "selected"
+            if not isinstance(result, Mapping) or set(result) != {"items", "account_alias"}:
+                raise FinanceUnavailable("root financial read omitted its selected account alias or bounded observations")
+            alias = result["account_alias"]
             if not isinstance(alias, str) or not _ID.fullmatch(alias):
-                alias = "selected"
+                raise FinanceUnavailable("root financial read account alias does not match the pinned source domain")
+            rows = _bounded_rows(result)
             observed = _timestamp(datetime.now(timezone.utc))
-            return {"observations": [asdict(_normalize_observation(provider, operation, alias, row, observed))
-                                     for row in rows]}
+            output = {"observations": [asdict(_normalize_observation(provider, operation, alias, row, observed))
+                                       for row in rows]}
+            _validate_financial_read_result(output)
+            return output
         return read
 
 

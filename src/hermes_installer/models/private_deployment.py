@@ -1,0 +1,2150 @@
+"""Root observations for existing private model deployments.
+
+This module deliberately separates selected configuration from observed runtime
+evidence.  A connector route, model alias, or caller supplied path can never
+mint a deployment receipt.  The low level listener observer below correlates a
+loopback LISTEN socket inode with an enrolled process's open file descriptors
+and current PID/cgroup/network-namespace identity.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import stat
+import sys
+import time
+import base64
+from dataclasses import dataclass, fields
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from hermes_installer.managed_process_custodian import RemoteOriginKernelProof
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+_SOCKET_LINK = re.compile(r"socket:\[(\d+)\]\Z", re.ASCII)
+_TCP_STATE_LISTEN = "0A"
+_AUTHORITY_KINDS = {
+    "private-endpoint": "PrivateEndpointObservation",
+    "private-model-deployment": "PrivateModelDeploymentObservation",
+    "existing-model-tree": "ExistingModelArtifactObservation",
+}
+_GLM_SOURCE_MANIFEST_ARTIFACT_ID = "glm52-artifact-metadata-v1"
+_GLM_LICENSE_ARTIFACT_ID = "glm52-upstream-mit-license-cf457fa"
+_GLM_QUANTIZED_README_ARTIFACT_ID = "glm52-quantized-readme-6bbb01e"
+_GLM_RELEASE_SOURCE_MEMBERS = {
+    _GLM_SOURCE_MANIFEST_ARTIFACT_ID: (
+        "planning/glm52-artifact-metadata.json",
+        "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56232),
+    _GLM_LICENSE_ARTIFACT_ID: (
+        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
+        "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7", 1065),
+    _GLM_QUANTIZED_README_ARTIFACT_ID: (
+        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
+        "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17468),
+}
+_MODEL_SELECTION_JOURNAL_CHILD = "existing-model-selections"
+
+
+class PrivateDeploymentDenied(RuntimeError):
+    """Root could not establish a current exact endpoint/model deployment."""
+
+
+@dataclass(frozen=True, slots=True)
+class LoopbackListenerObservation:
+    """Current kernel-derived owner evidence for one IPv4 loopback listener."""
+
+    profile_id: str
+    generation: str
+    enrollment_id: str
+    uid: int
+    pid: int
+    pid_starttime_ticks: int
+    cgroup_id: str
+    network_namespace_inode: int
+    address: str
+    port: int
+    socket_inode: int
+    owner_fd: int
+    observation_sha256: str
+    issued_monotonic: float
+
+
+def _canonical_claims(value: Any) -> dict[str, Any]:
+    """Copy a typed receipt's claims to strict canonical JSON-compatible data."""
+    def plain(item: Any) -> Any:
+        if isinstance(item, Mapping):
+            return {str(key): plain(child) for key, child in item.items()}
+        if isinstance(item, (tuple, list)):
+            return [plain(child) for child in item]
+        return item
+
+    result: dict[str, Any] = {}
+    for field in fields(value):
+        if field.name in {"signature", "receipt_sha256"}:
+            continue
+        item = getattr(value, field.name)
+        result[field.name] = plain(item)
+    try:
+        encoded = json.dumps(result, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError):
+        raise PrivateDeploymentDenied("observation claims are not canonical JSON") from None
+    if len(encoded) > 1_000_000:
+        raise PrivateDeploymentDenied("observation claims exceed the fixed bound")
+    return result
+
+
+def _supporting_source_receipt_digest(rows: Any) -> str:
+    """Digest the exact v136 supporting-source receipt rows, independent of order."""
+    if not isinstance(rows, (list, tuple)) or len(rows) != 3:
+        raise PrivateDeploymentDenied("three pinned supporting source receipts are required")
+    normalized = []
+    expected = {_GLM_SOURCE_MANIFEST_ARTIFACT_ID, _GLM_LICENSE_ARTIFACT_ID,
+                _GLM_QUANTIZED_README_ARTIFACT_ID}
+    for row in rows:
+        if (not isinstance(row, Mapping)
+                or set(row) != {"artifact_id", "sha256", "size_bytes", "receipt_handle"}
+                or row.get("artifact_id") not in expected
+                or not isinstance(row.get("sha256"), str)
+                or not _SHA256.fullmatch(row["sha256"])
+                or type(row.get("size_bytes")) is not int or row["size_bytes"] <= 0
+                or not isinstance(row.get("receipt_handle"), str)
+                or not re.fullmatch(r"model-source-observation:[A-Za-z0-9_-]{20,128}",
+                                    row["receipt_handle"], re.ASCII)):
+            raise PrivateDeploymentDenied("supporting source receipt row is invalid")
+        normalized.append(dict(row))
+    if {row["artifact_id"] for row in normalized} != expected:
+        raise PrivateDeploymentDenied("supporting source receipt set is incomplete")
+    normalized.sort(key=lambda row: (row["artifact_id"], row["sha256"], row["receipt_handle"]))
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_model_subpath(value: Any) -> str:
+    if (not isinstance(value, str) or len(value) > 128
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value, re.ASCII)
+            or value in {".", ".."}):
+        raise PrivateDeploymentDenied("model directory choice must be one observed safe direct-child name")
+    return value
+
+
+def _root_selection_fields(selection: Any) -> dict[str, Any]:
+    names = (
+        "selection_handle", "root_id", "selection_kind", "template_artifact_receipt_handle",
+        "template_sha256", "private_profile_selection_handle", "principal_selection_handle",
+        "namespace_selection_handle", "principal_id", "profile_id", "namespace_id",
+        "prepared_generation_id", "prepared_generation_digest", "controller_binding_handle",
+        "selection_sha256", "issued_monotonic", "expires_monotonic", "revocation_epoch",
+        "root_device", "root_inode", "root_uid", "root_gid", "root_mode",
+    )
+    values = {name: getattr(selection, name, None) for name in names}
+    string_names = names[:15]
+    if (any(not isinstance(values[name], str) or not values[name] for name in string_names)
+            or values["root_id"] != "installer-existing-model-store-v1"
+            or values["selection_kind"] != "existing-model-store"
+            or not _SHA256.fullmatch(values["template_sha256"])
+            or not _SHA256.fullmatch(values["prepared_generation_digest"])
+            or not _SHA256.fullmatch(values["selection_sha256"])
+            or not isinstance(values["revocation_epoch"], str) or not values["revocation_epoch"]
+            or any(type(values[name]) not in {int, float} for name in ("issued_monotonic", "expires_monotonic"))
+            or any(type(values[name]) is not int for name in ("root_device", "root_inode", "root_uid", "root_gid", "root_mode"))
+            or values["root_uid"] != 0 or values["root_gid"] != 0 or values["root_mode"] != 0o700):
+        raise PrivateDeploymentDenied("root model-store choice does not carry the required protected identity")
+    values.update({
+        "model_store_root_id": values["root_id"],
+        "model_store_root_receipt_handle": values["selection_handle"],
+        "device": values["root_device"], "inode": values["root_inode"],
+        "uid": values["root_uid"], "gid": values["root_gid"], "mode": values["root_mode"],
+    })
+    return values
+
+
+def _root_selection_object(value: Any) -> Any:
+    selected = getattr(value, "selection", value)
+    if not isinstance(getattr(selected, "selection_handle", None), str):
+        raise PrivateDeploymentDenied("verified model-store resolver returned no typed selection")
+    return selected
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedEndpointBoundaryEvidence:
+    """Root-private live process/listener/network evidence; not a deployment receipt."""
+
+    binding: Any
+    network_lease: Any
+    process_proof: RemoteOriginKernelProof
+    listener_observation: LoopbackListenerObservation
+
+
+@dataclass(frozen=True, slots=True)
+class PrivateEndpointObservation:
+    schema: int
+    receipt_handle: str
+    receipt_sha256: str
+    boot_id: str
+    endpoint_binding_id: str
+    endpoint_selection_sha256: str
+    profile_id: str
+    namespace_id: str
+    principal_id: str
+    service_enrollment_id: str
+    service_generation: str
+    process_profile_id: str
+    process_profile_generation: str
+    endpoint_target_id: str
+    connector_route_ids: tuple[str, ...]
+    recipient_id: str
+    credential_reference_id: str | None
+    server_config_artifact_id: str
+    server_config_sha256: str
+    runtime_artifact_records: tuple[Mapping[str, Any], ...]
+    process_identity_digest: str
+    kernel_process_receipt_handle: str
+    private_network_receipt_handle: str
+    listening_endpoint_observation_handle: str
+    ownership_observation_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: bytes = b""
+
+    def claims(self) -> dict[str, Any]:
+        return _canonical_claims(self)
+
+
+@dataclass(frozen=True, slots=True)
+class PrivateModelDeploymentObservation:
+    schema: int
+    receipt_handle: str
+    receipt_sha256: str
+    boot_id: str
+    model_binding_id: str
+    model_selection_sha256: str
+    endpoint_receipt_handle: str
+    profile_id: str
+    namespace_id: str
+    service_enrollment_id: str
+    service_generation: str
+    source_model_id: str
+    source_revision: str
+    license_artifact_id: str
+    license_sha256: str
+    model_artifact_id: str
+    model_artifact_sha256: str
+    model_tree_manifest_sha256: str
+    model_member_observation_sha256: str
+    runtime_artifact_id: str
+    runtime_artifact_sha256: str
+    load_config_artifact_id: str
+    load_config_sha256: str
+    served_model_id: str
+    capability: str
+    dimensions: int | None
+    process_identity_digest: str
+    kernel_process_receipt_handle: str
+    load_observation_handle: str
+    capability_probe_receipt_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: bytes = b""
+
+    def claims(self) -> dict[str, Any]:
+        return _canonical_claims(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingModelArtifactObservation:
+    observation_handle: str
+    selection_handle: str
+    artifact_id: str
+    source_model_id: str
+    source_revision: str
+    source_manifest_artifact_id: str
+    source_manifest_sha256: str
+    license_artifact_id: str
+    license_sha256: str
+    tree_manifest_sha256: str
+    member_observation_sha256: str
+    root_device: int
+    root_inode: int
+    root_uid: int
+    root_gid: int
+    root_mode: int
+    member_count: int
+    total_size_bytes: int
+    issued_monotonic: float
+    expires_monotonic: float
+    boot_id: str
+    supporting_source_receipt_sha256: str
+    signature: bytes = b""
+
+    def claims(self) -> dict[str, Any]:
+        return _canonical_claims(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingModelTreeFacts:
+    """Digest and root identity from an already selected held model directory."""
+
+    tree_manifest_sha256: str
+    member_observation_sha256: str
+    root_device: int
+    root_inode: int
+    root_uid: int
+    root_gid: int
+    root_mode: int
+    member_count: int
+    total_size_bytes: int
+    members: tuple[Mapping[str, Any], ...]
+    directories: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedExistingModelArtifactObservation:
+    """Root-local source proof returned before authority signing.
+
+    ``observation`` is the exact unsigned v127 authority DTO. The retained
+    observer identity prevents a caller-created DTO from entering the signer.
+    """
+
+    observation: ExistingModelArtifactObservation
+    observer_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class RootExistingModelArtifactSelection:
+    """Root-TTY-selected, source-pinned directory beneath an existing model store."""
+
+    selection_handle: str
+    choice_observation_id: str
+    private_profile_selection_handle: str
+    principal_selection_handle: str
+    namespace_selection_handle: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    model_store_root_id: str
+    model_store_root_receipt_handle: str
+    model_store_root_selection_sha256: str
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    controller_binding_handle: str
+    revocation_epoch: str
+    root_device: int
+    root_inode: int
+    root_uid: int
+    root_gid: int
+    root_mode: int
+    relative_subpath: str
+    source_model_id: str
+    source_revision: str
+    source_manifest_artifact_id: str
+    source_manifest_sha256: str
+    license_artifact_id: str
+    license_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
+@dataclass(slots=True)
+class RootHeldExistingModelDirectory:
+    """One owned duplicate FD for the selected model subdirectory."""
+
+    selection: RootExistingModelArtifactSelection
+    directory_fd: int
+    device: int
+    inode: int
+    uid: int
+    gid: int
+    mode: int
+    expires_monotonic: float
+
+    def close(self) -> None:
+        if self.directory_fd >= 0:
+            os.close(self.directory_fd)
+            self.directory_fd = -1
+
+
+@dataclass(slots=True)
+class _ExistingModelSelectionState:
+    selection: RootExistingModelArtifactSelection
+    root_selection: Any
+    root_receipt_handle: str
+    private_profile_selection_handle: str
+    tty_proof: Any
+    directory_fd: int
+    device: int
+    inode: int
+    uid: int
+    gid: int
+    mode: int
+    supporting_source_observations: tuple[Any, ...] = ()
+    supporting_source_receipt_rows: tuple[Mapping[str, Any], ...] = ()
+
+
+class RootExistingModelSelectionRegistry:
+    """Retain the second root-TTY choice and exact existing model directory.
+
+    The root filesystem registry owns the first store-root choice. This layer
+    never accepts a path from an RPC/profile; it reads one relative subpath
+    from the foreground root TTY and asks that registry to open it beneath its
+    held root FD. Source metadata and license must already be immutable catalog
+    artifacts under the reviewed IDs before any prompt is shown.
+    """
+
+    def __init__(self, selected_installation_binding: Any,
+                 root_owned_filesystem_selection_registry: Any, root_journal: Any,
+                 artifact_observer: Any, *, verified_installer_release_receipt: Any,
+                 expected_uid: int = 0, input_reader: Callable[[str], str] = input,
+                 monotonic: Callable[[], float] = time.monotonic):
+        if (os.geteuid() != expected_uid or expected_uid != 0
+                or selected_installation_binding is None or root_journal is None
+                or artifact_observer is None or verified_installer_release_receipt is None
+                or not callable(getattr(verified_installer_release_receipt,
+                                        "resolve_reviewed_source_artifact", None))
+                or not callable(getattr(verified_installer_release_receipt,
+                                        "open_reviewed_source_artifact", None))
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "resolve_current_root", None))
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "open_selected_root", None))
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "list_existing_children", None))
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "open_child_directory", None))
+                or not callable(getattr(artifact_observer, "observe", None))
+                or not callable(getattr(artifact_observer, "verify_current", None))):
+            raise PrivateDeploymentDenied("existing-model root selection services are unavailable")
+        self.installation_binding = selected_installation_binding
+        self.filesystem_registry = root_owned_filesystem_selection_registry
+        self.root_journal = root_journal
+        self.artifact_observer = artifact_observer
+        self.release_receipt = verified_installer_release_receipt
+        self.expected_uid = expected_uid
+        self.input_reader = input_reader
+        self._monotonic = monotonic
+        self._selections: dict[str, _ExistingModelSelectionState] = {}
+
+    @classmethod
+    def from_root_setup(cls, selected_installation_binding: Any,
+                        root_owned_filesystem_selection_registry: Any,
+                        root_journal: Any, artifact_observer: Any = None, *,
+                        verified_installer_release_receipt: Any = None,
+                        expected_uid: int = 0, **kwargs: Any
+                        ) -> "RootExistingModelSelectionRegistry":
+        if artifact_observer is None or verified_installer_release_receipt is None:
+            raise PrivateDeploymentDenied("protected catalog and reviewed release-source observers are unavailable")
+        return cls(selected_installation_binding,
+                   root_owned_filesystem_selection_registry, root_journal,
+                   artifact_observer,
+                   verified_installer_release_receipt=verified_installer_release_receipt,
+                   expected_uid=expected_uid, **kwargs)
+
+    def observe_existing_model_directory(self, root_receipt_handle: str,
+                                         private_profile_selection_handle: str
+                                         ) -> RootExistingModelArtifactSelection:
+        if (os.geteuid() != self.expected_uid or self.expected_uid != 0
+                or not isinstance(root_receipt_handle, str) or not root_receipt_handle
+                or not isinstance(private_profile_selection_handle, str)
+                or not private_profile_selection_handle):
+            raise PrivateDeploymentDenied("root model-store selection receipt is unavailable")
+        manifest_sha = self._catalog_digest(_GLM_SOURCE_MANIFEST_ARTIFACT_ID)
+        license_sha = self._catalog_digest(_GLM_LICENSE_ARTIFACT_ID)
+        readme_sha = self._catalog_digest(_GLM_QUANTIZED_README_ARTIFACT_ID)
+        root_selection = self._resolve_current_root(root_receipt_handle,
+                                                    private_profile_selection_handle)
+        proof = None
+        held = None
+        source_observations: list[Any] = []
+        retained = False
+        try:
+            from hermes_installer.root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+            if not (sys.stdin.isatty() and sys.stderr.isatty()):
+                raise PrivateDeploymentDenied("model subdirectory selection requires the root controlling TTY")
+            proof = _capture_root_tty_proof()
+            children = self.filesystem_registry.list_existing_children(root_receipt_handle)
+            if (not isinstance(children, (tuple, list)) or len(children) > 256
+                    or len(children) != len(set(children))
+                    or tuple(sorted(children)) != tuple(children)
+                    or any(not _validate_model_subpath(name) == name for name in children)):
+                raise PrivateDeploymentDenied("fixed model store returned an invalid child inventory")
+            if not children:
+                raise PrivateDeploymentDenied("fixed model store has no already-existing model directory")
+            choices = "\n".join(f"  {name}" for name in children)
+            raw_subpath = self.input_reader(
+                "Choose one already-present direct child of the selected model store (no default):\n"
+                + choices + "\nChild directory name: "
+            )
+            _verify_root_tty_proof(proof)
+            subpath = _validate_model_subpath(raw_subpath)
+            if subpath not in children:
+                raise PrivateDeploymentDenied("model directory choice is not an observed direct child")
+            selection_handle = "existing-model-selection:" + secrets.token_urlsafe(24)
+            source_rows: list[Mapping[str, Any]] = []
+            for artifact_id, digest in (
+                    (_GLM_SOURCE_MANIFEST_ARTIFACT_ID, manifest_sha),
+                    (_GLM_LICENSE_ARTIFACT_ID, license_sha),
+                    (_GLM_QUANTIZED_README_ARTIFACT_ID, readme_sha)):
+                self._verify_release_source_member(artifact_id, digest)
+                observation = self.artifact_observer.observe(artifact_id, digest)
+                source_observations.append(observation)
+                if (not self.artifact_observer.verify_current(observation)
+                        or observation.artifact_id != artifact_id
+                        or observation.sha256 != digest
+                        or type(observation.size_bytes) is not int):
+                    raise PrivateDeploymentDenied("pinned model source evidence is stale or mismatched")
+                source_rows.append({
+                    "artifact_id": artifact_id, "sha256": digest,
+                    "size_bytes": observation.size_bytes,
+                    "receipt_handle": "model-source-observation:" + hashlib.sha256(
+                        (selection_handle + "\0" + artifact_id).encode("utf-8")).hexdigest(),
+                })
+            readme_observation = source_observations[2]
+            readme_fd = readme_observation.open_blob()
+            try:
+                readme_bytes = _read_bounded_fd(readme_fd, 32 * 1024)
+            finally:
+                os.close(readme_fd)
+            readme_lines = {line.strip() for line in readme_bytes.splitlines()}
+            if not {b"license: mit", b"base_model: zai-org/GLM-5.2"}.issubset(readme_lines):
+                raise PrivateDeploymentDenied("quantized source README lacks the pinned license/base-model declaration")
+            from hermes_installer.models.artifacts import ArtifactManifest, MODEL_ID, MODEL_REVISION
+            manifest_fd = source_observations[0].open_blob()
+            try:
+                manifest = ArtifactManifest.from_metadata_bytes(
+                    _read_bounded_fd(manifest_fd, 8 * 1024 * 1024))
+            finally:
+                os.close(manifest_fd)
+            if (manifest.model_id != MODEL_ID or manifest.revision != MODEL_REVISION
+                    or not manifest.fully_verifiable):
+                raise PrivateDeploymentDenied("pinned source manifest does not identify the selected model")
+            license_fd = source_observations[1].open_blob()
+            try:
+                license_bytes = _read_bounded_fd(license_fd, 256 * 1024)
+            finally:
+                os.close(license_fd)
+            if b"MIT License" not in license_bytes:
+                raise PrivateDeploymentDenied("pinned model license bytes are not the reviewed MIT license")
+            held = self.filesystem_registry.open_child_directory(root_receipt_handle, subpath)
+            root_info = os.fstat(held.directory_fd)
+            self._verify_held_root_subdirectory(held, root_selection, root_info)
+            root_fields = _root_selection_fields(root_selection)
+            now = self._monotonic()
+            expiry = min(float(root_fields["expires_monotonic"]),
+                         float(proof.expires_monotonic), now + 30.0)
+            if expiry <= now:
+                raise PrivateDeploymentDenied("root model-store selection expired during TTY choice")
+            choice_claims = {
+                "schema": 1, "root_store_selection_handle": root_receipt_handle,
+                "root_store_selection_sha256": root_fields["selection_sha256"],
+                "private_profile_selection_handle": private_profile_selection_handle,
+                "relative_subpath": subpath,
+                "controller_pid": proof.controller_pid,
+                "controller_start_ticks": proof.controller_start_ticks,
+                "tty_device": proof.tty_device, "tty_inode": proof.tty_inode,
+                "tty_rdevice": proof.tty_rdevice,
+                "issued_monotonic": proof.issued_monotonic,
+            }
+            choice_observation_id = "root-tty-model-choice:" + hashlib.sha256(
+                json.dumps(choice_claims, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+            controller = root_fields["controller_binding_handle"]
+            selection = RootExistingModelArtifactSelection(
+                selection_handle=selection_handle,
+                choice_observation_id=choice_observation_id,
+                private_profile_selection_handle=root_fields["private_profile_selection_handle"],
+                principal_selection_handle=root_fields["principal_selection_handle"],
+                namespace_selection_handle=root_fields["namespace_selection_handle"],
+                principal_id=root_fields["principal_id"], profile_id=root_fields["profile_id"],
+                namespace_id=root_fields["namespace_id"],
+                model_store_root_id=root_fields["model_store_root_id"],
+                model_store_root_receipt_handle=root_receipt_handle,
+                model_store_root_selection_sha256=root_fields["selection_sha256"],
+                prepared_generation_id=root_fields["prepared_generation_id"],
+                prepared_generation_digest=root_fields["prepared_generation_digest"],
+                controller_binding_handle=root_fields["controller_binding_handle"],
+                revocation_epoch=root_fields["revocation_epoch"],
+                root_device=root_fields["root_device"], root_inode=root_fields["root_inode"],
+                root_uid=root_fields["root_uid"], root_gid=root_fields["root_gid"],
+                root_mode=root_fields["root_mode"],
+                relative_subpath=subpath, source_model_id=MODEL_ID,
+                source_revision=MODEL_REVISION,
+                source_manifest_artifact_id=_GLM_SOURCE_MANIFEST_ARTIFACT_ID,
+                source_manifest_sha256=manifest_sha,
+                license_artifact_id=_GLM_LICENSE_ARTIFACT_ID, license_sha256=license_sha,
+                issued_monotonic=now, expires_monotonic=expiry,
+            )
+            if type(selection.revocation_epoch) is not str or not selection.revocation_epoch:
+                raise PrivateDeploymentDenied("model-store authority epoch is malformed")
+            _verify_root_tty_proof(proof)
+            self._persist_selection(selection, source_rows)
+            state = _ExistingModelSelectionState(
+                selection, root_selection, root_receipt_handle,
+                private_profile_selection_handle, proof,
+                os.dup(held.directory_fd), root_info.st_dev, root_info.st_ino,
+                root_info.st_uid, root_info.st_gid, stat.S_IMODE(root_info.st_mode),
+                tuple(source_observations), tuple(source_rows),
+            )
+            self._selections[selection.selection_handle] = state
+            source_observations = []
+            retained = True
+            return selection
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("root model subdirectory choice could not be retained") from None
+        finally:
+            if held is not None and held.directory_fd >= 0:
+                os.close(held.directory_fd)
+            for observation in source_observations:
+                observation.close()
+            if proof is not None and not retained:
+                proof.close()
+
+    def resolve_selection(self, selection_handle: str) -> RootExistingModelArtifactSelection:
+        state = self._selections.get(selection_handle)
+        if state is None:
+            raise PrivateDeploymentDenied("model directory selection handle is absent or foreign")
+        self.verify_current(state.selection)
+        return state.selection
+
+    def verify_current(self, selection: RootExistingModelArtifactSelection
+                       ) -> RootExistingModelArtifactSelection:
+        if type(selection) is not RootExistingModelArtifactSelection:
+            raise PrivateDeploymentDenied("model selection has an unknown type")
+        state = self._selections.get(selection.selection_handle)
+        if state is None or state.selection is not selection:
+            raise PrivateDeploymentDenied("model selection is not the retained root TTY choice")
+        now = self._monotonic()
+        if not selection.issued_monotonic <= now < selection.expires_monotonic:
+            raise PrivateDeploymentDenied("model selection lease expired")
+        try:
+            from hermes_installer.root_setup import _verify_root_tty_proof
+            _verify_root_tty_proof(state.tty_proof)
+            root_current = self._resolve_current_root(
+                state.root_receipt_handle, state.private_profile_selection_handle)
+            if (root_current.selection_handle != selection.model_store_root_receipt_handle
+                    or root_current.selection_sha256 != selection.model_store_root_selection_sha256
+                    or root_current.revocation_epoch != selection.revocation_epoch
+                    or root_current.prepared_generation_digest != selection.prepared_generation_digest
+                    or root_current.principal_selection_handle != selection.principal_selection_handle
+                    or root_current.namespace_selection_handle != selection.namespace_selection_handle):
+                raise ValueError
+            self._verify_source_catalog_current(selection)
+            info = os.fstat(state.directory_fd)
+            if ((info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+                    != (state.device, state.inode, state.uid, state.gid, state.mode)
+                    or not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & 0o022):
+                raise ValueError
+            held = self.filesystem_registry.open_child_directory(
+                state.root_receipt_handle, selection.relative_subpath)
+            try:
+                reopened = os.fstat(held.directory_fd)
+                self._verify_held_root_subdirectory(held, state.root_selection, reopened)
+                if (reopened.st_dev, reopened.st_ino) != (state.device, state.inode):
+                    raise ValueError
+            finally:
+                os.close(held.directory_fd)
+            return selection
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("root model directory selection is stale") from None
+
+    def open_selected_directory(self, selection_handle: str) -> RootHeldExistingModelDirectory:
+        selection = self.resolve_selection(selection_handle)
+        state = self._selections[selection_handle]
+        held = None
+        try:
+            held = self.filesystem_registry.open_child_directory(
+                state.root_receipt_handle, selection.relative_subpath)
+            info = os.fstat(held.directory_fd)
+            self._verify_held_root_subdirectory(held, state.root_selection, info)
+            if (info.st_dev, info.st_ino) != (state.device, state.inode):
+                raise ValueError
+            fd = os.dup(held.directory_fd)
+            os.close(held.directory_fd)
+            held = None
+            return RootHeldExistingModelDirectory(
+                selection, fd, info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                stat.S_IMODE(info.st_mode), selection.expires_monotonic,
+            )
+        except Exception:
+            raise PrivateDeploymentDenied("selected model directory could not be reopened by held receipt") from None
+        finally:
+            if held is not None:
+                try:
+                    os.close(held.directory_fd)
+                except OSError:
+                    pass
+
+    def supporting_source_receipt_digest(self, selection_handle: str) -> str:
+        selection = self.resolve_selection(selection_handle)
+        self._verify_source_catalog_current(selection)
+        state = self._selections[selection_handle]
+        return _supporting_source_receipt_digest(state.supporting_source_receipt_rows)
+
+    def close(self) -> None:
+        for state in self._selections.values():
+            if state.directory_fd >= 0:
+                os.close(state.directory_fd)
+                state.directory_fd = -1
+            state.tty_proof.close()
+            for observation in state.supporting_source_observations:
+                observation.close()
+        self._selections.clear()
+
+    def _resolve_current_root(self, receipt_handle: str,
+                              private_profile_selection_handle: str) -> Any:
+        try:
+            verified = self.filesystem_registry.resolve_current_root(
+                receipt_handle, private_profile_selection_handle)
+            selection = _root_selection_object(verified)
+            fields = _root_selection_fields(selection)
+            now = self._monotonic()
+            verified_issued = getattr(verified, "issued_monotonic", None)
+            verified_expiry = getattr(verified, "expires_monotonic", None)
+            verified_epoch = getattr(verified, "authority_epoch", None)
+            if (fields["model_store_root_receipt_handle"] != receipt_handle
+                    or fields["private_profile_selection_handle"] != private_profile_selection_handle
+                    or not isinstance(getattr(verified, "current_profile_receipt_handle", None), str)
+                    or not getattr(verified, "current_profile_receipt_handle", None)
+                    or not isinstance(getattr(verified, "current_profile_selection_sha256", None), str)
+                    or not _SHA256.fullmatch(verified.current_profile_selection_sha256)
+                    or type(verified_issued) not in {int, float}
+                    or type(verified_expiry) not in {int, float}
+                    or not isinstance(verified_epoch, str)
+                    or verified_epoch != fields["revocation_epoch"]
+                    or not verified_issued <= now < verified_expiry
+                    or verified_expiry - verified_issued > 30.0
+                    or not fields["issued_monotonic"] <= now < fields["expires_monotonic"]):
+                raise ValueError
+            held = self.filesystem_registry.open_selected_root(receipt_handle)
+            try:
+                info = os.fstat(held.directory_fd)
+                if (getattr(held, "selection", None) is not selection
+                        or (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                            stat.S_IMODE(info.st_mode))
+                           != (fields["root_device"], fields["root_inode"], 0, 0, 0o700)
+                        or (held.device, held.inode, held.uid, held.gid, held.mode)
+                           != (fields["root_device"], fields["root_inode"], 0, 0, 0o700)):
+                    raise ValueError
+            finally:
+                held.close()
+            return selection
+        except Exception:
+            raise PrivateDeploymentDenied("root-held model-store receipt is stale or foreign") from None
+
+    def _verify_release_source_member(self, artifact_id: str, digest: str) -> None:
+        expected = _GLM_RELEASE_SOURCE_MEMBERS.get(artifact_id)
+        if expected is None or expected[1] != digest:
+            raise PrivateDeploymentDenied("model source ID is outside the fixed v135 source set")
+        relative_path, expected_sha, expected_size = expected
+        try:
+            member = self.release_receipt.resolve_reviewed_source_artifact(artifact_id)
+            if (getattr(member, "relative_path", None) != relative_path
+                    or getattr(member, "sha256", None) != expected_sha
+                    or getattr(member, "size_bytes", None) != expected_size):
+                raise ValueError
+            fd = self.release_receipt.open_reviewed_source_artifact(artifact_id)
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                        or info.st_size != expected_size):
+                    raise ValueError
+                raw = _read_bounded_fd(fd, expected_size)
+                if len(raw) != expected_size or hashlib.sha256(raw).hexdigest() != expected_sha:
+                    raise ValueError
+            finally:
+                os.close(fd)
+        except Exception:
+            raise PrivateDeploymentDenied("reviewed release source member is unavailable or mismatched") from None
+
+    def _catalog_digest(self, artifact_id: str) -> str:
+        try:
+            catalog = self.artifact_observer.runtime_bindings.artifact_catalog
+            artifact = catalog.artifacts[artifact_id]
+            digest = artifact.sha256
+            if not _SHA256.fullmatch(digest):
+                raise ValueError
+            return digest
+        except Exception:
+            raise PrivateDeploymentDenied(
+                "pinned GLM source manifest and license are absent from the protected artifact catalog"
+            ) from None
+
+    def _verify_source_catalog_current(self, selection: RootExistingModelArtifactSelection) -> None:
+        state = self._selections.get(selection.selection_handle)
+        if state is None or len(state.supporting_source_observations) != 3:
+            raise PrivateDeploymentDenied("supporting source receipts are no longer retained")
+        expected_ids = (_GLM_SOURCE_MANIFEST_ARTIFACT_ID, _GLM_LICENSE_ARTIFACT_ID,
+                        _GLM_QUANTIZED_README_ARTIFACT_ID)
+        for observation, expected_id in zip(state.supporting_source_observations,
+                                            expected_ids, strict=True):
+            self._verify_release_source_member(expected_id, self._catalog_digest(expected_id))
+            if (not self.artifact_observer.verify_current(observation)
+                    or observation.artifact_id != expected_id
+                    or observation.sha256 != self._catalog_digest(expected_id)):
+                raise PrivateDeploymentDenied("supporting model source observation is stale")
+        rows = [dict(row) for row in state.supporting_source_receipt_rows]
+        if (len(rows) != 3 or any(
+                set(row) != {"artifact_id", "sha256", "size_bytes", "receipt_handle"}
+                or not isinstance(row["receipt_handle"], str)
+                or not row["receipt_handle"].startswith("model-source-observation:")
+                or row["artifact_id"] != observation.artifact_id
+                or row["sha256"] != observation.sha256
+                or row["size_bytes"] != observation.size_bytes
+                for row, observation in zip(rows, state.supporting_source_observations, strict=True))
+                or not self._verify_selection_record(selection, rows)):
+            raise PrivateDeploymentDenied("supporting model source receipts are not durably retained")
+
+    def _persist_selection(self, selection: RootExistingModelArtifactSelection,
+                           source_rows: list[Mapping[str, Any]]) -> None:
+        value = _existing_model_selection_record(selection, source_rows)
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+        directory_fd = _open_private_child(self.root_journal, _MODEL_SELECTION_JOURNAL_CHILD)
+        name = hashlib.sha256(selection.selection_handle.encode("utf-8")).hexdigest() + ".json"
+        temp = "." + secrets.token_hex(16) + ".tmp"
+        try:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=directory_fd)
+            try:
+                view = memoryview(raw)
+                while view:
+                    count = os.write(fd, view)
+                    if count <= 0:
+                        raise OSError("short model selection record write")
+                    view = view[count:]
+                os.fsync(fd)
+                os.fchmod(fd, 0o400)
+            finally:
+                os.close(fd)
+            os.link(temp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                    follow_symlinks=False)
+            os.unlink(temp, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except Exception:
+            try:
+                os.unlink(temp, dir_fd=directory_fd)
+            except OSError:
+                pass
+            raise
+        finally:
+            os.close(directory_fd)
+
+    def _verify_selection_record(self, selection: RootExistingModelArtifactSelection,
+                                 source_rows: list[Mapping[str, Any]]) -> bool:
+        directory_fd = fd = -1
+        try:
+            directory_fd = _open_private_child(self.root_journal, _MODEL_SELECTION_JOURNAL_CHILD)
+            name = hashlib.sha256(selection.selection_handle.encode("utf-8")).hexdigest() + ".json"
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o400 or info.st_size > 64 * 1024):
+                return False
+            value = json.loads(_read_bounded_fd(fd, 64 * 1024))
+            return value == _existing_model_selection_record(selection, source_rows)
+        except Exception:
+            return False
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if directory_fd >= 0:
+                os.close(directory_fd)
+
+
+    @staticmethod
+    def _verify_held_root_subdirectory(held: Any, root_selection: Any,
+                                       info: os.stat_result) -> None:
+        if (type(info.st_mode) is not int or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o022
+                or getattr(held, "selection", None) is not root_selection
+                or (info.st_dev, info.st_ino) != (held.device, held.inode)
+                or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+                   != (held.uid, held.gid, held.mode)):
+            raise PrivateDeploymentDenied("selected model directory custody is invalid")
+
+
+def _existing_model_selection_record(selection: RootExistingModelArtifactSelection,
+                                     source_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema": 1, "selection_handle": selection.selection_handle,
+        "choice_observation_id": selection.choice_observation_id,
+        "private_profile_selection_handle": selection.private_profile_selection_handle,
+        "principal_selection_handle": selection.principal_selection_handle,
+        "namespace_selection_handle": selection.namespace_selection_handle,
+        "model_store_root_id": selection.model_store_root_id,
+        "model_store_root_receipt_handle": selection.model_store_root_receipt_handle,
+        "model_store_root_selection_sha256": selection.model_store_root_selection_sha256,
+        "prepared_generation_id": selection.prepared_generation_id,
+        "prepared_generation_digest": selection.prepared_generation_digest,
+        "controller_binding_handle": selection.controller_binding_handle,
+        "revocation_epoch": selection.revocation_epoch,
+        "root_device": selection.root_device, "root_inode": selection.root_inode,
+        "root_uid": selection.root_uid, "root_gid": selection.root_gid,
+        "root_mode": selection.root_mode,
+        "relative_subpath": selection.relative_subpath,
+        "principal_id": selection.principal_id, "profile_id": selection.profile_id,
+        "namespace_id": selection.namespace_id, "source_model_id": selection.source_model_id,
+        "source_revision": selection.source_revision,
+        "issued_monotonic": selection.issued_monotonic,
+        "expires_monotonic": selection.expires_monotonic,
+        "source_receipts": list(source_rows),
+    }
+
+
+class RootExistingModelArtifactObserver:
+    """Observe an already present model tree through a root-held TTY choice.
+
+    The factory owns selection creation. This class accepts only its opaque
+    handle and duplicated held directory FD; it never accepts a path.
+    """
+
+    def __init__(self, bindings: Any, root_journal: Any, authority_service: Any,
+                 root_existing_model_selection_registry: Any, artifact_observer: Any,
+                 *, expected_uid: int = 0, monotonic: Callable[[], float] = time.monotonic,
+                 boot_id_reader: Callable[[], str] | None = None):
+        if (os.geteuid() != expected_uid or expected_uid != 0
+                or root_journal is None or authority_service is None
+                or root_existing_model_selection_registry is None
+                or artifact_observer is None
+                or not callable(getattr(root_existing_model_selection_registry, "resolve_selection", None))
+                or not callable(getattr(root_existing_model_selection_registry, "verify_current", None))
+                or not callable(getattr(root_existing_model_selection_registry, "open_selected_directory", None))
+                or not callable(getattr(artifact_observer, "observe", None))
+                or not callable(getattr(artifact_observer, "verify_current", None))):
+            raise PrivateDeploymentDenied("root-held existing-model observation inputs are unavailable")
+        self.bindings = bindings
+        self.root_journal = root_journal
+        self.authority_service = authority_service
+        self.selection_registry = root_existing_model_selection_registry
+        self.artifact_observer = artifact_observer
+        self.expected_uid = expected_uid
+        self._monotonic = monotonic
+        self._boot_id_reader = boot_id_reader or (
+            lambda: Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip())
+        self._observer_id = secrets.token_urlsafe(32)
+        self._observations: dict[str, tuple[VerifiedExistingModelArtifactObservation, Any, ExistingModelTreeFacts]] = {}
+
+    @classmethod
+    def from_root_runtime(cls, bindings: Any, root_journal: Any,
+                          authority_service: Any,
+                          root_existing_model_selection_registry: Any, *,
+                          artifact_observer: Any = None, expected_uid: int = 0,
+                          **kwargs: Any) -> "RootExistingModelArtifactObserver":
+        resolver = getattr(bindings, "resolve_root_journal", None)
+        generation_digest = getattr(bindings, "service_generation_digest", None)
+        if not callable(resolver) or not isinstance(generation_digest, str):
+            raise PrivateDeploymentDenied("active protected root-journal resolver is unavailable")
+        try:
+            selected_journal = resolver(
+                "installer-authority-journal-v1",
+                expected_active_generation_digest=generation_digest,
+            )
+        except Exception:
+            raise PrivateDeploymentDenied("active protected authority journal is unavailable") from None
+        if type(selected_journal) is not type(root_journal) or selected_journal != root_journal:
+            raise PrivateDeploymentDenied("existing model observer received a stale root-journal selection")
+        if artifact_observer is None:
+            from hermes_installer.authority.source_artifact_receipts import RootCatalogArtifactObserver
+            staging = getattr(bindings, "artifact_staging_directory", None)
+            enrollment = getattr(bindings, "enrollment_catalog", None)
+            if not isinstance(staging, Path) or enrollment is None:
+                raise PrivateDeploymentDenied("protected artifact staging selection is unavailable")
+            # RootCatalogArtifactObserver only consumes these two immutable
+            # root-loader projections; no caller controls this adapter.
+            from types import SimpleNamespace
+            protected = SimpleNamespace(
+                protected_enrollment_digest=enrollment.digest,
+                artifact_staging_directory=staging,
+            )
+            artifact_observer = RootCatalogArtifactObserver.from_root_runtime(
+                bindings, protected, expected_uid=expected_uid)
+        return cls(bindings, root_journal, authority_service,
+                   root_existing_model_selection_registry, artifact_observer,
+                   expected_uid=expected_uid, **kwargs)
+
+    def observe_selected_tree(self, selection_handle: str) -> VerifiedExistingModelArtifactObservation:
+        if (os.geteuid() != self.expected_uid or self.expected_uid != 0
+                or not isinstance(selection_handle, str) or not selection_handle
+                or len(selection_handle) > 256):
+            raise PrivateDeploymentDenied("existing-model source selection handle is unavailable")
+        held = None
+        manifest_observation = license_observation = None
+        try:
+            selection = self.selection_registry.resolve_selection(selection_handle)
+            self._validate_selection(selection, selection_handle)
+            current = self.selection_registry.verify_current(selection)
+            if current is not selection:
+                raise PrivateDeploymentDenied("existing-model selection is not the retained current object")
+            held = self.selection_registry.open_selected_directory(selection_handle)
+            if (type(held) is not RootHeldExistingModelDirectory
+                    or getattr(held, "selection", None) is not selection):
+                raise PrivateDeploymentDenied("held model directory belongs to another selection")
+            directory_fd = getattr(held, "directory_fd", -1)
+            root_info = os.fstat(directory_fd)
+            if (not stat.S_ISDIR(root_info.st_mode)
+                    or (root_info.st_dev, root_info.st_ino) != (held.device, held.inode)
+                    or root_info.st_uid != self.expected_uid or root_info.st_gid != 0
+                    or stat.S_IMODE(root_info.st_mode) != held.mode
+                    or root_info.st_mode & 0o022
+                    or (held.uid, held.gid) != (self.expected_uid, 0)):
+                raise PrivateDeploymentDenied("held model directory identity or ownership is unsafe")
+
+            manifest_observation = self.artifact_observer.observe(
+                selection.source_manifest_artifact_id, selection.source_manifest_sha256)
+            if not self.artifact_observer.verify_current(manifest_observation):
+                raise PrivateDeploymentDenied("pinned model source manifest is not current")
+            manifest_fd = manifest_observation.open_blob()
+            try:
+                metadata = _read_bounded_fd(manifest_fd, 8 * 1024 * 1024)
+            finally:
+                os.close(manifest_fd)
+            from hermes_installer.models.artifacts import ArtifactManifest
+            manifest = ArtifactManifest.from_metadata_bytes(metadata)
+            if (manifest.model_id != selection.source_model_id
+                    or manifest.revision != selection.source_revision
+                    or not manifest.fully_verifiable):
+                raise PrivateDeploymentDenied("selected source manifest does not match the model choice")
+
+            license_observation = self.artifact_observer.observe(
+                selection.license_artifact_id, selection.license_sha256)
+            if not self.artifact_observer.verify_current(license_observation):
+                raise PrivateDeploymentDenied("selected model license artifact is not current")
+            license_fd = license_observation.open_blob()
+            try:
+                license_bytes = _read_bounded_fd(license_fd, 256 * 1024)
+            finally:
+                os.close(license_fd)
+            if not license_bytes or b"MIT License" not in license_bytes:
+                raise PrivateDeploymentDenied("selected GLM source license bytes are not the pinned MIT license")
+
+            facts = inspect_existing_model_tree(directory_fd, manifest, expected_uid=self.expected_uid)
+            if not self.artifact_observer.verify_current(manifest_observation) or not self.artifact_observer.verify_current(license_observation):
+                raise PrivateDeploymentDenied("source manifest or license changed during tree observation")
+            now = self._monotonic()
+            deadline = min(float(selection.expires_monotonic), float(held.expires_monotonic), now + 30.0)
+            if deadline <= now:
+                raise PrivateDeploymentDenied("selected model tree observation lease expired")
+            provisional = ExistingModelArtifactObservation(
+                observation_handle="existing-model-observation:" + secrets.token_urlsafe(24),
+                selection_handle=selection_handle,
+                artifact_id="existing-model:" + facts.tree_manifest_sha256,
+                source_model_id=selection.source_model_id,
+                source_revision=selection.source_revision,
+                source_manifest_artifact_id=selection.source_manifest_artifact_id,
+                source_manifest_sha256=selection.source_manifest_sha256,
+                license_artifact_id=selection.license_artifact_id,
+                license_sha256=selection.license_sha256,
+                tree_manifest_sha256=facts.tree_manifest_sha256,
+                member_observation_sha256=facts.member_observation_sha256,
+                root_device=facts.root_device, root_inode=facts.root_inode,
+                root_uid=facts.root_uid, root_gid=facts.root_gid, root_mode=facts.root_mode,
+                member_count=facts.member_count, total_size_bytes=facts.total_size_bytes,
+                issued_monotonic=now, expires_monotonic=deadline,
+                boot_id=self._boot_id_reader(), signature=b"",
+                supporting_source_receipt_sha256=(
+                    self.selection_registry.supporting_source_receipt_digest(selection_handle)),
+            )
+            verified = VerifiedExistingModelArtifactObservation(provisional, self._observer_id)
+            self._observations[provisional.observation_handle] = (verified, selection, facts)
+            return verified
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("selected existing model tree could not be verified") from None
+        finally:
+            if held is not None:
+                fd = getattr(held, "directory_fd", -1)
+                if type(fd) is int and fd >= 0:
+                    os.close(fd)
+            for item in (manifest_observation, license_observation):
+                close = getattr(item, "close", None)
+                if callable(close):
+                    close()
+
+    def _validate_selection(self, selection: Any, selection_handle: str) -> None:
+        if (type(selection) is not RootExistingModelArtifactSelection
+                or getattr(selection, "selection_handle", None) != selection_handle):
+            raise PrivateDeploymentDenied("model selection was not issued by the protected root selection registry")
+        required = ("choice_observation_id", "private_profile_selection_handle",
+                    "principal_selection_handle", "namespace_selection_handle",
+                    "principal_id", "profile_id", "namespace_id",
+                    "model_store_root_id", "model_store_root_receipt_handle",
+                    "model_store_root_selection_sha256", "prepared_generation_id",
+                    "prepared_generation_digest", "controller_binding_handle",
+                    "relative_subpath",
+                    "source_model_id", "source_revision", "source_manifest_artifact_id",
+                    "source_manifest_sha256", "license_artifact_id", "license_sha256",
+                    "issued_monotonic", "expires_monotonic")
+        if any(not getattr(selection, name, None) for name in required):
+            raise PrivateDeploymentDenied("protected model source selection is incomplete")
+        if (not _SHA256.fullmatch(selection.source_manifest_sha256)
+                or not _SHA256.fullmatch(selection.license_sha256)
+                or type(selection.issued_monotonic) not in {float, int}
+                or type(selection.expires_monotonic) not in {float, int}
+                or not isinstance(selection.revocation_epoch, str) or not selection.revocation_epoch
+                or any(type(getattr(selection, name)) is not int for name in
+                       ("root_device", "root_inode", "root_uid", "root_gid", "root_mode"))
+                or selection.root_uid != 0 or selection.root_gid != 0 or selection.root_mode != 0o700
+                or not _SHA256.fullmatch(selection.model_store_root_selection_sha256)
+                or not _SHA256.fullmatch(selection.prepared_generation_digest)
+                or not selection.issued_monotonic <= self._monotonic() < selection.expires_monotonic
+                or selection.expires_monotonic - selection.issued_monotonic > 30):
+            raise PrivateDeploymentDenied("protected model source selection has an invalid lease or digest")
+
+    def verify_current(self, verified: VerifiedExistingModelArtifactObservation) -> bool:
+        if (type(verified) is not VerifiedExistingModelArtifactObservation
+                or verified.observer_id != self._observer_id):
+            raise PrivateDeploymentDenied("existing model observation is not from this root observer")
+        observation = verified.observation
+        retained = self._observations.get(observation.observation_handle)
+        if retained is None or retained[0] != verified:
+            raise PrivateDeploymentDenied("existing model observation is no longer retained")
+        if (observation.boot_id != self._boot_id_reader()
+                or not observation.issued_monotonic <= self._monotonic() < observation.expires_monotonic):
+            raise PrivateDeploymentDenied("existing model observation is stale")
+        current = self.selection_registry.verify_current(retained[1])
+        if current is not retained[1]:
+            raise PrivateDeploymentDenied("existing model source selection changed")
+        source_receipt_digest = self.selection_registry.supporting_source_receipt_digest(
+            observation.selection_handle)
+        if (not _SHA256.fullmatch(observation.supporting_source_receipt_sha256)
+                or observation.supporting_source_receipt_sha256 != source_receipt_digest):
+            raise PrivateDeploymentDenied("supporting source receipt digest changed")
+        self._verify_source_pins_current(retained[1])
+        held = self.selection_registry.open_selected_directory(observation.selection_handle)
+        try:
+            if (type(held) is not RootHeldExistingModelDirectory
+                    or getattr(held, "selection", None) is not retained[1]):
+                raise PrivateDeploymentDenied("held model directory changed its root selection")
+            facts = retained[2]
+            if ((held.device, held.inode, held.uid, held.gid, held.mode)
+                    != (observation.root_device, observation.root_inode,
+                        observation.root_uid, observation.root_gid, observation.root_mode)
+                    or facts.tree_manifest_sha256 != observation.tree_manifest_sha256
+                    or facts.member_observation_sha256 != observation.member_observation_sha256):
+                raise PrivateDeploymentDenied("existing model tree changed since observation")
+            _revalidate_existing_model_tree_metadata(held.directory_fd, facts,
+                                                    expected_uid=self.expected_uid)
+            return True
+        finally:
+            os.close(held.directory_fd)
+
+    def verify_observation_for_authority(self, observation: ExistingModelArtifactObservation) -> bool:
+        pair = self._observations.get(observation.observation_handle)
+        return bool(pair and pair[0].observation is observation and self.verify_current(pair[0]))
+
+    def open_member(self, observation_handle: str, relative_manifest_member: str) -> int:
+        pair = self._observations.get(observation_handle)
+        if pair is None or not self.verify_current(pair[0]):
+            raise PrivateDeploymentDenied("existing model member request has no current observation")
+        manifest = self._manifest_for_selection(pair[1])
+        if relative_manifest_member not in {item.name for item in manifest.files}:
+            raise PrivateDeploymentDenied("requested file is not in the exact pinned source manifest")
+        held = self.selection_registry.open_selected_directory(pair[0].observation.selection_handle)
+        try:
+            if (type(held) is not RootHeldExistingModelDirectory
+                    or getattr(held, "selection", None) is not pair[1]):
+                raise PrivateDeploymentDenied("held model directory changed its root selection")
+            current = self.selection_registry.verify_current(pair[1])
+            if current is not pair[1]:
+                raise PrivateDeploymentDenied("existing model selection changed before member open")
+            fd = _open_existing_model_member(held.directory_fd, relative_manifest_member, manifest)
+            facts = pair[2]
+            row = next((row for row in facts.members if row["path"] == relative_manifest_member), None)
+            opened = os.fstat(fd)
+            if (row is None or (opened.st_dev, opened.st_ino, opened.st_size,
+                    opened.st_mtime_ns, opened.st_ctime_ns) != (row["device"], row["inode"],
+                    row["source_size_bytes"], row["mtime_ns"], row["ctime_ns"])):
+                os.close(fd)
+                raise PrivateDeploymentDenied("selected model member changed after receipt observation")
+            return fd
+        finally:
+            os.close(held.directory_fd)
+
+    def retain_authority_signed_observation(self, receipt: ExistingModelArtifactObservation) -> None:
+        pair = self._observations.get(receipt.observation_handle)
+        if (pair is None or pair[0].observation.claims() != receipt.claims()
+                or not isinstance(receipt.signature, bytes) or len(receipt.signature) != 32
+                or not self.verify_current(pair[0])):
+            raise PrivateDeploymentDenied("signed model tree receipt does not match a current observation")
+        self._observations[receipt.observation_handle] = (
+            VerifiedExistingModelArtifactObservation(receipt, self._observer_id), pair[1], pair[2])
+
+    def verify_signed_observation(self, receipt: ExistingModelArtifactObservation) -> bool:
+        pair = self._observations.get(receipt.observation_handle)
+        if (pair is None or pair[0].observation.claims() != receipt.claims()
+                or not receipt.signature or len(receipt.signature) != 32):
+            return False
+        try:
+            return self.verify_current(pair[0])
+        except PrivateDeploymentDenied:
+            return False
+
+    def _manifest_for_selection(self, selection: Any) -> Any:
+        observed = self.artifact_observer.observe(
+            selection.source_manifest_artifact_id, selection.source_manifest_sha256)
+        try:
+            if not self.artifact_observer.verify_current(observed):
+                raise PrivateDeploymentDenied("selected source manifest is stale")
+            fd = observed.open_blob()
+            try:
+                from hermes_installer.models.artifacts import ArtifactManifest
+                manifest = ArtifactManifest.from_metadata_bytes(_read_bounded_fd(fd, 8 * 1024 * 1024))
+            finally:
+                os.close(fd)
+            if (manifest.model_id != selection.source_model_id
+                    or manifest.revision != selection.source_revision
+                    or not manifest.fully_verifiable):
+                raise PrivateDeploymentDenied("selected model source manifest no longer matches its selection")
+            return manifest
+        finally:
+            observed.close()
+
+    def _verify_source_pins_current(self, selection: Any) -> None:
+        observed_manifest = observed_license = None
+        try:
+            observed_manifest = self.artifact_observer.observe(
+                selection.source_manifest_artifact_id, selection.source_manifest_sha256)
+            observed_license = self.artifact_observer.observe(
+                selection.license_artifact_id, selection.license_sha256)
+            if (not self.artifact_observer.verify_current(observed_manifest)
+                    or not self.artifact_observer.verify_current(observed_license)):
+                raise PrivateDeploymentDenied("selected source metadata or license became stale")
+            fd = observed_license.open_blob()
+            try:
+                if b"MIT License" not in _read_bounded_fd(fd, 256 * 1024):
+                    raise PrivateDeploymentDenied("selected GLM source license no longer matches MIT")
+            finally:
+                os.close(fd)
+        finally:
+            for item in (observed_manifest, observed_license):
+                close = getattr(item, "close", None)
+                if callable(close):
+                    close()
+
+
+def _read_bounded_fd(fd: int, maximum: int) -> bytes:
+    if type(fd) is not int or fd < 0 or type(maximum) is not int or maximum <= 0:
+        raise PrivateDeploymentDenied("protected artifact descriptor or bound is invalid")
+    output = bytearray()
+    while True:
+        block = os.read(fd, min(64 * 1024, maximum + 1 - len(output)))
+        if not block:
+            break
+        output.extend(block)
+        if len(output) > maximum:
+            raise PrivateDeploymentDenied("protected source metadata exceeds its fixed byte bound")
+    return bytes(output)
+
+
+def _open_existing_model_member(root_fd: int, relative_path: str, manifest: Any) -> int:
+    from hermes_installer.models.artifacts import ArtifactManifest
+    if (type(manifest) is not ArtifactManifest or not isinstance(relative_path, str)
+            or not relative_path or relative_path.startswith("/") or "\\" in relative_path):
+        raise PrivateDeploymentDenied("model member path is invalid")
+    parts = relative_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise PrivateDeploymentDenied("model member path escapes the selected tree")
+    rows = [item for item in manifest.files if item.name == relative_path]
+    if len(rows) != 1 or not rows[0].digest or rows[0].digest_algorithm not in {"sha256", "git-sha1"}:
+        raise PrivateDeploymentDenied("model member is not exactly source-pinned")
+    parent_fd = os.dup(root_fd)
+    try:
+        for component in parts[:-1]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = child
+        result = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+        info = os.fstat(result)
+        item = rows[0]
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+                or info.st_size != item.size):
+            os.close(result)
+            raise PrivateDeploymentDenied("selected model member identity or size changed")
+        source_hash = hashlib.sha256() if item.digest_algorithm == "sha256" else hashlib.sha1()
+        if item.digest_algorithm == "git-sha1":
+            source_hash.update(f"blob {item.size}\0".encode("ascii"))
+        total = 0
+        while True:
+            block = os.read(result, 1024 * 1024)
+            if not block:
+                break
+            total += len(block)
+            source_hash.update(block)
+        after = os.fstat(result)
+        if (total != item.size or source_hash.hexdigest() != item.digest
+                or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                   != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)):
+            os.close(result)
+            raise PrivateDeploymentDenied("selected model member failed current source digest verification")
+        os.lseek(result, 0, os.SEEK_SET)
+        return result
+    except PrivateDeploymentDenied:
+        raise
+    except OSError:
+        raise PrivateDeploymentDenied("selected model member could not be opened safely") from None
+    finally:
+        os.close(parent_fd)
+
+
+def inspect_existing_model_tree(root_fd: int, manifest: Any, *,
+                                expected_uid: int = 0) -> ExistingModelTreeFacts:
+    """Verify a selected model tree by descriptor without accepting a path.
+
+    The expected manifest is the independently source-pinned
+    ``models.artifacts.ArtifactManifest``. Every regular file is opened with
+    ``O_NOFOLLOW`` beneath the held directory FD, checked for exact size and
+    source digest (SHA-256 or Git blob SHA-1), and also assigned an observed
+    SHA-256 plus inode/owner/mode facts. Symlinks, special files, extra files,
+    untrusted-writable roots/members, and mutable observations are rejected.
+    This function can be expensive on a 429 GB model; it performs no download
+    or copy and is called only after an explicit protected existing-tree
+    selection.
+    """
+    if os.geteuid() != expected_uid or expected_uid != 0:
+        raise PrivateDeploymentDenied("existing model tree observation requires the root authority")
+    return _inspect_existing_model_tree_fd(root_fd, manifest, expected_uid=expected_uid)
+
+
+def _inspect_existing_model_tree_fd(root_fd: int, manifest: Any, *,
+                                    expected_uid: int) -> ExistingModelTreeFacts:
+    """Descriptor walker shared with clearly classified unprivileged unit fixtures."""
+    from hermes_installer.models.artifacts import ArtifactManifest
+
+    if (type(root_fd) is not int or root_fd < 0 or type(expected_uid) is not int
+            or expected_uid < 0 or type(manifest) is not ArtifactManifest
+            or not manifest.fully_verifiable):
+        raise PrivateDeploymentDenied("existing model tree needs root and a fully pinned source manifest")
+    root_info = os.fstat(root_fd)
+    if (not stat.S_ISDIR(root_info.st_mode)
+            or root_info.st_uid != expected_uid or root_info.st_mode & 0o022):
+        raise PrivateDeploymentDenied("selected model root is not a protected root-owned directory")
+    expected = {item.name: item for item in manifest.files}
+    if len(expected) != len(manifest.files):
+        raise PrivateDeploymentDenied("pinned model manifest contains duplicate members")
+    seen: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    directories: list[dict[str, Any]] = []
+
+    def walk(directory_fd: int, prefix: str) -> None:
+        try:
+            names = sorted(os.listdir(directory_fd))
+        except OSError:
+            raise PrivateDeploymentDenied("selected model tree could not be enumerated") from None
+        for name in names:
+            if name in {".", ".."} or "/" in name or "\\" in name:
+                raise PrivateDeploymentDenied("selected model tree contains an unsafe member name")
+            relative = f"{prefix}/{name}" if prefix else name
+            try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError:
+                raise PrivateDeploymentDenied("selected model tree member changed during inspection") from None
+            if info.st_uid != expected_uid or info.st_mode & 0o022:
+                raise PrivateDeploymentDenied("selected model tree member is writable by an untrusted identity")
+            if stat.S_ISDIR(info.st_mode):
+                if not any(path.startswith(relative + "/") for path in expected):
+                    raise PrivateDeploymentDenied("selected model tree contains an unlisted directory")
+                directories.append({
+                    "path": relative, "device": info.st_dev, "inode": info.st_ino,
+                    "uid": info.st_uid, "gid": info.st_gid,
+                    "mode": stat.S_IMODE(info.st_mode), "mtime_ns": info.st_mtime_ns,
+                    "ctime_ns": info.st_ctime_ns,
+                })
+                try:
+                    child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                       dir_fd=directory_fd)
+                except OSError:
+                    raise PrivateDeploymentDenied("selected model tree directory is unsafe") from None
+                try:
+                    after_open = os.fstat(child_fd)
+                    if (after_open.st_dev, after_open.st_ino) != (info.st_dev, info.st_ino):
+                        raise PrivateDeploymentDenied("selected model tree directory changed during open")
+                    walk(child_fd, relative)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(info.st_mode) or relative not in expected:
+                raise PrivateDeploymentDenied("selected model tree contains an extra or special file")
+            item = expected[relative]
+            if info.st_size != item.size:
+                raise PrivateDeploymentDenied("selected model member size differs from source manifest")
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+            except OSError:
+                raise PrivateDeploymentDenied("selected model member could not be opened safely") from None
+            try:
+                before = os.fstat(fd)
+                if (before.st_dev, before.st_ino, before.st_size) != (info.st_dev, info.st_ino, info.st_size):
+                    raise PrivateDeploymentDenied("selected model member changed before hashing")
+                source_hash = hashlib.sha256() if item.digest_algorithm == "sha256" else hashlib.sha1()
+                observed_hash = hashlib.sha256()
+                if item.digest_algorithm == "git-sha1":
+                    source_hash.update(f"blob {item.size}\0".encode("ascii"))
+                total_read = 0
+                while True:
+                    try:
+                        block = os.read(fd, 1024 * 1024)
+                    except InterruptedError:
+                        continue
+                    if not block:
+                        break
+                    total_read += len(block)
+                    source_hash.update(block)
+                    observed_hash.update(block)
+                after = os.fstat(fd)
+                if (total_read != item.size or source_hash.hexdigest() != item.digest
+                        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                           != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+                    raise PrivateDeploymentDenied("selected model member bytes changed or fail source digest")
+                rows.append({
+                    "path": relative, "kind": "file", "source_size_bytes": item.size,
+                    "source_digest_algorithm": item.digest_algorithm,
+                    "source_digest": item.digest, "observed_sha256": observed_hash.hexdigest(),
+                    "device": before.st_dev, "inode": before.st_ino,
+                    "uid": before.st_uid, "gid": before.st_gid,
+                    "mode": stat.S_IMODE(before.st_mode),
+                    "mtime_ns": before.st_mtime_ns, "ctime_ns": before.st_ctime_ns,
+                })
+                seen.add(relative)
+            finally:
+                os.close(fd)
+
+    try:
+        walk(root_fd, "")
+    except PrivateDeploymentDenied:
+        raise
+    except OSError:
+        raise PrivateDeploymentDenied("selected model tree could not be verified") from None
+    if seen != set(expected):
+        raise PrivateDeploymentDenied("selected model tree is missing pinned source members")
+    rows.sort(key=lambda row: row["path"])
+    directories.sort(key=lambda row: row["path"])
+    content_manifest = [{
+        "path": row["path"], "kind": "file", "size_bytes": row["source_size_bytes"],
+        "source_digest_algorithm": row["source_digest_algorithm"],
+        "source_digest": row["source_digest"], "observed_sha256": row["observed_sha256"],
+    } for row in rows]
+    tree_raw = json.dumps(content_manifest, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False, allow_nan=False).encode("utf-8")
+    tree_digest = hashlib.sha256(tree_raw).hexdigest()
+    member_raw = json.dumps({
+        "root_device": root_info.st_dev, "root_inode": root_info.st_ino,
+        "root_uid": root_info.st_uid, "root_gid": root_info.st_gid,
+        "root_mode": stat.S_IMODE(root_info.st_mode), "members": rows,
+        "directories": directories,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return ExistingModelTreeFacts(
+        tree_digest, hashlib.sha256(member_raw).hexdigest(), root_info.st_dev,
+        root_info.st_ino, root_info.st_uid, root_info.st_gid,
+        stat.S_IMODE(root_info.st_mode), len(rows), sum(item.size for item in manifest.files),
+        tuple(rows), tuple(directories),
+    )
+
+
+def _revalidate_existing_model_tree_metadata(root_fd: int, facts: ExistingModelTreeFacts,
+                                            *, expected_uid: int) -> None:
+    """Check every held member path/inode/time identity without rehashing huge weights."""
+    root = os.fstat(root_fd)
+    if (not stat.S_ISDIR(root.st_mode) or (root.st_dev, root.st_ino, root.st_uid,
+            root.st_gid, stat.S_IMODE(root.st_mode)) != (facts.root_device, facts.root_inode,
+            facts.root_uid, facts.root_gid, facts.root_mode)):
+        raise PrivateDeploymentDenied("selected model root identity changed")
+    files = {row["path"]: row for row in facts.members}
+    dirs = {row["path"]: row for row in facts.directories}
+    expected: dict[str, set[str]] = {"": set()}
+    for path in (*files, *dirs):
+        parts = path.split("/")
+        for index, part in enumerate(parts):
+            parent = "/".join(parts[:index])
+            expected.setdefault(parent, set()).add(part)
+    observed_files: set[str] = set()
+    observed_dirs: set[str] = set()
+
+    def walk(directory_fd: int, prefix: str) -> None:
+        try:
+            names = set(os.listdir(directory_fd))
+        except OSError:
+            raise PrivateDeploymentDenied("selected model directory changed during revalidation") from None
+        if names != expected.get(prefix, set()):
+            raise PrivateDeploymentDenied("selected model tree membership changed")
+        for name in sorted(names):
+            if name in {".", ".."} or "/" in name or "\\" in name:
+                raise PrivateDeploymentDenied("selected model tree contains an unsafe member")
+            relative = f"{prefix}/{name}" if prefix else name
+            try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError:
+                raise PrivateDeploymentDenied("selected model member disappeared") from None
+            if stat.S_ISDIR(info.st_mode):
+                row = dirs.get(relative)
+                identity = (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                            stat.S_IMODE(info.st_mode), info.st_mtime_ns, info.st_ctime_ns)
+                if row is None or identity != (row["device"], row["inode"], row["uid"],
+                        row["gid"], row["mode"], row["mtime_ns"], row["ctime_ns"]):
+                    raise PrivateDeploymentDenied("selected model directory identity changed")
+                child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                   dir_fd=directory_fd)
+                try:
+                    opened = os.fstat(child_fd)
+                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise PrivateDeploymentDenied("selected model directory changed while opening")
+                    observed_dirs.add(relative)
+                    walk(child_fd, relative)
+                finally:
+                    os.close(child_fd)
+                continue
+            row = files.get(relative)
+            identity = (info.st_dev, info.st_ino, info.st_size, info.st_uid, info.st_gid,
+                        stat.S_IMODE(info.st_mode), info.st_mtime_ns, info.st_ctime_ns)
+            if (row is None or not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != expected_uid or info.st_mode & 0o022
+                    or identity != (row["device"], row["inode"], row["source_size_bytes"],
+                        row["uid"], row["gid"], row["mode"], row["mtime_ns"], row["ctime_ns"])):
+                raise PrivateDeploymentDenied("selected model file identity changed")
+            member_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(member_fd)
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    raise PrivateDeploymentDenied("selected model file changed while opening")
+            finally:
+                os.close(member_fd)
+            observed_files.add(relative)
+
+    walk(root_fd, "")
+    if observed_files != set(files) or observed_dirs != set(dirs):
+        raise PrivateDeploymentDenied("selected model tree member set changed")
+
+
+def _read_pid_stat(path: Path) -> tuple[int, int]:
+    """Return PID and Linux start ticks without being confused by ')' in comm."""
+    raw = path.read_text(encoding="ascii")
+    close = raw.rfind(")")
+    if close < 0:
+        raise PrivateDeploymentDenied("process stat is malformed")
+    try:
+        pid = int(raw[:raw.find(" ")])
+        fields = raw[close + 2 :].split()  # begins with field 3 (state)
+        start_ticks = int(fields[19])  # field 22
+    except (ValueError, IndexError):
+        raise PrivateDeploymentDenied("process stat is malformed") from None
+    return pid, start_ticks
+
+
+def _tcp4_listener_inodes(table: str, port: int) -> set[int]:
+    """Parse only exact 127.0.0.1 IPv4 LISTEN sockets on the selected port."""
+    found: set[int] = set()
+    for line in table.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 10:
+            continue
+        local, state = fields[1], fields[3]
+        try:
+            address_hex, port_hex = local.split(":", 1)
+            inode = int(fields[9], 10)
+            local_port = int(port_hex, 16)
+        except (ValueError, IndexError):
+            continue
+        # Linux procfs prints IPv4 address words in host byte order.
+        if (address_hex.upper() == "0100007F" and local_port == port
+                and state.upper() == _TCP_STATE_LISTEN and inode > 0):
+            found.add(inode)
+    return found
+
+
+def inspect_loopback_listener(
+    proof: RemoteOriginKernelProof,
+    *,
+    port: int,
+    proc_root: Path = Path("/proc"),
+    monotonic: Callable[[], float] = time.monotonic,
+) -> LoopbackListenerObservation:
+    """Observe an exact IPv4 loopback listener owned by the selected process.
+
+    `proof` must be freshly returned by root custody. The caller must obtain a
+    second custody proof after this function and require an exact identity
+    match before issuing a durable receipt. This function also brackets its
+    procfs reads with PID/starttime/cgroup/netns checks to detect reuse/races.
+    """
+    if (os.geteuid() != 0 or type(proof) is not RemoteOriginKernelProof
+            or type(port) is not int or not 1 <= port <= 65535
+            or not proc_root.is_absolute() or time.monotonic() >= proof.expires_monotonic):
+        raise PrivateDeploymentDenied("listener observation requires root and a selected process proof")
+    root = proc_root / str(proof.pid)
+    try:
+        before = _read_pid_stat(root / "stat")
+        uid_line = next(line for line in (root / "status").read_text(encoding="ascii").splitlines()
+                        if line.startswith("Uid:"))
+        uid = int(uid_line.split()[1])
+        netns = os.stat(root / "ns/net").st_ino
+        cgroups = (root / "cgroup").read_text(encoding="ascii")
+        tcp = (root / "net/tcp").read_text(encoding="ascii")
+        listeners = _tcp4_listener_inodes(tcp, port)
+        owned: list[tuple[int, int]] = []
+        for fd_path in (root / "fd").iterdir():
+            try:
+                match = _SOCKET_LINK.fullmatch(os.readlink(fd_path))
+                if match and int(match.group(1)) in listeners:
+                    owned.append((int(match.group(1)), int(fd_path.name)))
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                continue
+        after = _read_pid_stat(root / "stat")
+    except (OSError, StopIteration, ValueError):
+        raise PrivateDeploymentDenied("selected process listener state is unavailable") from None
+    if (before != after or before != (proof.pid, proof.pid_starttime_ticks)
+            or uid != proof.uid or netns != proof.network_namespace_inode
+            or proof.cgroup_id not in cgroups.splitlines()
+            or not owned):
+        raise PrivateDeploymentDenied("listener owner does not match the current enrolled process")
+    # Capture all observed fields in one canonical digest; no address supplied
+    # by a caller is accepted, and wildcard/remote bindings never match.
+    record = {
+        "profile_id": proof.profile_id,
+        "generation": proof.profile_generation,
+        "enrollment_id": proof.enrollment_id,
+        "uid": proof.uid,
+        "pid": proof.pid,
+        "pid_starttime_ticks": proof.pid_starttime_ticks,
+        "cgroup_id": proof.cgroup_id,
+        "network_namespace_inode": proof.network_namespace_inode,
+        "address": "127.0.0.1",
+        "port": port,
+        "socket_inode": min(owned)[0],
+        "owner_fds": sorted(fd for _inode, fd in owned),
+    }
+    digest = hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False).encode("utf-8")).hexdigest()
+    return LoopbackListenerObservation(
+        proof.profile_id, proof.profile_generation, proof.enrollment_id, proof.uid,
+        proof.pid, proof.pid_starttime_ticks, proof.cgroup_id,
+        proof.network_namespace_inode, "127.0.0.1", port, min(owned)[0], min(fd for _inode, fd in owned),
+        digest, monotonic(),
+    )
+
+
+def inspect_enrolled_loopback_listener(custody: Any, profile_id: str,
+                                       generation: str, *, port: int = 8000,
+                                       proc_root: Path = Path("/proc"),
+                                       monotonic: Callable[[], float] = time.monotonic
+                                       ) -> tuple[RemoteOriginKernelProof, LoopbackListenerObservation]:
+    """Bracket the kernel listener probe with fresh root custody inspections."""
+    inspect = getattr(custody, "inspect_enrolled_process", None)
+    if not callable(inspect):
+        raise PrivateDeploymentDenied("root process custody inspector is unavailable")
+    try:
+        before = inspect(profile_id, generation)
+        if type(before) is not RemoteOriginKernelProof:
+            raise PrivateDeploymentDenied("selected service has no current process proof")
+        observation = inspect_loopback_listener(before, port=port, proc_root=proc_root,
+                                                monotonic=monotonic)
+        after = inspect(profile_id, generation)
+    except PrivateDeploymentDenied:
+        raise
+    except Exception:
+        raise PrivateDeploymentDenied("selected service listener could not be revalidated") from None
+    identity = lambda proof: (
+        proof.process_id, proof.enrollment_id, proof.profile_id,
+        proof.profile_generation, proof.uid, proof.gid, proof.pid,
+        proof.pid_starttime_ticks, proof.executable_device, proof.executable_inode,
+        proof.executable_sha256, proof.cgroup_id, proof.mount_namespace_inode,
+        proof.network_namespace_inode, proof.pidfd_registry_handle,
+    )
+    if (type(after) is not RemoteOriginKernelProof or identity(before) != identity(after)
+            or monotonic() >= min(before.expires_monotonic, after.expires_monotonic)):
+        raise PrivateDeploymentDenied("selected process changed during listener ownership observation")
+    return after, observation
+
+
+class RootPrivateMemoryDeploymentRegistry:
+    """Receipt registry factory seam defined by SK-T125/SK-T127.
+
+    Construction intentionally requires the real authority signer, root
+    journal, protected selection registry, and current observers. No local
+    key, mutable profile dictionary, callback boolean, or network alias can
+    substitute for those services.
+    """
+
+    def __init__(self, bindings: Any, verified_protected_enrollment: Any,
+                 artifact_observer: Any, managed_process_custody: Any,
+                 selected_endpoint_connector: Any, root_journal: Any, *,
+                 authority_service: Any, existing_model_artifact_observer: Any = None,
+                 endpoint_selections: Any, model_selections: Any,
+                 boot_id_reader: Callable[[], str] | None = None,
+                 monotonic: Callable[[], float] = time.monotonic):
+        if (os.geteuid() != 0 or authority_service is None or root_journal is None
+                or endpoint_selections is None or model_selections is None
+                or not callable(getattr(authority_service, "issue_private_memory_observation", None))
+                or not callable(getattr(authority_service, "verify_private_memory_observation", None))
+                or not callable(getattr(authority_service, "attach_private_memory_observation_producer", None))
+                or not callable(getattr(managed_process_custody, "inspect_enrolled_process", None))
+                or not callable(getattr(artifact_observer, "observe", None))
+                or not callable(getattr(artifact_observer, "verify_current", None))):
+            raise PrivateDeploymentDenied("root private deployment observers are not composed")
+        self.bindings = bindings
+        self.protected_enrollment = verified_protected_enrollment
+        self.artifact_observer = artifact_observer
+        self.process_custody = managed_process_custody
+        self.connector = selected_endpoint_connector
+        self.root_journal = root_journal
+        self.authority_service = authority_service
+        self.existing_model_artifact_observer = existing_model_artifact_observer
+        self.endpoint_selections = endpoint_selections
+        self.model_selections = model_selections
+        self._boot_id_reader = boot_id_reader or (lambda: Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+        self._monotonic = monotonic
+        self._pending: dict[int, tuple[str, Any]] = {}
+        self._receipts: dict[str, tuple[str, Any]] = {}
+        self._journal_dirfds: dict[str, int] = {}
+        authority_service.attach_private_memory_observation_producer(self)
+
+    @classmethod
+    def from_root_runtime(cls, bindings: Any, verified_protected_enrollment: Any,
+                          artifact_observer: Any, managed_process_custody: Any,
+                          selected_endpoint_connector: Any, root_journal: Any, *,
+                          authority_service: Any, existing_model_artifact_observer: Any = None,
+                          endpoint_selections: Any = None, model_selections: Any = None,
+                          **kwargs: Any) -> "RootPrivateMemoryDeploymentRegistry":
+        """Construct from explicit protected selections; absent projections deny."""
+        runtime_catalog = getattr(bindings, "enrollment_catalog", None)
+        if (runtime_catalog is None or getattr(verified_protected_enrollment,
+                                               "protected_enrollment_digest", None)
+                != getattr(runtime_catalog, "digest", None)):
+            raise PrivateDeploymentDenied("selected runtime and protected enrollment do not match")
+        if endpoint_selections is None:
+            endpoint_selections = getattr(bindings, "private_memory_endpoint_selections", None)
+        if model_selections is None:
+            model_selections = getattr(bindings, "private_memory_model_selections", None)
+        if endpoint_selections is None or model_selections is None:
+            raise PrivateDeploymentDenied("typed private endpoint/model selections are not enrolled")
+        return cls(bindings, verified_protected_enrollment, artifact_observer,
+                   managed_process_custody, selected_endpoint_connector, root_journal,
+                   authority_service=authority_service,
+                   existing_model_artifact_observer=existing_model_artifact_observer,
+                   endpoint_selections=endpoint_selections, model_selections=model_selections,
+                   **kwargs)
+
+    def inspect_selected_endpoint_boundary(self, binding_id: str) -> SelectedEndpointBoundaryEvidence:
+        """Observe current root custody, namespace lease and exact loopback listener.
+
+        This is deliberately only process/network boundary evidence. It does not
+        prove that a selected server loaded its pinned config or selected model.
+        """
+        binding = self.resolve_endpoint_selection(binding_id)
+        resolve_lease = getattr(self.bindings, "resolve_private_loopback_network_lease", None)
+        if not callable(resolve_lease):
+            raise PrivateDeploymentDenied("root-retained private loopback namespace lease is unavailable")
+        try:
+            from hermes_installer.authority.private_loopback_network import (
+                RootPrivateLoopbackNetworkLease, verify_root_network_lease,
+            )
+            lease = resolve_lease(binding.network_binding_handle)
+            if type(lease) is not RootPrivateLoopbackNetworkLease:
+                raise ValueError
+            verify_root_network_lease(lease)
+            network = lease.network
+            process_profile = self.bindings.process_profiles.get(binding.process_profile_id)
+            member = network.member(binding.service_enrollment_id)
+            if (network.network_id != binding.network_binding_handle
+                    or network.service_generation_digest != binding.service_generation_digest
+                    or network.namespace_identity != binding.namespace_id
+                    or member.profile_id != binding.process_profile_id
+                    or member.generation != binding.process_profile_generation
+                    or process_profile is None or member.uid != process_profile.owner_uid
+                    or lease.expires_monotonic <= self._monotonic()):
+                raise ValueError
+            proof, listener = inspect_enrolled_loopback_listener(
+                self.managed_process_custody, binding.process_profile_id,
+                binding.process_profile_generation, port=8000, monotonic=self._monotonic)
+            if (proof.enrollment_id != binding.service_enrollment_id
+                    or proof.uid != member.uid
+                    or proof.network_namespace_inode != lease.namespace_inode
+                    or listener.address != "127.0.0.1" or listener.port != 8000):
+                raise ValueError
+            verify_root_network_lease(lease)
+            if self.resolve_endpoint_selection(binding_id) is not binding:
+                raise ValueError
+            return SelectedEndpointBoundaryEvidence(binding, lease, proof, listener)
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied(
+                "selected private endpoint lost its current root network/process/listener proof") from None
+
+    def observe_selected_endpoint(self, selected_service_binding: Any) -> str:
+        binding_id = selected_service_binding if isinstance(selected_service_binding, str) else getattr(
+            selected_service_binding, "binding_id", None)
+        self.inspect_selected_endpoint_boundary(binding_id)
+        raise PrivateDeploymentDenied(
+            "live listener is observed, but the selected server has no actual loaded-config/runtime proof")
+
+    def observe_selected_model_deployment(self, endpoint_receipt_handle: str,
+                                          selected_model_binding: Any) -> str:
+        binding_id = selected_model_binding if isinstance(selected_model_binding, str) else getattr(
+            selected_model_binding, "binding_id", None)
+        self.resolve_model_selection(binding_id)
+        endpoint = self.resolve_private_endpoint_receipt(endpoint_receipt_handle)
+        if endpoint is None:
+            raise PrivateDeploymentDenied("model source selection has no current observed endpoint receipt")
+        raise PrivateDeploymentDenied(
+            "model selection is valid, but no process load/source probe or selected weights are observed")
+
+    def resolve_endpoint_selection(self, binding_id: str) -> Any:
+        """Resolve only current v128 protected metadata; this never creates a receipt."""
+        resolve = getattr(self.bindings, "resolve_private_memory_endpoint_binding", None)
+        if not callable(resolve):
+            raise PrivateDeploymentDenied("protected endpoint binding getter is unavailable")
+        try:
+            binding = resolve(binding_id)
+            if (getattr(binding, "service_generation_digest", None)
+                    != self.bindings.service_generation_digest):
+                raise PrivateDeploymentDenied("endpoint binding belongs to a stale service generation")
+            service = self.bindings.enrollment_catalog.resolve_enrollment(
+                binding.service_enrollment_id, binding.service_generation)
+            process = self.bindings.process_profiles.get(binding.process_profile_id)
+            if (service.profile_id != binding.profile_id
+                    or service.namespace_identity != binding.namespace_id
+                    or getattr(service, "principal_id", None) != binding.principal_id
+                    or process is None
+                    or getattr(process, "generation", None) != binding.process_profile_generation):
+                raise PrivateDeploymentDenied("endpoint binding does not join its current service/process identities")
+            resolve_network = getattr(self.bindings, "resolve_private_loopback_network", None)
+            if not callable(resolve_network):
+                raise PrivateDeploymentDenied("protected private-loopback network enrollment is unavailable")
+            network = resolve_network(
+                binding.network_binding_handle,
+                service_generation_digest=binding.service_generation_digest,
+            )
+            if (binding.service_enrollment_id not in network.member_enrollment_ids
+                    or network.namespace_identity != binding.namespace_id):
+                raise PrivateDeploymentDenied("endpoint binding does not join its selected private network")
+            from hermes_installer.service_connector import ROUTES
+            routes = [ROUTES.get((binding.endpoint_target_id, route_id))
+                      for route_id in binding.connector_route_ids]
+            if (not routes or any(route is None or route.target_id != binding.endpoint_target_id
+                                  for route in routes)):
+                raise PrivateDeploymentDenied("endpoint binding contains an unknown connector route")
+            if (binding.endpoint_target_id != "colibri-main"
+                    or binding.connector_route_ids != ("colibri-openai-v1",)
+                    or routes[0].port != 8000 or routes[0].protocol != "openai-http"):
+                raise PrivateDeploymentDenied("endpoint binding is outside the fixed Colibri inference route")
+            resolve_lease = getattr(self.bindings, "resolve_private_loopback_network_lease", None)
+            if not callable(resolve_lease):
+                raise PrivateDeploymentDenied("retained private loopback network lease is unavailable")
+            from hermes_installer.authority.private_loopback_network import (
+                RootPrivateLoopbackNetworkLease, verify_root_network_lease,
+            )
+            lease = resolve_lease(binding.network_binding_handle)
+            if type(lease) is not RootPrivateLoopbackNetworkLease:
+                raise PrivateDeploymentDenied("network resolver returned no root-retained lease")
+            verify_root_network_lease(lease)
+            if (lease.network.network_id != binding.network_binding_handle
+                    or lease.network.service_generation_digest != binding.service_generation_digest
+                    or lease.network.namespace_identity != binding.namespace_id
+                    or lease.network.member(binding.service_enrollment_id).generation
+                       != binding.process_profile_generation):
+                raise PrivateDeploymentDenied("endpoint metadata does not join the live network lease")
+            return binding
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("protected endpoint binding is absent, stale, or malformed") from None
+
+    def resolve_model_selection(self, binding_id: str) -> Any:
+        """Resolve only current v128 model metadata and existing-tree membership."""
+        resolve = getattr(self.bindings, "resolve_private_memory_model_binding", None)
+        if not callable(resolve):
+            raise PrivateDeploymentDenied("protected model binding getter is unavailable")
+        try:
+            model = resolve(binding_id)
+            if getattr(model, "service_generation_digest", None) != self.bindings.service_generation_digest:
+                raise PrivateDeploymentDenied("model binding belongs to a stale service generation")
+            endpoint = self.resolve_endpoint_selection(model.endpoint_binding_id)
+            if endpoint.service_generation_digest != model.service_generation_digest:
+                raise PrivateDeploymentDenied("model and endpoint bindings belong to different service generations")
+            from hermes_installer.models.artifacts import MODEL_ID, MODEL_REVISION
+            if (model.source_model_id != MODEL_ID or model.source_revision != MODEL_REVISION
+                    or model.license_artifact_id != _GLM_LICENSE_ARTIFACT_ID
+                    or model.license_sha256 != _GLM_RELEASE_SOURCE_MEMBERS[_GLM_LICENSE_ARTIFACT_ID][1]
+                    or model.capability != "extraction-text" or model.dimensions is not None):
+                raise PrivateDeploymentDenied(
+                    "selected model is not the pinned GLM-5.2 text source or requests unproven embedding")
+            if not model.model_artifact_id.startswith("existing-model:"):
+                raise PrivateDeploymentDenied(
+                    "GLM-5.2 weights must come from the root-selected existing model tree; no download is authorized")
+            candidates = [receipt for kind, receipt in self._receipts.values()
+                          if kind == "existing-model-tree"
+                          and receipt.artifact_id == model.model_artifact_id
+                          and receipt.tree_manifest_sha256 == model.model_tree_manifest_sha256
+                          and receipt.source_model_id == model.source_model_id
+                          and receipt.source_revision == model.source_revision
+                          and receipt.license_artifact_id == model.license_artifact_id
+                          and receipt.license_sha256 == model.license_sha256]
+            if len(candidates) != 1:
+                raise PrivateDeploymentDenied("selected existing GLM weights have no unique current source observation")
+            self.resolve_existing_model_tree(candidates[0].observation_handle)
+            return model
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("protected model binding is absent, stale, or malformed") from None
+
+    def resolve_private_endpoint_receipt(self, receipt_handle: str) -> PrivateEndpointObservation | None:
+        pair = self._receipts.get(receipt_handle)
+        if pair is None or pair[0] != "private-endpoint":
+            return None
+        receipt = pair[1]
+        try:
+            if (self.authority_service.verify_private_memory_observation(receipt)
+                    and self.verify_observation_receipt(receipt)):
+                return receipt
+        except Exception:
+            return None
+        return None
+
+    def resolve_selected_private_route(self, **_kwargs: Any) -> Any:
+        raise PrivateDeploymentDenied("no signed current private endpoint deployment receipt is enrolled")
+
+    def revalidate_private_route(self, route: Any, **_kwargs: Any) -> Any:
+        raise PrivateDeploymentDenied("private endpoint route receipt is unavailable")
+
+    def resolve_deployment(self, receipt_handle: str, **_kwargs: Any) -> Any:
+        raise PrivateDeploymentDenied("no signed current model deployment receipt is enrolled")
+
+    def revalidate_deployment(self, deployment: Any, **_kwargs: Any) -> Any:
+        raise PrivateDeploymentDenied("private model deployment receipt is unavailable")
+
+    def observe_existing_model_tree(self, selection_handle: str) -> ExistingModelArtifactObservation:
+        """Observe selected bytes, obtain the finite authority signature, and retain it."""
+        observer = self.existing_model_artifact_observer
+        if observer is None or not callable(getattr(observer, "observe_selected_tree", None)):
+            raise PrivateDeploymentDenied("no root-held existing model store selection is enrolled")
+        verified = observer.observe_selected_tree(selection_handle)
+        if type(verified) is not VerifiedExistingModelArtifactObservation:
+            raise PrivateDeploymentDenied("existing model observer returned an untyped source proof")
+        candidate = verified.observation
+        if not observer.verify_observation_for_authority(candidate):
+            raise PrivateDeploymentDenied("existing model source proof is not retained and current")
+        self._stage_authority_observation("existing-model-tree", candidate)
+        signed = self.authority_service.issue_private_memory_observation(
+            "existing-model-tree", candidate)
+        self.retain_authority_signed_observation("existing-model-tree", signed)
+        return signed
+
+    def resolve_existing_model_tree(self, observation_handle: str) -> ExistingModelArtifactObservation:
+        pair = self._receipts.get(observation_handle)
+        if pair is None or pair[0] != "existing-model-tree":
+            raise PrivateDeploymentDenied("existing model tree receipt is not retained")
+        receipt = pair[1]
+        if (not self.authority_service.verify_private_memory_observation(receipt)
+                or not self.verify_observation_receipt(receipt)):
+            raise PrivateDeploymentDenied("existing model tree receipt is stale or invalid")
+        return receipt
+
+    def open_existing_model_member(self, observation_handle: str,
+                                   relative_manifest_member: str) -> int:
+        receipt = self.resolve_existing_model_tree(observation_handle)
+        observer = self.existing_model_artifact_observer
+        if receipt.observation_handle != observation_handle or observer is None:
+            raise PrivateDeploymentDenied("existing model member receipt is unavailable")
+        return observer.open_member(observation_handle, relative_manifest_member)
+
+    def _stage_authority_observation(self, observation_kind: str, observation: Any) -> None:
+        """Retain one internally produced typed observation for AuthorityService."""
+        expected = _observation_type(observation_kind)
+        if type(observation) is not expected:
+            raise PrivateDeploymentDenied("authority observation kind and exact DTO type differ")
+        if getattr(observation, "boot_id", None) != self._boot_id_reader():
+            raise PrivateDeploymentDenied("observation belongs to a different boot")
+        now = self._monotonic()
+        issued, expiry = observation.issued_monotonic, observation.expires_monotonic
+        if (type(issued) not in {int, float} or type(expiry) not in {int, float}
+                or not issued <= now < expiry or expiry - issued > 30.0
+                or observation.signature):
+            raise PrivateDeploymentDenied("observation lease is invalid or already signed")
+        claims = observation.claims()
+        canonical = json.dumps(claims, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False).encode("utf-8")
+        expected_sha = hashlib.sha256(canonical).hexdigest()
+        declared_sha = getattr(observation, "receipt_sha256", None)
+        if declared_sha is not None and declared_sha != expected_sha:
+            raise PrivateDeploymentDenied("observation receipt digest does not match its claims")
+        handle = getattr(observation, "receipt_handle", getattr(observation, "observation_handle", None))
+        if not isinstance(handle, str) or not handle or any(ord(char) < 33 for char in handle):
+            raise PrivateDeploymentDenied("observation handle is malformed")
+        self._pending[id(observation)] = (observation_kind, observation)
+
+    def verify_observation_for_authority(self, observation_kind: str, observation: Any) -> bool:
+        staged = self._pending.get(id(observation))
+        if (type(observation) is not _observation_type(observation_kind) or staged is None
+                or staged != (observation_kind, observation)
+                or getattr(observation, "boot_id", None) != self._boot_id_reader()):
+            return False
+        now = self._monotonic()
+        if not observation.issued_monotonic <= now < observation.expires_monotonic:
+            return False
+        if observation_kind == "existing-model-tree":
+            observer = self.existing_model_artifact_observer
+            return bool(observer and observer.verify_observation_for_authority(observation))
+        return True
+
+    def retain_authority_signed_observation(self, observation_kind: str,
+                                            signed_receipt: Any) -> None:
+        staged = self._pending.get(id(signed_receipt))
+        # dataclasses.replace creates a new object; match only the staged
+        # unsigned object after checking every signed claim is identical.
+        if type(signed_receipt) is not _observation_type(observation_kind):
+            raise PrivateDeploymentDenied("authority returned the wrong signed observation type")
+        unsigned_pair = next((row for row in self._pending.values()
+                              if row[0] == observation_kind
+                              and row[1].claims() == signed_receipt.claims()), None)
+        if unsigned_pair is None or not signed_receipt.signature:
+            raise PrivateDeploymentDenied("signed receipt has no exact staged observation")
+        if not isinstance(signed_receipt.signature, bytes) or len(signed_receipt.signature) != 32:
+            raise PrivateDeploymentDenied("authority returned a malformed observation signature")
+        handle = getattr(signed_receipt, "receipt_handle", getattr(signed_receipt, "observation_handle", None))
+        if handle in self._receipts:
+            raise PrivateDeploymentDenied("receipt is duplicated")
+        if observation_kind == "existing-model-tree":
+            observer = self.existing_model_artifact_observer
+            if observer is None:
+                raise PrivateDeploymentDenied("existing model observation producer disappeared")
+            observer.retain_authority_signed_observation(signed_receipt)
+        if not self._persist_receipt(observation_kind, signed_receipt):
+            raise PrivateDeploymentDenied("receipt could not be durably retained")
+        self._receipts[handle] = (observation_kind, signed_receipt)
+        self._pending.pop(id(unsigned_pair[1]), None)
+
+    def verify_observation_receipt(self, receipt: Any) -> bool:
+        if type(receipt) not in {PrivateEndpointObservation,
+                                PrivateModelDeploymentObservation,
+                                ExistingModelArtifactObservation}:
+            return False
+        kind = next((name for name, typ in _AUTHORITY_KINDS.items()
+                     if type(receipt).__name__ == typ), None)
+        handle = getattr(receipt, "receipt_handle", getattr(receipt, "observation_handle", None))
+        retained = self._receipts.get(handle)
+        retained_receipt = retained[1] if retained else None
+        if (kind is None or retained is None or retained[0] != kind or retained_receipt is None
+                or retained_receipt.claims() != receipt.claims()
+                or retained_receipt.signature != receipt.signature
+                or getattr(receipt, "boot_id", None) != self._boot_id_reader()
+                or not isinstance(receipt.signature, bytes) or len(receipt.signature) != 32):
+            return False
+        now = self._monotonic()
+        if not receipt.issued_monotonic <= now < receipt.expires_monotonic:
+            return False
+        if kind == "existing-model-tree":
+            observer = self.existing_model_artifact_observer
+            return bool(observer and observer.verify_signed_observation(receipt))
+        return True
+
+    def _persist_receipt(self, kind: str, receipt: Any) -> bool:
+        try:
+            child_name = ("existing-model-observations" if kind == "existing-model-tree"
+                          else "private-memory-deployments")
+            if child_name not in self._journal_dirfds:
+                self._journal_dirfds[child_name] = _open_private_child(
+                    self.root_journal, child_name,
+                )
+            journal_dirfd = self._journal_dirfds[child_name]
+            value = receipt.claims()
+            value["signature"] = base64.b64encode(receipt.signature).decode("ascii")
+            value["observation_kind"] = kind
+            if hasattr(receipt, "receipt_sha256"):
+                value["receipt_sha256"] = receipt.receipt_sha256
+            raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=False, allow_nan=False).encode("utf-8")
+            handle = getattr(receipt, "receipt_handle", getattr(receipt, "observation_handle", ""))
+            name = hashlib.sha256((kind + "\0" + str(handle)).encode()).hexdigest() + ".json"
+            temp = "." + secrets.token_hex(16) + ".tmp"
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=journal_dirfd)
+            try:
+                view = memoryview(raw)
+                while view:
+                    count = os.write(fd, view)
+                    if count <= 0:
+                        raise OSError("short receipt write")
+                    view = view[count:]
+                os.fsync(fd)
+                os.fchmod(fd, 0o400)
+            finally:
+                os.close(fd)
+            os.link(temp, name, src_dir_fd=journal_dirfd,
+                    dst_dir_fd=journal_dirfd, follow_symlinks=False)
+            os.unlink(temp, dir_fd=journal_dirfd)
+            os.fsync(journal_dirfd)
+            return True
+        except (OSError, TypeError, ValueError):
+            try:
+                os.unlink(temp, dir_fd=journal_dirfd)
+            except (OSError, UnboundLocalError):
+                pass
+            return False
+
+
+def _observation_type(kind: str) -> type:
+    types = {
+        "private-endpoint": PrivateEndpointObservation,
+        "private-model-deployment": PrivateModelDeploymentObservation,
+        "existing-model-tree": ExistingModelArtifactObservation,
+    }
+    try:
+        return types[kind]
+    except (KeyError, TypeError):
+        raise PrivateDeploymentDenied("private memory observation kind is not allowed") from None
+
+
+def _open_private_child(root_journal: Any, name: str) -> int:
+    """Open/create one fixed 0700 child beneath the held protected journal."""
+    from hermes_installer.protected_enrollment import RootJournalSelection
+
+    if (name not in {"private-memory-deployments", "existing-model-observations",
+                     "existing-model-selections"}
+            or type(root_journal) is not RootJournalSelection or root_journal.root_id != "installer-authority-journal-v1"
+            or os.geteuid() != 0):
+        raise PrivateDeploymentDenied("protected authority journal selection is unavailable")
+    root_fd = os.open(root_journal.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        root_info = os.fstat(root_fd)
+        if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0 or root_info.st_gid != 0
+                or stat.S_IMODE(root_info.st_mode) != 0o700
+                or (root_info.st_dev, root_info.st_ino) != (root_journal.device, root_journal.inode)):
+            raise PrivateDeploymentDenied("protected journal identity changed")
+        try:
+            os.mkdir(name, 0o700, dir_fd=root_fd)
+            os.fsync(root_fd)
+        except FileExistsError:
+            pass
+        child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=root_fd)
+        child_info = os.fstat(child_fd)
+        if (not stat.S_ISDIR(child_info.st_mode) or child_info.st_uid != 0
+                or child_info.st_gid != 0 or stat.S_IMODE(child_info.st_mode) != 0o700):
+            os.close(child_fd)
+            raise PrivateDeploymentDenied("private receipt child directory is unsafe")
+        return child_fd
+    finally:
+        os.close(root_fd)
+
+
+__all__ = [
+    "ExistingModelArtifactObservation", "ExistingModelTreeFacts",
+    "RootExistingModelArtifactObserver", "RootExistingModelArtifactSelection",
+    "RootExistingModelSelectionRegistry", "RootHeldExistingModelDirectory",
+    "VerifiedExistingModelArtifactObservation",
+    "LoopbackListenerObservation",
+    "PrivateDeploymentDenied", "PrivateEndpointObservation",
+    "PrivateModelDeploymentObservation",
+    "RootPrivateMemoryDeploymentRegistry", "inspect_enrolled_loopback_listener",
+    "inspect_existing_model_tree", "inspect_loopback_listener",
+]
