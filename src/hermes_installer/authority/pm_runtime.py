@@ -37,6 +37,7 @@ UV_BYTES = 20423730
 PYTHON_ID = "hermes-pm-python314-linux-arm64"
 PYTHON_SHA256 = "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f"
 PYTHON_BYTES = 95628137
+PYTHON_EXECUTABLE_SHA256 = "566f5e480aa1adccd3214f6251f50cab08daf768158d778fd9a73d19ab1fe001"
 _MAX_SECONDS = 1800.0
 
 
@@ -64,6 +65,58 @@ class VerifiedPMRuntimeSelection:
     cache_tag: str
     soabi: str
     machine: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedPMRuntimeProjectionMember:
+    """One current catalogued member of the official PM base Python tree.
+
+    Regular-file ``fd`` values are read-only descriptors. Symlink rows carry
+    their exact catalogued target and, on Linux, an O_PATH descriptor to the
+    link itself. Paths are relative to ``runtime_root_fd`` and are never
+    caller supplied.
+    """
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    executable: bool
+    mode: int
+    device: int
+    inode: int
+    uid: int
+    gid: int
+    kind: str
+    link_target: str | None
+    fd: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedPMRuntimeProjection:
+    """Held, receipt-backed official PM Python base runtime projection.
+
+    The consumer owns every descriptor in this value and must call ``close``
+    when it has duplicated the members it needs. ``members`` is the complete
+    protected tree, ``runtime_members`` omits executable files and the
+    selected interpreter, and ``other_executable_members`` preserves the
+    remaining executable rows needed to verify the full source closure.
+    """
+    selection: VerifiedPMRuntimeSelection
+    base_closure_sha256: str
+    runtime_root_fd: int
+    executable_relative_path: str
+    executable_member: VerifiedPMRuntimeProjectionMember
+    runtime_members: tuple[VerifiedPMRuntimeProjectionMember, ...]
+    other_executable_members: tuple[VerifiedPMRuntimeProjectionMember, ...]
+    members: tuple[VerifiedPMRuntimeProjectionMember, ...]
+
+    def close(self) -> None:
+        descriptors = {self.runtime_root_fd}
+        descriptors.update(member.fd for member in self.members if member.fd is not None)
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 class NativePMRuntimeResolver(Protocol):
@@ -147,6 +200,19 @@ class RootPMRuntimeProvisioner:
             py_artifact = self._resolve_artifact(python_handle, proof, PYTHON_ID, PYTHON_SHA256, PYTHON_BYTES)
             uv_tree = self.catalog.materialize_tree(UV_ID, UV_SHA256, self.artifact_root, expected_uid=0)
             py_tree = self.catalog.materialize_tree(PYTHON_ID, PYTHON_SHA256, self.artifact_root, expected_uid=0)
+            base_python_closure_sha256 = _tree_sha256(py_tree.path)
+            base_python_tree_relative = py_tree.path.relative_to(self.artifact_root).as_posix()
+            if not _safe_relative(base_python_tree_relative):
+                raise BootstrapEnrollmentError("official PM base Python tree is outside its protected artifact root")
+            python_spec = self.catalog.artifacts[PYTHON_ID]
+            executable_row = next((row for row in python_spec.tree_files
+                                   if row.path == "bin/python3.14"), None)
+            if (executable_row is None or executable_row.kind != "file"
+                    or not executable_row.executable
+                    or executable_row.sha256 != PYTHON_EXECUTABLE_SHA256):
+                raise BootstrapEnrollmentError("official PM Python executable differs from the reviewed source pin")
+            _verify_catalog_runtime_root(py_tree.path, python_spec.tree_files,
+                                         expected_closure_sha256=base_python_closure_sha256)
             uv = _find_executable(uv_tree.path, "uv")
             uv_probe = subprocess.run([str(uv), "--version"], stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin"},
@@ -201,6 +267,8 @@ class RootPMRuntimeProvisioner:
                 source_handle=source_receipt_handle, executable=executable,
                 identity=identity, sync_receipt=pm_receipt, feature_list=sync_features,
                 artifact_handles=(uv_handle, python_handle),
+                base_python_tree_relative=base_python_tree_relative,
+                base_python_closure_sha256=base_python_closure_sha256,
             )
             return receipt
         except BaseException:
@@ -252,7 +320,9 @@ class RootPMRuntimeProvisioner:
     def _publish_receipt(self, *, base: Path, generation: str, prepared: Any,
                          proof: Any, source_handle: str, executable: Path,
                          identity: dict[str, Any], sync_receipt: bytes, feature_list: list[str],
-                         artifact_handles: tuple[str, str]) -> str:
+                         artifact_handles: tuple[str, str],
+                         base_python_tree_relative: str,
+                         base_python_closure_sha256: str) -> str:
         info = executable.stat()
         runtime_sha = _hash(executable)
         venv_root = executable.parent.parent
@@ -275,6 +345,8 @@ class RootPMRuntimeProvisioner:
             "runtime_relative": executable.relative_to(base).as_posix(),
             "runtime_venv_relative": venv_root.relative_to(base).as_posix(),
             "runtime_closure_sha256": runtime_closure_sha,
+            "base_python_tree_relative": base_python_tree_relative,
+            "base_python_closure_sha256": base_python_closure_sha256,
             "pm_sync_receipt_sha256": pm_sha, "pm_sync_outcome": "succeeded",
             "feature_list": feature_list, "committed_venv_receipt_handle": handle,
             "runtime_executable_artifact_id": "observed:pm-committed-venv-python",
@@ -304,10 +376,12 @@ class RootPMRuntimeReceiptRegistry:
     """Root-private path-free receipt store and resolver for the native factory."""
     def __init__(self, *, runtime_root: Path, setup_session: Any,
                  current_guard: Callable[[str, str], bool] | None = None,
+                 catalog: Any = None, artifact_root: Path | None = None,
                  monotonic: Callable[[], float] = time.monotonic,
                  authority_uid: int = 0):
         if (authority_uid != 0 or not runtime_root.is_absolute()
-                or not callable(getattr(setup_session, "_check_live", None))):
+                or not callable(getattr(setup_session, "_check_live", None))
+                or (artifact_root is not None and not artifact_root.is_absolute())):
             raise ValueError("PM runtime registry is not bound to root setup authority")
         self.runtime_root = runtime_root
         self.setup_session = setup_session
@@ -315,6 +389,8 @@ class RootPMRuntimeReceiptRegistry:
         if not callable(current_guard):
             raise ValueError("PM runtime resolver requires the root factory current-generation guard")
         self.current_guard = current_guard
+        self.catalog = catalog
+        self.artifact_root = artifact_root
         self.monotonic = monotonic
 
     def resolve_runtime(self, runtime_receipt_handle: str, transaction_handle: str,
@@ -336,6 +412,63 @@ class RootPMRuntimeReceiptRegistry:
             record["runtime_device"], record["runtime_inode"], record["runtime_uid"],
             record["runtime_gid"], record["runtime_mode"], tuple(record["version_info"]),
             record["implementation"], record["cache_tag"], record["soabi"], record["machine"])
+
+    def resolve_runtime_projection(self, runtime_receipt_handle: str,
+                                   transaction_handle: str,
+                                   prepared_generation_id: str) -> VerifiedPMRuntimeProjection:
+        """Reopen the current official base interpreter and its exact held closure."""
+        _require_root_linux()
+        if (self.catalog is None or self.artifact_root is None
+                or not callable(getattr(self.catalog, "materialize_tree", None))):
+            raise BootstrapEnrollmentPending("official PM base runtime closure is not attached to the root artifact catalog")
+        selected = self.resolve_runtime(runtime_receipt_handle, transaction_handle,
+                                        prepared_generation_id)
+        record = self._record(runtime_receipt_handle)
+        runtime_root_fd: int | None = None
+        members: tuple[VerifiedPMRuntimeProjectionMember, ...] = ()
+        try:
+            tree = self.catalog.materialize_tree(
+                PYTHON_ID, PYTHON_SHA256, self.artifact_root, expected_uid=0)
+            relative = tree.path.relative_to(self.artifact_root).as_posix()
+            if relative != record.get("base_python_tree_relative"):
+                raise ValueError
+            catalog_spec = self.catalog.artifacts[PYTHON_ID]
+            if (catalog_spec.sha256 != record.get("base_python_sha256")
+                    or catalog_spec.artifact_id != record.get("base_python_artifact_id")):
+                raise ValueError
+            runtime_root_fd, members, closure_sha256 = _open_catalog_runtime_tree(
+                tree.path, catalog_spec.tree_files,
+                expected_closure_sha256=record.get("base_python_closure_sha256"))
+            executable = next((member for member in members
+                               if member.relative_path == "bin/python3.14"), None)
+            if (executable is None or executable.kind != "file" or not executable.executable
+                    or executable.fd is None or executable.sha256 != PYTHON_EXECUTABLE_SHA256):
+                raise ValueError
+            selected_members = tuple(
+                member for member in members
+                if member.relative_path != "bin/python3.14" and not member.executable)
+            other_executables = tuple(
+                member for member in members
+                if member.relative_path != "bin/python3.14" and member.executable)
+            return VerifiedPMRuntimeProjection(
+                selection=selected, base_closure_sha256=closure_sha256,
+                runtime_root_fd=runtime_root_fd,
+                executable_relative_path="bin/python3.14", executable_member=executable,
+                runtime_members=selected_members,
+                other_executable_members=other_executables, members=members)
+        except BootstrapEnrollmentPending:
+            raise
+        except Exception:
+            descriptors = {member.fd for member in members if member.fd is not None}
+            if runtime_root_fd is not None:
+                descriptors.add(runtime_root_fd)
+            for descriptor in descriptors:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            raise BootstrapEnrollmentError(
+                "official PM base Python closure is absent, changed, or outside its receipt") from None
 
     def resolve_python(self, *, pm_runtime_handle: str, enrollment_id: str,
                        service_generation: str, source_artifact_id: str) -> Path:
@@ -391,10 +524,13 @@ class RootPMRuntimeReceiptRegistry:
                 or record.get("source_commit") != SOURCE_COMMIT
                 or record.get("pm_lock_sha256") != LOCK_SHA256
                 or record.get("uv_sha256") != UV_SHA256
+                or record.get("base_python_artifact_id") != PYTHON_ID
                 or record.get("base_python_sha256") != PYTHON_SHA256
                 or record.get("pm_sync_outcome") != "succeeded"
                 or not _safe_relative(record.get("runtime_relative"))
-                or not _safe_relative(record.get("runtime_venv_relative"))):
+                or not _safe_relative(record.get("runtime_venv_relative"))
+                or not _safe_relative(record.get("base_python_tree_relative"))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("base_python_closure_sha256", "")))):
             raise BootstrapEnrollmentError("PM runtime receipt no longer matches official source/tool pins")
         return record
 
@@ -537,6 +673,176 @@ def _tree_sha256(root: Path) -> str:
         else:
             raise PMRuntimeUnavailable("PM environment contains a special file")
     return digest.hexdigest()
+
+
+def _verify_catalog_runtime_root(root: Path, rows: Any,
+                                 *, expected_closure_sha256: str) -> None:
+    """Verify an immutable catalog tree through held member descriptors."""
+    root_fd, members, observed = _open_catalog_runtime_tree(
+        root, rows, expected_closure_sha256=expected_closure_sha256)
+    try:
+        pass
+    finally:
+        descriptors = {root_fd}
+        descriptors.update(member.fd for member in members if member.fd is not None)
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _open_catalog_runtime_tree(root: Path, rows: Any,
+                               *, expected_closure_sha256: Any
+                               ) -> tuple[int, tuple[VerifiedPMRuntimeProjectionMember, ...], str]:
+    """Open and hash every member of the protected PM base runtime tree.
+
+    The walk is descriptor relative and does not follow links. Its digest uses
+    the same canonical row encoding as ``_tree_sha256`` and must match both the
+    receipt and the protected catalog's complete file/symlink inventory.
+    """
+    if (not root.is_absolute() or not isinstance(expected_closure_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_closure_sha256)):
+        raise ValueError("runtime tree binding is malformed")
+    expected_rows = {item.path: item for item in rows}
+    if (not expected_rows or len(expected_rows) != len(rows)
+            or any(not _safe_relative(name) for name in expected_rows)):
+        raise ValueError("runtime catalog rows are malformed")
+    root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    root_fd = os.open(root, root_flags)
+    held: list[int] = []
+    observed_rows: dict[str, tuple[str, int, str, str | None, bool]] = {}
+    members: list[VerifiedPMRuntimeProjectionMember] = []
+    try:
+        root_info = os.fstat(root_fd)
+        if (not stat.S_ISDIR(root_info.st_mode) or not _root_owned(root_info)
+                or stat.S_IMODE(root_info.st_mode) & 0o222):
+            raise ValueError("runtime root custody is invalid")
+
+        def visit(directory_fd: int, prefix: str) -> None:
+            for name in sorted(os.listdir(directory_fd)):
+                if (not name or name in {".", ".."} or "/" in name or "\\" in name or "\x00" in name):
+                    raise ValueError("runtime tree contains a nonportable path")
+                relative = f"{prefix}/{name}" if prefix else name
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    if (not _root_owned(info) or stat.S_IMODE(info.st_mode) & 0o222):
+                        raise ValueError("runtime directory custody is invalid")
+                    observed_rows[relative] = ("", 0, "dir", None, False)
+                    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+                    child_fd = os.open(name, flags, dir_fd=directory_fd)
+                    try:
+                        opened = os.fstat(child_fd)
+                        if (not stat.S_ISDIR(opened.st_mode) or opened.st_dev != info.st_dev
+                                or opened.st_ino != info.st_ino or not _root_owned(opened)
+                                or stat.S_IMODE(opened.st_mode) & 0o222):
+                            raise ValueError("runtime directory changed while opening")
+                        visit(child_fd, relative)
+                    finally:
+                        os.close(child_fd)
+                    continue
+                if stat.S_ISREG(info.st_mode):
+                    mode = stat.S_IMODE(info.st_mode)
+                    if (not _root_owned(info) or info.st_nlink != 1
+                            or mode not in {0o444, 0o555}):
+                        raise ValueError("runtime file custody is invalid")
+                    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+                    member_fd = os.open(name, flags, dir_fd=directory_fd)
+                    held.append(member_fd)
+                    opened = os.fstat(member_fd)
+                    if (not stat.S_ISREG(opened.st_mode) or opened.st_dev != info.st_dev
+                            or opened.st_ino != info.st_ino or not _root_owned(opened)
+                            or opened.st_nlink != 1 or stat.S_IMODE(opened.st_mode) != mode):
+                        raise ValueError("runtime file changed while opening")
+                    digest = hashlib.sha256()
+                    offset = 0
+                    while offset < opened.st_size:
+                        block = os.pread(member_fd, min(1024 * 1024, opened.st_size - offset), offset)
+                        if not block:
+                            raise ValueError("runtime file shortened while hashing")
+                        digest.update(block)
+                        offset += len(block)
+                    after = os.fstat(member_fd)
+                    if (after.st_dev != opened.st_dev or after.st_ino != opened.st_ino
+                            or after.st_size != opened.st_size or after.st_mtime_ns != opened.st_mtime_ns
+                            or after.st_ctime_ns != opened.st_ctime_ns):
+                        raise ValueError("runtime file changed while hashing")
+                    sha = digest.hexdigest()
+                    executable = bool(mode & 0o111)
+                    observed_rows[relative] = (sha, opened.st_size, "file", None, executable)
+                    members.append(VerifiedPMRuntimeProjectionMember(
+                        relative, sha, opened.st_size, executable, mode, opened.st_dev,
+                        opened.st_ino, opened.st_uid, opened.st_gid, "file", None, member_fd))
+                    continue
+                if stat.S_ISLNK(info.st_mode):
+                    if not _root_owned(info):
+                        raise ValueError("runtime link ownership is invalid")
+                    target = os.readlink(name, dir_fd=directory_fd)
+                    if not _safe_link_target(relative, target):
+                        raise ValueError("runtime link target escapes its tree")
+                    raw_target = target.encode("utf-8")
+                    sha = hashlib.sha256(raw_target).hexdigest()
+                    link_fd = None
+                    path_only = getattr(os, "O_PATH", None)
+                    if path_only is not None:
+                        link_fd = os.open(name, path_only | getattr(os, "O_NOFOLLOW", 0)
+                                          | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+                        held.append(link_fd)
+                        opened = os.fstat(link_fd)
+                        again = os.readlink(name, dir_fd=directory_fd)
+                        if (not stat.S_ISLNK(opened.st_mode) or opened.st_dev != info.st_dev
+                                or opened.st_ino != info.st_ino or not _root_owned(opened)
+                                or again != target):
+                            raise ValueError("runtime link changed while opening")
+                    observed_rows[relative] = (sha, len(raw_target), "symlink", target, False)
+                    members.append(VerifiedPMRuntimeProjectionMember(
+                        relative, sha, len(raw_target), False, stat.S_IMODE(info.st_mode),
+                        info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                        "symlink", target, link_fd))
+                    continue
+                raise ValueError("runtime tree contains a special member")
+
+        visit(root_fd, "")
+        expected_observed = {
+            item.path: (item.sha256, item.size_bytes, item.kind, item.link_target, item.executable)
+            for item in expected_rows.values()
+        }
+        if {key: value for key, value in observed_rows.items() if value[2] != "dir"} != expected_observed:
+            raise ValueError("runtime tree differs from the protected artifact inventory")
+        digest = hashlib.sha256()
+        for relative, (sha, _size, kind, link_target, _executable) in sorted(observed_rows.items()):
+            digest.update(relative.encode("utf-8") + b"\0")
+            if kind == "dir":
+                digest.update(b"dir\0")
+            elif kind == "symlink":
+                digest.update(b"link\0" + str(link_target).encode("utf-8"))
+            else:
+                digest.update(b"file\0" + bytes.fromhex(sha))
+        closure_sha = digest.hexdigest()
+        if closure_sha != expected_closure_sha256:
+            raise ValueError("runtime closure digest differs from its receipt")
+        members.sort(key=lambda member: member.relative_path)
+        return root_fd, tuple(members), closure_sha
+    except BaseException:
+        for descriptor in set(held + [root_fd]):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
+
+
+def _safe_link_target(relative: str, target: str) -> bool:
+    if (not isinstance(target, str) or not target or target.startswith("/")
+            or "\\" in target or "\x00" in target):
+        return False
+    import posixpath
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(relative), target))
+    return resolved not in {"", ".", ".."} and not resolved.startswith("../")
+
+
+def _root_owned(info: Any) -> bool:
+    return info.st_uid == 0 and info.st_gid == 0
 
 
 def _hash(path: Path) -> str:
