@@ -262,6 +262,31 @@ def _context_digest(context: HostContext) -> str:
     return canonical_digest({**context.claims(), "signature": context.signature})
 
 
+class _ApplicationPackageObservationSigner:
+    """Narrow public facade for the two source-owned v136 observations."""
+
+    __slots__ = ("__service",)
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+
+    def issue_locked_package_artifact(self, observation: Any) -> Any:
+        return self.__service._issue_application_package_observation(
+            "locked-package-artifact", observation)
+
+    def verify_locked_package_artifact(self, receipt: Any) -> Any:
+        return self.__service._verify_application_package_observation(
+            "locked-package-artifact", receipt)
+
+    def issue_package_license_observation(self, observation: Any) -> Any:
+        return self.__service._issue_application_package_observation(
+            "package-license", observation)
+
+    def verify_package_license_observation(self, receipt: Any) -> Any:
+        return self.__service._verify_application_package_observation(
+            "package-license", receipt)
+
+
 class AuthorityService:
     """One authenticated client request per connection on the fixed socket."""
 
@@ -339,6 +364,8 @@ class AuthorityService:
         self.private_memory_route_resolver = None
         self.private_memory_job_queue = None
         self.private_memory_observation_producer = None
+        self.application_package_observation_producer = None
+        self._application_package_observation_signer = None
         self.web_content_artifact_registry = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -496,6 +523,112 @@ class AuthorityService:
             raise
         except Exception:
             raise AuthorityDenied("memory.observation", "private-memory observation verification failed") from None
+
+    def attach_application_package_closure_registry(self, registry: Any) -> None:
+        """Attach the exact root-owned locked-package observation registry."""
+        from .application_runtime_preparation import RootApplicationOfflinePackageClosureRegistry
+
+        if (self.application_package_observation_producer is not None
+                or type(registry) is not RootApplicationOfflinePackageClosureRegistry
+                or getattr(registry, "authority_service", None) is not self
+                or not callable(getattr(registry, "verify_observation_for_authority", None))
+                or not callable(getattr(registry, "retain_authority_signed_observation", None))
+                or not callable(getattr(registry, "verify_observation_receipt", None))):
+            raise AuthorityDenied("application.package_observation", "root package observation registry is invalid")
+        self.application_package_observation_producer = registry
+
+    def application_package_observation_signer(self) -> Any:
+        """Return the service-owned signer scoped to two exact v136 DTOs."""
+        if self._application_package_observation_signer is None:
+            self._application_package_observation_signer = _ApplicationPackageObservationSigner(self)
+        return self._application_package_observation_signer
+
+    def _issue_application_package_observation(self, kind: str, observation: Any) -> Any:
+        from dataclasses import replace
+        from .application_runtime_preparation import (
+            RootApplicationLockedPackageArtifactReceipt,
+            RootApplicationPackageLicenseObservation,
+        )
+
+        specs = {
+            "locked-package-artifact": (
+                RootApplicationLockedPackageArtifactReceipt,
+                "root-application-locked-package-artifact-v136",
+                frozenset({
+                    "receipt_handle", "artifact_id", "application_id",
+                    "source_preparation_selection_handle", "qualification_choice_handle",
+                    "qualification_consent_receipt_handle", "setup_session_id", "transaction_handle",
+                    "plan_sha256", "prepared_generation_digest", "lock_receipt_handle", "lock_sha256",
+                    "lock_member_id", "package_name", "package_version", "artifact_kind",
+                    "platform_tags", "origin_policy_id", "source_url", "lock_integrity_algorithm",
+                    "lock_integrity_digest", "artifact_sha256", "size_bytes", "cas_device",
+                    "cas_inode", "cas_mode", "controller_binding_handle", "issued_monotonic",
+                    "expires_monotonic",
+                }),
+            ),
+            "package-license": (
+                RootApplicationPackageLicenseObservation,
+                "root-application-package-license-observation-v136",
+                frozenset({
+                    "receipt_handle", "artifact_receipt_handle", "artifact_sha256", "package_name",
+                    "package_version", "metadata_kind", "metadata_member_path",
+                    "metadata_member_sha256", "declared_license_expression", "license_member_records",
+                    "evidence_sha256", "eligibility", "review_policy_receipt_handle",
+                    "issued_monotonic", "expires_monotonic",
+                }),
+            ),
+        }
+        spec = specs.get(kind)
+        registry = self.application_package_observation_producer
+        if (spec is None or registry is None or type(observation) is not spec[0]
+                or not callable(getattr(observation, "claims", None))):
+            raise AuthorityDenied("application.package_observation", "package observation kind or source type is unavailable")
+        try:
+            if registry.verify_observation_for_authority(kind, observation) is not True:
+                raise AuthorityDenied("application.package_observation", "package source evidence is not current")
+            claims = observation.claims()
+            if not isinstance(claims, Mapping) or set(claims) != spec[2]:
+                raise AuthorityDenied("application.package_observation", "package observation claims differ from v136 schema")
+            receipt = replace(observation, signature=self._sign_root_selected(spec[1], claims))
+            if registry.retain_authority_signed_observation(kind, receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package receipt was not retained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.package_observation", "package observation could not be signed and retained") from None
+
+    def _verify_application_package_observation(self, kind: str, receipt: Any) -> Any:
+        from .application_runtime_preparation import (
+            RootApplicationLockedPackageArtifactReceipt,
+            RootApplicationPackageLicenseObservation,
+        )
+
+        specs = {
+            "locked-package-artifact": (RootApplicationLockedPackageArtifactReceipt,
+                                         "root-application-locked-package-artifact-v136"),
+            "package-license": (RootApplicationPackageLicenseObservation,
+                                "root-application-package-license-observation-v136"),
+        }
+        registry = self.application_package_observation_producer
+        spec = specs.get(kind)
+        if (registry is None or spec is None or type(receipt) is not spec[0]
+                or not isinstance(getattr(receipt, "signature", None), str)
+                or len(receipt.signature) != hashlib.sha256().digest_size * 2):
+            raise AuthorityDenied("application.package_observation", "package observation receipt type is invalid")
+        try:
+            claims = receipt.claims()
+            expected_claims = set(receipt.__dataclass_fields__) - {"signature"}
+            if not isinstance(claims, Mapping) or set(claims) != expected_claims:
+                raise AuthorityDenied("application.package_observation", "package receipt claims differ from its typed schema")
+            self._verify_root_selected_signature(spec[1], claims, receipt.signature)
+            if registry.verify_observation_receipt(receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package observation is stale or unretained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.package_observation", "package observation could not be verified") from None
 
     def attach_web_content_artifact_registry(self, registry: Any) -> None:
         """Attach the exact staged web-content CAS/receipt owner once."""
