@@ -183,6 +183,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
                 self.revoke_after_capture = False
                 self.provider_observer = SimpleNamespace(
                     source_kind="provider-result", observer_enrollment_id="provider-result-observer",
+                    capture_schema_id="native-root-provider-response-v1",
                     role_id="role.native", package_id="package-a",
                     native_package_generation="package-gen-a", profile_id="profile-a",
                     generation="process-gen-a",
@@ -339,6 +340,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
             registration_id="registration.native.mcp", operation="mcp.request",
             validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
+            result_schema_id="schema-result", result_schema_sha256="a" * 64,
+            validate_result=lambda raw: raw == b'{"ok":true}',
         )
 
         def action_resolver(_bridge, identity, tool_name):
@@ -392,6 +395,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
             observer_id="provider-result-observer", loaded_package_proof=self.source_observers.loaded_proof,
             expires_monotonic=time.monotonic() + 30,
             service_generation_digest=self.authority.service_generation_digest,
+            result_schema_id="schema-result",
+            result_schema_sha256="a" * 64,
         )
         self.invocation_registry._invocations[self.invocation_handle] = self.invocation
         def artifact_bytes(schema):
