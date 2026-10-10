@@ -185,3 +185,9 @@ Prepared build service selection v115: `plans/amendments/2026-10-10-prepared-bui
 Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-runtime-release-asset-redirect-v116.md`; one exact publicCPython GitHub302 officialasset hop with TLS/header/query/integrity checks, all other NoRedirect unchanged. Existing actualbootstrap/acceptance tasks remain open.
 
 - [ ] HI-T131.1 — Materialize only the exact pinned PyYAML compatibility members; verify negative arbitrary descendants, traversal, special files, duplicates and RECORD mismatch; retain actual runtime probe and pending acceptance.
+
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance.
+
+- [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
+
+- [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.

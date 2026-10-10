@@ -1421,5 +1421,74 @@
       "SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies"
     ],
     "status": "All original scope and AC open; no baseline edit, live account/weights/endpoint effect or privileged Mac install."
+  },
+  "runtime_member_role_v149": {
+    "schema": 1,
+    "requirements": [
+      "HI-T33",
+      "HI-T62",
+      "HI-T76",
+      "HI-T123",
+      "HI-T137",
+      "HI-T138"
+    ],
+    "why": "Actual runtime closure files were mislabeled interpreter despite unique interpreter path; prepared worker module proof wrongly required root-actor imports; first public input needs genuine per-input disclosure, not public profile or empty parent bypass.",
+    "runtime_layout": {
+      "role": "runtime-member",
+      "addition": "Append finite release manifest role runtime-member, existing interpreter role unchanged and unique.",
+      "interpreter": "Only runtime/bin/python with roles exactly [interpreter]; actual selected interpreter bytes/held FD. No stdlib/library/package file assigned interpreter.",
+      "members": "Every other selected verified isolated installer runtime closure regular member maps runtime/<exact normalized runtime-relative path>, roles exactly [runtime-member]. No filename/suffix inference or arbitrary runtime directory sweep. Must be exact retained VerifiedInstallerInterpreterReceipt.files/actual runtime closure manifest selected by v76, executable/root/stdlib/PyYAML receipts; source digest never executable proof.",
+      "bounds": "Existing <=50000 release rows/portable unique normalized nofollow relative paths, no dot/dotdot/symlink/hardlink/special files. Mode0555 only actual selected executable member mode, otherwise0444. Root0/no untrusted writable ancestors; full actual hash/size/member closure validated before publication and every held release resolve. Manifest includes all runtime members, excludes unselected caches/bytecode/local files.",
+      "producer_verifier": "RootInstalledReleaseBuilder emits runtime-member rows, InstalledRootReleaseVerifier fixed role validator accepts only exact runtime/ prefix and declared selected interpreter closure membership; fails if unique interpreter absent/duplicated, mixed roles or undeclared runtime files. Preserve actual isolated stdlib/shared-library/dependency import origins; role alone proves no executed origin."
+    },
+    "prepared_role_source": {
+      "type": "hermes_installer.authority.bootstrap_runtime_factory.RootPreparedReleaseMemberReceipt",
+      "semantics": "Actual source-defined held-release membership/bytes only, distinct existing RootReleaseModuleReceipt (current root actor imported origin) and later LoadedNativePackageProof/loaded_process_roles (actual worker import/PIDFD). Do not require root actor to import native_invocations/native_boundary worker source to prepare role definitions.",
+      "fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256",
+        "size_bytes",
+        "release_commit",
+        "deployment_receipt_sha256",
+        "source_receipt_handle",
+        "setup_session_id",
+        "prepared_generation_id"
+      ],
+      "issuer": "RootSelectedInstallationBinding.resolve_prepared_native_process_role_member(native_policy_preparation_handle,role_id)->RootPreparedReleaseMemberReceipt; current source-defined exact v137 role module/member descriptor chooses artifact, not caller path.",
+      "checks": "Current genuine setup/controller/principal/source-definition adapter and selected release/plan/prepared generation. Exact reviewed role descriptor artifact/path/SHA/size held release row roles[module] or actual reviewed source role; securely reopen release member through held release FD, compute bytes SHA and retain genuine registry handle. No imported-origin assertion in this type. read_current revalidates same release/member/source/session.",
+      "later": "Assembler v134 serializes exact source-defined process_role_records/digest. After active publication, custody independently joins genuine selected role/source receipts to actual mounted closure and authenticated loaded_process_roles import paths/dev/inode/hash with current worker PIDFD/mount/cgroup/profile/package generations. Prepared held member proof never substitutes live import/source receipt. Root definition adapter itself remains current actual imported RootReleaseModuleReceipt where root code executes it."
+    },
+    "public_first_input": {
+      "owner": "root public input permission registry + genuine root TTY/native input source observer",
+      "persistent": "v138 normal configuration signed durable public-free-web-read choice selects exact v142 scopes; configuration alone never classifies input or grants egress.",
+      "method": "RootPublicInputPermissionRegistry.observe_public_input_disclosure(public_permission_selection_handle,retained_observed_input_handle,selected_execution_handle,actual_root_tty_disclosure)->RootPublicNativeInputObservation",
+      "order": [
+        "Root observer retains exact actual new input bytes/hash/size and selected native execution/current peer/profile/process/package generation/source origin in a pending non-authority record; no SourceReceipt PUBLIC ceiling issued yet.",
+        "Trusted foreground root TTY presents exact bounded disclosure of that new input and selected public web destination scope/zero budget; user explicitly identifies this own new input as PUBLIC for public-free web-read. No default/bool/worker label; receipt binds input SHA/size/selection/peer and genuine TTY/controller observation.",
+        "Root observer/permission registry verifies same retained bytes, current selected source/peer, actual TTY subject/private namespace/current source origin and ancestry. Any PRIVATE/UNKNOWN parent, history/memory/credential/imported attachment remains denied; user disclosure does not relabel existing private source. Empty parents only permitted for this genuinely observed fresh disclosed public input, not caller omission.",
+        "Registry issues sealed RootPublicNativeInputObservation with source choice/disclosure/input binding, then existing resolve_for_selected_input yields current <=30s public permission and source issuer mints actual source receipt through same selected input ancestry. Every dispatch/retry current resolver rechecks epoch/scope/selection/source."
+      ],
+      "fields": "Existing v138 public input observation plus disclosure_observation_handle,disclosure_sha256,retained_observed_input_handle,input_sha256,input_size_bytes,selected_execution_handle,tty_controller_observation_handle. All root registry membership/currentness, exact existing selected input handles not caller claims.",
+      "failure": "No actual foreground per-input disclosure or source proof => no PUBLIC receipt/egress. Persistent public choice/private consent/profile/captured worker flag cannot bypass. No public model/memory export or paid route."
+    },
+    "tasks": [
+      {
+        "id": "HI-T149.1",
+        "owner": "release builder/verifier",
+        "work": "Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance."
+      },
+      {
+        "id": "HI-T149.2",
+        "owner": "factory/source observer/native custody",
+        "work": "Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies."
+      },
+      {
+        "id": "HI-T149.3",
+        "owner": "public permission/factory/source input",
+        "work": "Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny."
+      }
+    ],
+    "acceptance": "All original AC/baseline unchanged. Source role/layout/disclosure producers required; no actual runtime/public target acceptance inferred."
   }
 }
