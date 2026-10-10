@@ -9,6 +9,7 @@ The publisher remains the only component that changes the selected generation.
 from __future__ import annotations
 
 import fcntl
+import copy
 import hashlib
 import json
 import os
@@ -218,6 +219,8 @@ def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
         "principal_selection_receipt_handle": claim.principal_selection_receipt_handle,
         "runtime_receipt_handles": list(claim.runtime_receipt_handles),
         "materialization_receipt_handles": list(claim.materialization_receipt_handles),
+        "precompile_reservation_handle": claim._reservation_handle,
+        "role_closure_sha256": claim.role_closure_sha256,
         "compiled_policy_sha256": claim.compiled_policy_sha256,
         "compiled_artifact_catalog_sha256": claim.compiled_artifact_catalog_sha256,
         "compiled_selection_sha256": claim.compiled_selection_sha256,
@@ -300,6 +303,33 @@ class ActiveSetupChoiceProjection:
     _compiler_seal: object = field(repr=False, compare=False)
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootActivePolicyPrecompile:
+    """Compiler-retained capability for one genuine precompile reservation."""
+
+    schema: int
+    publication_handle: str
+    reservation_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_digest: str
+    prepared_generation_id: str
+    assembly_selection_handle: str
+    assembly_selection_sha256: str
+    receipt_ids: tuple[str, ...]
+    output_closure_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _root_setup_session: Any = field(repr=False, compare=False)
+    _root_prepared_native_bundle: Any = field(repr=False, compare=False)
+    _root_reservation: Any = field(repr=False, compare=False)
+    _root_role_closure: Any = field(repr=False, compare=False)
+    _compiler_seal: object = field(repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "RootActivePolicyPrecompile(<root-private>)"
+
+
 def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> None:
     if (not isinstance(claim.policy_bytes, bytes) or _sha(claim.policy_bytes) != claim.compiled_policy_sha256
             or not isinstance(claim.artifact_catalog_bytes, bytes)
@@ -308,6 +338,10 @@ def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> 
             or not isinstance(claim.source_receipt_handles, tuple)
             or _ordered_unique_receipt_handles(claim.source_receipt_handles, "active claim")
             != claim.source_receipt_handles
+            or not isinstance(claim.role_closure_sha256, str)
+            or not _HEX.fullmatch(claim.role_closure_sha256)
+            or not isinstance(claim._reservation_handle, str)
+            or not _HANDLE.fullmatch(claim._reservation_handle)
             or not set(claim.runtime_receipt_handles).issubset(claim.source_receipt_handles)
             or not set(claim.materialization_receipt_handles).issubset(claim.source_receipt_handles)
             or claim.principal_selection_receipt_handle not in claim.source_receipt_handles):
@@ -359,6 +393,7 @@ class RootActivePolicyCompilationClaim:
     _seal: object = field(repr=False, compare=False)
     _root_prepared_native_bundle: Any = field(default=None, repr=False, compare=False)
     choice_adoptions: tuple[ActiveSetupChoiceProjection, ...] = ()
+    role_closure_sha256: str = ""
 
 
 class RootActivePolicyTemplateResolver:
@@ -423,6 +458,9 @@ class RootActivePolicyCompilationRegistry:
         self._claims: dict[str, RootActivePolicyCompilationClaim] = {}
         self._states: dict[str, str] = {}
         self._locks: dict[str, int] = {}
+        self._precompile_caps: dict[str, RootActivePolicyPrecompile] = {}
+        self._precompile_reservations: dict[tuple[str, str, tuple[str, ...]], Any] = {}
+        self._native_claims: dict[str, Any] = {}
 
     @classmethod
     def from_root_setup(cls, setup_runtime_factory: Any,
@@ -434,23 +472,223 @@ class RootActivePolicyCompilationRegistry:
                    runtime_receipt_registry, materialization_receipt_registry,
                    root_journal)
 
-    def compile_active_policy(
+    def begin_active_policy_precompile(
             self, setup_session_handle: RootSetupSessionHandle,
-            prepared_bundle: Any,
-            materialization_receipt_handles: Sequence[str]) -> str:
+            prepared_bundle: Any) -> RootActivePolicyPrecompile:
+        """Reserve selected native CAS outputs before compiling active documents.
+
+        The factory supplies the current native assembly and its five genuine
+        output receipts from the retained prepared bundle. This registry then
+        allocates its publication handle, reserves those receipts, and asks the
+        factory to derive and retain the matching runnable-role projection.
+        """
         self._require_root()
         session = self.factory.resolve_live_session(setup_session_handle)
         prepared = self._verify_prepared_native_bundle(session, prepared_bundle)
-        if getattr(self.runtime_receipts, "setup_session", None) is not session:
-            raise BootstrapEnrollmentPending("PM runtime registry is not bound to this exact live setup session")
         output_binding = getattr(self.materialization_receipts, "_binding", None)
         if getattr(output_binding, "_session", None) is not session:
             raise BootstrapEnrollmentPending("native output registry is not bound to this exact live setup session")
         session._refresh_authorization()
-        runtime_handles = (prepared_bundle.pm_runtime_receipt_handle,)
-        output_handles = self._handles(materialization_receipt_handles, "native output receipt")
-        if len(runtime_handles) != 1 or not output_handles:
-            raise BootstrapEnrollmentPending("active policy compilation requires selected PM runtime and complete native outputs")
+        binding = session.selected_installation
+        assembly_selection = binding.resolve_current_native_bootstrap_assembly_for_bundle(prepared_bundle)
+        from .bootstrap_runtime_factory import RootNativeBootstrapAssemblySelection
+        if type(assembly_selection) is not RootNativeBootstrapAssemblySelection:
+            raise BootstrapEnrollmentPending("factory returned no typed current root native assembly selection")
+        current_assembly = binding.resolve_current_native_bootstrap_assembly(
+            assembly_selection.selection_handle)
+        if current_assembly is not assembly_selection:
+            raise BootstrapEnrollmentPending("native assembly selection is not the current retained root selection")
+        if (assembly_selection.setup_session_id != setup_session_handle.session_id
+                or assembly_selection.transaction_handle != session._authorization.transaction_handle
+                or assembly_selection.plan_digest != session._authorization.plan_digest
+                or assembly_selection.prepared_generation_id != prepared.generation_id
+                or assembly_selection.pm_runtime_receipt_handle != prepared_bundle.pm_runtime_receipt_handle
+                or assembly_selection.materialization_receipt_handle != prepared_bundle.materialization_receipt_handle):
+            raise BootstrapEnrollmentPending("native assembly selection does not join the current prepared bundle")
+        selected_outputs = binding.compile_selected_native_package(prepared_bundle)
+        if not isinstance(selected_outputs, tuple) or len(selected_outputs) != 5:
+            raise BootstrapEnrollmentPending("factory did not produce the exact five selected native output receipts")
+        output_handles = tuple(sorted(self._handles(
+            tuple(getattr(row, "receipt_id", None) for row in selected_outputs),
+            "native output receipt")))
+        if len(output_handles) != 5:
+            raise BootstrapEnrollmentPending("precompile requires the complete five-role native output receipt set")
+        reservation_key = (setup_session_handle.session_id,
+                           assembly_selection.selection_handle, output_handles)
+        reservation = self._precompile_reservations.get(reservation_key)
+        if reservation is None:
+            publication_handle = secrets.token_urlsafe(36)
+            reservation = self.materialization_receipts.reserve_for_precompile(
+                assembly_selection.selection_handle, output_handles, publication_handle)
+            # Retain the durable reservation immediately. If the following
+            # role projection is interrupted, a same-session retry resumes
+            # this reservation instead of reserving or consuming another set.
+            self._precompile_reservations[reservation_key] = reservation
+        else:
+            reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+                reservation.reservation_handle)
+        current_reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            reservation.reservation_handle)
+        if (type(current_reservation) is not type(reservation)
+                or current_reservation != reservation
+                or reservation.setup_session_id != setup_session_handle.session_id
+                or reservation.transaction_handle != session._authorization.transaction_handle
+                or reservation.plan_digest != session._authorization.plan_digest
+                or reservation.prepared_generation_id != prepared.generation_id
+                or reservation.assembly_selection_handle != assembly_selection.selection_handle
+                or reservation.receipt_ids != self._handles(reservation.receipt_ids, "reserved native output")):
+            raise BootstrapEnrollmentPending("native precompile reservation differs from its current root selection")
+        projection_registry = binding.resolve_current_runnable_role_projection_registry()
+        closure = projection_registry.resolve_selected_runnable_roles(
+            prepared_bundle.pm_runtime_receipt_handle, reservation.reservation_handle)
+        closure = projection_registry.verify_current(closure)
+        self._validate_runnable_role_closure(closure, reservation, session, prepared)
+        now = time.monotonic()
+        live = self.sessions._live(setup_session_handle)
+        expires = min(reservation.expires_monotonic, closure.expires_monotonic,
+                      float(live.expires_monotonic), now + 120.0)
+        if expires <= now:
+            raise BootstrapEnrollmentPending("precompile capability lease expired")
+        capability = RootActivePolicyPrecompile(
+            schema=1, publication_handle=reservation.publication_handle,
+            reservation_handle=reservation.reservation_handle,
+            setup_session_id=reservation.setup_session_id,
+            transaction_handle=reservation.transaction_handle,
+            plan_digest=reservation.plan_digest,
+            prepared_generation_id=reservation.prepared_generation_id,
+            assembly_selection_handle=reservation.assembly_selection_handle,
+            assembly_selection_sha256=reservation.assembly_selection_sha256,
+            receipt_ids=reservation.receipt_ids,
+            output_closure_sha256=reservation.output_closure_sha256,
+            issued_monotonic=now, expires_monotonic=expires,
+            _root_setup_session=session, _root_prepared_native_bundle=prepared_bundle,
+            _root_reservation=reservation, _root_role_closure=closure,
+            _compiler_seal=self._seal)
+        existing = self._precompile_caps.get(capability.reservation_handle)
+        if existing is not None:
+            raise BootstrapEnrollmentPending("native precompile reservation was already retained")
+        self._precompile_caps[capability.reservation_handle] = capability
+        return capability
+
+    def verify_current_precompile_capability(
+            self, capability: RootActivePolicyPrecompile) -> RootActivePolicyPrecompile:
+        from .native_output_receipts import RootNativePrecompileOutputReservation
+        if (type(capability) is not RootActivePolicyPrecompile
+                or capability._compiler_seal is not self._seal
+                or self._precompile_caps.get(capability.reservation_handle) is not capability
+                or capability.expires_monotonic <= time.monotonic()
+                or capability.issued_monotonic > time.monotonic()):
+            raise BootstrapEnrollmentPending("active precompile capability is stale, altered, or unsealed")
+        session = self.factory.resolve_live_session(capability._root_setup_session._handle)
+        if session is not capability._root_setup_session:
+            raise BootstrapEnrollmentPending("precompile capability belongs to another live setup session")
+        session._refresh_authorization()
+        prepared = self._verify_prepared_native_bundle(session, capability._root_prepared_native_bundle)
+        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            capability.reservation_handle)
+        reservation_key = (capability.setup_session_id, capability.assembly_selection_handle,
+                           capability.receipt_ids)
+        if (type(reservation) is not RootNativePrecompileOutputReservation
+                or self._precompile_reservations.get(reservation_key) != capability._root_reservation
+                or reservation != capability._root_reservation
+                or reservation.publication_handle != capability.publication_handle
+                or reservation.setup_session_id != capability.setup_session_id
+                or reservation.transaction_handle != capability.transaction_handle
+                or reservation.plan_digest != capability.plan_digest
+                or reservation.prepared_generation_id != capability.prepared_generation_id
+                or reservation.assembly_selection_handle != capability.assembly_selection_handle
+                or reservation.assembly_selection_sha256 != capability.assembly_selection_sha256
+                or reservation.receipt_ids != capability.receipt_ids
+                or reservation.output_closure_sha256 != capability.output_closure_sha256
+                or prepared.generation_id != capability.prepared_generation_id):
+            raise BootstrapEnrollmentPending("precompile reservation no longer matches the retained root capability")
+        binding = session.selected_installation
+        projection_registry = binding.resolve_current_runnable_role_projection_registry()
+        closure = projection_registry.verify_current(capability._root_role_closure)
+        self._validate_runnable_role_closure(closure, reservation, session, prepared)
+        return capability
+
+    @staticmethod
+    def _validate_runnable_role_closure(closure: Any, reservation: Any,
+                                        session: Any, prepared: EnrollmentReceipt) -> None:
+        from .bootstrap_runtime_factory import RootSelectedRunnableRoleClosure
+        expected = {"official-pm-runtime", "native-compiled-closure",
+                    "native-entrypoint-manifest", "native-action-resolver",
+                    "native-candidate-index", "native-boundary-overlay"}
+        if (type(closure) is not RootSelectedRunnableRoleClosure
+                or closure.setup_session_id != session._handle.session_id
+                or closure.transaction_handle != session._authorization.transaction_handle
+                or closure.plan_digest != session._authorization.plan_digest
+                or closure.prepared_generation_id != prepared.generation_id
+                or closure.pm_runtime_receipt_handle is None
+                or closure.native_output_claim_handle != reservation.reservation_handle
+                or not isinstance(closure.role_rows, tuple)
+                or len(closure.role_rows) != len(expected)):
+            raise BootstrapEnrollmentPending("precompile role closure does not join current session and reservation")
+        by_role: dict[str, Any] = {}
+        for row in closure.role_rows:
+            if getattr(row, "role", None) in by_role:
+                raise BootstrapEnrollmentPending("precompile role closure duplicates a runtime role")
+            by_role[getattr(row, "role", "")] = row
+        if set(by_role) != expected:
+            raise BootstrapEnrollmentPending("precompile role closure has missing or unexpected runtime roles")
+        native_rows = [row for role, row in by_role.items() if role != "official-pm-runtime"]
+        if {row.receipt_handle for row in native_rows} != set(reservation.receipt_ids):
+            raise BootstrapEnrollmentPending("precompile role rows do not bind the exact reserved output receipts")
+        if any(row.receipt_kind != "native-output-cas" for row in native_rows):
+            raise BootstrapEnrollmentPending("native role closure contains another receipt kind")
+        pm_row = by_role["official-pm-runtime"]
+        if (pm_row.receipt_kind != "pm-runtime"
+                or pm_row.receipt_handle != closure.pm_runtime_receipt_handle
+                or pm_row.output_kind != "pm-runtime"):
+            raise BootstrapEnrollmentPending("PM role row differs from its exact selected runtime receipt")
+        expected_kinds = {
+            "native-compiled-closure": "compiled-closure",
+            "native-entrypoint-manifest": "entrypoint-json",
+            "native-action-resolver": "resolver-json",
+            "native-boundary-overlay": "boundary-overlay",
+            "native-candidate-index": "candidate-index-json",
+        }
+        for role, kind in expected_kinds.items():
+            row = by_role[role]
+            if (row.output_kind != kind or not isinstance(row.artifact_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", row.artifact_id)
+                    or not isinstance(row.sha256, str) or not _HEX.fullmatch(row.sha256)
+                    or type(row.size_bytes) is not int or row.size_bytes <= 0
+                    or not isinstance(row.source_receipt_handles, tuple)
+                    or _ordered_unique_receipt_handles(row.source_receipt_handles, "role source")
+                       != row.source_receipt_handles):
+                raise BootstrapEnrollmentPending("native role row is malformed or has the wrong output kind")
+        row_data = [{
+            "role": row.role, "receipt_kind": row.receipt_kind,
+            "receipt_handle": row.receipt_handle, "artifact_id": row.artifact_id,
+            "sha256": row.sha256, "size_bytes": row.size_bytes,
+            "output_kind": row.output_kind,
+            "source_receipt_handles": list(row.source_receipt_handles),
+        } for row in closure.role_rows]
+        if (not isinstance(closure.role_closure_sha256, str)
+                or not _HEX.fullmatch(closure.role_closure_sha256)
+                or _sha(_canonical(row_data)) != closure.role_closure_sha256):
+            raise BootstrapEnrollmentPending("runnable role closure digest differs from its exact rows")
+
+    def compile_active_policy(
+            self, setup_session_handle: RootSetupSessionHandle,
+            prepared_bundle: Any,
+            precompile: RootActivePolicyPrecompile | None = None) -> str:
+        self._require_root()
+        if precompile is None:
+            precompile = self.begin_active_policy_precompile(
+                setup_session_handle, prepared_bundle)
+        capability = self.verify_current_precompile_capability(precompile)
+        session = capability._root_setup_session
+        prepared = self._verify_prepared_native_bundle(session, prepared_bundle)
+        if prepared_bundle is not capability._root_prepared_native_bundle:
+            raise BootstrapEnrollmentPending("active compile bundle differs from the retained precompile capability")
+        if getattr(self.runtime_receipts, "setup_session", None) is not session:
+            raise BootstrapEnrollmentPending("PM runtime registry is not bound to this exact live setup session")
+        closure = capability._root_role_closure
+        runtime_handles = (closure.pm_runtime_receipt_handle,)
+        output_handles = capability.receipt_ids
         resolved_runtime = tuple(self.runtime_receipts.resolve_runtime(
             handle, session._authorization.transaction_handle, prepared.generation_id)
             for handle in runtime_handles)
@@ -462,15 +700,16 @@ class RootActivePolicyCompilationRegistry:
         principal_handle = getattr(principal, "receipt_id", None)
         if not isinstance(principal_handle, str) or not re.fullmatch(r"[0-9a-f]{64}", principal_handle):
             raise BootstrapEnrollmentPending("adopted principal registry returned an invalid root receipt")
-        policy_bytes, catalog_bytes, selection_document, selection_digest = self._compile_documents(session)
+        policy_bytes, catalog_bytes, selection_document, selection_digest = self._compile_documents(
+            session, closure)
         choice_adoptions = self._compile_choice_adoptions(
             session, prepared, selection_document["catalog_sha256"])
         issued = time.monotonic()
         live = self.sessions._live(setup_session_handle)
-        expires = min(issued + 120.0, float(live.expires_monotonic))
+        expires = min(issued + 120.0, float(live.expires_monotonic), capability.expires_monotonic)
         if expires <= issued:
             raise BootstrapEnrollmentPending("active policy compilation lease expired")
-        publication_handle = secrets.token_urlsafe(36)
+        publication_handle = capability.publication_handle
         observed_handle = self._mint_actor_observation(session, prepared, expires)
         source_receipt_handles = _ordered_unique_receipt_handles((
             prepared_bundle.hermes_source_receipt_handle,
@@ -479,28 +718,41 @@ class RootActivePolicyCompilationRegistry:
             prepared_bundle.resource_profile_selection_receipt_handle,
             prepared_bundle.materialization_receipt_handle,
             *runtime_handles, *output_handles, principal_handle,
+            *(handle for role_row in closure.role_rows
+              for handle in role_row.source_receipt_handles),
             *(handle for row in choice_adoptions
               for handle in row.source_member_receipt_handles)),
             "active source")
         provisional = RootActivePolicyCompilationClaim(
-            1, session._authorization.plan_artifact_id,
-            session._factory._release.release_commit,
-            publication_handle, setup_session_handle.session_id,
-            session._authorization.transaction_handle, session._authorization.plan_digest,
-            prepared.generation_id, selection_digest, prepared.generation_digest,
-            session._policy.artifact_id, session._policy.sha256, principal_handle,
-            runtime_handles, output_handles,
-            source_receipt_handles,
-            _sha(policy_bytes), _sha(catalog_bytes),
-            _sha(_canonical(dict(selection_document))), selection_document["catalog_sha256"],
-            issued, expires, "0" * 64, policy_bytes, catalog_bytes,
-            selection_document, observed_handle, self.root_journal, session,
-            "", self._seal, prepared_bundle, choice_adoptions,
+            schema=1, plan_artifact_id=session._authorization.plan_artifact_id,
+            release_commit=session._factory._release.release_commit,
+            publication_handle=publication_handle, setup_session_id=setup_session_handle.session_id,
+            transaction_handle=session._authorization.transaction_handle,
+            plan_sha256=session._authorization.plan_digest,
+            prepared_generation_id=prepared.generation_id,
+            expected_selection_catalog_sha256=selection_digest,
+            expected_service_generation_digest=prepared.generation_digest,
+            policy_template_artifact_id=session._policy.artifact_id,
+            policy_template_sha256=session._policy.sha256,
+            principal_selection_receipt_handle=principal_handle,
+            runtime_receipt_handles=runtime_handles,
+            materialization_receipt_handles=output_handles,
+            source_receipt_handles=source_receipt_handles,
+            compiled_policy_sha256=_sha(policy_bytes),
+            compiled_artifact_catalog_sha256=_sha(catalog_bytes),
+            compiled_selection_sha256=_sha(_canonical(dict(selection_document))),
+            selection_catalog_sha256=selection_document["catalog_sha256"],
+            issued_monotonic=issued, expires_monotonic=expires,
+            claim_digest="0" * 64, policy_bytes=policy_bytes,
+            artifact_catalog_bytes=catalog_bytes, selection_document=selection_document,
+            observed_root_receipt_handle=observed_handle,
+            _root_journal_root=self.root_journal, _root_setup_session=session,
+            _reservation_handle=capability.reservation_handle, _seal=self._seal,
+            _root_prepared_native_bundle=prepared_bundle,
+            choice_adoptions=choice_adoptions,
+            role_closure_sha256=closure.role_closure_sha256,
         )
         claim_digest = _sha(_canonical(_manifest(provisional)))
-        reservation = self.materialization_receipts.reserve_for_active_compilation(
-            output_handles, prepared_generation_id=prepared.generation_id,
-            publication_handle=publication_handle, claim_digest=claim_digest)
         claim = RootActivePolicyCompilationClaim(
             schema=provisional.schema, plan_artifact_id=provisional.plan_artifact_id,
             release_commit=provisional.release_commit,
@@ -528,15 +780,17 @@ class RootActivePolicyCompilationRegistry:
             observed_root_receipt_handle=provisional.observed_root_receipt_handle,
             _root_journal_root=provisional._root_journal_root,
             _root_setup_session=provisional._root_setup_session,
-            _reservation_handle=reservation.reservation_handle, _seal=self._seal,
+            _reservation_handle=capability.reservation_handle, _seal=self._seal,
             _root_prepared_native_bundle=provisional._root_prepared_native_bundle,
             choice_adoptions=provisional.choice_adoptions,
+            role_closure_sha256=provisional.role_closure_sha256,
         )
         # Durable claim record reserves the transaction before the publisher can
         # create any generation. Same-transaction replay remains denied until
         # explicit release or committed active state.
         lock_fd = -1
         state_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".json")
+        durable = False
         try:
             _ensure_private_directory(self._claim_root)
             lock_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".lock")
@@ -551,22 +805,32 @@ class RootActivePolicyCompilationRegistry:
             self._persist_claim_bundle(claim)
             record = self._claim_record(claim, "claimed")
             _write_json(state_path, record)
+            durable = True
             self._claims[publication_handle] = claim
             self._states[publication_handle] = "claimed"
             self._locks[publication_handle] = lock_fd
             lock_fd = -1
+            output_claim = self.materialization_receipts.bind_compiled_policy_claim(
+                capability.reservation_handle, publication_handle)
+            from .native_output_receipts import RootNativeOutputClaim
+            if (type(output_claim) is not RootNativeOutputClaim
+                    or output_claim.compiled_active_policy_handle != publication_handle
+                    or output_claim.claim_digest != claim.claim_digest
+                    or output_claim.reservation.reservation_handle != capability.reservation_handle
+                    or output_claim.reservation.receipt_ids != claim.materialization_receipt_handles):
+                raise BootstrapEnrollmentPending("native output registry bound another compiled claim")
+            self._native_claims[publication_handle] = output_claim
+            self.verify_current_active_policy_claim(claim)
             return publication_handle
         except Exception:
+            if durable:
+                # A binding call may have committed before an interruption. Keep
+                # the immutable claim and reservation for same-handle retry.
+                raise
             # If persistence failed after some immutable files were written,
-            # remove only artifacts whose names are derived from this fresh
-            # unreturned handle. Keep the reservation if durable cleanup itself
-            # fails; that is the safe outcome after an uncertain interruption.
+            # retain the precompile reservation; it is never released or
+            # reconstructed from caller metadata on a failed compile.
             try:
-                if state_path.exists():
-                    state = _read_json(state_path)
-                    if (state.get("publication_handle") == publication_handle
-                            and state.get("claim_digest") == claim_digest):
-                        state_path.unlink()
                 for suffix in (".policy", ".catalog", ".selection", ".claim.json"):
                     path = self._claim_root / (publication_handle + suffix)
                     try:
@@ -579,9 +843,6 @@ class RootActivePolicyCompilationRegistry:
                         os.fsync(directory)
                     finally:
                         os.close(directory)
-                self.materialization_receipts.release_active_compilation(
-                    reservation.reservation_handle, prepared_generation_id=prepared.generation_id,
-                    publication_handle=publication_handle, claim_digest=claim_digest)
             except Exception:
                 pass
             raise
@@ -652,13 +913,27 @@ class RootActivePolicyCompilationRegistry:
                 handle, claim.transaction_handle, claim.prepared_generation_id)
             if not self._runtime_joins(resolved, session, prepared):
                 raise BootstrapEnrollmentPending("PM runtime closure changed during active policy compilation")
-        outputs = self.materialization_receipts.verify_active_compilation(
-            claim._reservation_handle, prepared_generation_id=claim.prepared_generation_id,
-            publication_handle=claim.publication_handle, claim_digest=claim.claim_digest)
-        if {item.receipt_id for item in outputs} != set(claim.materialization_receipt_handles):
-            raise BootstrapEnrollmentPending("native output closure changed during active policy compilation")
+        if self._native_claims.get(claim.publication_handle) is None:
+            capability = self._precompile_caps.get(claim._reservation_handle)
+            if (capability is None or capability.publication_handle != claim.publication_handle
+                    or capability.receipt_ids != claim.materialization_receipt_handles
+                    or capability.output_closure_sha256 == ""):
+                raise BootstrapEnrollmentPending("active claim has no same-reservation precompile binding")
+            self.verify_current_precompile_capability(capability)
+        else:
+            outputs = self.materialization_receipts.verify_active_compilation(
+                claim._reservation_handle, prepared_generation_id=claim.prepared_generation_id,
+                publication_handle=claim.publication_handle, claim_digest=claim.claim_digest)
+            if tuple(item.receipt_id for item in outputs) != claim.materialization_receipt_handles:
+                raise BootstrapEnrollmentPending("native output closure changed during active policy compilation")
         self._verify_actor_observation(claim.observed_root_receipt_handle, claim)
-        policy_bytes, catalog_bytes, selection, predecessor = self._compile_documents(session)
+        if claim._root_prepared_native_bundle is None:
+            raise BootstrapEnrollmentPending("active claim lost its typed runnable role closure")
+        capability = self._precompile_caps.get(claim._reservation_handle)
+        if capability is None:
+            raise BootstrapEnrollmentPending("active claim lost its typed precompile capability")
+        policy_bytes, catalog_bytes, selection, predecessor = self._compile_documents(
+            session, capability._root_role_closure)
         if (predecessor != claim.expected_selection_catalog_sha256
                 or policy_bytes != claim.policy_bytes or catalog_bytes != claim.artifact_catalog_bytes
                 or _canonical(dict(selection)) != _canonical(dict(claim.selection_document))):
@@ -808,6 +1083,7 @@ class RootActivePolicyCompilationRegistry:
             "expected_service_generation_digest", "policy_template_artifact_id",
             "policy_template_sha256", "principal_selection_receipt_handle",
             "runtime_receipt_handles", "materialization_receipt_handles",
+            "precompile_reservation_handle", "role_closure_sha256",
             "compiled_policy_sha256", "compiled_artifact_catalog_sha256",
             "compiled_selection_sha256", "selection_catalog_sha256",
             "observed_root_receipt_handle", "plan_artifact_id", "release_commit",
@@ -925,6 +1201,7 @@ class RootActivePolicyCompilationRegistry:
         reservation = self.materialization_receipts.resolve_active_compilation_reservation(receipt)
         if (type(reservation) is not NativeOutputReservation
                 or reservation.publication_handle != publication_handle
+                or reservation.reservation_handle != manifest.get("precompile_reservation_handle")
                 or reservation.claim_digest != receipt.claim_digest
                 or reservation.prepared_generation_id != receipt.prepared_generation_id
                 or reservation.receipt_ids != tuple(output_handles)):
@@ -993,7 +1270,8 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("active policy journal differs from the current selected publication")
         return row
 
-    def _compile_documents(self, session: Any) -> tuple[bytes, bytes, dict[str, Any], str]:
+    def _compile_documents(self, session: Any, role_closure: Any
+                           ) -> tuple[bytes, bytes, dict[str, Any], str]:
         # Re-read and revalidate the exact current loader inputs. This avoids
         # serializing caller objects or reconstructing source facts from IDs.
         path = self.resolver.selection_path
@@ -1028,6 +1306,38 @@ class RootActivePolicyCompilationRegistry:
                 or verified_policy.sha256 != policy_row["sha256"]
                 or verified_policy != session._policy):
             raise BootstrapEnrollmentPending("live setup policy differs from the selected strict policy bytes")
+        capability = self._precompile_caps.get(role_closure.native_output_claim_handle)
+        if capability is None:
+            raise BootstrapEnrollmentPending("active documents have no retained compiler precompile capability")
+        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            capability.reservation_handle)
+        prepared = self._verify_prepared_native_bundle(session, capability._root_prepared_native_bundle)
+        self._validate_runnable_role_closure(role_closure, reservation, session, prepared)
+        role_by_name = {row.role: row for row in role_closure.role_rows}
+        role_kinds = {
+            "official-pm-runtime": "pm-runtime",
+            "native-compiled-closure": "compiled-closure",
+            "native-entrypoint-manifest": "entrypoint-json",
+            "native-action-resolver": "resolver-json",
+            "native-boundary-overlay": "boundary-overlay",
+            "native-candidate-index": "candidate-index-json",
+        }
+        policy_doc = copy.deepcopy(policy_doc)
+        rules = policy_doc.get("receipt_binding_rules")
+        if not isinstance(rules, list):
+            raise BootstrapEnrollmentPending("selected policy has no strict receipt binding rules")
+        for role, output_kind in role_kinds.items():
+            selected = role_by_name[role]
+            rule_rows = [row for row in rules
+                         if isinstance(row, dict) and row.get("receipt_role") == role]
+            if (len(rule_rows) != 1 or rule_rows[0].get("required_phase") != "runnable"
+                    or rule_rows[0].get("allowed_output_kinds") != [output_kind]
+                    or rule_rows[0].get("allowed_artifact_ids") != []
+                    or selected.output_kind != output_kind):
+                raise BootstrapEnrollmentPending(
+                    "prepared policy receipt rule does not exactly match the selected runnable role")
+            rule_rows[0]["allowed_artifact_ids"] = [selected.artifact_id]
+        policy_bytes = _canonical(policy_doc)
         from .bootstrap_enrollment import _open_immutable_release_root
         release_fd = _open_immutable_release_root(
             current.release_root, current.release_device, current.release_inode)
@@ -1054,6 +1364,16 @@ class RootActivePolicyCompilationRegistry:
                 row["sha256"] = _sha(policy_bytes)
         unsigned_digest = _sha(_canonical(selection))
         selection["catalog_sha256"] = unsigned_digest
+        # The strict loader must accept the exact compiled active policy before
+        # the publisher is allowed to switch the root selection pointer. This
+        # rejects prepared-empty catalogs and any incomplete active projection.
+        plan_rows = [row for row in current.plans
+                     if row.get("artifact_id") == session._authorization.plan_artifact_id]
+        if len(plan_rows) != 1:
+            raise BootstrapEnrollmentPending("selected setup plan is absent or ambiguous during active compilation")
+        self.resolver._parse_policy(
+            policy_doc, _sha(policy_bytes), plan_rows[0], current,
+            compilation_phase="active")
         return policy_bytes, catalog_bytes, selection, current.selection_digest
 
     def _compile_choice_adoptions(

@@ -178,6 +178,7 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         # These rows require separately verified root endpoint/model receipts;
         # a prepared snapshot must not derive or activate them.
         "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+        "memory_service_enablement_projections": [],
         # Public web scopes are separately selected and published with native
         # effects; an empty prepared snapshot must carry the strict catalog key.
         "public_web_scopes": [],
@@ -550,6 +551,7 @@ class RootFirstStagePolicyCompiler:
             "catalog_selections": {
                 "protected_devices": [], "protected_build_records": [], "native_packages": [],
                 "memory_enrollments": [], "operation_parameter_schemas": [], "source_issuers": [],
+                "memory_service_enablement_projections": [],
                 "resource_jobs": [], "remote_session_enrollments": [],
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [],

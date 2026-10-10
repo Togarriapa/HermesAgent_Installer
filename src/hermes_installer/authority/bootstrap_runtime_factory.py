@@ -771,6 +771,18 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
         return self._session._resolve_current_native_bootstrap_assembly(selection_handle)
 
+    def resolve_current_native_bootstrap_assembly_for_bundle(
+            self, bundle: "RootPreparedNativeBundle") -> "RootNativeBootstrapAssemblySelection":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
+        return self._session._resolve_native_bootstrap_assembly_for_bundle(bundle)
+
+    def compile_selected_native_package(
+            self, bundle: "RootPreparedNativeBundle") -> tuple[Any, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native package compiler is not owned by this setup session")
+        return self._session._compile_selected_native_package(bundle)
+
     def resolve_native_assembly_definitions(self, selection_handle: str) -> "RootNativeAssemblyDefinitions":
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
@@ -895,7 +907,8 @@ class RootSelectedInstallationBinding:
 
     def authorize_native_output(self, *, artifact_role: str, output_kind: str,
                                 member_tree_sha256: str, output_sha256: str,
-                                output_size_bytes: int) -> Any:
+                                output_size_bytes: int,
+                                assembly_selection_handle: str | None = None) -> Any:
         """Resolve fixed output roles from current root-held source/assembly proofs."""
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("native output binding is not owned by this setup session")
@@ -942,14 +955,58 @@ class RootSelectedInstallationBinding:
                 compiled_closure_sha256=None,
                 expires_monotonic=min(prepared.expires_monotonic, time.monotonic() + 30.0),
             )
-        native_packages = session._policy.catalog_selections.get("native_packages", ())
-        if not native_packages:
+        if (artifact_role not in {
+                "native-compiled-closure", "native-entrypoint-manifest",
+                "native-action-resolver", "native-boundary-overlay", "native-candidate-index",
+        } or not isinstance(assembly_selection_handle, str)):
+            raise BootstrapEnrollmentPending("generated native output lacks its fixed role or assembly selection")
+        expected_kinds = {
+            "native-compiled-closure": "compiled-closure",
+            "native-entrypoint-manifest": "entrypoint-json",
+            "native-action-resolver": "resolver-json",
+            "native-boundary-overlay": "boundary-overlay",
+            "native-candidate-index": "candidate-index-json",
+        }
+        if expected_kinds[artifact_role] != output_kind:
+            raise BootstrapEnrollmentPending("generated native output role and fixed output kind do not match")
+        selection = session._resolve_current_native_bootstrap_assembly(assembly_selection_handle)
+        policy = session.resolve_current_native_policy_selection(
+            selection.native_policy_preparation_handle)
+        records = session.resolve_current_prepared_native_policy_records(
+            selection.native_policy_preparation_handle)
+        if (selection.setup_session_id != session._handle.session_id
+                or selection.transaction_handle != session._authorization.transaction_handle
+                or selection.prepared_generation_id != prepared.generation_id
+                or selection.protected_enrollment_digest != prepared.generation_digest
+                or policy.selection_handle != selection.native_policy_preparation_handle
+                or records.native_policy_selection_handle != policy.selection_handle
+                or not _SHA.fullmatch(member_tree_sha256)
+                or not _SHA.fullmatch(output_sha256)
+                or type(output_size_bytes) is not int or output_size_bytes <= 0):
+            raise BootstrapEnrollmentPending("native output does not join current assembly, policy and prepared custody")
+        # No active package row is consulted here. A source inventory or schema
+        # receipt alone cannot authorize executable action/effect/observer rows.
+        missing = tuple(getattr(records, "missing_prerequisite_ids", ()))
+        if missing:
+            detail = ", ".join(sorted(set(str(item) for item in missing)))
             raise BootstrapEnrollmentPending(
-                "the selected prepared policy has no root-authorized native package/compiler selection")
-        # Until the reviewed package/output role join is supplied by installed
-        # policy, unknown role construction is never allowed through this seam.
+                "native output lacks source-backed action/effect/role authorization: " + detail)
         raise BootstrapEnrollmentPending(
-            "native output role cannot be authorized without a source-pinned compiler deployment receipt")
+            "native output definitions have no complete verified action/effect/observer projection")
+
+    def authorize_prepared_native_output(
+            self, assembly_selection_handle: str, artifact_role: str, output_kind: str,
+            member_tree_sha256: str, output_sha256: str, output_size_bytes: int) -> Any:
+        """v169 positional producer seam; all authority still resolves root-side."""
+        return self.authorize_native_output(
+            artifact_role=artifact_role, output_kind=output_kind,
+            member_tree_sha256=member_tree_sha256, output_sha256=output_sha256,
+            output_size_bytes=output_size_bytes,
+            assembly_selection_handle=assembly_selection_handle,
+        )
+
+    def revalidate_prepared_native_output(self, selection: Any) -> bool:
+        return self.revalidate_native_output(selection)
 
     def revalidate_native_output(self, selection: Any) -> bool:
         from .native_output_receipts import NativeOutputSelection
@@ -977,6 +1034,16 @@ class RootSelectedInstallationBinding:
                     member_tree_sha256=selection.member_tree_sha256,
                     output_sha256=selection.output_sha256,
                     output_size_bytes=selection.output_size_bytes,
+                )
+                return current == selection
+            if selection.assembly_selection_handle is not None:
+                current = self.authorize_native_output(
+                    artifact_role=selection.artifact_role,
+                    output_kind=selection.output_kind,
+                    member_tree_sha256=selection.member_tree_sha256,
+                    output_sha256=selection.output_sha256,
+                    output_size_bytes=selection.output_size_bytes,
+                    assembly_selection_handle=selection.assembly_selection_handle,
                 )
                 return current == selection
             return False
@@ -1406,22 +1473,20 @@ class RootRunnableRoleProjectionRegistry:
                 or not isinstance(pm_runtime_receipt_handle, str)
                 or not isinstance(native_output_claim_handle, str)):
             raise BootstrapEnrollmentPending("runnable role projection requires the exact current empty prepared generation")
-        claim = self.compiler.resolve_current_active_policy_claim(native_output_claim_handle)
-        if (claim._root_setup_session is not session
-                or claim.setup_session_id != session._handle.session_id
-                or claim.transaction_handle != session._authorization.transaction_handle
-                or claim.plan_sha256 != session._authorization.plan_digest
-                or claim.prepared_generation_id != prepared.generation_id
-                or claim.expected_service_generation_digest != prepared.generation_digest
-                or claim.runtime_receipt_handles != (pm_runtime_receipt_handle,)):
-            raise BootstrapEnrollmentPending("active compiler claim does not bind this setup and PM selection")
+        reservation = self.output_registry.resolve_current_precompile_reservation(
+            native_output_claim_handle)
+        if (reservation.setup_session_id != session._handle.session_id
+                or reservation.transaction_handle != session._authorization.transaction_handle
+                or reservation.plan_digest != session._authorization.plan_digest
+                or reservation.prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending("native precompile reservation does not bind this setup session")
         pm = self.pm_registry.resolve_runtime(
-            pm_runtime_receipt_handle, claim.transaction_handle, claim.prepared_generation_id)
-        if (pm.setup_session_id != claim.setup_session_id
-                or pm.transaction_handle != claim.transaction_handle
-                or pm.prepared_generation_id != claim.prepared_generation_id
+            pm_runtime_receipt_handle, reservation.transaction_handle, reservation.prepared_generation_id)
+        if (pm.setup_session_id != reservation.setup_session_id
+                or pm.transaction_handle != reservation.transaction_handle
+                or pm.prepared_generation_id != reservation.prepared_generation_id
                 or pm.source_artifact_id != session._policy.source_artifact_id):
-            raise BootstrapEnrollmentPending("observed PM runtime differs from the current active claim")
+            raise BootstrapEnrollmentPending("observed PM runtime differs from the current precompile reservation")
         try:
             pm_size = pm.python_path.stat().st_size
         except OSError:
@@ -1430,9 +1495,13 @@ class RootRunnableRoleProjectionRegistry:
             "official-pm-runtime", "pm-runtime", pm_runtime_receipt_handle,
             pm.source_artifact_id, pm.runtime_sha256, pm_size, "pm-runtime", (),
         )]
-        native = self.output_registry.verify_active_compilation(
-            claim._reservation_handle, prepared_generation_id=claim.prepared_generation_id,
-            publication_handle=claim.publication_handle, claim_digest=claim.claim_digest)
+        native = tuple(self.output_registry._receipt_from_id(receipt_id)
+                       for receipt_id in reservation.receipt_ids)
+        if (len(native) != 5
+                or any(item.state != "reserved" for item in native)
+                or self.output_registry.resolve_current_precompile_reservation(
+                    reservation.reservation_handle) != reservation):
+            raise BootstrapEnrollmentPending("native reserved output receipts changed during role projection")
         by_role = {item.artifact_role: item for item in native}
         if set(by_role) != set(_RUNNABLE_OUTPUT_ROLE_MAP):
             raise BootstrapEnrollmentPending("reserved native output closure lacks the exact five runnable roles")
@@ -1464,14 +1533,14 @@ class RootRunnableRoleProjectionRegistry:
         now = time.monotonic()
         closure = RootSelectedRunnableRoleClosure(
             schema=1, role_closure_handle=secrets.token_urlsafe(36),
-            setup_session_id=claim.setup_session_id,
-            transaction_handle=claim.transaction_handle, plan_digest=claim.plan_sha256,
-            prepared_generation_id=claim.prepared_generation_id,
+            setup_session_id=reservation.setup_session_id,
+            transaction_handle=reservation.transaction_handle, plan_digest=reservation.plan_digest,
+            prepared_generation_id=reservation.prepared_generation_id,
             pm_runtime_receipt_handle=pm_runtime_receipt_handle,
             native_output_claim_handle=native_output_claim_handle,
             role_rows=tuple(rows), role_closure_sha256=digest,
             issued_monotonic=now,
-            expires_monotonic=min(claim.expires_monotonic, pm.expires_monotonic,
+            expires_monotonic=min(reservation.expires_monotonic, pm.expires_monotonic,
                                   *(item.expires_monotonic for item in native)),
             _registry_seal=self._seal,
         )
@@ -2050,7 +2119,8 @@ class InstalledBootstrapPolicyResolver:
             normalized_templates.append({"id": row["id"], "record": copy.deepcopy(record),
                                          "receipt_bindings": tuple(normalized)})
         selection_fields = {"protected_devices", "protected_build_records", "native_packages",
-                            "memory_enrollments", "operation_parameter_schemas", "source_issuers",
+                            "memory_enrollments", "memory_service_enablement_projections",
+                            "operation_parameter_schemas", "source_issuers",
                             "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
                             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
                             "root_journal_roots", "resource_controller_roles",
@@ -2205,6 +2275,7 @@ class InstalledBootstrapPolicyResolver:
             _fail("prepared authority base requires a valid root-bound service snapshot")
         empty_snapshot_catalogs = (
             "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+            "memory_service_enablement_projections",
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments", "resource_body_recipes",
             "resource_scope_bindings", "resource_validators", "resource_controller_roles",
@@ -2242,6 +2313,7 @@ class InstalledBootstrapPolicyResolver:
             "protected_build_records": "protected_build_records",
             "native_packages": "native_packages",
             "memory_enrollments": "memory_enrollments",
+            "memory_service_enablement_projections": "memory_service_enablement_projections",
             "operation_parameter_schemas": "operation_parameter_schemas",
             "source_issuers": "source_issuers",
             "resource_jobs": "resource_jobs",
@@ -3669,6 +3741,7 @@ class RootSetupPolicyFactory:
             native_schema_artifacts=selection.get("native_schema_artifacts", ()),
             composio_channel_enrollments=selection.get("composio_channel_enrollments", ()),
             channel_delivery_bindings=selection.get("channel_delivery_bindings", ()),
+            memory_service_enablement_projections=selection["memory_service_enablement_projections"],
             authority_base=copy.deepcopy(policy.authority_base_template),
             home_root=parent / "home", work_root=parent / "work", data_root=parent / "data",
             root_journal_roots=(dict(authorization.root_journal_root),),
@@ -3725,6 +3798,7 @@ class RootSetupPolicyFactory:
             protected_build_records=selection["protected_build_records"],
             native_packages=selection["native_packages"],
             memory_enrollments=selection["memory_enrollments"],
+            memory_service_enablement_projections=selection["memory_service_enablement_projections"],
             operation_parameter_schemas=selection["operation_parameter_schemas"],
             source_issuers=selection["source_issuers"], resource_jobs=selection["resource_jobs"],
             resource_controller_roles=selection["resource_controller_roles"],
@@ -4491,6 +4565,73 @@ class RootBootstrapSession:
         self._verify_current_setup_controller()
         return self._native_policy_preparation_registry
 
+    def _resolve_prepared_native_package_generation(
+            self, prepared: EnrollmentReceipt, bundle: RootPreparedNativeBundle,
+    ) -> tuple[str, str, RootReleaseModuleReceipt]:
+        """Derive the native package generation from already-held inputs.
+
+        This deliberately runs before the native policy TTY choice.  The
+        package generation is source identity (prepared service generation,
+        selected Resources closure, and reviewed compiler closure), not an
+        output hash and not a future active-package row.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        self._resolve_current_prepared_native_bundle(bundle)
+        if (self._last_receipt is not prepared or prepared.state != "prepared"
+                or prepared.enrollment_ids or bundle.prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending("native package identity requires the current empty prepared generation")
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        support: list[RootReleaseModuleReceipt] = []
+        for artifact_id in _NATIVE_ASSEMBLY_SUPPORT_MODULES:
+            rows = [row for row in release.files if row.artifact_id == artifact_id]
+            if (len(rows) != 1 or "module" not in rows[0].roles
+                    or artifact_id not in plan.allowed_artifact_ids):
+                raise BootstrapEnrollmentPending("native package identity lacks its reviewed compiler module closure")
+            row = rows[0]
+            origins = [origin for origin in actor.module_origins
+                       if origin[1] == str(release.release_root / row.relative_path)
+                       and origin[4] == row.sha256]
+            if len(origins) != 1:
+                raise BootstrapEnrollmentPending("native package compiler is outside the current root import closure")
+            prior = next((item for item in self._prepared_release_member_receipts.values()
+                          if item.artifact_id == artifact_id
+                          and item._prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                prior = RootReleaseModuleReceipt(
+                    row.artifact_id, row.relative_path, row.sha256, row.size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    secrets.token_urlsafe(36), self._handle.session_id, self._seal,
+                    self, prepared.generation_id)
+                self._prepared_release_member_receipts[prior.source_receipt_handle] = prior
+            prior.read_current()
+            support.append(prior)
+        compiler = next((item for item in support
+                         if item.artifact_id == _NATIVE_ASSEMBLY_COMPILER_ARTIFACT), None)
+        if compiler is None:
+            raise BootstrapEnrollmentPending("native package compiler receipt is absent")
+        closure_digest = hashlib.sha256(_canonical([
+            {"artifact_id": item.artifact_id, "sha256": item.sha256,
+             "size_bytes": item.size_bytes, "source_receipt_handle": item.source_receipt_handle}
+            for item in sorted(support, key=lambda value: value.artifact_id)
+        ])).hexdigest()
+        materialization = bundle.materialization_receipt
+        generation = hashlib.sha256(_canonical({
+            "package_id": "hermes-agent-native-package-v1",
+            "profile_id": self._policy.identity_policy.get("service_profile_id"),
+            "service_generation": prepared.generation_id,
+            "service_digest": prepared.generation_digest,
+            "resource_profile_id": materialization.resource_profile_id,
+            "resource_closure_digest": materialization.selected_closure_digest,
+            "hermes_revision": materialization.hermes_revision,
+            "compiler_sha256": compiler.sha256,
+            "compiler_closure_sha256": closure_digest,
+        })).hexdigest()
+        actor.verify_current(release)
+        return generation, closure_digest, compiler
+
     def observe_native_policy_configuration(self) -> Any:
         """Capture root-TTY intent for finite native component families.
 
@@ -4564,6 +4705,37 @@ class RootBootstrapSession:
             service_profile_id = self._policy.identity_policy.get("service_profile_id")
             if not isinstance(service_profile_id, str) or not service_profile_id:
                 raise BootstrapEnrollmentPending("native policy choice lacks its selected service profile")
+            bundle = self.prepare_selected_native_bundle()
+            package_generation, _compiler_closure_digest, _compiler_receipt = (
+                self._resolve_prepared_native_package_generation(prepared, bundle))
+            overlay_registration_ids = (
+                "resource-overlay-store:tool:resource_overlay_read",
+                "resource-overlay-store:tool:resource_overlay_history",
+                "resource-overlay-store:tool:resource_overlay_write",
+                "resource-overlay-store:tool:resource_overlay_delete",
+            )
+            selected_owner_overlay: tuple[str, ...] = ()
+            if "resource-overlay-store" in selected_set:
+                print("\nOwner-private overlay operation intent (separate from native action bindings):")
+                for index, registration_id in enumerate(overlay_registration_ids, 1):
+                    print(f"  {index}. {registration_id.rsplit(':', 1)[-1]}")
+                print("Choose operation numbers separated by commas; blank selects none.")
+                overlay_answer = input("Owner overlay operations: ").strip()
+                _verify_root_tty_proof(proof)
+                if overlay_answer:
+                    try:
+                        overlay_numbers = tuple(int(item.strip(), 10)
+                                                for item in overlay_answer.split(","))
+                    except ValueError:
+                        raise BootstrapEnrollmentPending(
+                            "owner overlay selection must use listed numbers or blank") from None
+                    if (not overlay_numbers or len(set(overlay_numbers)) != len(overlay_numbers)
+                            or any(number < 1 or number > len(overlay_registration_ids)
+                                   for number in overlay_numbers)):
+                        raise BootstrapEnrollmentPending(
+                            "owner overlay selection contains a duplicate or unknown operation")
+                    selected_owner_overlay = tuple(
+                        overlay_registration_ids[number - 1] for number in overlay_numbers)
             now = time.monotonic()
             deadline = self._factory.session_store.current_deadline(self._handle)
             expires = min(deadline, current.expires_monotonic, now + 300.0)
@@ -4587,10 +4759,11 @@ class RootBootstrapSession:
                 service_generation=prepared.generation_id,
                 resource_profile_selection_handle=resource_handle,
                 package_id="hermes-agent-native-package-v1",
-                native_package_generation=None,
+                native_package_generation=package_generation,
                 selected_component_ids=tuple(selected),
                 selected_registration_ids=tuple(selected_registrations),
                 selected_action_binding_ids=tuple(selected_actions),
+                selected_owner_overlay_registration_ids=selected_owner_overlay,
                 controller_binding_handle=controller_handle,
                 private_input_consent_selection_handle=None,
                 issued_monotonic=now, expires_monotonic=expires, revocation_epoch=0,
@@ -5087,7 +5260,8 @@ class RootBootstrapSession:
                     "remote_observation_enrollments", "native_schema_artifacts",
                     "composio_channel_enrollments", "channel_delivery_bindings",
                     "remote_startup_enrollments", "private_loopback_networks",
-                    "selected_resource_executions", "selected_application_runtimes",
+            "selected_resource_executions", "selected_application_runtimes",
+            "memory_service_enablement_projections",
                     "private_memory_endpoint_selections", "private_memory_model_selections",
                     "public_web_scopes"))):
             raise BootstrapEnrollmentPending("resume snapshot is not an empty prepared generation")
@@ -6366,6 +6540,44 @@ class RootBootstrapSession:
         self._verify_current_setup_controller()
         return bundle
 
+    def _resolve_native_bootstrap_assembly_for_bundle(
+            self, bundle: RootPreparedNativeBundle) -> RootNativeBootstrapAssemblySelection:
+        """Resolve the assembly selector from this session's retained bundle.
+
+        The prepared receipt handle and materialization handle never arrive
+        over the public caller boundary; both come from the exact retained
+        root bundle and are rechecked here.
+        """
+        self._check_live()
+        current_bundle = self._resolve_current_prepared_native_bundle(bundle)
+        prepared = self._last_receipt
+        if (prepared is None or not prepared.provision_receipt_handle
+                or current_bundle.materialization_receipt_handle
+                   != current_bundle.materialization_receipt.receipt_handle):
+            raise BootstrapEnrollmentPending("native assembly requires the retained prepared bundle receipts")
+        selection = self._resolve_native_bootstrap_assembly(
+            prepared.provision_receipt_handle,
+            current_bundle.materialization_receipt_handle)
+        if self._resolve_current_prepared_native_bundle(bundle) is not bundle:
+            raise BootstrapEnrollmentPending("prepared native bundle changed during assembly selection")
+        return selection
+
+    def _compile_selected_native_package(
+            self, bundle: RootPreparedNativeBundle) -> tuple[Any, ...]:
+        """Compile only the currently retained native selection and return its five CAS receipts."""
+        selection = self._resolve_native_bootstrap_assembly_for_bundle(bundle)
+        self._resolve_current_native_bootstrap_assembly(selection.selection_handle)
+        from .native_assembler import RootNativePackageAssembler
+        assembler = RootNativePackageAssembler(
+            self._selected_installation, self._root_native_output_receipts())
+        receipts = assembler.compile_selected(selection)
+        if (self._resolve_current_native_bootstrap_assembly(selection.selection_handle) != selection
+                or self._resolve_current_prepared_native_bundle(bundle) is not bundle):
+            raise BootstrapEnrollmentPending("native package selection changed while compiling outputs")
+        if len(receipts) != 5:
+            raise BootstrapEnrollmentPending("native package compiler did not retain the exact five role receipts")
+        return receipts
+
     def _resolve_native_bootstrap_assembly(
             self, prepared_setup_receipt_handle: str,
             native_materialization_receipt_handle: str) -> RootNativeBootstrapAssemblySelection:
@@ -6460,6 +6672,9 @@ class RootBootstrapSession:
             "compiler_sha256": compiler.sha256,
             "compiler_closure_sha256": closure_digest,
         })).hexdigest()
+        if package_generation != policy_selection.native_package_generation:
+            raise BootstrapEnrollmentPending(
+                "native package generation changed between root TTY choice and assembly")
         now = time.monotonic()
         expires = min(prepared.expires_monotonic,
                       self._factory.session_store.current_deadline(self._handle), now + 300.0)

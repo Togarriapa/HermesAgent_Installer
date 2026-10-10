@@ -1715,6 +1715,9 @@ def build_root_runtime_bindings(
         native_packages=getattr(enrollment, "native_package_records", None),
         source_issuers=getattr(enrollment, "source_issuers", None),
         memory_enrollments=getattr(enrollment, "memory_enrollments", None),
+        memory_service_enablement_projections=getattr(
+            enrollment, "memory_service_enablement_projection_records", None,
+        ),
         parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
         selected_application_runtimes=getattr(enrollment, "selected_application_runtime_records", None),
         private_memory_endpoint_selections=getattr(

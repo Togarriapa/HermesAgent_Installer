@@ -61,6 +61,7 @@ def _claim() -> RootActivePolicyCompilationClaim:
         observed_root_receipt_handle="C" * 64,
         _root_journal_root=__import__("pathlib").Path("/var/lib/hermes-installer/authority-journal"),
         _root_setup_session=object(), _reservation_handle="D" * 43, _seal=object(),
+        role_closure_sha256="e" * 64,
     )
 
 
@@ -240,7 +241,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
                         (state.update(value), state_writes.append(dict(value))))
 
     reservation = NativeOutputReservation(
-        "V" * 43, original.publication_handle, original.claim_digest,
+        "W" * 43, original.publication_handle, original.claim_digest,
         original.prepared_generation_id, original.materialization_receipt_handles)
     recovered_rows = []
     class Outputs:
@@ -262,6 +263,15 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
     registry.materialization_receipts = Outputs()
     # Deliberately no in-memory claims/session, as after a compiler restart.
     registry._claims = {}
+
+    # A matching publication and output tuple cannot substitute another
+    # reservation handle; recovery must retain the exact precompile capability.
+    with pytest.raises(BootstrapEnrollmentPending, match="another durable reservation"):
+        registry.complete_active_publication(receipt)
+    assert recovered_rows == []
+    reservation = NativeOutputReservation(
+        original._reservation_handle, original.publication_handle, original.claim_digest,
+        original.prepared_generation_id, original.materialization_receipt_handles)
 
     with pytest.raises(BootstrapEnrollmentPending, match="finalization interruption"):
         registry.complete_active_publication(receipt)
