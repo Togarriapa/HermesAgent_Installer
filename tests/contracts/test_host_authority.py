@@ -92,6 +92,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             nonce="nonce:a", grant_id="grant:a", signature="signed",
         )
 
+
     @staticmethod
     def _response(body):
         import json
@@ -1034,6 +1035,60 @@ class AuthorityRestartReplayContracts(unittest.TestCase):
                     "payload": base64.b64encode(payload).decode("ascii"), "timeout": 1.0,
                 }, cancelled=lambda: False)
         self.assertEqual(handlers_called, [])
+
+
+class ActivePrincipalSelectionContracts(unittest.TestCase):
+    def _service(self, *, active_digest="a" * 64):
+        binding = PrincipalBinding(1234, "principal:active", "profile:active", "namespace:active",
+                                   frozenset({"profile-run"}))
+        return AuthorityService(
+            signing_key=b"p" * 32, key_id="active-principal-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+            profile_generations={binding.profile_id: "generation-7"},
+            service_generation_digest=active_digest,
+        ), binding
+
+    def test_profile_selector_requires_exact_root_runtime_catalog(self):
+        service, binding = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding("profile:active")
+
+    def test_profile_selector_joins_exact_root_runtime_catalog(self):
+        from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+
+        service, binding = self._service()
+        selected = SimpleNamespace(
+            profile_id=binding.profile_id, generation="generation-7",
+            service_uid=binding.uid, principal_id=binding.principal_id,
+            namespace_identity=binding.namespace_id,
+        )
+        catalog = SimpleNamespace(
+            digest="a" * 64,
+            resolve_profile_generation=lambda profile_id, generation: (
+                selected if (profile_id, generation) == (binding.profile_id, "generation-7")
+                else (_ for _ in ()).throw(ValueError("stale"))),
+        )
+        runtime = RootRuntimeBindings(
+            enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+            process_manager=None, effect_handlers={}, native_bridges={},
+            artifact_catalog=None, build_store=None, service_connector=None,
+            protected_principal_bindings=(binding,),
+        )
+        service.attach_root_runtime_bindings(runtime)
+        self.assertIs(service.resolve_current_active_principal_binding(binding.profile_id), binding)
+
+    def test_profile_selector_rejects_unknown_and_mutated_generation(self):
+        service, binding = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding("profile:prepared-only")
+        service.profile_generations[binding.profile_id] = "generation-next"
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding(binding.profile_id)
+
+    def test_profile_selector_rejects_unactivated_service_generation(self):
+        service, binding = self._service(active_digest=None)
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding(binding.profile_id)
 
 
 if __name__ == "__main__":

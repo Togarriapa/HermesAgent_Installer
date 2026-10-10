@@ -1225,6 +1225,7 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         return {
             "targets": targets, "owner_ledger": None, "owner_state": owner_state,
             "queue": None, "ipc": None, "compound_ledger": None,
+            "job_resolver": None,
             "compound_executor": None, "engines": {},
             "private_engine_unavailable": {},
             "eligibility": lambda *_: False, "maximum_timeout": 15.0,
@@ -1321,6 +1322,23 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
                 return child.result(context, receipt)
             def consent_active(self, consent_id: str) -> bool:
                 return any(child.consent_active(consent_id) for child in self.queues.values())
+            def resolve_active_job(self, job_handle: str, *, now: float | None = None) -> MemoryJobAuthorityRecord:
+                # Job IDs are random, but still reject ambiguous matches if
+                # storage corruption or an impossible collision is observed.
+                matches = []
+                for child in self.queues.values():
+                    try:
+                        matches.append(child.resolve_active_job(job_handle, now=now))
+                    except BrokerDenied:
+                        continue
+                if len(matches) != 1:
+                    raise BrokerDenied("root memory job is absent or ambiguous across profile queues")
+                return matches[0]
+            def is_current(self, record: MemoryJobAuthorityRecord, *, now: float | None = None) -> bool:
+                if type(record) is not MemoryJobAuthorityRecord:
+                    return False
+                child = self.queues.get(record.profile_id)
+                return child is not None and child.is_current(record, now=now)
             def revoke_owner(self, profile: str, provider: str, generation: int,
                              *, reason: str = "owner_changed") -> int:
                 child = self.queues.get(profile)
@@ -1432,6 +1450,7 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         "eligibility": eligibility,
         "maximum_timeout": 15.0,
         "consent_active": consent_active,
+        "job_resolver": queue,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
         "capture_coordinator": capture_coordinator,

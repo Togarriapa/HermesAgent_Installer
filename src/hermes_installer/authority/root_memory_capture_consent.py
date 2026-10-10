@@ -141,6 +141,7 @@ class RootMemoryCaptureConsentRegistry:
         choice = resolver(current_explicit_choice_receipt_handle, profile_selection_handle)
         if (getattr(choice, "_registry_seal", None) is not getattr(self.choices, "_registry_seal", object())
                 or getattr(choice, "choice_receipt_handle", None) != current_explicit_choice_receipt_handle
+                or getattr(choice, "profile_selection_handle", None) != profile_selection_handle
                 or getattr(choice, "principal_id", None) != enrollment.principal_id
                 or getattr(choice, "profile_id", None) != enrollment.profile_id
                 or getattr(choice, "namespace_id", None) != enrollment.namespace_identity
@@ -149,6 +150,9 @@ class RootMemoryCaptureConsentRegistry:
                 or getattr(choice, "service_generation", None) != enrollment.service_generation
                 or getattr(choice, "provider", None) != enrollment.provider):
             raise AuthorityDenied("memory.consent", "memory TTY choice is stale or belongs to another owner/engine")
+        current_choice = getattr(self.choices, "is_current_memory_capture_choice", None)
+        if not callable(current_choice) or current_choice(choice) is not True:
+            raise AuthorityDenied("memory.consent", "root TTY memory capture choice is no longer current")
         routes = _ids(getattr(choice, "route_ids", None), "memory route IDs")
         recipients = _ids(getattr(choice, "private_recipient_ids", None), "memory private recipient IDs")
         if not set(routes).issubset(enrollment.fixed_route_map):
@@ -246,13 +250,14 @@ class RootMemoryCaptureConsentRegistry:
         resolver = getattr(self.choices, "current_profile_selection_handle", None)
         if not callable(resolver):
             raise AuthorityDenied("memory.profile", "current root profile-selection resolver is unavailable")
-        principals = [item for item in self.service.bindings_by_uid.values()
-                      if item.profile_id == enrollment.profile_id
-                      and item.principal_id == enrollment.principal_id
-                      and item.namespace_id == enrollment.namespace_identity]
-        if len(principals) != 1:
-            raise AuthorityDenied("memory.profile", "memory owner has no unique current principal binding")
-        handle = resolver(principals[0])
+        active_binding = getattr(self.service, "resolve_current_active_principal_binding", None)
+        if not callable(active_binding):
+            raise AuthorityDenied("memory.profile", "active protected principal resolver is unavailable")
+        principal = active_binding(enrollment.profile_id)
+        if (principal.principal_id != enrollment.principal_id
+                or principal.namespace_id != enrollment.namespace_identity):
+            raise AuthorityDenied("memory.profile", "memory owner differs from active principal binding")
+        handle = resolver(principal)
         if not isinstance(handle, str) or not 32 <= len(handle) <= 128:
             raise AuthorityDenied("memory.profile", "current root profile-selection handle is unavailable")
         return handle
