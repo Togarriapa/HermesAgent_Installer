@@ -304,6 +304,7 @@ def _finalize_active_setup_choice_registry(*, service: AuthorityService,
                 active_owner_overlay_registry=owner_overlay_registry,
                 local_owner_overlay_unavailable_reason=None,
             )
+            service.attach_active_owner_overlay_registry(owner_overlay_registry)
         except Exception as exc:
             # Local-owner resources are independent of Authentik. An absent
             # or stale local adoption disables only that exact feature lane.
