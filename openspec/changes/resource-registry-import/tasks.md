@@ -104,3 +104,8 @@ Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retain
 
 - [ ] `HI-T185.1` Publish and resolve concrete tagged owner registration observer and captured-source schemas. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
 - [ ] `HI-T185.2` Bind actual worker proxy/native execute RPC to observed invocation/current one-use local grant and CAS. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+
+
+## v186 endpoint source phase
+
+- [ ] `VD-T186.3` Exercise preactive no-effects, authenticated transfer/CAS/revocation/conflict cleanup and phase evidence. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.

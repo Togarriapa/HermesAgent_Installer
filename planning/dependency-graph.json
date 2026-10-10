@@ -2382,7 +2382,8 @@
       "HI-T182.3"
     ],
     "HI-T183.1": [
-      "HI-T183.0"
+      "HI-T183.0",
+      "HI-T186.1"
     ],
     "HI-T183.2": [
       "HI-T183.1",
@@ -2425,6 +2426,17 @@
     "VD-T185.3": [
       "HI-T185.1",
       "HI-T185.2"
+    ],
+    "HI-T186.1": [
+      "HI-T183.0"
+    ],
+    "HI-T186.2": [
+      "HI-T186.1",
+      "HI-T183.1"
+    ],
+    "VD-T186.3": [
+      "HI-T186.1",
+      "HI-T186.2"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim. v99: HI-T08 native candidate compilation consumes the source registration projection before HI-T11 dispatch; RB-T08 and MC-F01 retain their existing native/source/schema prerequisite edges. No active-before-assembly dependency introduced. v100: HI-T11 source issuance resolves current purpose-specific private input consent before any provider egress; existing HI-T12/PR-F03 grant checks retain all parent ceilings and current revocation. v101: HI-T09/HI-T13 selected display startup requires measured Xpra source plus actual transform/output/runtime receipts; source pin is not process readiness. v102: prepared source receipt precedes Resources profile selection/native assembly; active publication follows actual PM/materialization output receipts. Dispatch current consent check is non-consuming after ingress. v104: SK-F03 selected runtime qualification probe precedes active application runtime row; actual owned application manager terminal plus artifact validation precedes functional evidence. Existing HI selected launch prerequisites retained.",
@@ -2737,6 +2749,13 @@
   "owner_observer_rpc_v185": {
     "amendment": "plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md",
     "wire_contract": "planning/owner-overlay-observer-wire-v185.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "preactive_listener_v186": {
+    "amendment": "plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md",
+    "wire_contract": "planning/preactive-authority-listener-wire-v186.json",
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
