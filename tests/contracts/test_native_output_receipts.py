@@ -6,6 +6,7 @@ import io
 import json
 import os
 import tarfile
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -219,17 +220,20 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
                 "generation-1", "installer-module:native_materializer",
                 "3" * 64, "installer-module:native_materializer", "5" * 64,
                 ("A" * 48, "B" * 48), member_tree_sha256,
-                output_sha256, output_size_bytes, closure_tree_sha256, 10_000.0,
+                output_sha256, output_size_bytes, closure_tree_sha256, time.monotonic() + 10_000.0,
             )
 
+        current = True
+
         def revalidate_native_output(self, selection):
-            return selection.transaction_handle == "transaction-" + "1" * 64
+            return self.current and selection.transaction_handle == "transaction-" + "1" * 64
 
     cas, journal = tmp_path / "cas", tmp_path / "journal"
     cas.mkdir(mode=0o700)
     journal.mkdir(mode=0o700)
+    binding = Binding()
     registry = RootMaterializationReceiptRegistry._from_root_factory(
-        binding=Binding(), cas_root=cas, journal_root=journal)
+        binding=binding, cas_root=cas, journal_root=journal)
     receipts = {}
     for role, (kind, path) in outputs.items():
         data = payload if role == "native-compiled-closure" else archive_contents[path]
@@ -242,6 +246,31 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
     assert object_path.read_bytes() == payload
     assert object_path.stat().st_uid == 0 and object_path.stat().st_mode & 0o777 == 0o400
     assert receipt.artifact_id == "native-output:native-compiled-closure:package-1:generation-1"
+    output_ids = tuple(receipts[role].receipt_id for role in outputs)
+    reservation = registry.reserve_for_active_compilation(
+        output_ids, prepared_generation_id="generation-1",
+        publication_handle="publication-" + "a" * 40, claim_digest="b" * 64)
+    held = registry.verify_active_compilation(
+        reservation.reservation_handle, prepared_generation_id="generation-1",
+        publication_handle=reservation.publication_handle, claim_digest=reservation.claim_digest)
+    assert {item.receipt_id for item in held} == set(output_ids)
+    registry.release_active_compilation(
+        reservation.reservation_handle, prepared_generation_id="generation-1",
+        publication_handle=reservation.publication_handle, claim_digest=reservation.claim_digest)
+    # A released transaction can be reserved under a fresh publication claim;
+    # loss of source currentness prevents the next held verification.
+    retry = registry.reserve_for_active_compilation(
+        output_ids, prepared_generation_id="generation-1",
+        publication_handle="publication-" + "c" * 40, claim_digest="d" * 64)
+    binding.current = False
+    with pytest.raises(NativeOutputReceiptDenied, match="current|revalid"):
+        registry.verify_active_compilation(
+            retry.reservation_handle, prepared_generation_id="generation-1",
+            publication_handle=retry.publication_handle, claim_digest=retry.claim_digest)
+    binding.current = True
+    registry.release_active_compilation(
+        retry.reservation_handle, prepared_generation_id="generation-1",
+        publication_handle=retry.publication_handle, claim_digest=retry.claim_digest)
     consumed = None
     for role in outputs:
         consumed = registry.resolve_for_activation(

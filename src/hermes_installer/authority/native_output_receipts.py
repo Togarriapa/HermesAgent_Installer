@@ -349,10 +349,10 @@ class RootMaterializationReceiptRegistry:
                     if changed != 1:
                         raise NativeOutputReceiptDenied("native output changed during active compilation reservation")
                 db.execute(
-                    "INSERT INTO reservations VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO reservations VALUES(?,?,?,?,?,?,?,?)",
                     (reservation.reservation_handle, publication_handle, claim_digest,
                      prepared_generation_id, json.dumps(role_ids), first["transaction_handle"],
-                     min(record["expires_monotonic"] for record in records)),
+                     min(record["expires_monotonic"] for record in records), "reserved"),
                 )
             except Exception:
                 db.rollback()
