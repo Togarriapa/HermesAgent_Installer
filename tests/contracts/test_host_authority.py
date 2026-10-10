@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import socket
 import stat
@@ -90,6 +91,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             issued_at_monotonic=10.0, monotonic_expires_at=40.0,
             nonce="nonce:a", grant_id="grant:a", signature="signed",
         )
+
 
     @staticmethod
     def _response(body):
@@ -531,6 +533,25 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         )
         return context, grant, digest
 
+    def test_native_mcp_dispatch_accepts_safe_content_type_header(self):
+        class Dispatcher:
+            def __init__(self, service):
+                self.service = service
+
+            def dispatch_native_mcp(self, **_kwargs):
+                return {"status": 200, "body": b"{}",
+                        "headers": {"content-type": "application/json"},
+                        "receipt_id": "mcp-receipt"}
+
+        self.service.attach_native_mcp_dispatcher(Dispatcher(self.service))
+        result = self.service._dispatch_native_mcp(
+            os.getuid(), os.getpid(), 0,
+            {"schema": 1, "invocation_handle": "h" * 32,
+             "canonical_arguments_b64": base64.b64encode(b"{}").decode("ascii")},
+            cancelled=lambda: False,
+        )
+        self.assertEqual(result["headers"], {"content-type": "application/json"})
+
     def test_peer_uid_issues_signed_context_and_fixed_broker_performs_effect(self):
         context, grant, digest = self._context_and_grant()
         self.assertEqual(context.uid, os.getuid())
@@ -818,7 +839,7 @@ class NativeEventClientContracts(unittest.TestCase):
                 return NativeResponseMetadata("p" * 40, (NativeToolCallBinding(
                     observed_call_handle="c" * 40, provider_tool_call_id="call_1",
                     tool_name="selected_tool", arguments_sha256="a" * 64,
-                ),))
+                ),), "t" * 40, "f" * 40)
 
         service = AuthorityService(
             signing_key=b"n" * 32, key_id="native-response-take-fixture",
@@ -829,7 +850,10 @@ class NativeEventClientContracts(unittest.TestCase):
                    "response_body_sha256": "b" * 64, "native_request_handle": "r" * 40}
         result = service._dispatch(binding.uid, 123, 8, "native.response.take", request,
                                    cancelled=lambda: False)
-        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings"})
+        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings",
+                                       "turn_handle", "final_response_delivery_handle"})
+        self.assertEqual(result["turn_handle"], "t" * 40)
+        self.assertEqual(result["final_response_delivery_handle"], "f" * 40)
         self.assertEqual(calls, [(binding.uid, 123, 8, "d" * 43, "b" * 64, "r" * 40)])
         client = AuthorityClient(Path("/unused"), server_uid=0)
         requests = []
@@ -1011,6 +1035,60 @@ class AuthorityRestartReplayContracts(unittest.TestCase):
                     "payload": base64.b64encode(payload).decode("ascii"), "timeout": 1.0,
                 }, cancelled=lambda: False)
         self.assertEqual(handlers_called, [])
+
+
+class ActivePrincipalSelectionContracts(unittest.TestCase):
+    def _service(self, *, active_digest="a" * 64):
+        binding = PrincipalBinding(1234, "principal:active", "profile:active", "namespace:active",
+                                   frozenset({"profile-run"}))
+        return AuthorityService(
+            signing_key=b"p" * 32, key_id="active-principal-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+            profile_generations={binding.profile_id: "generation-7"},
+            service_generation_digest=active_digest,
+        ), binding
+
+    def test_profile_selector_requires_exact_root_runtime_catalog(self):
+        service, binding = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding("profile:active")
+
+    def test_profile_selector_joins_exact_root_runtime_catalog(self):
+        from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+
+        service, binding = self._service()
+        selected = SimpleNamespace(
+            profile_id=binding.profile_id, generation="generation-7",
+            service_uid=binding.uid, principal_id=binding.principal_id,
+            namespace_identity=binding.namespace_id,
+        )
+        catalog = SimpleNamespace(
+            digest="a" * 64,
+            resolve_profile_generation=lambda profile_id, generation: (
+                selected if (profile_id, generation) == (binding.profile_id, "generation-7")
+                else (_ for _ in ()).throw(ValueError("stale"))),
+        )
+        runtime = RootRuntimeBindings(
+            enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+            process_manager=None, effect_handlers={}, native_bridges={},
+            artifact_catalog=None, build_store=None, service_connector=None,
+            protected_principal_bindings=(binding,),
+        )
+        service.attach_root_runtime_bindings(runtime)
+        self.assertIs(service.resolve_current_active_principal_binding(binding.profile_id), binding)
+
+    def test_profile_selector_rejects_unknown_and_mutated_generation(self):
+        service, binding = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding("profile:prepared-only")
+        service.profile_generations[binding.profile_id] = "generation-next"
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding(binding.profile_id)
+
+    def test_profile_selector_rejects_unactivated_service_generation(self):
+        service, binding = self._service(active_digest=None)
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding(binding.profile_id)
 
 
 if __name__ == "__main__":

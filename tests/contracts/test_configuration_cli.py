@@ -45,12 +45,14 @@ class ConfigurationCLITests(unittest.TestCase):
     def test_mcp_test_connection_stays_pending_until_root_binding(self):
         journal = FakeJournal()
         JournalSetupStateStore(journal, "mcp").put_selection("service_id", "figma")
-        result = run_configuration_command("test-connection", config_data={"schema_version": 1},
+        selected_config = {"schema_version": 1, "components": {"mcp": False}}
+        result = run_configuration_command("test-connection", config_data=selected_config,
             journal=journal, credential_store=FakeStore(), interactive=False,
             resume_command="hermes-installer test-connection mcp", target="mcp")
         self.assertEqual(result.state.value, "pending")
         self.assertEqual(result.exit_code, 4)
         self.assertIn("root-enrolled", result.findings[0].details["next_steps"][0])
+        self.assertEqual(result.findings[0].details["config"], selected_config)
 
     def test_provider_test_connection_runs_only_the_fixed_read_only_probe(self):
         from hermes_installer.provider_setup_adapters import OpenRouterProbeResult, build_provider_setup_adapter

@@ -341,7 +341,7 @@ class BootstrapTests(unittest.TestCase):
 if __name__ == "__main__": unittest.main()
 
 class EnrolledBootstrapTests(unittest.TestCase):
-    def test_root_selected_operations_never_activate_without_native_health_receipt(self):
+    def test_root_selected_stage_stays_pending_until_observer_owned_health(self):
         import base64
         import time
         from types import SimpleNamespace
@@ -389,12 +389,12 @@ class EnrolledBootstrapTests(unittest.TestCase):
             self.assertFalse(report.agent_ready)
             self.assertFalse(report.desktop_built)
             self.assertFalse(report.fixture_only)
-            self.assertIn("native Agent function evidence", report.configuration_state)
+            self.assertIn("functional Agent evidence", report.configuration_state)
             self.assertEqual([call["operation_id"] for call in client.operations], [
-                "hermes-agent-stage-v1", "hermes-agent-health-v1"])
+                "hermes-agent-stage-v1"])
             self.assertTrue(all(call["parameters"] == {} for call in client.operations))
             self.assertEqual(journal.operation("hermes-agent:" + HERMES_COMMIT)["status"],
                              "pending:native-health-observation")
             self.assertEqual([row["state"] for row in journal.owned("hermes-generation")], ["staged"])
-            diagnostic = data.path("runtime/logs/hermes-agent/" + HERMES_COMMIT[:12] + "/selected-health.log")
+            diagnostic = data.path("runtime/logs/hermes-agent/" + HERMES_COMMIT[:12] + "/selected-stage.log")
             self.assertNotIn(b"fixture-secret", diagnostic.read_bytes())

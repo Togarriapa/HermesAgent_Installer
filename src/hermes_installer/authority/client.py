@@ -23,6 +23,7 @@ from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
     NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeResponseMetadata,
     NativeToolCallBinding,
+    RootCompletedNativeTurnPresentation,
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
 from .process_controls import ProcessControlResponse
@@ -218,6 +219,60 @@ class AuthorityClient:
                 or result.get("schema") != 1 or result.get("receipt_handle") != receipt_handle):
             raise AuthorityDenied("source.delivery", "root returned a mismatched source receipt handle")
         return receipt_handle
+
+    def take_selected_native_input(self, *,
+                                   cancelled: Callable[[], bool] | None = None
+                                   ) -> "NativeInitialInputDelivery | None":
+        """Take this live producer's one queued native input, without selectors.
+
+        The root identifies the current execution solely from SO_PEERCRED and
+        the authenticated peer PIDFD. ``None`` means that no input is queued
+        yet; callers may only retry under their bounded selected startup wait.
+        """
+        from .source_observers import NativeInitialInputDelivery
+
+        result = self._rpc("native.input.take", {"schema": 1}, timeout=min(30.0, self.timeout),
+                           cancelled=cancelled)
+        if (not isinstance(result, dict) or type(result.get("schema")) is not int
+                or result["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed input delivery")
+        if set(result) == {"schema", "state"} and result.get("state") == "pending":
+            return None
+        fields = {"schema", "source_receipt_handle", "selected_execution_handle",
+                  "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if set(result) not in (fields, fields | {"turn_handle"}):
+            raise AuthorityDenied("native.input.take", "authority returned unexpected input delivery fields")
+        turn_handle = result.get("turn_handle")
+        if turn_handle is not None and (not isinstance(turn_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle)):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed turn handle")
+        try:
+            delivery = NativeInitialInputDelivery(**result)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.input.take", "authority returned an invalid input delivery") from None
+        if not self.monotonic() < delivery.expires_monotonic <= self.monotonic() + 30.0:
+            raise AuthorityDenied("native.input.take", "authority returned an expired input delivery")
+        return delivery
+
+    def finish_selected_native_turn(
+        self, turn_handle: str, final_response_delivery_handle: str,
+    ) -> RootCompletedNativeTurnPresentation:
+        """Finish one peer-bound native turn and receive only its opaque receipt."""
+        for name, handle in (("turn", turn_handle),
+                             ("final response delivery", final_response_delivery_handle)):
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("native.turn.finish", f"{name} handle is malformed")
+        result = self._rpc("native.turn.finish", {
+            "schema": 1,
+            "turn_handle": turn_handle,
+            "final_response_delivery_handle": final_response_delivery_handle,
+        })
+        presentation = RootCompletedNativeTurnPresentation.from_wire(result)
+        if (presentation.turn_handle != turn_handle
+                or presentation.state != "completed"
+                or not self.monotonic() < presentation.expires_monotonic):
+            raise AuthorityDenied("native.turn.finish", "root returned a stale or mismatched turn receipt")
+        return presentation
 
     def begin_native_invocation(self, producer_context_handle: str,
                                 observed_call_handle: str,
@@ -420,7 +475,7 @@ class AuthorityClient:
                 or len(body) > 4 * 1024 * 1024
                 or not isinstance(headers, dict) or len(headers) > 32
                 or any(not isinstance(key, str) or not isinstance(value, str)
-                       or any(char in key + value for char in "\\r\\n\\x00")
+                       or any(char in key + value for char in "\r\n\x00")
                        for key, value in headers.items())
                 or not isinstance(result["receipt_id"], str)
                 or not 1 <= len(result["receipt_id"]) <= 256):

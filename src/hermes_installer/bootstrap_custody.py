@@ -136,16 +136,6 @@ class RootSelectedHermesOperations:
         self._stage = self._run("hermes-agent-stage-v1", timeout=timeout, cancelled=cancelled)
         return self._stage
 
-    def health(self, stage: SelectedHermesRun, *, timeout: float = 600.0,
-               cancelled: Callable[[], bool] | None = None) -> SelectedHermesRun:
-        if (stage is not self._stage or stage.operation_id != "hermes-agent-stage-v1"
-                or stage.enrollment_id != self._enrollment_id
-                or stage.generation_id != self._generation_id
-                or stage.generation_digest != self._generation_digest
-                or not stage.operation_completed):
-            raise BootstrapCustodyError("Hermes health requires this generation's successful stage receipt")
-        return self._run("hermes-agent-health-v1", timeout=timeout, cancelled=cancelled)
-
 
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
