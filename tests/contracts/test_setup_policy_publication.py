@@ -15,7 +15,7 @@ from hermes_installer.authority.setup_policy_publication import (
     _canonical, _sha, POLICY_GENERATIONS, _choice_adoption_from_record,
     _choice_adoption_value, PolicyPublicationReceiptResolver,
     RootSetupPolicyGenerationPublisher, RootSetupPublicationReceipt, _SEAL,
-    _CHOICE_PROJECTION_FIELDS, _validate_choice_adoption_time,
+    _CHOICE_PROJECTION_FIELDS, _validate_choice_adoption_time, _mint_choice_adoptions,
 )
 
 
@@ -400,6 +400,19 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
         projection = SimpleNamespace(**projection_values)
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "original setup deadline"):
             _validate_choice_adoption_time((projection,), record["setup_deadline_unix"] + 0.001)
+
+    def test_publisher_persists_the_adoption_timestamp_on_the_sealed_receipt(self):
+        record = self._choice_adoption_record()
+        projection_values = {key: value for key, value in record.items()
+                             if key in _CHOICE_PROJECTION_FIELDS}
+        projection_values["source_member_receipt_handles"] = tuple(
+            projection_values["source_member_receipt_handles"])
+        compiled = SimpleNamespace(choice_adoptions=(SimpleNamespace(**projection_values),))
+        minted, = _mint_choice_adoptions(
+            compiled, "r" * 64, "7" * 64, "installer-bootstrap-policy-generation-v1",
+            "active-committed", adopted_at_unix=1050.0)
+        self.assertEqual(minted.adopted_at_unix, 1050.0)
+        self.assertEqual(_choice_adoption_value(minted)["adopted_at_unix"], 1050.0)
 
     def test_choice_adoption_currentness_rechecks_signed_source_and_revocation_each_call(self):
         adoption = _choice_adoption_from_record(self._choice_adoption_record())
