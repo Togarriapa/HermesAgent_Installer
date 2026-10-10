@@ -1823,6 +1823,8 @@ class RootSourceBootstrapActorVerifier:
         prefix = interpreter.runtime_prefix.resolve(strict=True)
         stdlib = Path(sysconfig.get_path("stdlib")).resolve(strict=True)
         allowed_paths = {str(prefix), str(root.resolve(strict=True)), str(stdlib)}
+        runtime_members = {item.relative_path for item in interpreter.files}
+        optional_stdlib_zip = prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
         for path in sys.path:
             if not path:
                 raise InstallerReleaseBuildError("bootstrap actor imports from the ambient working directory")
@@ -1834,9 +1836,12 @@ class RootSourceBootstrapActorVerifier:
                 # even when the standalone runtime ships the expanded stdlib
                 # directory only. Permit only that exact absent runtime path;
                 # all other missing import roots remain a closed failure.
-                if _is_absent_optional_stdlib_zip(candidate, prefix):
+                if (candidate == optional_stdlib_zip
+                        and _is_absent_optional_stdlib_zip(candidate, prefix, runtime_members)):
                     continue
                 raise InstallerReleaseBuildError("bootstrap actor import path is unavailable") from None
+            if candidate == optional_stdlib_zip and optional_stdlib_zip.relative_to(prefix).as_posix() not in runtime_members:
+                raise InstallerReleaseBuildError("optional stdlib archive is absent from the measured runtime closure")
             if not any(_is_beneath(resolved, Path(base)) for base in allowed_paths):
                 raise InstallerReleaseBuildError("bootstrap actor import path is outside selected source/runtime closure")
         for name, module in tuple(sys.modules.items()):
@@ -3527,10 +3532,11 @@ def _runtime_site_search_paths() -> list[str]:
     return paths
 
 
-def _is_absent_optional_stdlib_zip(path: Path, runtime_prefix: Path) -> bool:
+def _is_absent_optional_stdlib_zip(path: Path, runtime_prefix: Path,
+                                   runtime_members: set[str] | frozenset[str]) -> bool:
     """Recognize CPython's one optional archive entry when it is truly absent."""
     expected = runtime_prefix / "lib" / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
-    if path != expected:
+    if path != expected or expected.relative_to(runtime_prefix).as_posix() in runtime_members:
         return False
     try:
         os.lstat(path)

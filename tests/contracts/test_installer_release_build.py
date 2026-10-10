@@ -225,12 +225,18 @@ def test_only_absent_fixed_optional_stdlib_zip_is_ignored(tmp_path):
     library.mkdir(parents=True)
     optional_zip = library / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
 
-    assert release_build._is_absent_optional_stdlib_zip(optional_zip, runtime)
-    assert not release_build._is_absent_optional_stdlib_zip(library / "python999.zip", runtime)
-    assert not release_build._is_absent_optional_stdlib_zip(runtime / "missing.zip", runtime)
+    assert release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, {
+        optional_zip.relative_to(runtime).as_posix(),
+    })
+    assert not release_build._is_absent_optional_stdlib_zip(library / "python999.zip", runtime, set())
+    assert not release_build._is_absent_optional_stdlib_zip(runtime / "missing.zip", runtime, set())
 
     optional_zip.symlink_to(library / "missing-target.zip")
-    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime)
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+    optional_zip.unlink()
+    optional_zip.write_bytes(b"unrecorded archive")
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
 
 
 def test_bundled_pip_is_bound_to_fixed_cpython_site_directory(tmp_path):
