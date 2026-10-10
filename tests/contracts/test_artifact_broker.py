@@ -392,6 +392,57 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertFalse(any("glm52" in row.artifact_id and "weight" in row.artifact_id
                              for row in catalog.artifacts.values()))
 
+    def test_native_module_and_hyperframes_toolchain_catalog_rows_are_finite_and_exact(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "toolchain-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        expected_modules = {
+            "installer-native-plugins-source-v137": (
+                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+            "installer-public-registries-source-v137": (
+                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+            "installer-native-invocations-module-v137": (
+                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+            "installer-native-boundary-module-v137": (
+                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
+            "installer-native-source-definitions-module-v137": (
+                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819),
+            "installer-native-input-capture-profile-v1": (
+                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837),
+            "installer-native-tool-result-capture-profile-v1": (
+                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984),
+            "installer-native-provider-result-capture-profile-v1": (
+                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
+        }
+        for artifact_id, (digest, size) in expected_modules.items():
+            spec = catalog.artifacts[artifact_id]
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+        toolchains = {
+            "application-node-26.7.0-linux-arm64": (
+                "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d", 32_581_212,
+                "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-arm64.tar.xz", ("nodejs.org",)),
+            "application-bun-1.4.3-linux-arm64": (
+                "efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21", 41_786_424,
+                "https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-aarch64.zip",
+                ("github.com", "release-assets.githubusercontent.com")),
+            "application-bun-1.4.3-license": (
+                "056696884250b0d682365260cf1487a6501b1665a343ec60e23a1e647043c572", 5_807,
+                "https://raw.githubusercontent.com/oven-sh/bun/c6da4a4d3010e5553438c60f6bd76d981976867c/LICENSE.md",
+                ("raw.githubusercontent.com",)),
+        }
+        for artifact_id, (digest, size, url, hosts) in toolchains.items():
+            spec = catalog.artifacts[artifact_id]
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes, spec.source_url),
+                             (digest, size, size, url))
+            self.assertEqual(spec.redirect_hosts, hosts)
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+
     def test_signed_coral_package_set_binds_only_enrolled_source_runtime_and_two_wheels(self):
         seed = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"
         catalog_path = self.base / "catalog.json"
