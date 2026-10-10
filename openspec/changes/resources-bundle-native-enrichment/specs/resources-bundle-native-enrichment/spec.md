@@ -423,3 +423,10 @@ Private input recipient consent v100: `plans/amendments/2026-10-10-private-input
 Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
 
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+### Requirement: Owner overlay operations v172
+The installer SHALL authorize source-established owner overlay methods through separate protected operation rows and genuine current owned profile CAS grants.
+
+#### Scenario: Local registration has no selected view receipt
+- **WHEN** source inventory names a local method without a current owned view/target/schema/source join
+- **THEN** it remains precisely pending and never becomes an executable backend action
