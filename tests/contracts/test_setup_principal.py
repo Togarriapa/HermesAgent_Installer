@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -159,7 +159,7 @@ class _LiveStore:
         self.handle = RootSetupSessionHandle("setup-fixture-1", "s" * 64)
         self.record = {
             "setup_session_id": "setup-fixture-1", "target_id": "target-fixture-1",
-            "plan_digest": "p" * 64, "operator_uid": 0,
+            "plan_digest": "b" * 64, "operator_uid": 0,
             "transaction_handle": "transaction-fixture-1", "target_uid": 1000,
             "target_gid": 1000, "mode": "install",
             "plan_artifact_id": "installer-root-setup-plan-v1",
@@ -351,6 +351,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
         import time
         import hermes_installer.authority.enrollment as enrollment_module
         import hermes_installer.authority.setup_principal as principal_module
+        from hermes_installer.authority.bootstrap_enrollment import EnrollmentPolicy, _generation
         from hermes_installer.authority.bootstrap_enrollment import InstalledRootSetupActorVerifier
 
         with tempfile.TemporaryDirectory(prefix="setup-principal-stage0-") as temp:
@@ -362,12 +363,14 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
             session_handle = secrets.token_hex(32)
             transaction_handle = secrets.token_hex(32)
             plan_digest = "a" * 64
+            clock = {"now": time.monotonic()}
 
             class InitialSession:
                 phase = "initial-compilation"
                 compilation_session_handle = session_handle
                 compilation_transaction_handle = transaction_handle
                 plan_sha256 = plan_digest
+                choices_sha256 = "c" * 64
                 expires_monotonic = time.monotonic() + 240
                 _root_journal_root = {
                     "root_id": "installer-authority-journal-v1",
@@ -408,6 +411,11 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                         30,
                     )
 
+                def resolve_adopted_handoff(self, normal_handle):
+                    if normal_handle != self.handoff.normal_session_handle:
+                        raise ValueError("unknown normal setup session")
+                    return self.handoff
+
             @dataclass(frozen=True)
             class VerifiedIdentityPolicyTemplate:
                 artifact_id: str
@@ -436,8 +444,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                     vault = RootCredentialVault(vault_root)
                     intake = RootSetupIdentityIntake.from_initial_compilation(
                         registry, actor, vault, journal,
-                        masked_secret_reader=lambda _prompt: "fixture-only-token",
-                    )
+                        masked_secret_reader=lambda _prompt: "fixture-only-token")
                     policy_handle = intake.select_authentik_policy(
                         session_handle, https_origin=fixture.origin,
                         system_group_id="system", recipient_group_id="operators",
@@ -448,6 +455,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                     self.assertTrue(reference.startswith("setup-authentik-"))
                     observer = RootSetupAuthentikIdentityObserver.from_initial_compilation(
                         registry, intake, vault, journal,
+                        monotonic=lambda: clock["now"],
                     )
                     # Trust the fixture certificate while retaining normal HTTPS verification.
                     default_context = ssl.create_default_context
@@ -462,14 +470,128 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                             session_handle, identity_handle)
                         selected = principal_registry.resolve_selected_principal(
                             selection_handle, session_handle, transaction_handle, plan_digest)
+                        normal_store = _LiveStore(journal)
+
+                        class Handoff:
+                            pass
+
+                        handoff = Handoff()
+                        handoff._initial_session = InitialSession()
+                        handoff.compilation_session_handle = session_handle
+                        handoff.compilation_transaction_handle = transaction_handle
+                        handoff.plan_sha256 = plan_digest
+                        handoff.choices_sha256 = "c" * 64
+                        handoff.principal_selection_receipt_handle = selection_handle
+                        handoff.normal_setup_session_id = normal_store.record["setup_session_id"]
+                        handoff.normal_transaction_handle = normal_store.record["transaction_handle"]
+                        handoff.expires_monotonic = time.monotonic() + 240
+                        handoff.normal_session_handle = normal_store.handle
+                        registry.handoff = handoff
+                        selected_generation = _generation(EnrollmentPolicy(
+                            "hermes-agent-native-v1", selected.principal_id,
+                            "generation-fixture-1", "hermes-source-fixture", (), (), (), (),
+                        ))
+                        normal_store.record["expected_previous_generation_digest"] = selected_generation[
+                            "generation_digest"]
+                        normal_store.authority_loader_for_session = lambda: {
+                            "service_generations": selected_generation,
+                        }
+                        factory_module.RootInitialPublicationHandoff = Handoff
+                        with (patch.object(principal_module, "RootSetupSessionStore", _LiveStore),
+                              patch.object(principal_module.os, "geteuid", return_value=0),
+                              patch.object(principal_module.sys, "platform", "linux")):
+                            normal_observer, normal_identity_handle = intake.rebind_published_policy(
+                                normal_session_store=normal_store,
+                                normal_session_handle=normal_store.handle,
+                                initial_principal_registry=principal_registry,
+                                initial_identity_observer=observer,
+                            )
+                            normal_registry, normal_selection_handle = principal_registry.adopt_initial_publication(
+                                normal_session_store=normal_store,
+                                normal_session_handle=normal_store.handle,
+                                authenticated_identity_receipt_handle=normal_identity_handle,
+                                normal_identity_resolver=normal_observer,
+                            )
+                            principal_selector = normal_registry.resolve_adopted_principal_selector(
+                                normal_store, normal_store.handle)
+                            namespace_selector = normal_registry.resolve_adopted_namespace_selector(
+                                normal_store, normal_store.handle)
+                            current_pair = normal_registry.resolve_current_setup_identity(
+                                principal_selector.selection_handle,
+                                namespace_selector.selection_handle, normal_store.handle)
+                            first_current_principal = current_pair.principal.receipt_id
+                            first_current_namespace = current_pair.namespace.receipt_handle
+                            clock["now"] += 31.0
+                            refreshed_pair = normal_registry.resolve_current_setup_identity(
+                                principal_selector.selection_handle,
+                                namespace_selector.selection_handle, normal_store.handle)
+                            self.assertNotEqual(refreshed_pair.principal.receipt_id,
+                                                first_current_principal)
+                            self.assertNotEqual(refreshed_pair.namespace.receipt_handle,
+                                                first_current_namespace)
+                            self.assertEqual(refreshed_pair.principal_selection_handle,
+                                             principal_selector.selection_handle)
+                            self.assertEqual(refreshed_pair.namespace_selection_handle,
+                                             namespace_selector.selection_handle)
+                            self.assertLessEqual(refreshed_pair.expires_monotonic -
+                                                 refreshed_pair.issued_monotonic, 30.0)
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    "0" * 64, namespace_selector.selection_handle, normal_store.handle)
+                            fixture.current_user["pk"] = "subject-revoked"
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            fixture.current_user["pk"] = "subject-17"
+                            fixture.groups["members"]["parents"] = []
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            fixture.groups["members"]["parents"] = ["system"]
+                            original_policy = normal_observer.policy_resolver.policy
+                            normal_observer.policy_resolver.policy = replace(
+                                original_policy, policy_revision="revoked-policy")
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            normal_observer.policy_resolver.policy = original_policy
+                            normal_store.record["expected_previous_generation_digest"] = "e" * 64
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            normal_store.record["expected_previous_generation_digest"] = selected_generation[
+                                "generation_digest"]
+                            clock["now"] += 31.0
+                            final_pair = normal_registry.resolve_current_setup_identity(
+                                principal_selector.selection_handle,
+                                namespace_selector.selection_handle, normal_store.handle)
+                            self.assertEqual(final_pair.principal_selection_handle,
+                                             principal_selector.selection_handle)
+                            self.assertNotEqual(final_pair.principal.receipt_id,
+                                                refreshed_pair.principal.receipt_id)
+                            self.assertNotEqual(final_pair.namespace.receipt_handle,
+                                                refreshed_pair.namespace.receipt_handle)
                     self.assertEqual(identity.authentik_subject_id, "subject-17")
                     self.assertTrue(identity.system_member)
                     self.assertEqual(selected.principal_id,
                                      "authentik:" + __import__("hashlib").sha256(b"subject-17").hexdigest())
                     self.assertEqual(selected.principal_binding.bind(23001).uid, 23001)
+                    self.assertEqual(final_pair.principal.authentik_subject_id, "subject-17")
+                    self.assertNotEqual(final_pair.principal.receipt_id, normal_selection_handle)
+                    self.assertEqual(normal_observer._read_identity_receipt(
+                        normal_identity_handle).setup_session_id, normal_store.record["setup_session_id"])
                     self.assertEqual((vault_root / reference).stat().st_mode & 0o777, 0o600)
                     self.assertNotIn("fixture-only-token",
                                      (journal / "setup-principal-receipts" / f"{identity_handle}.json").read_text())
+                    (vault_root / reference).unlink()
+                    with self.assertRaises(BootstrapEnrollmentPending):
+                        normal_registry.resolve_current_setup_identity(
+                            principal_selector.selection_handle,
+                            namespace_selector.selection_handle, normal_store.handle)
             finally:
                 fixture.close()
 
