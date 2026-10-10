@@ -226,6 +226,22 @@ _COMPOSIO_POLICY = {
 }
 _GEN = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+
+
+def _jarvis_primary_source_row(
+        profiles: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...]
+        ) -> tuple[str, str, str]:
+    """Select the unique user-facing source row from a verified profile index."""
+    matches = [row for row in profiles if isinstance(row, tuple) and len(row) == 3
+               and row[0] == "hermes"]
+    if (len(matches) != 1 or not all(isinstance(value, str) and value for value in matches[0])
+            or not matches[0][1].startswith("profiles/")
+            or not matches[0][1].endswith(".yaml")
+            or not re.fullmatch(r"[0-9a-f]{64}", matches[0][2])):
+        raise BootstrapEnrollmentPending(
+            "verified Resources source must contain exactly one valid Jarvis primary profile"
+        )
+    return matches[0]
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _PREPARED_RELEASE_MEMBER_SEAL = object()
 
@@ -4819,6 +4835,11 @@ class RootBootstrapSession:
         self._pm_runtime_handle: str | None = None
         self._native_pm_bindings: set[tuple[str, str, str]] = set()
         self._resource_profiles: dict[str, RootSelectedResourceProfile] = {}
+        # Complete identity-only index for the exact verified Resources source
+        # retained above. This is not a grant to execute any delegate. The
+        # protected task/runtime path must still establish its current
+        # principal, namespace and operation grants before dispatch.
+        self._resource_profile_source_index: dict[str, tuple[str, str, str]] = {}
         self._resource_profile_tty_proofs: dict[str, Any] = {}
         self._application_setup_choices: dict[str, RootSelectedApplicationQualificationChoice] = {}
         self._application_source_preparations: dict[str, Any] = {}
@@ -7050,19 +7071,19 @@ class RootBootstrapSession:
         if self._resource_profiles:
             raise BootstrapEnrollmentPending("this root setup session already has a Resources TTY selection")
 
+        # Resources profile IDs are internal routing identities. The only
+        # user-facing entry is the source manifest marked as the sole user
+        # entrypoint; asking the operator to choose from all 208 profiles
+        # would expose specialists as alternate front doors.
+        primary = _jarvis_primary_source_row(profiles)
         tty_proof = _capture_root_tty_proof()
         try:
-            print("\nVerified Hermes Resources profiles:")
-            for index, (profile_id, _path, _digest) in enumerate(profiles, 1):
-                print(f"  {index}. {profile_id}")
-            selected_text = input("Select a profile number: ").strip()
+            print("\nVerified user profile: Jarvis")
+            selected_text = input("Press Enter to continue with Jarvis: ").strip()
             _verify_root_tty_proof(tty_proof)
-            if not selected_text.isascii() or not selected_text.isdecimal():
-                raise BootstrapEnrollmentPending("Resources profile selection must be a printed row number")
-            selected_index = int(selected_text) - 1
-            if not 0 <= selected_index < len(profiles):
-                raise BootstrapEnrollmentPending("Resources profile selection is outside the printed list")
-            profile_id, member_path, member_sha = profiles[selected_index]
+            if selected_text:
+                raise BootstrapEnrollmentPending("Jarvis profile confirmation accepts Enter only")
+            profile_id, member_path, member_sha = primary
             live = self._factory.session_store._live(self._handle)
             if (tty_proof.controller_uid != 0 or tty_proof.controller_gid != 0
                     or tty_proof.controller_pid != os.getpid()
@@ -7104,11 +7125,16 @@ class RootBootstrapSession:
             self._resource_profiles[receipt_handle] = receipt
             self._resource_profile_tty_proofs[receipt_handle] = tty_proof
             self._verified_resources[source_handle] = (verified_source, registry)
+            self._resource_profile_source_index = {
+                source_id: (source_path, source_digest, verified_source.revision)
+                for source_id, source_path, source_digest in profiles
+            }
             tty_proof = None
             return receipt_handle
         finally:
             if tty_proof is not None:
                 tty_proof.close()
+
 
     def resolve_selected_resource_profile(self, receipt_handle: str) -> RootSelectedResourceProfile:
         self._check_live()

@@ -26,10 +26,23 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     _service_requires_package_runtime,
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
+    _jarvis_primary_source_row,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_resources_user_entry_is_fixed_to_unique_jarvis_row(self):
+        profiles = [(f"specialist-{index}", f"profiles/specialist-{index}.yaml", "a" * 64)
+                    for index in range(207)]
+        primary = ("hermes", "profiles/hermes.yaml", "b" * 64)
+        self.assertEqual(_jarvis_primary_source_row([*profiles, primary]), primary)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            _jarvis_primary_source_row(profiles)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            _jarvis_primary_source_row([*profiles, primary, primary])
+        with self.assertRaises(BootstrapEnrollmentPending):
+            _jarvis_primary_source_row([("hermes", "../outside.yaml", "b" * 64)])
+
     def test_runnable_role_projection_exposes_only_literal_v72_fields_as_detached_values(self):
         child_refs = {"native-compiled-closure:test": "a" * 64,
                       "native-entrypoint-manifest:test": "b" * 64}
