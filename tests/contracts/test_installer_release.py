@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hermes_installer.authority import installer_release as release
+from hermes_installer.authority import installer_release_build as release_build
 from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
@@ -257,8 +258,40 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                 row["installed_path"], row["sha256"], row["size_bytes"], row["role"])
             for row in v228["new_reviewed_module_members"]
         })
-        self.assertEqual({artifact_id: (path, digest, size, role)
-                          for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
+        v241 = json.loads((Path(__file__).parents[2]
+                           / "planning/candidate-update-source-review-v241.json").read_text())
+        prior_pin = v241["static_pin_update"]
+        v247 = json.loads((Path(__file__).parents[2]
+                           / "planning/source-update-entry-source-review-v247.json").read_text())
+        approved_pin = v247["source"]
+        pin_application = v247["pin_application"]
+        artifact_id = prior_pin["installed_artifact_id"]
+        self.assertEqual(artifact_id, approved_pin["installed_artifact_id"])
+        self.assertEqual(prior_pin["sha256"], pin_application["old_sha256"])
+        self.assertEqual(prior_pin["size_bytes"], pin_application["old_size_bytes"])
+        self.assertEqual(prior_pin["installed_member"], approved_pin["installed_member"])
+        self.assertEqual(prior_pin["role"], approved_pin["role"])
+        self.assertEqual(prior_pin["source_path"], approved_pin["source_path"])
+        self.assertEqual(prior_pin["tables"], pin_application["tables"])
+        self.assertEqual(approved_pin["sha256"], "0b7d7203b41d3496ebb14d6997fa3e3aaef58aafa98bb8c498004aaf31960616")
+        self.assertEqual(approved_pin["size_bytes"], 71543)
+        source_bytes = (Path(__file__).parents[2] / approved_pin["source_path"]).read_bytes()
+        self.assertEqual(len(source_bytes), approved_pin["size_bytes"])
+        self.assertEqual(hashlib.sha256(source_bytes).hexdigest(), approved_pin["sha256"])
+        expected[artifact_id] = (
+            approved_pin["installed_member"], approved_pin["sha256"],
+            approved_pin["size_bytes"], approved_pin["role"])
+        actual_release = {artifact_id: (path, digest, size, role)
+                          for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}
+        actual_builder = {
+            name: (source_path, installed_path, digest, size, role)
+            for name, source_path, installed_path, digest, size, role
+            in release_build.REVIEWED_SOURCE_MODULES
+        }
+        self.assertEqual(actual_release, expected)
+        self.assertEqual(actual_builder[approved_pin["module_name"]], (
+            approved_pin["source_path"], approved_pin["installed_member"],
+            approved_pin["sha256"], approved_pin["size_bytes"], approved_pin["role"]))
         rows = [
             VerifiedReleaseFile("installer-root-setup-launcher-v1", ("launcher",), LAUNCHER_PATH,
                                 "1" * 64, 1, 1, 1, 0o555),
