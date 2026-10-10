@@ -9,6 +9,7 @@ The requested Pi setup needs fresh/adopted supported arm64 install, official age
 - Implement the full constraints and individual obligations assigned to `installer-bootstrap-desktop` in planning/traceability.json.
 - Deliver component-specific functional/failure tests and account/hardware pending states rather than clone-only completion.
 - Preserve existing data and keep all externally funded/account/device actions within configured scope.
+- Keep release-build retries usable with retained sealed outputs by reserving a conservative selected-input/output bound under the existing aggregate CAS limit; never prune retained outputs to make capacity.
 
 ## Capabilities
 

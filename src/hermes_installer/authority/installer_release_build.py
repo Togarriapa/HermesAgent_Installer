@@ -247,6 +247,7 @@ MAX_SOURCE_FILE_BYTES = 512 * 1024 * 1024
 MAX_SOURCE_TREE_BYTES = 8 * 1024 * 1024 * 1024
 MAX_SOURCE_CAS_BYTES = 16 * 1024 * 1024 * 1024
 MAX_RELEASE_BUILD_CAS_BYTES = 16 * 1024 * 1024 * 1024
+MAX_RELEASE_BUILD_MANIFEST_BYTES = 16 * 1024 * 1024
 BOOTSTRAP_RUNTIME_ROOT = Path("/var/lib/hermes-installer/bootstrap-runtimes")
 BOOTSTRAP_RUNTIME_ARCHIVE_URL = (
     "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/"
@@ -2562,7 +2563,7 @@ class VerifiedInstallerReleaseBuildReceipt:
     def open_manifest(self) -> int:
         self.verify_current()
         fd = _open_relative(self._root_fd, RELEASE_MANIFEST_PATH, os.O_RDONLY)
-        digest, _ = _hash_fd(fd, 16 * 1024 * 1024)
+        digest, _ = _hash_fd(fd, MAX_RELEASE_BUILD_MANIFEST_BYTES)
         if digest != self.closure_manifest_sha256:
             os.close(fd)
             raise InstallerReleaseBuildError("release manifest changed while opening")
@@ -2611,14 +2612,25 @@ class RootInstalledReleaseBuilder:
         _ensure_root_directory(Path("/var/lib/hermes-installer/authority-journal"), 0o700)
         _ensure_root_directory(BUILD_CAS_ROOT.parent, 0o700)
         _ensure_root_directory(BUILD_CAS_ROOT, 0o700)
-        if _tree_byte_usage(BUILD_CAS_ROOT) + 2 * MAX_SOURCE_TREE_BYTES > MAX_RELEASE_BUILD_CAS_BYTES:
-            raise BootstrapEnrollmentPending("release build CAS has no bounded space for another sealed output")
+        with _locked_release_build_cas(BUILD_CAS_ROOT):
+            return self._build_selected_under_capacity_lock(
+                distribution_handle, source, interpreter, actor)
+
+    def _build_selected_under_capacity_lock(
+            self, distribution_handle: str, source: VerifiedInstallerDistributionReceipt,
+            interpreter: VerifiedInstallerInterpreterReceipt,
+            actor: VerifiedRootSourceBootstrapActor) -> str:
+        source.verify_current()
+        interpreter.verify_current()
+        actor.verify_current(source, interpreter)
+        plan_bytes = self._render_plan(source)
+        reservation_bytes = _release_build_output_reservation(source, interpreter, plan_bytes)
+        _require_release_build_cas_capacity(_tree_byte_usage(BUILD_CAS_ROOT), reservation_bytes)
         output = BUILD_CAS_ROOT / secrets.token_hex(24)
         os.mkdir(output, 0o700)
         root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             rows_without_identity = self._stage_fixed_layout(root_fd, source, interpreter, actor)
-            plan_bytes = self._render_plan(source)
             _write_relative(root_fd, STAGED_PLAN_PATH, plan_bytes, mode=0o444)
             rows_without_identity.append((STAGED_PLAN_PATH, hashlib.sha256(plan_bytes).hexdigest(),
                                           len(plan_bytes), 0o444, ("plan",)))
@@ -2631,6 +2643,8 @@ class RootInstalledReleaseBuilder:
                                          "size_bytes": row.size_bytes, "mode": row.mode,
                                          "roles": list(row.roles)} for row in rows]}
             manifest_bytes = _canonical_json(manifest_value)
+            if len(manifest_bytes) > MAX_RELEASE_BUILD_MANIFEST_BYTES:
+                raise InstallerReleaseBuildError("release manifest exceeds its fixed build-CAS limit")
             if sum(row.size_bytes for row in rows) + len(manifest_bytes) > 2 * MAX_SOURCE_TREE_BYTES:
                 raise InstallerReleaseBuildError("release output exceeds its fixed build-CAS size limit")
             _write_relative(root_fd, RELEASE_MANIFEST_PATH, manifest_bytes, mode=0o444)
@@ -3260,6 +3274,60 @@ def _tree_byte_usage(root: Path) -> int:
             if total > MAX_SOURCE_CAS_BYTES:
                 return total
     return total
+
+
+@contextmanager
+def _locked_release_build_cas(root: Path) -> Iterator[None]:
+    """Serialize reservation and output creation without pruning retained builds."""
+    root_fd = _open_secure_directory(root, expected_uid=0)
+    lock_fd = -1
+    try:
+        lock_fd = os.open(".capacity.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                          0o600, dir_fd=root_fd)
+        info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+            raise InstallerReleaseBuildError("release build CAS capacity lock custody is invalid")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if lock_fd >= 0:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+        os.close(root_fd)
+
+
+def _release_build_output_reservation(
+        source: VerifiedInstallerDistributionReceipt,
+        interpreter: VerifiedInstallerInterpreterReceipt,
+        plan_bytes: bytes) -> int:
+    """Bound a new build from selected source/runtime bytes and generated output."""
+    # Some exact source rows are staged both under their original baseline / amendment
+    # paths and under the installed layout (for example pinned templates and the build
+    # driver). Reserving twice the complete selected source is a conservative bound for
+    # that intentional duplication without charging the full 8 GiB source ceiling.
+    source_bytes = 2 * sum(row.size_bytes for row in source.files)
+    runtime_bytes = sum(row.size_bytes for row in interpreter.files)
+    executable_fd = interpreter.open_executable()
+    try:
+        executable_info = os.fstat(executable_fd)
+        if not stat.S_ISREG(executable_info.st_mode) or executable_info.st_size <= 0:
+            raise InstallerReleaseBuildError("selected runtime executable has no bounded regular-file size")
+        executable_bytes = executable_info.st_size
+    finally:
+        os.close(executable_fd)
+    return (source_bytes + runtime_bytes + executable_bytes + len(plan_bytes)
+            + MAX_RELEASE_BUILD_MANIFEST_BYTES)
+
+
+def _require_release_build_cas_capacity(used_bytes: int, reservation_bytes: int) -> None:
+    if (type(used_bytes) is not int or used_bytes < 0 or type(reservation_bytes) is not int
+            or reservation_bytes < 0 or reservation_bytes > MAX_RELEASE_BUILD_CAS_BYTES
+            or used_bytes > MAX_RELEASE_BUILD_CAS_BYTES - reservation_bytes):
+        raise BootstrapEnrollmentPending(
+            "release build CAS lacks bounded capacity for the selected output")
 
 
 def _write_distribution_receipt(candidate_dir: Path,

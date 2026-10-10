@@ -7,8 +7,10 @@ import os
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1454,6 +1456,54 @@ def test_bootstrap_fd3_survives_exec_and_same_fd_cloexec_is_repaired():
 
     exercise(source_is_fd3=True)
     exercise(source_is_fd3=False)
+
+
+def test_release_build_cas_reservation_uses_selected_input_bounds_and_retains_headroom(tmp_path):
+    executable = tmp_path / "python"
+    executable.write_bytes(b"python-runtime-executable")
+    source = SimpleNamespace(files=(SimpleNamespace(size_bytes=101), SimpleNamespace(size_bytes=203)))
+    interpreter = SimpleNamespace(
+        files=(SimpleNamespace(size_bytes=307), SimpleNamespace(size_bytes=409)),
+        open_executable=lambda: os.open(executable, os.O_RDONLY),
+    )
+    plan_bytes = b"rendered plan"
+    reservation = release_build._release_build_output_reservation(source, interpreter, plan_bytes)
+    expected = (2 * (101 + 203) + 307 + 409 + len(b"python-runtime-executable") + len(plan_bytes)
+                + release_build.MAX_RELEASE_BUILD_MANIFEST_BYTES)
+    assert reservation == expected
+
+    retained_pi_output_bytes = 606_706_296
+    release_build._require_release_build_cas_capacity(retained_pi_output_bytes, reservation)
+    release_build._require_release_build_cas_capacity(
+        release_build.MAX_RELEASE_BUILD_CAS_BYTES - reservation, reservation)
+    with pytest.raises(release_build.BootstrapEnrollmentPending, match="bounded capacity"):
+        release_build._require_release_build_cas_capacity(
+            release_build.MAX_RELEASE_BUILD_CAS_BYTES - reservation + 1, reservation)
+    with pytest.raises(release_build.BootstrapEnrollmentPending, match="bounded capacity"):
+        release_build._require_release_build_cas_capacity(0, release_build.MAX_RELEASE_BUILD_CAS_BYTES + 1)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() != 0,
+                    reason="capacity lock requires a root-owned protected Linux fixture")
+def test_release_build_cas_capacity_lock_serializes_usage_reservations():
+    root = Path(tempfile.mkdtemp(prefix="hermes-release-build-cas-lock-", dir="/root"))
+    os.chmod(root, 0o700)
+    lock_fd = -1
+    try:
+        with release_build._locked_release_build_cas(root):
+            lock_path = root / ".capacity.lock"
+            info = lock_path.stat(follow_symlinks=False)
+            assert info.st_uid == 0 and info.st_gid == 0 and info.st_nlink == 1
+            assert release_build.stat.S_IMODE(info.st_mode) == 0o600
+            lock_fd = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+            with pytest.raises(BlockingIOError):
+                release_build.fcntl.flock(lock_fd, release_build.fcntl.LOCK_EX | release_build.fcntl.LOCK_NB)
+        release_build.fcntl.flock(lock_fd, release_build.fcntl.LOCK_EX | release_build.fcntl.LOCK_NB)
+    finally:
+        if lock_fd >= 0:
+            os.close(lock_fd)
+        (root / ".capacity.lock").unlink(missing_ok=True)
+        os.rmdir(root)
 
 
 def test_runtime_handoff_cannot_be_constructed_without_registry_seal():
