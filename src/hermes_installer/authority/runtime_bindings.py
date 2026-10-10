@@ -357,6 +357,7 @@ class RootRuntimeBindings:
                 or service.roots.work_id != selected.record["work_root_id"]
                 or service.roots.data_id != selected.record["data_root_id"]
                 or selected.record["max_lifetime_seconds"] > managed.max_lifetime_seconds
+                or selected.record["max_lifetime_seconds"] > recipe.recipe.max_lifetime_seconds
                 or managed.memory_max_bytes is None
                 or selected.record["max_memory_bytes"] > managed.memory_max_bytes
                 or selected.record["max_workers"] != 1

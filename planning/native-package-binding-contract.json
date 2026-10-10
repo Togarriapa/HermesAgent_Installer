@@ -748,6 +748,21 @@
       "component_count": 18,
       "operational_projection": false,
       "meaning": "Actual recording register_tool source facts only, never handler execution or selected result/observer/source receipt authority. Null result/source receipts and empty observers stay unqualified; root selected producer resolves actual proofs before executable candidates."
+    },
+    "toolset_namespace_clarification": "toolset is exact actual register_tool source value; native_server_name is selected transport/ownership namespace label (hermes-installer for nonMCP), distinct from toolset. Patched pre-discovery registration preserves trusted toolset separately from MCP ownership prefix; no schema field renaming/inference. Source-only inventory remains separate, executable index includes only fully proved selected rows; missing required family/tool proof is incomplete coverage, not accepted omission.",
+    "binding_examples": {
+      "direct": {
+        "selector_values": {},
+        "action_id": "exact-existing-selected-action-id",
+        "argument_projection": [
+          {
+            "name": "exact-action-field",
+            "source_field": "exact-registered-field"
+          }
+        ],
+        "workflow_id": null
+      },
+      "workflow": "Same four keys; action_id external registration_id, workflow_id actual selected fixed workflow, selectors source exact literals or empty if one validated workflow. MCP direct binding selects protected native_mcp_tool_bindings.id as action_id per existing explicit id/action mapping (row has no invented action_id field). Public/owner rows select external registration_id and exact reviewed handler_id; no fake effect enrollment."
     }
   },
   "private_input_recipient_consent": {
@@ -817,6 +832,7 @@
     "dto_types": "Root-only sealed immutable DTO; schema1 and purpose/private recipients/zero budget as above. receipt_handle independent random actual registry lookup. input_selection_digest is actual root canonical selected input closure, input_observation_handle root retained actual input record before source capture, never source-text classification. service_generation_digest verified containing current runtime snapshot supplied externally, no recursive active row. Fresh lease min(input proof,selected execution,policy/route/principal leases,now+30s); signed domain root-private-input-consent-v1. Copied DTO/signature alone cannot bypass actual lookup/current revocation.",
     "selected_input_join": "RootNativeInputSelection gains root-derived private_consent_selection_handle (null means no egress consent). Root selected task/health/Desktop/HTTP/audio selection resolver obtains it from registry current profile preference, never worker request. AuthorityService.issue_selected_input_source resolves fresh consent against EXACT same observed_input_proof/selected_input_binding and intersects selected source_issuer.private_provider_route_ids, current consent route recipients and EVERY parent recipient ceiling. UNKNOWN/private sensitivity stays unchanged. Empty intersection remains empty/deny; do not strip ancestry or grant public route. This permits authentic selected private input only when actual current root-held explicit preference exists.",
     "revoke": "revoke_selected_private_input_consent(selection_handle,current_authorized_owner_request)->RootPrivateInputConsentRevocationReceipt {schema,selection_handle,consent_id,revocation_epoch,revoked_monotonic,signature}. Actual current owner request bound root actor/principal/private profile, atomically increments durable epoch/state. Recheck before source issuance and every dispatch/retry/background child. Old receipt ceilings are necessary but not sufficient: current consent epoch checked separately. Previously emitted/committed bytes are not claimed undone.",
-    "evidence": "Explicit selected private route choice then authentic initial input and private provider request positive; absent/public/wrong owner/profile/generation/unknown route/stale policy/revoked epoch/parent empty ceiling/replayed lookup/forged choice/worker authorized flag negatives. No public promotion or account/budget readiness inferred. All acceptance pending."
+    "evidence": "Explicit selected private route choice then authentic initial input and private provider request positive; absent/public/wrong owner/profile/generation/unknown route/stale policy/revoked epoch/parent empty ceiling/replayed lookup/forged choice/worker authorized flag negatives. No public promotion or account/budget readiness inferred. All acceptance pending.",
+    "dispatch_revalidation": "revalidate_retained_input_consent(consent_receipt_handle,*,retained_input_selection_handle,expected_consent_id,expected_revocation_epoch)->same retained RootPrivateInputConsent. Root registry non-consumingly resolves actual original input/selection and consent record after ingress consumed, rechecks current owner/profile/namespace/service/policy/routes/revocation and original expiry. Expected fields match independently retained root request closure, not caller dict. No re-consume ingress, extend stale input/source lease, remint permission or strip ancestry. Authority every dispatch/retry/background child calls it; current empty/revoked/expired denies."
   }
 }

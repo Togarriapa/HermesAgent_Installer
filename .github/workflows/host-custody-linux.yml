@@ -33,6 +33,12 @@ jobs:
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_process_custody_linux -v
 
+      - name: Exercise selected display credential mount custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_xauthority_mount_kernel_linux.py' -v
+
       - name: Exercise root task custody
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
         run: |
