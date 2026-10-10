@@ -63,7 +63,7 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             self.assertFalse(_safe_relative(path), path)
         self.assertTrue(_safe_relative("plans/bootstrap-policy.json"))
 
-    def test_v63_installed_release_roles_use_exact_paths_and_module_ids(self):
+    def test_installed_release_roles_use_exact_paths_and_module_ids(self):
         self.assertEqual(_module_name("lib/python/hermes_installer/authority/daemon.py"),
                          "hermes_installer.authority.daemon")
         self.assertEqual(_module_name("lib/python/hermes_installer/__init__.py"),
@@ -88,6 +88,30 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         with self.assertRaises(InstallerReleaseError):
             _validate_fixed_layout_role("plans/bootstrap-policy-v1.json",
                                         "1" * 64, 10, ["bootstrap-policy"])
+
+    def test_current_fixed_template_closure_matches_v72_v77_v81_pins(self):
+        from hermes_installer.authority.installer_release import FIXED_TEMPLATES
+        expected = {
+            "templates/root-setup-plan-template-v1.json":
+                ("installer-root-setup-plan-template-v1",
+                 "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5", 920),
+            "templates/bootstrap-receipt-bindings-template-v1.json":
+                ("installer-bootstrap-receipt-bindings-template-v1",
+                 "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609", 10195),
+            "templates/composio-whatsapp-catalog-read-policy-v1.json":
+                ("installer-composio-whatsapp-catalog-read-policy-v1",
+                 "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5", 528),
+        }
+        actual = {path: (artifact_id, digest, size)
+                  for artifact_id, path, digest, size in FIXED_TEMPLATES}
+        for path, value in expected.items():
+            self.assertEqual(actual[path], value)
+        self.assertEqual(len(actual), 6)
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role(
+                "templates/composio-whatsapp-catalog-read-policy-v1.json",
+                "0" * 64, 528, ["template"],
+            )
 
     def test_open_verified_file_checks_digest_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as td:
