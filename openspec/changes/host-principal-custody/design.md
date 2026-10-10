@@ -350,3 +350,8 @@ Health causal ancestry v194: `plans/amendments/2026-10-10-health-event-causal-an
 ## Final coherent source review v195
 
 Exact closed source/member/catalog/preload application under existing VD-T180.6/VD-T183.5: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`. Source0add8c33 follows reviewed nested leaf corrections; metadata self-pinning is excluded. All original implementation/acceptance tasks and AC01..AC18 remain OPEN.
+
+
+## Installed startup and qualification custody v197
+
+Actual daemon/setup process separation requires a closed source-issued startup intent and concrete tagged admission; installed qualification must construct its own real fixture source/publication/session/runtime graph. Exact finite contract/order/failures: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md` / `planning/installed-startup-qualification-custody-v197.json`. No private store copy, production relabel or BPF relaxation; all original AC and future source pins OPEN.

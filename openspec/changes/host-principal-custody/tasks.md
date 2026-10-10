@@ -416,3 +416,9 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 
 
 Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.
+
+
+- [ ] `HI-T197.1` Implement live setup-issued fixed startup intent, cancellation and authenticated adopted-channel transport; exact contract `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md`.
+- [ ] `HI-T197.2` Compose genuine daemon intent registry/tagged display admission/controller PIDFD and attach before dispatch; no copied setup session.
+- [ ] `HI-T197.3` Implement fixed owned qualification controller/source/PM/materializer/publication/session/runtime composer and both installed dispatch suites; preserve HI-T160/173/178 dependencies.
+- [ ] `VD-T197.4` Replace synthetic positive display/task fixtures with genuine composed authority/custody/effects, replay/currentness/BPF/cleanup failures; all AC01..AC18 OPEN.

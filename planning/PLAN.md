@@ -107,3 +107,6 @@ Final coherent source review v195: `plans/amendments/2026-10-10-final-coherent-s
 
 
 Safe bootstrap diagnostics v196: `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md` / `planning/safe-bootstrap-diagnostics-source-review-v196.json`; BD-T196.1/VD-T196.2 OPEN, exact fff38897 source review updates only two v195 leaves, no guard or runtime authority change. All AC01..AC18 OPEN; immutable baseline unchanged.
+
+
+Installed startup/qualification custody v197: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md`; HI-T197.1..3/VD-T197.4 OPEN. Closed actual two-actor startup intent, separate concrete fixture session/runtime composition and real task admission chain; no production relabel or BPF weakening. All AC01..AC18 and actual future source pins OPEN.

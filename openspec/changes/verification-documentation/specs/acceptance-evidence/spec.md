@@ -907,3 +907,17 @@ The installer SHALL report bootstrap OS failures only through the exact finite s
 #### Scenario: Exact source application remains separate from target success
 - **WHEN** the two reviewed source tuples are applied and source tests pass
 - **THEN** actual candidate publication, installed execution and all original runtime/target acceptance SHALL still require their genuine evidence
+
+
+## ADDED Requirements
+
+### Requirement: Genuine installed startup and qualification authority
+The installer SHALL use the exact closed process/session/source/publication contract in `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md` to compose selected display startup and fixed installed qualification effects.
+
+#### Scenario: Setup and daemon are different actors
+- **WHEN** the daemon admits a selected startup from root setup
+- **THEN** a bounded one-use authenticated original-deadline startup intent and actual controller PIDFD/current protected source selection SHALL be required, with no copied store or recreated setup handle
+
+#### Scenario: Fixed qualification has a real producer
+- **WHEN** display or task qualification runs
+- **THEN** its current owned controller, actual source/PM/materialized fixture publication/session and isolated composed runtime SHALL drive the production typed effect path and verified cleanup; missing proof or unsupported kernel SHALL not count as passed
