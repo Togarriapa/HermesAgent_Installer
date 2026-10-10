@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -256,6 +257,169 @@ def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._download_pinned(release_build.BOOTSTRAP_PYYAML_URL, "0" * 64,
                                        len(payload), 1024)
+
+
+def test_runtime_download_follows_only_one_exact_public_asset_redirect(monkeypatch):
+    payload = b"pinned runtime bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    url = release_build.BOOTSTRAP_RUNTIME_ARCHIVE_URL
+    location = "https://release-assets.githubusercontent.com/release/asset?sig=fixture-secret"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256", digest)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_DOWNLOAD", len(payload))
+    requests = []
+
+    class Response:
+        status = 200
+        headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+
+        def __init__(self):
+            self.offset = 0
+            self.closed = False
+
+        def geturl(self):
+            return location
+
+        def read(self, count=-1):
+            if count < 0:
+                count = len(payload)
+            result = payload[self.offset:self.offset + count]
+            self.offset += len(result)
+            return result
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            assert timeout == 30
+            if len(requests) == 1:
+                from email.message import Message
+                headers = Message()
+                headers["Location"] = location
+                raise release_build.urllib.error.HTTPError(
+                    url, 302, "Found", headers, io.BytesIO())
+            return response
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    assert release_build._download_pinned(
+        url, digest, len(payload), len(payload)) == payload
+    assert len(requests) == 2
+    assert requests[0].full_url == url
+    assert requests[1].full_url == location
+    for request in requests:
+        assert request.get_header("Authorization") is None
+        assert request.get_header("Cookie") is None
+        assert request.get_header("Proxy-authorization") is None
+        assert request.get_header("Referer") is None
+    assert response.closed
+
+
+@pytest.mark.parametrize("location", [
+    None,
+    "https://release-assets.githubusercontent.com.evil.invalid/file?sig=x",
+    "https://release-assets.githubusercontent.com./file?sig=x",
+    "https://user@release-assets.githubusercontent.com/file?sig=x",
+    "http://release-assets.githubusercontent.com/file?sig=x",
+    "https://release-assets.githubusercontent.com:444/file?sig=x",
+    "https://release-assets.githubusercontent.com/file#fragment",
+    "https://reléase-assets.githubusercontent.com/file?sig=x",
+    "//release-assets.githubusercontent.com/file?sig=x",
+    "https://release-assets.githubusercontent.com/" + "x" * 8200,
+])
+def test_runtime_redirect_rejects_unreviewed_locations(location):
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._validate_runtime_asset_redirect(location)
+
+
+def test_runtime_download_rejects_a_second_redirect_and_hash_mismatch(monkeypatch):
+    payload = b"wrong bytes"
+    digest = hashlib.sha256(b"expected bytes").hexdigest()
+    url = release_build.BOOTSTRAP_RUNTIME_ARCHIVE_URL
+    location = "https://release-assets.githubusercontent.com/release/asset?sig=fixture-secret"
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256", digest)
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_DOWNLOAD", len(payload))
+
+    class Opener:
+        def open(self, request, timeout):
+            from email.message import Message
+            headers = Message()
+            headers["Location"] = location
+            raise release_build.urllib.error.HTTPError(
+                request.full_url, 302, "Found", headers, io.BytesIO())
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(url, digest, len(payload), len(payload))
+
+    class OneRedirectThenWrongBody:
+        calls = 0
+
+        def open(self, request, timeout):
+            from email.message import Message
+            self.calls += 1
+            if self.calls == 1:
+                headers = Message()
+                headers["Location"] = location
+                raise release_build.urllib.error.HTTPError(
+                    request.full_url, 302, "Found", headers, io.BytesIO())
+
+            class Response:
+                status = 200
+                headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+
+                def __init__(self):
+                    self.offset = 0
+
+                def geturl(self):
+                    return location
+
+                def read(self, count=-1):
+                    if count < 0:
+                        count = len(payload)
+                    result = payload[self.offset:self.offset + count]
+                    self.offset += len(result)
+                    return result
+
+                def close(self):
+                    return None
+
+            return Response()
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: OneRedirectThenWrongBody())
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="bytes do not match"):
+        release_build._download_pinned(url, digest, len(payload), len(payload))
+
+
+def test_pyyaml_download_keeps_no_redirect_policy(monkeypatch):
+    calls = []
+
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request.full_url)
+            from email.message import Message
+            headers = Message()
+            headers["Location"] = "https://release-assets.githubusercontent.com/unreviewed"
+            raise release_build.urllib.error.HTTPError(
+                request.full_url, 302, "Found", headers, io.BytesIO())
+
+    monkeypatch.setattr(release_build.urllib.request, "build_opener",
+                        lambda *handlers: Opener())
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._download_pinned(
+            release_build.BOOTSTRAP_PYYAML_URL,
+            release_build.BOOTSTRAP_PYYAML_SHA256,
+            release_build.BOOTSTRAP_PYYAML_BYTES,
+            1_048_576,
+        )
+    assert calls == [release_build.BOOTSTRAP_PYYAML_URL]
 
 
 def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():

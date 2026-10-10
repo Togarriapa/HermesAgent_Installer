@@ -24,6 +24,7 @@ import tarfile
 import time
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, is_dataclass
@@ -899,25 +900,77 @@ def _load_runtime_receipt(handle: str, distribution_handle: str) -> _Provisioned
 
 
 def _download_pinned(url: str, expected_sha: str, expected_size: int, maximum: int) -> bytes:
-    if (url not in {BOOTSTRAP_RUNTIME_ARCHIVE_URL, BOOTSTRAP_PYYAML_URL}
-            or not _SHA256.fullmatch(expected_sha) or expected_size > maximum):
+    runtime_pin = (url == BOOTSTRAP_RUNTIME_ARCHIVE_URL
+                   and expected_sha == BOOTSTRAP_RUNTIME_ARCHIVE_SHA256
+                   and expected_size == BOOTSTRAP_RUNTIME_ARCHIVE_BYTES
+                   and maximum == BOOTSTRAP_RUNTIME_MAX_DOWNLOAD)
+    wheel_pin = (url == BOOTSTRAP_PYYAML_URL
+                 and expected_sha == BOOTSTRAP_PYYAML_SHA256
+                 and expected_size == BOOTSTRAP_PYYAML_BYTES
+                 and maximum == 1_048_576)
+    if not (runtime_pin or wheel_pin) or not _SHA256.fullmatch(expected_sha):
         raise InstallerReleaseBuildError("bootstrap payload source is outside fixed policy")
-    request = urllib.request.Request(url, headers={"Accept-Encoding": "identity", "User-Agent": "HermesInstaller/1"})
+
+    def request_for(target: str) -> urllib.request.Request:
+        return urllib.request.Request(
+            target, headers={"Accept-Encoding": "identity", "User-Agent": "HermesInstaller/1"})
+
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    response: Any = None
+    target: str | None = None
     try:
-        with opener.open(request, timeout=30) as response:
-            if response.status != 200 or response.geturl() != url:
-                raise InstallerReleaseBuildError("pinned bootstrap payload response is not the fixed HTTPS object")
-            if response.headers.get_content_length() not in (None, expected_size):
-                raise InstallerReleaseBuildError("pinned bootstrap payload length differs from the fixed size")
-            body = response.read(maximum + 1)
-            if len(body) > maximum or response.read(1):
-                raise InstallerReleaseBuildError("pinned bootstrap payload exceeds its transfer bound")
+        try:
+            response = opener.open(request_for(url), timeout=30)
+        except urllib.error.HTTPError as redirect:
+            if not runtime_pin or redirect.code != 302 or redirect.url != url:
+                redirect.close()
+                raise InstallerReleaseBuildError("pinned bootstrap payload response is not permitted") from None
+            try:
+                location = redirect.headers.get("Location")
+            finally:
+                redirect.close()
+            target = _validate_runtime_asset_redirect(location)
+            try:
+                response = opener.open(request_for(target), timeout=30)
+            except urllib.error.HTTPError as second_response:
+                second_response.close()
+                raise InstallerReleaseBuildError("pinned runtime asset returned another redirect or HTTP error") from None
+        if response.status != 200 or (runtime_pin and target is None):
+            raise InstallerReleaseBuildError("pinned bootstrap payload response is not successful")
+        if response.geturl() != (target if runtime_pin else url):
+            raise InstallerReleaseBuildError("pinned bootstrap payload response URL changed unexpectedly")
+        if response.headers.get_content_length() not in (None, expected_size):
+            raise InstallerReleaseBuildError("pinned bootstrap payload length differs from the fixed size")
+        body = response.read(maximum + 1)
+        if len(body) > maximum or response.read(1):
+            raise InstallerReleaseBuildError("pinned bootstrap payload exceeds its transfer bound")
     except (OSError, urllib.error.URLError, TimeoutError):
         raise BootstrapEnrollmentPending("pinned bootstrap payload could not be acquired over verified TLS") from None
+    finally:
+        if response is not None:
+            response.close()
     if len(body) != expected_size or hashlib.sha256(body).hexdigest() != expected_sha:
         raise InstallerReleaseBuildError("pinned bootstrap payload bytes do not match the reviewed digest")
     return body
+
+
+def _validate_runtime_asset_redirect(location: str | None) -> str:
+    if not isinstance(location, str) or not location:
+        raise InstallerReleaseBuildError("pinned runtime redirect location is missing or oversized")
+    try:
+        if len(location.encode("utf-8", "strict")) > 8192:
+            raise InstallerReleaseBuildError("pinned runtime redirect location is missing or oversized")
+        location.encode("ascii", "strict")
+        parsed = urllib.parse.urlsplit(location)
+        port = parsed.port
+    except (UnicodeEncodeError, ValueError):
+        raise InstallerReleaseBuildError("pinned runtime redirect location is malformed") from None
+    if (parsed.scheme != "https" or parsed.hostname != "release-assets.githubusercontent.com"
+            or parsed.netloc not in {"release-assets.githubusercontent.com", "release-assets.githubusercontent.com:443"}
+            or port not in (None, 443)
+            or parsed.username is not None or parsed.password is not None or parsed.fragment):
+        raise InstallerReleaseBuildError("pinned runtime redirect authority is outside fixed policy")
+    return location
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
