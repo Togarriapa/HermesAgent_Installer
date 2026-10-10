@@ -284,7 +284,8 @@ def test_selected_application_runtime_record_joins_recipe_roots_and_artifacts_bu
         def resolve_launch_recipe(self, enrollment_id, generation, operation_id):
             assert (enrollment_id, generation, operation_id) == (
                 "service-a", "profile-generation-a", "application-run-v1")
-            return SimpleNamespace(process_start_target="application:start")
+            return SimpleNamespace(process_start_target="application:start",
+                                   recipe=SimpleNamespace(max_lifetime_seconds=90))
         def resolve_operation(self, enrollment_id, generation, operation):
             assert operation == "process.start"
             return SimpleNamespace(target="application:start")
