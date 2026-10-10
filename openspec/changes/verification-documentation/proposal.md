@@ -91,3 +91,6 @@ Selected view paths v192: `plans/amendments/2026-10-10-native-worker-selected-vi
 
 
 Selected member custody v193: `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md` permits only exact five native-output file binds into a separately owned readable target tree, preserving original protected root/member proof and empty hidden source parents; exact private selected/observed APIs distinguish source and target identity. All pins/acceptance OPEN.
+
+
+Health causal ancestry v194: `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md` retains each native event digest meaning and real causal source relations, replaces impossible uniform run equality with observed authenticated DAG proof, and binds schema2 receipt/completion to final result closure plus health_run_proof_sha256. No fixture ancestry substitution; all acceptance/pins OPEN.

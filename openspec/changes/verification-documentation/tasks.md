@@ -132,3 +132,5 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 - [ ] VD-T192.2 Verify actual selected PM/package views, loader/proc proof and conflict/source/readability failures. See `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; acceptance OPEN.
 
 - [ ] VD-T193.2 Verify five readonly member binds/source0700/target custody and failure cleanup. See `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; acceptance OPEN.
+
+- [ ] VD-T194.3 Verify real distinct input/tool ancestry joins and false samehash/foreignchain failures. See `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; acceptance OPEN.

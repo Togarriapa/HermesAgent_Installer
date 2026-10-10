@@ -98,3 +98,6 @@ Native selected views v192: `plans/amendments/2026-10-10-native-worker-selected-
 
 
 Native member custody v193: `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; HI-T193.1 → VD-T193.2 OPEN, source root/member versus actual owned target identities distinct. All AC01..18 OPEN.
+
+
+Health event ancestry v194: `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; HI-T194.1 → HI-T194.2 → VD-T194.3 OPEN, genuine per-event provenance and causal DAG/source proof. All AC01..18 OPEN.
