@@ -23,6 +23,7 @@ from hermes_installer.registry.resources_runtime import (
     SelectedResourceExecution,
     SelectedResourceRegistry,
     selected_resource_specs_by_generation,
+    selected_resource_registry_from_verified_materialization,
     ResourceRuntimeError,
     SelectedResourceUnavailable,
     WebhookVerifier,
@@ -40,6 +41,7 @@ from hermes_installer.registry.resources_runtime import (
     _verified_installed_resource_bundle,
 )
 from hermes_installer.registry.source import load_bundled_source
+from hermes_installer.registry.native import NativeRegistry
 from hermes_installer.state import Journal, OwnedRoot
 
 
@@ -225,6 +227,55 @@ class ResourcesRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(policy_receipt.event_id, "d-2")
 
+    def test_webhook_authenticates_raw_bytes_before_duplicate_safe_json_parse(self):
+        secret = b"s" * 32
+        store = _ReplayStore()
+        verifier = WebhookVerifier(store, now=lambda: 100.0)
+        spec = {
+            "path": "/hooks/strict", "method": "POST",
+            "authentication": {"type": "hmac-sha256", "signatureHeader": "X-Signature"},
+            "action": {"type": "repository-change-review", "mutate": False},
+            "replayProtection": {"deliveryIdHeader": "X-Delivery"},
+            "policy": {"authorityFromWebhookReceipt": "deny"},
+        }
+        duplicate_body = b'{"repository":{"id":1},"repository":{"id":2}}'
+        headers = {"Content-Type": "application/json", "X-Delivery": "strict-1"}
+        bad_signature = "sha256=" + "0" * 64
+        with self.assertRaisesRegex(ResourceRuntimeError, "signature verification"):
+            verifier.verify("strict-hook", spec, {**headers, "X-Signature": bad_signature},
+                            duplicate_body, secret)
+        self.assertEqual(store.ids, set())
+
+        signature = "sha256=" + hmac.new(secret, duplicate_body, hashlib.sha256).hexdigest()
+        with self.assertRaisesRegex(ResourceRuntimeError, "duplicate fields"):
+            verifier.verify("strict-hook", spec, {**headers, "X-Signature": signature},
+                            duplicate_body, secret)
+        self.assertEqual(store.ids, set())
+
+        valid_body = b'{"repository":{"id":1}}'
+        valid_signature = "sha256=" + hmac.new(secret, valid_body, hashlib.sha256).hexdigest()
+        receipt = verifier.verify("strict-hook", spec,
+                                  {**headers, "X-Signature": valid_signature}, valid_body, secret)
+        self.assertEqual(receipt.event_id, "strict-1")
+        self.assertEqual(store.ids, {("strict-hook", "strict-1")})
+
+        bounded_store = _ReplayStore()
+        bounded_verifier = WebhookVerifier(bounded_store, now=lambda: 100.0)
+        too_deep = (b'{"a":' * 34) + b'0' + (b'}' * 34)
+        deep_headers = {**headers, "X-Delivery": "strict-deep"}
+        deep_signature = "sha256=" + hmac.new(secret, too_deep, hashlib.sha256).hexdigest()
+        with self.assertRaisesRegex(ResourceRuntimeError, "nesting bound"):
+            bounded_verifier.verify("strict-hook", spec,
+                                    {**deep_headers, "X-Signature": deep_signature}, too_deep, secret)
+        too_many_members = ("{" + ",".join(f'"k{i}":0' for i in range(4097)) + "}").encode()
+        member_headers = {**headers, "X-Delivery": "strict-members"}
+        member_signature = "sha256=" + hmac.new(secret, too_many_members, hashlib.sha256).hexdigest()
+        with self.assertRaisesRegex(ResourceRuntimeError, "member bound"):
+            bounded_verifier.verify("strict-hook", spec,
+                                    {**member_headers, "X-Signature": member_signature},
+                                    too_many_members, secret)
+        self.assertEqual(bounded_store.ids, set())
+
     def test_durable_webhook_replay_store_survives_restart_and_fails_closed_when_full(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -403,6 +454,48 @@ class ResourcesRuntimeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ResourceRuntimeError, "ID and generation are ambiguous"):
             selected_resource_specs_by_generation(SelectedResourceRegistry((first, second)))
+
+    def test_selected_specs_are_reloaded_from_pinned_verified_materialization(self):
+        source = load_bundled_source()
+        registry = NativeRegistry.from_verified_source(source)
+        discovery = registry.discover(("crons/resource-sync",))
+        resolved = next(item for item in discovery.resources
+                        if item.resource.id == "resource-sync")
+        identity = ResourceIdentity(
+            resolved.resource.id, resolved.resource.kind.value, resolved.resource.version,
+            registry.paths[f"crons/{resolved.resource.id}@{resolved.resource.version}"],
+            source.revision, resolved.resource.digest,
+        )
+        selected = SelectedResourceExecution(
+            identity=identity, generation_digest="c" * 64,
+            effective_spec={"action": {"type": "caller-forged"}},
+            capability="resource.cron.run",
+            target=f"resource:crons/{identity.resource_id}@{identity.version}",
+            operation="resource.cron.run", recipient=None,
+            delegation_id="selected-cron", profile_id="hermes", enabled=True,
+        )
+        joined = selected_resource_registry_from_verified_materialization(
+            registry, discovery, (selected,), expected_generation_digest="c" * 64,
+        )
+        effective = joined.rows[0].effective_spec
+        self.assertEqual(effective["action"]["type"], "installer-resource-candidate-assessment")
+        self.assertEqual(effective["action"]["source"]["revision"], source.revision)
+        self.assertNotEqual(effective["action"]["type"], "caller-forged")
+
+        tampered_identity = ResourceIdentity(
+            identity.resource_id, identity.kind, identity.version, identity.source_path,
+            "f" * 40, identity.content_digest,
+        )
+        tampered = SelectedResourceExecution(
+            identity=tampered_identity, generation_digest="c" * 64,
+            effective_spec={}, capability=selected.capability, target=selected.target,
+            operation=selected.operation, recipient=None, delegation_id=selected.delegation_id,
+            profile_id=selected.profile_id, enabled=True,
+        )
+        with self.assertRaisesRegex(ResourceRuntimeError, "does not match"):
+            selected_resource_registry_from_verified_materialization(
+                registry, discovery, (tampered,), expected_generation_digest="c" * 64,
+            )
 
     def test_candidate_assessment_rejects_partial_or_unpinned_bundle_artifact(self):
         with tempfile.TemporaryDirectory() as temp:
