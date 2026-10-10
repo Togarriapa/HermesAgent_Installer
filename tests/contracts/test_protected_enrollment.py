@@ -804,9 +804,12 @@ def test_public_web_scope_parser_binds_canonical_payload_and_rejects_unsafe_targ
     )}
     assert parsed.enrolled_scope.target == "plugin:web:docs-a:process-g1"
     assert parsed.enrolled_scope.targets[0].hostname == "docs.example.org"
-    assert parsed.scope_payload_sha256 == hashlib.sha256(json.dumps(
+    canonical_payload = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-    ).encode("utf-8")).hexdigest()
+    ).encode("utf-8")
+    assert parsed.scope_payload == canonical_payload
+    assert parsed.scope_payload_sha256 == hashlib.sha256(canonical_payload).hexdigest()
+    assert type(parsed.enrolled_scope.deadline_seconds) is int
     assert parsed.service_generation_digest == "c" * 64
 
     for bad in (
