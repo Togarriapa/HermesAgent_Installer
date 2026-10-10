@@ -229,6 +229,25 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertNotIn("sudo -- hermes-installer-root-setup install", output.getvalue())
         self.assertNotIn("/tmp", output.getvalue())
 
+    def test_qualification_dispatch_is_finite_and_never_enters_setup_lifecycle(self) -> None:
+        with patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch("hermes_installer.root_setup._require_root_linux"), \
+             patch("hermes_installer.root_setup.run_root_setup_action",
+                   side_effect=AssertionError("qualification must not run install/resume/update")), \
+             patch("hermes_installer.root_setup._run_installed_qualification", return_value=4) as dispatch:
+            code = main(["qualify", "--suite", "resource-cron-task-v1"])
+        dispatch.assert_called_once_with("resource-cron-task-v1")
+        self.assertEqual(code, 4)
+
+    def test_qualification_rejects_missing_or_unreviewed_suite(self) -> None:
+        with self.assertRaises(SystemExit):
+            main(["qualify"])
+        with self.assertRaises(SystemExit):
+            main(["qualify", "--suite", "caller-selected-suite"])
+        with self.assertRaises(SystemExit):
+            main(["install", "--suite", "resource-cron-task-v1"])
+
 
 if __name__ == "__main__":
     unittest.main()

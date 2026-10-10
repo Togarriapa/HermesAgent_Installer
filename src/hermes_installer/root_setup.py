@@ -23,6 +23,12 @@ class RootSetupAction(StrEnum):
     INSTALL = "install"
     RESUME = "resume"
     UPDATE = "update"
+    QUALIFY = "qualify"
+
+
+class RootInstalledQualificationSuite(StrEnum):
+    RESOURCE_CRON_TASK = "resource-cron-task-v1"
+    DISPLAY_XAUTHORITY = "display-xauthority-v1"
 
 
 class RootSetupState(StrEnum):
@@ -126,8 +132,9 @@ class RootSetupExplicitChoices:
             raise TypeError("root setup choices must be issued by the root TTY selection registry")
         if not isinstance(candidate_git_sha, str) or not _CANDIDATE_SHA.fullmatch(candidate_git_sha):
             raise ValueError("candidate source choice must be an exact lowercase 40-character Git SHA")
-        if not isinstance(lifecycle_action, RootSetupAction):
-            raise ValueError("root lifecycle action must be a fixed RootSetupAction enum")
+        if (not isinstance(lifecycle_action, RootSetupAction)
+                or lifecycle_action is RootSetupAction.QUALIFY):
+            raise ValueError("source bootstrap accepts only install, resume, or update")
         object.__setattr__(self, "candidate_git_sha", candidate_git_sha)
         object.__setattr__(self, "lifecycle_action", lifecycle_action)
         object.__setattr__(self, "_seal", _seal)
@@ -237,8 +244,9 @@ class RootBootstrapCandidateSelectionRegistry:
     def issue_explicit_tty_choice(self, action: RootSetupAction) -> RootSetupExplicitChoices:
         if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
             raise RuntimeError("candidate source choice requires the Linux root setup process")
-        if not isinstance(action, RootSetupAction):
-            raise ValueError("root lifecycle action must be one of the fixed RootSetupAction values")
+        if (not isinstance(action, RootSetupAction)
+                or action is RootSetupAction.QUALIFY):
+            raise ValueError("root source bootstrap accepts only install, resume, or update")
         if not (sys.stdin.isatty() and sys.stderr.isatty()):
             raise RuntimeError("candidate source choice requires the root controlling terminal")
         proof = _capture_root_tty_proof()
@@ -356,7 +364,9 @@ def run_root_setup_action(
     try:
         selected_action = RootSetupAction(action)
     except (TypeError, ValueError):
-        raise ValueError("root setup action must be install, resume, or update") from None
+        raise ValueError("root setup action must be install, resume, update, or qualify") from None
+    if selected_action is RootSetupAction.QUALIFY:
+        raise ValueError("qualification requires the fixed --suite selector")
 
     try:
         _require_root_linux()
@@ -575,10 +585,21 @@ def run_root_setup_action(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
     parser.add_argument("action", choices=tuple(item.value for item in RootSetupAction))
+    parser.add_argument("--suite", choices=tuple(item.value for item in RootInstalledQualificationSuite))
     args = parser.parse_args(argv)
+    if args.action == RootSetupAction.QUALIFY.value:
+        if args.suite is None:
+            parser.error("qualify requires --suite with a fixed installed qualification suite")
+    elif args.suite is not None:
+        parser.error("--suite is available only with qualify")
     if not sys.stdin.isatty() or not sys.stderr.isatty():
+        if args.action == RootSetupAction.QUALIFY.value:
+            print("Qualification requires the root controlling terminal.", file=sys.stderr)
+            return 4
         result = _result(RootSetupAction(args.action), RootSetupState.PENDING, "admission",
                          "Root setup requires its controlling terminal for local operator intake.")
+    elif args.action == RootSetupAction.QUALIFY.value:
+        return _run_installed_qualification(args.suite)
     else:
         try:
             result = run_root_setup_action(args.action)
@@ -595,6 +616,52 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result.state is RootSetupState.PENDING and result.resume_command:
         print(f"Resume with: {result.resume_command}", file=sys.stderr)
     return result.exit_code
+
+
+def _run_installed_qualification(suite_id: str) -> int:
+    """Dispatch one source-owned qualification recipe through the installed actor."""
+    try:
+        selected_suite = RootInstalledQualificationSuite(suite_id)
+    except (TypeError, ValueError):
+        print("Qualification suite is outside the fixed installed suite catalog.", file=sys.stderr)
+        return 1
+    try:
+        _require_root_linux()
+    except RuntimeError:
+        print("Qualification is incomplete: a current Linux root actor is required.", file=sys.stderr)
+        return 4
+    try:
+        from .authority.installed_qualification import (
+            RootInstalledQualificationResult,
+            run_selected_installed_qualification,
+        )
+    except ImportError:
+        print("Qualification is incomplete: the verified installed dispatcher is unavailable.",
+              file=sys.stderr)
+        return 4
+    try:
+        result = run_selected_installed_qualification(selected_suite.value)
+    except Exception as exc:
+        # The dispatcher owns detailed typed diagnostics. Never print exception
+        # contents, which could contain paths, source data, or credentials.
+        print(f"Qualification is incomplete ({type(exc).__name__}).", file=sys.stderr)
+        return 4
+    if (type(result) is not RootInstalledQualificationResult
+            or getattr(result, "schema", None) != 1
+            or getattr(result, "suite_id", None) != selected_suite.value
+            or getattr(result, "status", None) not in {"passed", "failed", "incomplete"}):
+        print("Qualification is incomplete: installed dispatcher returned an invalid result.",
+              file=sys.stderr)
+        return 4
+    status = result.status
+    evidence = getattr(result, "evidence_sha256", None)
+    if status == "passed" and (not isinstance(evidence, str)
+                               or not re.fullmatch(r"[0-9a-f]{64}", evidence)):
+        print("Qualification is incomplete: passed result has no valid evidence digest.",
+              file=sys.stderr)
+        return 4
+    print(f"Installed qualification {selected_suite.value}: {status}.", file=sys.stderr)
+    return {"passed": 0, "failed": 1, "incomplete": 4}[status]
 
 
 def launcher_status() -> LauncherStatus:
