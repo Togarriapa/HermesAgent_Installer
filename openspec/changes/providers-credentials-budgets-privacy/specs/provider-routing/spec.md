@@ -307,3 +307,10 @@ The installer SHALL verify current signed source choice/revocation and active ad
 #### Scenario: Original signed choice is revoked under unchanged active pointer
 - **WHEN** the root journal choice epoch/revocation changes
 - **THEN** the adoption/current permission denies despite an unchanged policy pointer and never extends an expired setup or runtime lease
+
+### Requirement: Runtime choice revocation source v156
+The installer SHALL consume genuine current installed actor and one-use foreground TTY revocation observation tied to the displayed adopted choice before signing a durable revoked epoch.
+
+#### Scenario: Revocation request carries caller epoch or expired setup proof
+- **WHEN** no genuine current runtime revocation observation exists
+- **THEN** the registry denies without changing the signed choice or restoring an expired lease

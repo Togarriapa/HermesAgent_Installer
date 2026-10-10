@@ -633,3 +633,10 @@ The installer SHALL bind the two reviewed worker source members with source-modu
 #### Scenario: Prepared worker source is available before worker launch
 - **WHEN** a verified held release includes the exact source-module bytes
 - **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Runtime choice revocation source v156
+The installer SHALL consume genuine current installed actor and one-use foreground TTY revocation observation tied to the displayed adopted choice before signing a durable revoked epoch.
+
+#### Scenario: Revocation request carries caller epoch or expired setup proof
+- **WHEN** no genuine current runtime revocation observation exists
+- **THEN** the registry denies without changing the signed choice or restoring an expired lease
