@@ -309,3 +309,8 @@ Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protec
 Source-owned qualification lease observation precedes source session/PM/NSS/home acquisition; genuine fixture process custody attaches once only after strict current source/runtime/identity/publication bindings. See `planning/qualification-source-before-process-custody-v230.json`. Original guards, deadlines, cleanup and all acceptance remain unchanged.
 Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md` and `planning/typed-initial-pending-diagnostics-v232.json` govern only nine fixed initial source boundaries and exact-type safe formatting. Actor/currentness and nested account checks remain genuine; no exception contents, TTL/parser changes or source hash approvals. BD-T232.1 → VD-T232.2 remain OPEN, all AC OPEN.
 Active authority aggregate v231: planning/active-authority-receipt-aggregate-v231.json requires consume only the issuer-current v231 active authority aggregate, bind its actual canonical core bytes/hash/size and reuse its exact generation at activation. BD-T231.2 and VD-T231.3 remain OPEN; all AC OPEN.
+
+
+## Retained qualification terminal v233
+
+See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.

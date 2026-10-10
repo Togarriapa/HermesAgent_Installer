@@ -204,3 +204,8 @@ Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-boots
 Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
 
 Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.
+
+
+## v233 Retained oneshot terminal
+
+`planning/retained-qualification-oneshot-terminal-v233.json` preserves exact active/exited evidence and permits purpose-owned quiescent unit collection only under original current custody. HI-T233.1/VD-T233.2 and all AC remain open. Installed predecessor update remains a separate unimplemented path.

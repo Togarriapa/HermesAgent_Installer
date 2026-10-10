@@ -1011,3 +1011,17 @@ The installer SHALL consume only the issuer-current v231 active authority aggreg
 #### Scenario: Current source receipts join active compilation
 - **WHEN** the current sealed aggregate and exact native precompile reservation have been validated
 - **THEN** the compiler binds the real core and distinct crosswalk members without resolving an already published policy to obtain its own inputs
+
+
+## ADDED Requirements
+
+### Requirement: Retained oneshot terminal evidence
+The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
+
+#### Scenario: Retained child has exited successfully
+- **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
+- **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
+
+#### Scenario: Active unit is not the retained terminal
+- **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
+- **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority

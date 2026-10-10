@@ -226,3 +226,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T230.2: Verify pre-attachment denial, exact current owner joins, original expiry and both cleanup phases; target acceptance remains open.
 - [ ] BD-T232.1: Source owner implements exact BootstrapPendingStepFailure and nine fixed boundaries/formatter with actor, account, redaction, subclass and malformed-field failures.
 - [ ] VD-T232.2: Review actual coherent committed diagnostic bytes under v228 and next target evidence independently; no source/acceptance promotion.
+
+
+- [ ] HI-T233.1: Implement retained oneshot terminal DTO/current verification and purpose-owned collection under v233.
+- [ ] VD-T233.2: Validate real systemd terminal/transport, drift/failure/foreign cleanup cases and independent native acceptance.

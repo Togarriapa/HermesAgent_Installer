@@ -1227,3 +1227,17 @@ The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json`
 #### Scenario: Diagnostic field changed after construction
 - **WHEN** the step is non-string or absent from the finite catalog
 - **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation
+
+
+## ADDED Requirements
+
+### Requirement: Retained oneshot terminal evidence
+The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
+
+#### Scenario: Retained child has exited successfully
+- **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
+- **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
+
+#### Scenario: Active unit is not the retained terminal
+- **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
+- **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority

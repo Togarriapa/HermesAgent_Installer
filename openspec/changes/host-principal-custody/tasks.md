@@ -483,3 +483,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actual effects separately.
 
 - [ ] HI-T231.1 (v231): Retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication. Genuine pipeline/failure evidence VD-T231.3 and target acceptance separately OPEN.
+
+
+- [ ] HI-T233.1: Implement retained oneshot terminal DTO/current verification and purpose-owned collection under v233.
+- [ ] VD-T233.2: Validate real systemd terminal/transport, drift/failure/foreign cleanup cases and independent native acceptance.
