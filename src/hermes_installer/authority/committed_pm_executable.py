@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import stat
@@ -174,8 +175,11 @@ class RootActiveCommittedPMExecutableResolver:
                     executable_uid=observed["executable_uid"],
                     executable_gid=observed["executable_gid"],
                     executable_mode=observed["executable_mode"],
-                    expires_monotonic=min(time.monotonic() + 30.0,
-                                          choice["setup_deadline_monotonic"]),
+                    # Adoption was required to occur before the original
+                    # setup deadline. Once adopted and currently published,
+                    # the active proof gets its own short lease.
+                    expires_monotonic=min(_fresh_active_lease(time.monotonic()),
+                                          choice["active_lease_expires_monotonic"]),
                     member_fds=tuple(member_fds), _issuer=self._issuer,
                 )
                 if identity.expires_monotonic <= time.monotonic():
@@ -308,11 +312,7 @@ class RootActiveCommittedPMExecutableResolver:
         from .service import _ROOT_SETUP_CHOICE_DOMAIN
 
         handle = active["source_choice_selection_handle"]
-        adopted_rows = [row for row in publication.choice_adoptions
-                        if row.selection_handle == handle and row.purpose == "native-policy-preparation"]
-        if len(adopted_rows) != 1:
-            raise ValueError("current active publication has no unique signed native choice adoption")
-        adoption = adopted_rows[0]
+        adoption = _select_exact_adoption(publication.choice_adoptions, handle)
         row, revoked = _read_choice_rows(
             self._journals.resolve(active["root_journal_id"],
                                    expected_active_generation_digest=self._catalog.digest).path)
@@ -327,8 +327,7 @@ class RootActiveCommittedPMExecutableResolver:
             revoked, choices=row, key=key, service_generation_digest=self._catalog.digest,
             release_deployment_receipt_sha256=self._release.deployment_receipt_sha256,
         )
-        if handle in revoked:
-            raise ValueError("signed setup choice has a durable revocation")
+        _require_not_revoked(handle, revoked)
         signed = row[handle]
         _verify_signed_choice(signed, key)
         canonical = _canonical(signed)
@@ -372,9 +371,9 @@ class RootActiveCommittedPMExecutableResolver:
                 or payload.get("service_generation") != active["process_profile_generation"]
                 or payload.get("principal_binding_sha256") != active["principal_binding_sha256"]
                 or payload.get("namespace_binding_sha256") != active["namespace_binding_sha256"]
-                or adoption.adopted_at_unix < signed["issued_at_unix"]
-                or adoption.adopted_at_unix > signed["setup_deadline_unix"]
-                or time.time() >= signed["setup_deadline_unix"]):
+                or not _valid_active_adoption_window(
+                    signed.get("issued_at_unix"), signed.get("setup_deadline_unix"),
+                    adoption.adopted_at_unix)):
             raise ValueError("current publisher adoption no longer matches signed choice source")
         selected = [item for item in payload.get("selected_worker_recipe_records", [])
                     if isinstance(item, Mapping)
@@ -386,15 +385,12 @@ class RootActiveCommittedPMExecutableResolver:
         # pointer race. The signed row and revocation index are independently
         # reopened on each call.
         current = PolicyPublicationReceiptResolver.resolve_current_choice_adoption(handle)
-        if (current.signed_record_sha256 != adoption.signed_record_sha256
-                or current.publication_receipt_handle != publication.receipt_handle):
-            raise ValueError("publisher choice adoption changed during source verification")
+        _require_same_current_adoption(current, adoption, publication.receipt_handle)
         return {
             "selection_handle": handle,
             "signed_record_sha256": row_sha,
             "setup_deadline_unix": signed["setup_deadline_unix"],
-            "setup_deadline_monotonic": time.monotonic() + max(
-                0.0, signed["setup_deadline_unix"] - time.time()),
+            "active_lease_expires_monotonic": _fresh_active_lease(time.monotonic()),
         }
 
     def _observe_pm(self, runtime: Mapping[str, Any], journal_path: Path
@@ -524,6 +520,41 @@ def _verify_signed_choice(row: Any, key: bytes) -> None:
                         hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, row["signature"]):
         raise ValueError("signed native choice HMAC is invalid")
+
+
+def _valid_active_adoption_window(issued_at: Any, setup_deadline: Any,
+                                  adopted_at: Any) -> bool:
+    """The original deadline constrains adoption, not later active use."""
+    values = (issued_at, setup_deadline, adopted_at)
+    if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
+        return False
+    return issued_at <= adopted_at <= setup_deadline
+
+
+def _require_same_current_adoption(current: Any, adopted: Any,
+                                   publication_handle: str) -> None:
+    if (current.signed_record_sha256 != adopted.signed_record_sha256
+            or current.publication_receipt_handle != publication_handle
+            or adopted.publication_receipt_handle != publication_handle):
+        raise ValueError("publisher choice adoption changed during source verification")
+
+
+def _select_exact_adoption(rows: Any, selection_handle: str) -> Any:
+    selected = [row for row in rows
+                if row.selection_handle == selection_handle
+                and row.purpose == "native-policy-preparation"]
+    if len(selected) != 1:
+        raise ValueError("current active publication has no unique signed native choice adoption")
+    return selected[0]
+
+
+def _fresh_active_lease(now_monotonic: float) -> float:
+    return now_monotonic + 30.0
+
+
+def _require_not_revoked(selection_handle: str, revocations: Mapping[str, Any]) -> None:
+    if selection_handle in revocations:
+        raise ValueError("signed setup choice has a durable revocation")
 
 
 def _verify_revocation_index(index: Any, *, choices: Mapping[str, Any], key: bytes,
