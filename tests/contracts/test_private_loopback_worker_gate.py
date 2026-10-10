@@ -9,6 +9,7 @@ import signal
 import socket
 import struct
 import json
+from unittest import mock
 from pathlib import Path
 
 
@@ -88,6 +89,64 @@ def test_live_worker_probe_reports_unsupported_effects_instead_of_authorizing_st
     assert (state == "ready") is actual_denials
     if denied_probe["outcome"] == "bound":
         assert state == "unsupported"
+
+
+def test_actual_gate_runner_never_executes_after_observed_unsupported_bind_policy():
+    """Drive main() with real socket probes and assert its unsupported branch."""
+    allowed, denied = _free_port(), _free_port()
+    while denied == allowed:
+        denied = _free_port()
+    contract = _contract(allowed, denied)
+    raw = json.dumps(contract, sort_keys=True, separators=(",", ":"),
+                     ensure_ascii=True).encode("ascii")
+    digest = __import__("hashlib").sha256(raw).hexdigest()
+    real_checks, real_state = _HELPER._probe(contract)
+    assert all(name in real_checks for name in (
+        "wrong_port_bind", "ipv6_bind", "wildcard_bind", "af_unix_control"))
+    assert real_checks["allowed_bind"] == {"outcome": "bound", "errno": None}
+
+    manager, worker = __import__("socket").socketpair(__import__("socket").AF_UNIX,
+                                                       __import__("socket").SOCK_STREAM)
+    await_root_release = _HELPER._await_root_release
+    emitted = []
+    exec_calls = []
+
+    def issue_real_one_use_grant(channel, *, nonce, contract_sha256):
+        grant = {
+            "schema": 1, "purpose": "private-loopback-worker-release",
+            "nonce": nonce, "contract_sha256": contract_sha256, "decision": "release",
+        }
+        encoded = json.dumps(grant, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True).encode("ascii")
+        manager.sendall(struct.pack("!I", len(encoded)) + encoded)
+        return await_root_release(channel, nonce=nonce,
+                                  contract_sha256=contract_sha256)
+
+    try:
+        with mock.patch.object(_HELPER.sys, "argv", ["private-loopback-worker-gate"]), \
+             mock.patch.object(_HELPER, "_read_contract", return_value=(contract, digest)), \
+             mock.patch.object(_HELPER, "_self_identity", return_value={"pid": os.getpid()}), \
+             mock.patch.object(_HELPER, "_gate_channel_from_activation", return_value=worker), \
+             mock.patch.object(_HELPER, "_send_frame", side_effect=lambda _fd, value, _bound: emitted.append(value)), \
+             mock.patch.object(_HELPER, "_await_root_release", side_effect=issue_real_one_use_grant), \
+             mock.patch.object(_HELPER.os, "kill") as kill, \
+             mock.patch.object(_HELPER.os, "execve", side_effect=lambda *args: exec_calls.append(args)
+                               or (_ for _ in ()).throw(OSError("controlled exec return"))), \
+             mock.patch.object(_HELPER, "_emit", side_effect=lambda value: emitted.append(value)):
+            result = _HELPER.main()
+        assert emitted[0]["checks"] == real_checks
+        assert emitted[0]["state"] == real_state
+        if real_state == "unsupported":
+            assert result == 77
+            assert not exec_calls
+            kill.assert_not_called()
+        else:
+            assert result == 75  # controlled execve return is unavailable, never success
+            assert len(exec_calls) == 1
+            kill.assert_called_once_with(os.getpid(), signal.SIGSTOP)
+    finally:
+        manager.close()
+        worker.close()
 
 
 def test_contract_validation_rejects_role_port_mismatch_before_probe():

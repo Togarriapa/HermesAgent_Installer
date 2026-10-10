@@ -1429,6 +1429,94 @@ def _parse_active_generation_record_collections(
         ) from exc
 
 
+def _freeze_generation_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_generation_json(child)
+                                 for key, child in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_generation_json(child) for child in value)
+    return value
+
+
+def _row_digest(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+
+
+def _validate_native_worker_generation_rows(item: Mapping[str, Any]) -> None:
+    """Validate exact v184 row schemas, acyclic digests and closed catalog FKs."""
+    names = ("native_worker_network_records", "active_network_generation_records",
+             "native_worker_runtime_records")
+    catalogs = [item[name] for name in names]
+    if not any(catalogs):
+        return
+    if not all(len(rows) == 1 for rows in catalogs):
+        raise ValueError("native worker network generation catalogs must be an atomic singleton set")
+    from .native_worker_generation_schema import validate_row
+
+    network, = catalogs[0]
+    active, = catalogs[1]
+    runtime, = catalogs[2]
+    validate_row(network, "native_worker_network_record", path="native_worker_network_record")
+    validate_row(active, "active_network_generation_record", path="active_network_generation_record")
+    validate_row(runtime, "native_worker_runtime_record", path="native_worker_runtime_record")
+    generation_id = item["generation_id"]
+    if (network["generation"] not in {row.get("generation") for row in item["service_records"]}
+            or active["generation_id"] != generation_id
+            or runtime["generation_id"] != generation_id):
+        raise ValueError("native worker generation foreign key is stale")
+    if (_row_digest(network) != active["network_row_sha256"]
+            or _row_digest(runtime) != active["worker_runtime_record_sha256"]):
+        raise ValueError("active network row digest does not match the complete child body")
+    service_rows = [row for row in item["service_records"]
+                    if row.get("enrollment_id") == active["service_enrollment_id"]
+                    and row.get("generation") == active["service_generation"]]
+    if (len(service_rows) != 1 or _row_digest(service_rows[0]) != active["service_row_sha256"]
+            or active["network_catalog"] != names[0]
+            or active["network_id"] != network["id"]
+            or active["network_generation"] != network["generation"]
+            or active["network_row_sha256"] != _row_digest(network)
+            or active["worker_runtime_record_id"] != runtime["id"]
+            or runtime["recipe_id"] != active["recipe_id"]
+            or runtime["recipe_sha256"] != active["recipe_sha256"]
+            or runtime["source_choice_selection_handle"] != active["source_choice_selection_handle"]
+            or runtime["service_enrollment_id"] != active["service_enrollment_id"]
+            or runtime["profile_id"] != active["process_profile_id"]
+            or runtime["profile_generation"] != active["process_profile_generation"]
+            or network["worker_enrollment_id"] != active["service_enrollment_id"]
+            or network["worker_profile_id"] != active["process_profile_id"]
+            or network["namespace_identity"] != active["namespace_id"]
+            or service_rows[0].get("profile_id") != active["process_profile_id"]
+            or service_rows[0].get("principal_id") != active["principal_id"]
+            or service_rows[0].get("namespace_identity") != active["namespace_id"]):
+        raise ValueError("native worker rows do not join their exact service/network/runtime records")
+
+
+def _validate_native_worker_process_profile_join(
+        item: Mapping[str, Any], raw_profiles: Any, typed_profiles: Mapping[str, Any]) -> None:
+    if not item.get("active_network_generation_records"):
+        return
+    active = item["active_network_generation_records"][0]
+    rows = [row for row in raw_profiles if isinstance(row, dict)
+            and row.get("profile_id") == active["process_profile_id"]]
+    profile = typed_profiles.get(active["process_profile_id"])
+    if (len(rows) != 1 or profile is None
+            or _row_digest(rows[0]) != active["process_row_sha256"]
+            or profile.generation != active["process_profile_generation"]):
+        raise ValueError("native worker active network row does not match the complete process profile")
+    service = next((row for row in item["service_records"]
+                    if row.get("enrollment_id") == active["service_enrollment_id"]
+                    and row.get("generation") == active["service_generation"]), None)
+    if (service is None or profile.owner_uid != service.get("service_uid")
+            or profile.owner_gid != service.get("service_gid")
+            or profile.service_user != service.get("service_user")
+            or str(profile.executable) != service.get("executable")
+            or profile.artifact_sha256 != service.get("executable_sha256")):
+        raise ValueError("native worker process profile does not match the selected service identity")
+
+
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
@@ -1487,16 +1575,13 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         if (not isinstance(rows, list) or len(rows) > row_limit
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
-    if schema == 2 and any(item[name] for name in (
-            "native_worker_network_records", "active_network_generation_records",
-            "native_worker_runtime_records")):
-        # These rows are activated only by the HI182/HI183 root-held producer
-        # and current-generation owner. Do not accept their presence before
-        # the closed typed parser and complete source joins are installed.
-        raise AuthorityDenied(
-            "enrollment.generation",
-            "native worker network catalogs are unavailable until verified source joins are installed",
-        )
+    if schema == 2:
+        try:
+            _validate_native_worker_generation_rows(item)
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise AuthorityDenied(
+                "enrollment.generation", "native worker generation rows are malformed or mismatched",
+            ) from exc
     # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
     # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
     try:
@@ -2603,6 +2688,14 @@ def _parse_protected_enrollment_document(
     primary_gids = [process_profiles[binding.profile_id].owner_gid for binding in bindings.values()]
     if len(primary_gids) != len(set(primary_gids)) or any(type(gid) is not int or gid <= 0 for gid in primary_gids):
         raise AuthorityDenied("enrollment.principal", "socket principals require unique protected primary groups")
+    try:
+        _validate_native_worker_process_profile_join(
+            service_generations, profiles, process_profiles,
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        raise AuthorityDenied(
+            "enrollment.generation", "native worker generation process profile join is invalid",
+        ) from None
     catalogs = {}
     for field in ("provider_enrollments", "mcp_services", "memory_providers"):
         entries = root[field]
@@ -2917,11 +3010,11 @@ def _parse_protected_enrollment_document(
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["memory_service_enablement_projections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["public_web_scopes"]),
-        native_worker_network_records=tuple(MappingProxyType(dict(row)) for row in
+        native_worker_network_records=tuple(_freeze_generation_json(row) for row in
                                              service_generations.get("native_worker_network_records", ())),
-        active_network_generation_records=tuple(MappingProxyType(dict(row)) for row in
+        active_network_generation_records=tuple(_freeze_generation_json(row) for row in
                                                  service_generations.get("active_network_generation_records", ())),
-        native_worker_runtime_records=tuple(MappingProxyType(dict(row)) for row in
+        native_worker_runtime_records=tuple(_freeze_generation_json(row) for row in
                                             service_generations.get("native_worker_runtime_records", ())),
     )
 

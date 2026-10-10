@@ -22,12 +22,29 @@ from hermes_installer.authority.private_loopback_network import (
     POLICY_ID, POLICY_SHA256, close_root_network_lease,
     create_root_namespace, namespace_path_for, validate_private_loopback_networks, _in_namespace,
     verify_root_network_lease, PrivateLoopbackMember, retain_network_member,
+    _subject_capability_receipt,
     release_network_member, unit_network_properties,
 )
 from hermes_installer.authority.host_tool_observation import (
     HostToolObservationDenied, HostToolObservationRegistry,
 )
 from hermes_installer.authority.types import AuthorityDenied
+
+
+def test_subject_capability_observation_requires_empty_inheritable_capabilities(monkeypatch):
+    status = "\n".join((
+        "CapEff:\t0000000000000000", "CapPrm:\t0000000000000000",
+        "CapBnd:\t0000000000000000", "CapAmb:\t0000000000000000",
+        "CapInh:\t0000000000000001",
+    ))
+
+    def read_text(path, *args, **kwargs):
+        assert str(path) == "/proc/123/status"
+        return status
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    with unittest.TestCase().assertRaises(AuthorityDenied):
+        _subject_capability_receipt(123)
 
 
 def _service(enrollment: str, profile: str, generation: str, uid: int) -> dict[str, object]:

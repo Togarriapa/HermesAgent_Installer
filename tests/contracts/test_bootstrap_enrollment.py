@@ -125,7 +125,7 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         changed["generation_digest"] = hashlib.sha256(json.dumps(
             changed, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
         ).encode("utf-8")).hexdigest()
-        with self.assertRaisesRegex(AuthorityDenied, "unavailable until verified source joins"):
+        with self.assertRaisesRegex(AuthorityDenied, "native worker generation rows are malformed"):
             _validate_service_generations(changed)
 
     def test_request_accepts_only_opaque_bounded_handles_and_intent(self):
