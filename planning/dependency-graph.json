@@ -2825,5 +2825,13 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "native_worker_member_views_v193": {
+    "amendment": "plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md",
+    "wire_contract": "planning/native-worker-view-member-custody-v193.json",
+    "order": "HI-T193.1 \u2192 VD-T193.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }
