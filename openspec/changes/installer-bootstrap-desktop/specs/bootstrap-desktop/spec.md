@@ -636,3 +636,10 @@ The installer SHALL activate from the same genuine PM and native CAS receipt clo
 #### Scenario: Generated native receipt is presented as static source receipt
 - **WHEN** activation receives a generated output through unrelated static artifact lookup
 - **THEN** it denies until the exact typed producer/CAS/source role projection is resolved
+
+### Requirement: Qualification key signer v166
+The installer SHALL sign only the exact fixture envelope with the genuine held fixture key before constructing its actual authority service.
+
+#### Scenario: Caller requests another signature domain
+- **WHEN** a fixture signer is used for unrelated data or production authority
+- **THEN** the restricted facade denies
