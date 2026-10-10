@@ -411,7 +411,7 @@ class DurableMemoryQueue:
                 or not context.source_receipts):
             raise BrokerDenied("memory capture context is not private, source-bound, and digest-bound")
         required_receipts = {
-            completed_turn.receipt_handle, completed_turn.input_receipt_handle,
+            completed_turn.input_receipt_handle,
             *completed_turn.request_receipt_handles,
             *completed_turn.response_receipt_handles,
             *completed_turn.tool_result_receipt_handles,
@@ -431,6 +431,12 @@ class DurableMemoryQueue:
                 or claims.get("namespace_id") != context.namespace_id
                 or claims.get("uid") != context.uid
                 or claims.get("policy_revision") != context.policy_revision
+                or not isinstance(claims.get("issued_at_unix"), (int, float))
+                or isinstance(claims.get("issued_at_unix"), bool)
+                or not isinstance(claims.get("expires_at_unix"), (int, float))
+                or isinstance(claims.get("expires_at_unix"), bool)
+                or claims.get("issued_at_unix", float("inf")) > self.clock()
+                or claims.get("expires_at_unix", 0) <= self.clock()
                 or "capture" not in claims.get("allowed_actions", ())):
             raise BrokerDenied("background consent differs from the current selected profile owner")
         _scope(context, target, {})
