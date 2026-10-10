@@ -664,3 +664,10 @@ The installer SHALL use exact source-established native output roles and output 
 #### Scenario: Unknown overlay role is supplied
 - **WHEN** a receipt uses native-overlay-archive rather than native-boundary-overlay
 - **THEN** reservation and projection deny the unknown literal
+
+### Requirement: Selected window input observation v177
+The installer SHALL verify actual press and release on the selected owned window before accepting display input qualification.
+
+#### Scenario: Focus changes or only injector success exists
+- **WHEN** same-window delivery cannot be independently verified
+- **THEN** qualification remains incomplete and any partial effect is reported truthfully

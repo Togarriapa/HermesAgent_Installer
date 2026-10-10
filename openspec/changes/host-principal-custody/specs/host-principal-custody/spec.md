@@ -773,3 +773,10 @@ The installer SHALL bind relocated Python environments to a genuinely held PM ba
 #### Scenario: Only interpreter executable bytes exist
 - **WHEN** the base standard-library/runtime closure is not currently verified
 - **THEN** the environment remains pending and cannot obtain runnable or ABI acceptance
+
+### Requirement: Selected window input observation v177
+The installer SHALL verify actual press and release on the selected owned window before accepting display input qualification.
+
+#### Scenario: Focus changes or only injector success exists
+- **WHEN** same-window delivery cannot be independently verified
+- **THEN** qualification remains incomplete and any partial effect is reported truthfully

@@ -2275,5 +2275,51 @@
       }
     ],
     "acceptance": "All original scope and AC remain open; fixture qualification does not prove Pi acceptance. Baseline unchanged."
+  },
+  "selected_window_input_observation_v177": {
+    "schema": 1,
+    "requirements": [
+      "HI-T160",
+      "HI-T162"
+    ],
+    "why": "Display qualifier aggregate input-event bool cannot prove one actual F24 press/release on the current selected owned window. XTEST follows server focus, not an XID destination.",
+    "suite_id": "display-xauthority-v1",
+    "source_pins": "No source/library hash invented. Display owner provides final tested committed native_display_input.py/helper/schema source bytes and measured held libXtst/XTest runtime/package/dependency source proof before broker enrollment. Unverified host dlopen/default library is not a source receipt.",
+    "producer": {
+      "class": "RootSelectedWindowInputObservationRegistry",
+      "constructor": "from_root_runtime(active_bindings,selected_display_authority,native_window_observer,verified_input_runtime_source,root_journal)",
+      "observe": "observe_selected_f24(display_control_handle,selected_window_handle)->RootSelectedWindowInputObservation",
+      "current": "verify_input_observation(observation)->bool; actual registry membership/current display/window/focus/event/source/PIDFD proofs, not private signer access",
+      "target_current": "NativeWindowObserver selected target exposes verify_current() or its registry current resolver; returned target is genuine sealed root-private display/XID observation."
+    },
+    "fields": [
+      "schema",
+      "selection_handle",
+      "display_control_handle",
+      "window_observation_handle",
+      "focus_observation_handle",
+      "input_delivery_receipt_handle",
+      "event_observation_handles",
+      "keysym",
+      "press_count",
+      "release_count",
+      "same_selected_window",
+      "profile_generation",
+      "display_generation",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "constraints": "schema1; keysym literalF24; press_count=release_count=1 exact integers not bool; same_selected_window stricttrue; event_observation_handles exactly2 retained distinct event receipts in press/release order. Opaque handles root registry identities, not syntax authority. XID/display connection/exact selected process/window/namespace details retained sealed private; no caller XID/key/window/display path.",
+    "effect": "Actual selected current display and owned window source proof; observe focus and genuinely hold/check focus stability across both XTEST events, then independently observe press and release delivered on SAME selected XID. XTEST does not address XID directly. Injection return/queued event alone not success. If stability cannot be established, deny before injection; any partial event/focus drift reported truthfully with bounded cleanup, never success bool. No arbitrary input, repeats, focus switching to unrelated window or broad session input grant.",
+    "joins": "Window/current PIDFD/package/source identity, display control/Xauthority/namespace/current selected native startup effect, verified input library runtime/source dependency closure, original fixed fixture lease/deadline and event observer proof all current. Keep existing Access JWT/input revocation boundary for remote paths; this owned local fixture observation is not public Desktop acceptance.",
+    "result": "display-xauthority-v1 semantic result single_harmless_input_event_observed may be true only after public registry verify_input_observation returns current true for this exact finite typed receipt. Receipt handle/digest is retained as semantic evidence; worker aggregate boolean never substitutes.",
+    "tasks": [
+      {
+        "id": "HI-T177.1",
+        "owner": "display input/native window observer/broker/custody",
+        "work": "Implement genuine focus-stable one press/release injector and same-window independent observation/current verifier, measured source/runtime pins and negative focus/source/replay/lease tests."
+      }
+    ],
+    "acceptance": "All original display/remote/Pi acceptance remains open; baseline unchanged."
   }
 }
