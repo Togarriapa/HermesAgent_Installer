@@ -419,6 +419,14 @@ class RootAuthorityRuntime:
     native_mcp_discovery_registry: Any | None = None
     selected_resources: Any | None = None
     selected_resource_unavailable_reason: str | None = None
+    resource_controller_runtime: Any | None = None
+    resource_controller_registry: Any | None = None
+    resource_event_context_issuer: Any | None = None
+    resource_scheduler: Any | None = None
+    resource_task_authority: Any | None = None
+    resource_event_unavailable_reason: str | None = None
+    controller_release_receipt: Any | None = None
+    controller_actor_observation: Any | None = None
 
     @property
     def process_manager(self) -> Any:
@@ -528,6 +536,10 @@ class RootAuthorityRuntime:
             self.native_invocation_registry,
             self.native_bridge_broker,
             self.source_observer_registry,
+            self.resource_controller_registry,
+            self.resource_controller_runtime,
+            self.controller_actor_observation,
+            self.controller_release_receipt,
             self.native_loader_observation_store,
             self.gateway_boundary_observer,
             self.native_window_observer,
@@ -628,6 +640,203 @@ class RootAuthorityRuntime:
         can select a filesystem location for the job ledger.
         """
         return _root_resource_job_ledger_path(self.bindings, self.enrollment)
+
+
+def _compose_selected_resource_events(
+    *, service: AuthorityService, enrollment: ProtectedEnrollment,
+    bindings: RootRuntimeBindings, jobs: Mapping[tuple[str, str], Any],
+    selected_resources: Any, source_observers: Any, job_authority: Any,
+) -> tuple[Any | None, Any | None, Any | None, Any | None, Any | None, tuple[Any, Any] | None, str | None]:
+    """Attach the real root controller/event/cron graph for selected Resources.
+
+    This path is entered only with materialization-backed selected rows and a
+    concrete source-observer registry. The installed release verifier, systemd
+    MainPID inspector, active role catalog, and source issuer resolver provide
+    the executable inputs; no module loader or event-proof callback is supplied
+    by a caller.
+    """
+    if (selected_resources is None or source_observers is None or job_authority is None
+            or getattr(service, "resource_job_authority", None) is not job_authority
+            or getattr(service, "resource_task_runner", None) is None):
+        return None, None, None, None, None, None, (
+            "selected materialized Resources, source observers, or concrete task runtime are unavailable"
+        )
+    enabled_jobs = tuple(
+        row for row in jobs.values()
+        if getattr(row, "selected_enabled", False) is True
+        and any(selected.identity.resource_id == row.resource_id
+                and selected.identity.kind == row.kind
+                and selected.generation_digest == row.generation
+                and selected.profile_id == row.profile_id
+                and selected.enabled is True
+                for selected in selected_resources.rows)
+    )
+    if not enabled_jobs:
+        return None, None, None, None, None, None, None
+
+    role_records = getattr(bindings, "resource_controller_role_records", ())
+    if not isinstance(role_records, tuple) or not role_records:
+        return None, None, None, None, None, None, (
+            "active selected Resources have no protected controller-role catalog"
+        )
+    runtime_published = False
+    try:
+        from hermes_installer.authority.installer_release import InstalledRootReleaseVerifier
+        from hermes_installer.authority.root_controller_custody import SystemdMainPidInspector
+        from hermes_installer.authority.resource_controller_runtime import RootControllerRoleRuntime
+        from hermes_installer.authority.resource_source_controllers import RootResourceControllerRegistry
+        from hermes_installer.authority.resource_event_issuance import ResourceEventContextIssuer
+        from hermes_installer.registry.resources_runtime import selected_resource_specs_by_generation
+        from hermes_installer.registry.resource_producers import (
+            CronOccurrenceStore, RootSelectedCronProducer, RootSelectedResourceScheduler,
+            build_selected_webhook_protocol_schema_resolver,
+        )
+
+        release_receipt, actor_observation = InstalledRootReleaseVerifier.from_current_root_process()
+        controller_runtime = None
+        controller_registry = None
+        event_issuer = None
+        resource_task_authority = None
+        scheduler = None
+        cron_store = None
+        try:
+            inspector = SystemdMainPidInspector(monotonic=service.monotonic)
+            controller_runtime = RootControllerRoleRuntime.from_root_runtime(
+                service=service, enrollment=enrollment, bindings=bindings,
+                release_receipt=release_receipt, actor_observation=actor_observation,
+                inspector=inspector, job_enrollments=jobs,
+                selected_resources=selected_resources, source_observers=source_observers,
+                monotonic=service.monotonic,
+            )
+            controller_registry = RootResourceControllerRegistry(
+                service=service, roles=controller_runtime.catalog,
+                job_enrollments=jobs, source_observers=source_observers,
+                selected_specs=selected_resource_specs_by_generation(selected_resources),
+                custody_resolver=controller_runtime.resolver,
+            )
+            controller_runtime.attach_event_registry(controller_registry)
+            controller_registry.attach_resource_job_authority(job_authority)
+
+            selected_by_id: dict[str, list[Any]] = {}
+            for selected in selected_resources.rows:
+                if selected.enabled is True:
+                    selected_by_id.setdefault(selected.identity.resource_id, []).append(selected)
+            current_jobs: dict[str, list[Any]] = {}
+            for job in enabled_jobs:
+                current_jobs.setdefault(job.resource_id, []).append(job)
+
+            def live_selected_generation(resource_id: str) -> str:
+                rows = selected_by_id.get(resource_id, ())
+                if len(rows) != 1:
+                    raise AuthorityDenied("resource.selection", "current selected resource is absent or ambiguous")
+                return rows[0].generation_digest
+
+            def live_consent_revision(resource_id: str) -> str:
+                rows = current_jobs.get(resource_id, ())
+                if len(rows) != 1:
+                    raise AuthorityDenied("resource.consent", "current protected resource consent is absent or ambiguous")
+                return rows[0].consent_revision
+
+            event_issuer = ResourceEventContextIssuer(
+                service=service, controller_registry=controller_registry,
+                selected_generation=live_selected_generation,
+                current_consent_revision=live_consent_revision,
+                monotonic=service.monotonic,
+                selected_protocol_schema=build_selected_webhook_protocol_schema_resolver(
+                    selected_resources, jobs,
+                ),
+            )
+
+            cron_candidates: list[tuple[Any, Any, Any, Any]] = []
+            selected_cron_count = sum(1 for job in enabled_jobs if job.kind == "crons")
+            for job in enabled_jobs:
+                if job.kind != "crons":
+                    continue
+                selected_rows = [row for row in selected_by_id.get(job.resource_id, ())
+                                 if row.identity.kind == "crons"
+                                 and row.generation_digest == job.generation
+                                 and row.profile_id == job.profile_id]
+                node_backend_ids = {node.backend_enrollment_id for node in job.nodes}
+                backend_rows = [backend for backend_id, backend in job.backends.items()
+                                if backend_id in node_backend_ids
+                                and backend.operation == "resource.cron.run"]
+                if len(selected_rows) != 1 or len(backend_rows) != 1:
+                    continue
+                backend = backend_rows[0]
+                observer_id = job.observer_enrollment_id
+                matching_roles = [role for role in controller_runtime.catalog.rows
+                                  if role.controller_kind == "root-scheduler"
+                                  and observer_id in role.source_observer_enrollment_ids
+                                  and backend.backend_id in role.allowed_backend_enrollment_ids
+                                  and "resource.cron.run" in role.allowed_operations]
+                if len(matching_roles) != 1:
+                    continue
+                binding = controller_runtime.resolve_selected_ingress_binding(
+                    matching_roles[0].id, job.source_issuer_channel_id, backend.backend_id,
+                )
+                cron_candidates.append((selected_rows[0], job, backend, binding))
+
+            if cron_candidates:
+                journal_path = _root_resource_job_ledger_path(bindings, enrollment)
+                cron_store = CronOccurrenceStore(
+                    journal_path.with_name("resource-cron-occurrences.sqlite3"),
+                )
+                producers = tuple(
+                    RootSelectedCronProducer(
+                        selected_resource=selected, job_enrollment=job,
+                        selected_ingress_binding=binding, event_issuer=event_issuer,
+                        occurrence_store=cron_store, job_authority=job_authority,
+                        service_generation_digest=service.service_generation_digest,
+                        wall_clock=service.wall_clock, monotonic=service.monotonic,
+                    )
+                    for selected, job, _backend, binding in cron_candidates
+                )
+                scheduler = RootSelectedResourceScheduler(producers)
+
+            if selected_cron_count and scheduler is None:
+                resource_event_reason = (
+                    "selected cron resources lack one exact protected backend/controller role join"
+                )
+            elif any(job.kind in {"webhooks", "channels"} for job in enabled_jobs):
+                resource_event_reason = (
+                    "selected webhook/channel events lack an attached authenticated root transport producer"
+                )
+            else:
+                resource_event_reason = None
+            if getattr(service, "resource_job_authority", None) is job_authority:
+                from hermes_installer.authority.resource_task_authority import RootResourceTaskAuthority
+                resource_task_authority = RootResourceTaskAuthority.from_authority_service(
+                    service, job_authority, controller_registry,
+                )
+                # The factory attaches this issuer directly to AuthorityService.
+                # From this point a later failure is a fatal startup error; the
+                # partially published service must never continue serving.
+                runtime_published = True
+            service.attach_resource_event_context_issuer(event_issuer)
+            runtime_published = True
+
+            return (controller_runtime, controller_registry, event_issuer, scheduler,
+                    resource_task_authority, (release_receipt, actor_observation), resource_event_reason)
+        except BaseException:
+            if controller_registry is not None:
+                try:
+                    controller_registry.close()
+                except BaseException:
+                    pass
+            if controller_runtime is not None:
+                try:
+                    controller_runtime.close()
+                except BaseException:
+                    pass
+            actor_observation.close()
+            release_receipt.close()
+            raise
+    except Exception as exc:
+        if runtime_published:
+            raise
+        return None, None, None, None, None, None, (
+            f"root controller/event runtime rejected composition ({type(exc).__name__})"
+        )
 
 
 def compose_root_authority_runtime(
@@ -1439,6 +1648,24 @@ def compose_root_authority_runtime(
                 raise AuthorityDenied("authority.composition", "resource job route lacks a protected effect rule")
         service.handlers.update(job_handlers)
 
+    resource_controller_runtime = None
+    resource_controller_registry = None
+    resource_event_context_issuer = None
+    resource_scheduler = None
+    resource_task_authority = None
+    controller_receipts = None
+    resource_event_unavailable_reason = None
+    if jobs and selected_resources is not None:
+        (resource_controller_runtime, resource_controller_registry,
+         resource_event_context_issuer, resource_scheduler, resource_task_authority,
+         controller_receipts, resource_event_unavailable_reason) = _compose_selected_resource_events(
+            service=service, enrollment=enrollment, bindings=bindings, jobs=jobs,
+            selected_resources=selected_resources, source_observers=source_observers,
+            job_authority=job_authority,
+        )
+        if resource_event_unavailable_reason is not None and job_authority is not None:
+            resource_task_unavailable_reason = resource_event_unavailable_reason
+
     return RootAuthorityRuntime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=artifact_catalog, vault=vault,
@@ -1455,4 +1682,12 @@ def compose_root_authority_runtime(
         native_mcp_discovery_registry=mcp_discovery_registry,
         selected_resources=selected_resources,
         selected_resource_unavailable_reason=selected_resource_unavailable_reason,
+        resource_controller_runtime=resource_controller_runtime,
+        resource_controller_registry=resource_controller_registry,
+        resource_event_context_issuer=resource_event_context_issuer,
+        resource_scheduler=resource_scheduler,
+        resource_task_authority=resource_task_authority,
+        resource_event_unavailable_reason=resource_event_unavailable_reason,
+        controller_release_receipt=(controller_receipts[0] if controller_receipts else None),
+        controller_actor_observation=(controller_receipts[1] if controller_receipts else None),
     )
