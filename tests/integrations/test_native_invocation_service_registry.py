@@ -197,6 +197,7 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 generation=generation,
                 adapter_id="hermes-main",
                 action_id="chat.complete",
+                operation="plugin.selected-tool.execute",
                 validate_arguments=lambda args: args == b'{"x":1}',
             )
 
@@ -245,6 +246,14 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 peer_pid=producer_pid,
             )
             grant = EffectAuthorization.from_wire(grant_wire)
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_invocation_for_effect(
+                    context, grant, "plugin.unselected.execute", request_digest,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_invocation_for_effect(
+                    context, grant, operation, "0" * 64,
+                )
             result = service._perform_effect(
                 producer_uid,
                 gateway_pid,

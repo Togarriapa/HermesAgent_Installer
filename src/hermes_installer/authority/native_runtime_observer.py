@@ -43,11 +43,12 @@ class NativeActionSelection:
     generation: str
     adapter_id: str
     action_id: str
+    operation: str
     validate_arguments: Callable[[bytes], bool]
 
     def __post_init__(self) -> None:
         if (any(not isinstance(getattr(self, name), str) or not getattr(self, name)
-                for name in ("package_id", "profile_id", "generation", "adapter_id", "action_id"))
+                for name in ("package_id", "profile_id", "generation", "adapter_id", "action_id", "operation"))
                 or not callable(self.validate_arguments)):
             raise ValueError("selected native action binding is incomplete")
 
@@ -219,11 +220,14 @@ class _NativeInvocation:
     arguments_sha256: str
     parent_closure_digest: str
     receipt_handles: tuple[str, ...]
+    canonical_arguments: bytes
     observer_id: str
     loaded_package_proof: Any
     expires_monotonic: float
     service_generation_digest: str
+    operation: str = ""
     mcp_dispatch_consumed: bool = False
+    effect_result_consumed: bool = False
 
 
 class NativeRuntimeObserverUnavailable(PermissionError):
@@ -849,6 +853,7 @@ class NativeInvocationRegistry:
             except Exception:
                 raise AuthorityDenied("native.invocation.action", "root action selection changed") from None
             if (not isinstance(selection, NativeActionSelection)
+                    or not isinstance(selection.operation, str) or not selection.operation
                     or (selection.package_id, selection.profile_id, selection.generation,
                         selection.adapter_id, selection.action_id)
                     != (response.package_id, response.profile_id, response.generation,
@@ -874,8 +879,9 @@ class NativeInvocationRegistry:
                 response.gateway_pid, os.dup(response.gateway_pidfd),
                 response.package_id, response.profile_id,
                 response.generation, adapter_id, action_id, tool_name, digest, closure_digest,
-                response.receipt_handles, response.observer_id, current_proof, lease,
-                self.service.service_generation_digest,
+                response.receipt_handles, bytes(canonical_arguments), response.observer_id,
+                current_proof, lease,
+                self.service.service_generation_digest, operation=selection.operation,
             )
             # Consume the observed call before publishing a binding. No failed
             # or concurrent begin can re-open this response call.
@@ -995,8 +1001,8 @@ class NativeInvocationRegistry:
                 or peer_uid != invocation.producer_identity.kernel_uid
                 or peer_pid != invocation.producer_pid
                 or self.monotonic() >= invocation.expires_monotonic
-                or (canonical_arguments is not None
-                    and hashlib.sha256(canonical_arguments).hexdigest() != invocation.arguments_sha256)):
+                    or (canonical_arguments is not None
+                        and hashlib.sha256(canonical_arguments).hexdigest() != invocation.arguments_sha256)):
             return False
         try:
             identity = self.process_resolver(peer_pid, peer_pidfd,
@@ -1011,9 +1017,13 @@ class NativeInvocationRegistry:
                     or proof != invocation.loaded_package_proof
                     or not isinstance(action, NativeActionSelection)
                     or (action.package_id, action.profile_id, action.generation,
-                        action.adapter_id, action.action_id)
+                        action.adapter_id, action.action_id, action.operation)
                     != (invocation.package_id, invocation.profile_id, invocation.generation,
-                        invocation.adapter_id, invocation.action_id)):
+                        invocation.adapter_id, invocation.action_id,
+                        getattr(invocation, "operation", None))
+                    or not self._validate_selection(action, invocation.canonical_arguments)
+                    or hashlib.sha256(invocation.canonical_arguments).hexdigest()
+                    != invocation.arguments_sha256):
                 return False
             with self.service._lock:
                 receipts = [self.service._source_receipt_handles.get(handle)
@@ -1026,6 +1036,142 @@ class NativeInvocationRegistry:
             ))
         except Exception:
             return False
+
+    def resolve_invocation_for_effect(self, context: HostContext, authorization: Any,
+                                      operation: str, payload_digest: str) -> Any:
+        """Resolve one root-retained tool call for a validated native effect.
+
+        This is root-private and accepts no invocation/call identifier. The
+        only candidate is selected by the signed effect claims and the exact
+        source-receipt closure retained when the provider call was observed.
+        The returned DTO is a one-use correlation record for the result
+        observer, not an RPC capability.
+        """
+        if (not isinstance(context, HostContext)
+                or type(operation) is not str or not operation
+                or not isinstance(payload_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", payload_digest)):
+            raise AuthorityDenied("native.effect.invocation", "effect invocation binding is malformed")
+        from .types import EffectAuthorization
+        if not isinstance(authorization, EffectAuthorization):
+            raise AuthorityDenied("native.effect.invocation", "effect authorization is unavailable")
+        service = self.service
+        try:
+            binding = service._binding(context.uid)
+            service._verify_context_signature(context)
+            service._verify_grant_signature(authorization)
+            service._assert_current_context(context, binding, context.uid)
+            service._assert_grant_current(authorization, binding, context.uid)
+            from .service import _context_digest
+            if (authorization.context_digest != _context_digest(context)
+                    or authorization.source_receipts != context.source_receipts
+                    or authorization.final_payload_digest != context.final_payload_digest
+                    or context.final_payload_digest != payload_digest
+                    or authorization.request_digest != payload_digest
+                    or authorization.operation != operation
+                    or context.operation != operation
+                    or authorization.profile_id != context.profile_id
+                    or authorization.principal_id != context.principal_id
+                    or authorization.uid != context.uid
+                    or authorization.generation != context.generation
+                    or authorization.native_process_identity != context.native_process_identity):
+                raise AuthorityDenied("native.effect.invocation", "signed effect does not bind the observed payload")
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.effect.invocation", "effect authority is stale or unverifiable") from None
+
+        # Resolve each signed source receipt to its retained root handle. The
+        # complete set must exactly equal one invocation's source closure.
+        by_id: dict[str, str] = {}
+        with service._lock:
+            for handle, receipt in service._source_receipt_handles.items():
+                if receipt.monotonic_expires_at > self.monotonic():
+                    if receipt.receipt_id in by_id:
+                        raise AuthorityDenied("native.effect.lineage", "source receipt identity is ambiguous")
+                    by_id[receipt.receipt_id] = handle
+        source_ids = tuple(receipt.receipt_id for receipt in context.source_receipts)
+        if (not source_ids or len(source_ids) != len(set(source_ids))
+                or any(receipt_id not in by_id for receipt_id in source_ids)):
+            raise AuthorityDenied("native.effect.lineage", "signed source closure is unavailable")
+        source_handles = tuple(by_id[receipt_id] for receipt_id in source_ids)
+        matches: list[_NativeInvocation] = []
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            for row in self._invocations.values():
+                response = self._responses.get(row.response_handle)
+                if (row.effect_result_consumed or row.expires_monotonic <= self.monotonic()
+                        or response is None or response.turn_handle is None
+                        or row.producer_identity.kernel_uid != context.uid
+                        or row.profile_id != context.profile_id
+                        or row.generation != context.generation
+                        or row.receipt_handles != source_handles):
+                    continue
+                matches.append(row)
+            if len(matches) != 1:
+                raise AuthorityDenied("native.effect.invocation", "no unique retained native invocation matches effect")
+            row = matches[0]
+            response = self._responses.get(row.response_handle)
+            if response is None:
+                raise AuthorityDenied("native.effect.invocation", "provider response observation expired")
+            producer = self.process_resolver(row.producer_pid, row.producer_pidfd,
+                                             profile_id=row.profile_id, generation=row.generation)
+            gateway = self.process_resolver(row.gateway_pid, row.gateway_pidfd,
+                                            profile_id=row.bridge.gateway_profile_id,
+                                            generation=row.bridge.gateway_generation)
+            proof = self._loaded_proof(row.observer_id, producer, row.producer_pid, row.producer_pidfd)
+            try:
+                service._assert_current_context(
+                    context, binding, context.uid, peer_pid=row.producer_pid)
+            except Exception:
+                raise AuthorityDenied("native.effect.peer", "effect context is not bound to the live producer") from None
+            if (service._native_process_identity(row.producer_pid, context.uid)
+                    != context.native_process_identity
+                    or row.producer_identity.profile_id != context.profile_id
+                    or row.producer_identity.generation != context.generation):
+                raise AuthorityDenied("native.effect.peer", "effect peer identity changed")
+            try:
+                selected = self.action_resolver(row.bridge, producer, row.tool_name)
+            except Exception:
+                raise AuthorityDenied("native.effect.action", "selected native action is unavailable") from None
+            if (producer != row.producer_identity or gateway != row.gateway_identity
+                    or proof != row.loaded_package_proof
+                    or not isinstance(selected, NativeActionSelection)
+                    or (selected.package_id, selected.profile_id, selected.generation,
+                        selected.adapter_id, selected.action_id, selected.operation)
+                    != (row.package_id, row.profile_id, row.generation,
+                        row.adapter_id, row.action_id, operation)
+                    or not self._native_mcp_peer_current(
+                        row, row.producer_identity.kernel_uid, row.producer_pid,
+                        row.producer_pidfd, None)):
+                raise AuthorityDenied("native.effect.action", "current peer, package, or selected action changed")
+            # A grant is single-use at the AuthorityService boundary. This
+            # separate bit prevents a result receipt from being attached twice.
+            row.effect_result_consumed = True
+            return RootNativeToolEffectInvocation(
+                invocation_handle=row.invocation_handle,
+                observed_call_handle=row.observed_call_handle,
+                response_observation_handle=row.response_handle,
+                response_receipt_handle=response.response_receipt_handle,
+                native_request_handle=response.native_request_handle,
+                turn_handle=response.turn_handle,
+                producer_identity=row.producer_identity,
+                producer_pid=row.producer_pid,
+                profile_id=row.profile_id,
+                generation=row.generation,
+                package_id=row.package_id,
+                native_package_generation=response.native_package_generation,
+                service_generation_digest=row.service_generation_digest,
+                adapter_id=row.adapter_id,
+                action_id=row.action_id,
+                tool_name=row.tool_name,
+                arguments_sha256=row.arguments_sha256,
+                source_receipt_handles=row.receipt_handles,
+                operation=operation,
+                request_digest=payload_digest,
+                expires_monotonic=row.expires_monotonic,
+            )
 
     def get_invocation_contexts(self, peer_uid: int, peer_pid: int, peer_pidfd: int,
                                 invocation_handle: str):
@@ -1081,6 +1227,7 @@ class NativeInvocationRegistry:
             for invocation in self._invocations.values():
                 os.close(invocation.producer_pidfd)
                 os.close(invocation.gateway_pidfd)
+                invocation.canonical_arguments = b"\x00" * len(invocation.canonical_arguments)
             self._responses.clear()
             self._retained_response_bytes = 0
             self._deliveries.clear()
@@ -1129,6 +1276,7 @@ class NativeInvocationRegistry:
                     os.close(invocation.gateway_pidfd)
                 except OSError:
                     pass
+                invocation.canonical_arguments = b"\x00" * len(invocation.canonical_arguments)
 
     def _ensure_open(self) -> None:
         if self._closed:
