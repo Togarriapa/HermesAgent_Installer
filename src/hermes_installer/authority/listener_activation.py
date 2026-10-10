@@ -9,6 +9,7 @@ an in-process socketpair as a process identity.
 from __future__ import annotations
 
 import array
+import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +22,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .types import AuthorityDenied
@@ -48,6 +50,39 @@ _MESSAGE_FIELDS = frozenset({
     "publication_receipt_handle", "publication_sha256", "service_generation_digest",
     "endpoint_receipt_sha256", "socket_device", "socket_inode",
 })
+_HEALTH_REQUEST_FIELDS = frozenset({
+    "schema", "operation", "intent_handle", "intent_sha256", "nonce",
+})
+_HEALTH_ACCEPTED_FIELDS = frozenset({
+    "schema", "operation", "intent_handle", "intent_sha256",
+})
+_HEALTH_COMPLETED_FIELDS = frozenset({
+    "schema", "operation", "intent_handle", "completion_handle", "completion_sha256",
+})
+_HEALTH_INTENT_FIELDS = frozenset({
+    "schema", "purpose", "intent_handle", "nonce_sha256",
+    "setup_actor_witness_handle", "setup_actor_witness_sha256", "activation_id",
+    "daemon_unit_id", "daemon_invocation_id", "committed_transaction_id",
+    "bootstrap_transaction_handle", "generation_id", "service_generation_digest",
+    "publication_receipt_handle", "publication_sha256", "profile_id", "enrollment_id",
+    "source_choice_selection_handle", "source_choice_signed_record_sha256",
+    "source_choice_epoch", "source_choice_revocation_epoch", "health_definition_sha256",
+    "issued_monotonic", "expires_monotonic",
+})
+_HEALTH_JOURNAL_FIELDS = frozenset({
+    "schema", "activation_id", "intent_body", "intent_sha256", "state",
+    "accepted_monotonic", "completion_handle", "completion_sha256",
+})
+_HEALTH_COMPLETION_FIELDS = frozenset({
+    "schema", "completion_handle", "intent_handle", "intent_sha256",
+    "committed_transaction_id", "bootstrap_transaction_handle", "generation_id",
+    "service_generation_digest", "publication_receipt_handle", "publication_sha256",
+    "source_choice_signed_record_sha256", "health_definition_sha256",
+    "health_receipt_handle", "health_receipt_sha256", "result_schema_id", "result_sha256",
+    "parent_closure_digest", "terminal_receipt_handle", "daemon_unit_id",
+    "daemon_invocation_id", "daemon_pid", "daemon_start_ticks",
+    "daemon_actor_witness_sha256", "completed_monotonic",
+})
 _MAX_MESSAGE = 8192
 _MAX_TTL = 30.0
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -62,6 +97,10 @@ _SETUP_LAUNCHER_SOURCE = (
     "raise SystemExit(main())\n"
 )
 _OPEN_DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+_HEALTH_LEDGER = "native-health-intents"
+_HEALTH_LEDGER_LOCK = ".ledger.lock"
+_HEALTH_LEDGER_FILE = "intent.json"
+_HEALTH_LEDGER_SEAL = object()
 
 
 class ListenerActivationUnavailable(AuthorityDenied):
@@ -534,6 +573,696 @@ class RootCurrentAuthorityListenerObservation:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootSetupHealthIntent:
+    """Opaque setup-issued health request; body remains in the protected journal."""
+    intent_handle: str
+    intent_sha256: str
+    nonce: bytes = field(repr=False, compare=False)
+    activation_id: str
+    expires_monotonic: float
+    _issuer: object = field(repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "RootSetupHealthIntent(<one-use fixed health request>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootAcceptedHealthIntent:
+    """Daemon-side journal receipt for an accepted, peer-bound health request."""
+    intent_handle: str
+    intent_sha256: str
+    body: Mapping[str, Any] = field(repr=False, compare=False)
+    accepted_monotonic: float
+    activation_id: str
+    _journal: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _HEALTH_LEDGER_SEAL or type(self._journal) is not RootSetupHealthIntentJournal:
+            raise TypeError("accepted health intent is issued by its protected root journal")
+        object.__setattr__(self, "body", MappingProxyType(dict(self.body)))
+
+    def __repr__(self) -> str:
+        return "RootAcceptedHealthIntent(<protected one-use request>)"
+
+
+_SETUP_HEALTH_WITNESS_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSetupFunctionalHealthWitness:
+    """Setup-side handle to a daemon-completed, current durable health row."""
+    intent_handle: str
+    completion_handle: str
+    completion_sha256: str
+    body: Mapping[str, Any] = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _SETUP_HEALTH_WITNESS_SEAL:
+            raise TypeError("functional health witness is issued by the current setup resolver")
+        object.__setattr__(self, "body", MappingProxyType(dict(self.body)))
+
+    def __repr__(self) -> str:
+        return "RootSetupFunctionalHealthWitness(<durable daemon completion>)"
+
+
+class RootSetupHealthIntentJournal:
+    """FD-anchored CAS ledger shared by the setup actor and installed daemon."""
+
+    def __init__(self, root_journal: Any, activation_id: str, *, create: bool,
+                 receiver: "RootAuthorityListenerActivationReceiver | None" = None,
+                 active_receipt: RootActiveAuthorityListenerReceipt | None = None):
+        from hermes_installer.protected_enrollment import RootJournalSelection
+        if (type(root_journal) is not RootJournalSelection
+                or root_journal.root_id != "installer-authority-journal-v1"
+                or root_journal.service_generation_digest is None
+                or not isinstance(root_journal.path, Path) or not root_journal.path.is_absolute()
+                or type(activation_id) is not str or not _HEX32.fullmatch(activation_id)
+                or os.geteuid() != 0):
+            raise ListenerActivationUnavailable("current protected root journal and activation ID are required")
+        self.root_journal = root_journal
+        self.activation_id = activation_id
+        if ((receiver is None) != (active_receipt is None)
+                or (receiver is not None and type(receiver) is not RootAuthorityListenerActivationReceiver)
+                or (active_receipt is not None and type(active_receipt) is not RootActiveAuthorityListenerReceipt)):
+            raise ListenerActivationUnavailable("daemon health journal requires a complete listener receiver pair")
+        self.receiver, self.active_receipt = receiver, active_receipt
+        self._root_fd = self._ledger_fd = -1
+        self._closed = False
+        try:
+            root_fd = os.open(root_journal.path, _OPEN_DIR)
+            root = os.fstat(root_fd)
+            named = root_journal.path.lstat()
+            if (not stat.S_ISDIR(root.st_mode) or root.st_uid != 0 or root.st_gid != 0
+                    or stat.S_IMODE(root.st_mode) != 0o700
+                    or (root.st_dev, root.st_ino) != (root_journal.device, root_journal.inode)
+                    or (named.st_dev, named.st_ino) != (root.st_dev, root.st_ino)):
+                os.close(root_fd)
+                raise ValueError("root journal directory identity changed")
+            if create:
+                try:
+                    os.mkdir(_HEALTH_LEDGER, 0o700, dir_fd=root_fd)
+                    os.chown(_HEALTH_LEDGER, 0, 0, dir_fd=root_fd, follow_symlinks=False)
+                    os.chmod(_HEALTH_LEDGER, 0o700, dir_fd=root_fd, follow_symlinks=False)
+                    os.fsync(root_fd)
+                except FileExistsError:
+                    pass
+            ledger_fd = os.open(_HEALTH_LEDGER, _OPEN_DIR, dir_fd=root_fd)
+            ledger = os.fstat(ledger_fd)
+            if (not stat.S_ISDIR(ledger.st_mode) or ledger.st_uid != 0 or ledger.st_gid != 0
+                    or stat.S_IMODE(ledger.st_mode) != 0o700):
+                os.close(ledger_fd)
+                os.close(root_fd)
+                raise ValueError("health intent ledger directory is not root-private")
+            self._root_fd, self._ledger_fd = root_fd, ledger_fd
+            self._root_identity = (root.st_dev, root.st_ino)
+            self._ledger_identity = (ledger.st_dev, ledger.st_ino)
+        except ListenerActivationUnavailable:
+            raise
+        except Exception:
+            self.close()
+            raise ListenerActivationUnavailable("protected health intent ledger is unavailable") from None
+
+    @classmethod
+    def from_root_journal(cls, root_journal: Any, activation_id: str, *,
+                          create: bool = False,
+                          receiver: "RootAuthorityListenerActivationReceiver | None" = None,
+                          active_receipt: RootActiveAuthorityListenerReceipt | None = None
+                          ) -> "RootSetupHealthIntentJournal":
+        return cls(root_journal, activation_id, create=create,
+                   receiver=receiver, active_receipt=active_receipt)
+
+    def _verify_directories(self) -> None:
+        if self._closed or self._root_fd < 0 or self._ledger_fd < 0:
+            raise ListenerActivationUnavailable("health intent ledger is closed")
+        root = os.fstat(self._root_fd)
+        ledger = os.fstat(self._ledger_fd)
+        root_name = self.root_journal.path.lstat()
+        ledger_name = os.stat(_HEALTH_LEDGER, dir_fd=self._root_fd, follow_symlinks=False)
+        if ((root.st_dev, root.st_ino) != self._root_identity
+                or (root_name.st_dev, root_name.st_ino) != self._root_identity
+                or root.st_uid != 0 or root.st_gid != 0 or stat.S_IMODE(root.st_mode) != 0o700
+                or (ledger.st_dev, ledger.st_ino) != self._ledger_identity
+                or (ledger_name.st_dev, ledger_name.st_ino) != self._ledger_identity
+                or ledger.st_uid != 0 or ledger.st_gid != 0 or stat.S_IMODE(ledger.st_mode) != 0o700):
+            raise ListenerActivationUnavailable("health intent ledger directory custody changed")
+
+    def _lock(self) -> int:
+        self._verify_directories()
+        try:
+            fd = os.open(_HEALTH_LEDGER_LOCK,
+                         os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=self._ledger_fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600):
+                os.close(fd)
+                raise ValueError("health intent lock is not root-owned mode 0600")
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            self._verify_directories()
+            return fd
+        except Exception:
+            raise ListenerActivationUnavailable("health intent ledger lock is unavailable") from None
+
+    def _read(self) -> tuple[dict[str, Any], str, tuple[int, int]]:
+        self._verify_directories()
+        try:
+            fd = os.open(_HEALTH_LEDGER_FILE,
+                         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0), dir_fd=self._ledger_fd)
+        except OSError:
+            raise ListenerActivationUnavailable("health intent record is unavailable") from None
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > _MAX_MESSAGE * 4):
+                raise ValueError("health intent record is not a bounded root-owned file")
+            raw = bytearray()
+            while len(raw) <= _MAX_MESSAGE * 4:
+                block = os.read(fd, min(8192, _MAX_MESSAGE * 4 + 1 - len(raw)))
+                if not block:
+                    break
+                raw.extend(block)
+            if len(raw) != info.st_size or len(raw) > _MAX_MESSAGE * 4:
+                raise ValueError("health intent record changed while reading")
+            value = json.loads(bytes(raw).decode("utf-8"), object_pairs_hook=_unique_pairs)
+            if (not isinstance(value, dict)
+                    or set(value) not in {_HEALTH_JOURNAL_FIELDS,
+                                          _HEALTH_JOURNAL_FIELDS | {"completion_body"}}):
+                raise ValueError("health intent journal fields differ from its closed schema")
+            body = value.get("intent_body")
+            if (value.get("schema") != 1 or value.get("activation_id") != self.activation_id
+                    or not isinstance(body, dict) or set(body) != _HEALTH_INTENT_FIELDS
+                    or value.get("intent_sha256") != _digest(body)
+                    or body.get("purpose") != "root-native-health-intent-v1"
+                    or not isinstance(body.get("intent_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", body["intent_handle"])
+                    or body.get("activation_id") != self.activation_id
+                    or type(body.get("issued_monotonic")) not in (int, float)
+                    or type(body.get("expires_monotonic")) not in (int, float)
+                    or not body["issued_monotonic"] < body["expires_monotonic"]
+                    or body["expires_monotonic"] - body["issued_monotonic"] > _MAX_TTL
+                    or not _HEX64.fullmatch(body.get("nonce_sha256", ""))
+                    or value.get("state") not in {"issued", "accepted", "started", "completed", "denied", "cancelled"}):
+                raise ValueError("health intent journal digest or state is invalid")
+            if value.get("state") == "completed":
+                completion = value.get("completion_body")
+                if (not isinstance(completion, dict) or set(completion) != _HEALTH_COMPLETION_FIELDS
+                        or value.get("completion_handle") != completion.get("completion_handle")
+                        or value.get("completion_sha256") != _digest(completion)):
+                    raise ValueError("completed health witness differs from its durable CAS row")
+            return value, _digest(value), (info.st_dev, info.st_ino)
+        except Exception:
+            raise ListenerActivationUnavailable("health intent record failed closed validation") from None
+        finally:
+            os.close(fd)
+
+    def _replace(self, value: Mapping[str, Any], old_identity: tuple[int, int] | None) -> tuple[dict[str, Any], str]:
+        self._verify_directories()
+        name = ".intent." + secrets.token_hex(16) + ".tmp"
+        raw = _canonical(dict(value))
+        if len(raw) > _MAX_MESSAGE * 4:
+            raise ListenerActivationUnavailable("health intent state exceeds its storage bound")
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                     0o600, dir_fd=self._ledger_fd)
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(raw):
+                count = os.write(fd, raw[offset:])
+                if count <= 0:
+                    raise OSError("zero-length health intent journal write")
+                offset += count
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            if old_identity is None:
+                try:
+                    os.stat(_HEALTH_LEDGER_FILE, dir_fd=self._ledger_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise ListenerActivationUnavailable("health intent already exists for this activation")
+            else:
+                current, _digest_value, identity = self._read()
+                if identity != old_identity:
+                    raise ListenerActivationUnavailable("health intent changed during compare-and-swap")
+            os.replace(name, _HEALTH_LEDGER_FILE, src_dir_fd=self._ledger_fd,
+                       dst_dir_fd=self._ledger_fd)
+            os.fsync(self._ledger_fd)
+            result, digest, _identity = self._read()
+            return result, digest
+        finally:
+            try:
+                os.unlink(name, dir_fd=self._ledger_fd)
+            except OSError:
+                pass
+
+    def issue(self, body: Mapping[str, Any]) -> tuple[str, str]:
+        if (not isinstance(body, Mapping) or set(body) != _HEALTH_INTENT_FIELDS
+                or body.get("activation_id") != self.activation_id
+                or not isinstance(body.get("intent_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", body["intent_handle"])):
+            raise ListenerActivationUnavailable("health intent body differs from the fixed v191 schema")
+        lockfd = self._lock()
+        try:
+            value = {"schema": 1, "activation_id": self.activation_id,
+                     "intent_body": dict(body), "intent_sha256": _digest(dict(body)),
+                     "state": "issued", "accepted_monotonic": None,
+                     "completion_handle": None, "completion_sha256": None}
+            _, digest = self._replace(value, None)
+            return body["intent_handle"], value["intent_sha256"]
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def accept(self, intent_handle: str, intent_sha256: str, nonce: str,
+               receiver: "RootAuthorityListenerActivationReceiver",
+               active_receipt: RootActiveAuthorityListenerReceipt) -> RootAcceptedHealthIntent:
+        if (not isinstance(intent_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", intent_handle)
+                or not _HEX64.fullmatch(intent_sha256)
+                or not _HEX64.fullmatch(nonce)
+                or type(receiver) is not RootAuthorityListenerActivationReceiver):
+            raise ListenerActivationUnavailable("health request is not a fixed one-use request")
+        observation = receiver.observe_active_current(active_receipt)
+        record = receiver._read_current_adopted_record()
+        now = time.monotonic()
+        if (observation.activation_id != self.activation_id
+                or record.get("activation_id") != self.activation_id
+                or receiver._setup_peer_pidfd is None
+                or receiver._verify_setup_peer(record) != (record["setup_pid"], 0, 0)):
+            raise ListenerActivationUnavailable("health setup peer is not the adopted current root actor")
+        lockfd = self._lock()
+        try:
+            value, _old_digest, identity = self._read()
+            body = value["intent_body"]
+            if (body["intent_handle"] != intent_handle
+                    or value["intent_sha256"] != intent_sha256
+                    or body["nonce_sha256"] != nonce
+                    or body["activation_id"] != self.activation_id
+                    or body["daemon_unit_id"] != observation.daemon_unit_id
+                    or body["daemon_invocation_id"] != observation.daemon_invocation_id
+                    or body["publication_receipt_handle"] != observation.publication_receipt_handle
+                    or body["publication_sha256"] != observation.publication_sha256
+                    or body["service_generation_digest"] != observation.service_generation_digest
+                    or body["setup_actor_witness_sha256"] != record["setup_actor_binding_sha256"]
+                    or now < body["issued_monotonic"] or now >= body["expires_monotonic"]
+                    or body["expires_monotonic"] - now > _MAX_TTL
+                    or body["committed_transaction_id"] != record["transaction_handle"]
+                    or body["bootstrap_transaction_handle"] != record["transaction_handle"]
+                    or body["profile_id"] != record["profile_id"]
+                    or body["enrollment_id"] != record["service_enrollment_id"]):
+                raise ListenerActivationUnavailable("health intent does not match current adopted source")
+            if value["state"] == "issued":
+                value["state"] = "accepted"
+                value["accepted_monotonic"] = time.monotonic()
+                value, _digest_value = self._replace(value, identity)
+            elif value["state"] != "accepted":
+                raise ListenerActivationUnavailable("health intent was already consumed or cancelled")
+            return RootAcceptedHealthIntent(
+                intent_handle, intent_sha256, dict(body), value["accepted_monotonic"],
+                self.activation_id, self, _HEALTH_LEDGER_SEAL)
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def resolve_current_accepted_intent_for_handle(
+            self, intent_handle: str, receiver: "RootAuthorityListenerActivationReceiver",
+            active_receipt: RootActiveAuthorityListenerReceipt) -> RootAcceptedHealthIntent:
+        observation = receiver.observe_active_current(active_receipt)
+        value, _digest_value, _identity = self._read()
+        body = value["intent_body"]
+        if (type(intent_handle) is not str
+                or value["state"] not in {"accepted", "started"}
+                or body["intent_handle"] != intent_handle
+                or body["daemon_unit_id"] != observation.daemon_unit_id
+                or body["daemon_invocation_id"] != observation.daemon_invocation_id
+                or body["service_generation_digest"] != observation.service_generation_digest
+                or body["publication_sha256"] != observation.publication_sha256):
+            raise ListenerActivationUnavailable("accepted health intent is no longer current")
+        return RootAcceptedHealthIntent(intent_handle, value["intent_sha256"], dict(body),
+                                        value["accepted_monotonic"], self.activation_id,
+                                        self, _HEALTH_LEDGER_SEAL)
+
+    def mark_started(self, accepted: RootAcceptedHealthIntent) -> RootAcceptedHealthIntent:
+        if (type(accepted) is not RootAcceptedHealthIntent or accepted._journal is not self
+                or self.receiver is None or self.active_receipt is None):
+            raise ListenerActivationUnavailable("health start lacks the daemon's exact accepted intent")
+        current = self.resolve_current_accepted_intent_for_handle(
+            accepted.intent_handle, self.receiver, self.active_receipt)
+        if current.intent_sha256 != accepted.intent_sha256:
+            raise ListenerActivationUnavailable("accepted health intent changed before run start")
+        lockfd = self._lock()
+        try:
+            value, _old_digest, identity = self._read()
+            if value["state"] == "accepted":
+                value["state"] = "started"
+                self._replace(value, identity)
+            elif value["state"] != "started":
+                raise ListenerActivationUnavailable("health intent cannot start from its current state")
+            return self.resolve_current_accepted_intent_for_handle(
+                accepted.intent_handle, self.receiver, self.active_receipt)
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def commit_completion(self, intent_handle: str, intent_sha256: str,
+                          completion_body: Mapping[str, Any]) -> tuple[str, str]:
+        """Commit only an actual consumer-issued closed witness after its own revalidation."""
+        if (self.receiver is None or self.active_receipt is None
+                or not isinstance(completion_body, Mapping)
+                or set(completion_body) != _HEALTH_COMPLETION_FIELDS
+                or completion_body.get("schema") != 1
+                or completion_body.get("intent_handle") != intent_handle
+                or completion_body.get("intent_sha256") != intent_sha256):
+            raise ListenerActivationUnavailable("health completion is not the exact daemon-owned witness")
+        accepted = self.resolve_current_accepted_intent_for_handle(
+            intent_handle, self.receiver, self.active_receipt)
+        lockfd = self._lock()
+        try:
+            value, _old_digest, identity = self._read()
+            intent = value["intent_body"]
+            if value["state"] == "completed":
+                existing = value["completion_body"]
+                if (existing != dict(completion_body)
+                        or value["completion_sha256"] != _digest(existing)):
+                    raise ListenerActivationUnavailable("completed health witness conflicts with prior CAS")
+                return existing["completion_handle"], value["completion_sha256"]
+            if (value["state"] != "started" or value["intent_sha256"] != intent_sha256
+                    or accepted.intent_sha256 != intent_sha256
+                    or completion_body.get("committed_transaction_id") != intent.get("committed_transaction_id")
+                    or completion_body.get("bootstrap_transaction_handle") != intent.get("bootstrap_transaction_handle")
+                    or completion_body.get("generation_id") != intent.get("generation_id")
+                    or completion_body.get("service_generation_digest") != intent.get("service_generation_digest")
+                    or completion_body.get("publication_receipt_handle") != intent.get("publication_receipt_handle")
+                    or completion_body.get("publication_sha256") != intent.get("publication_sha256")
+                    or completion_body.get("source_choice_signed_record_sha256")
+                       != intent.get("source_choice_signed_record_sha256")
+                    or completion_body.get("health_definition_sha256") != intent.get("health_definition_sha256")
+                    or completion_body.get("daemon_unit_id") != self.active_receipt.daemon_unit_id
+                    or completion_body.get("daemon_invocation_id") != self.active_receipt.daemon_invocation_id
+                    or completion_body.get("daemon_pid") != self.active_receipt.daemon_pid
+                    or completion_body.get("daemon_start_ticks") != self.active_receipt.daemon_start_ticks):
+                raise ListenerActivationUnavailable("health witness does not join the current intent and daemon")
+            self.receiver.observe_active_current(self.active_receipt)
+            value["state"] = "completed"
+            value["completion_handle"] = completion_body["completion_handle"]
+            value["completion_sha256"] = _digest(dict(completion_body))
+            value["completion_body"] = dict(completion_body)
+            self._replace(value, identity)
+            return value["completion_handle"], value["completion_sha256"]
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def resolve_current_completed_intent(self, intent_handle: str,
+                                         completion_handle: str) -> Mapping[str, Any]:
+        if self.receiver is not None and self.active_receipt is not None:
+            self.receiver.observe_active_current(self.active_receipt)
+        lockfd = self._lock()
+        try:
+            value, _digest_value, _identity = self._read()
+            body = value.get("completion_body")
+            if (value["state"] != "completed" or not isinstance(body, dict)
+                    or body.get("completion_handle") != completion_handle
+                    or body.get("intent_handle") != intent_handle
+                    or value.get("completion_handle") != completion_handle
+                    or value.get("completion_sha256") != _digest(body)):
+                raise ListenerActivationUnavailable("daemon-owned functional health witness is not completed")
+            return MappingProxyType(dict(body))
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def resolve_current_completed_pair(self, intent_handle: str,
+                                        completion_handle: str
+                                        ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+        if self.receiver is not None and self.active_receipt is not None:
+            self.receiver.observe_active_current(self.active_receipt)
+        lockfd = self._lock()
+        try:
+            value, _digest_value, _identity = self._read()
+            intent = value.get("intent_body")
+            completion = value.get("completion_body")
+            if (value.get("state") != "completed" or not isinstance(intent, dict)
+                    or not isinstance(completion, dict)
+                    or intent.get("intent_handle") != intent_handle
+                    or completion.get("intent_handle") != intent_handle
+                    or completion.get("completion_handle") != completion_handle
+                    or value.get("completion_handle") != completion_handle
+                    or value.get("completion_sha256") != _digest(completion)):
+                raise ListenerActivationUnavailable("completed health intent and witness are not a current durable pair")
+            return MappingProxyType(dict(intent)), MappingProxyType(dict(completion))
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for fd in (self._ledger_fd, self._root_fd):
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self._ledger_fd = self._root_fd = -1
+
+    def __repr__(self) -> str:
+        return "RootSetupHealthIntentJournal(<protected root journal>)"
+
+
+class RootSetupHealthIntentIssuer:
+    """Issue one selected, source-bound native-health request from live setup."""
+
+    def __init__(self, binding: Any, held_release: Any, own_actor: Any,
+                 activation_supervisor: "RootAuthorityListenerActivationSupervisor"):
+        from .bootstrap_runtime_factory import RootSelectedInstallationBinding
+        from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
+        if (type(binding) is not RootSelectedInstallationBinding
+                or type(held_release) is not VerifiedInstallerReleaseReceipt
+                or type(own_actor) is not RootActorObservation
+                or type(activation_supervisor) is not RootAuthorityListenerActivationSupervisor
+                or activation_supervisor.binding is not binding
+                or activation_supervisor.held_release is not held_release
+                or activation_supervisor.current_actor is not own_actor):
+            raise ListenerActivationUnavailable("exact current root setup and activation supervisor are required")
+        own_actor.verify_current(held_release)
+        binding._session._check_live()
+        self.binding, self.held_release, self.own_actor = binding, held_release, own_actor
+        self.supervisor = activation_supervisor
+        self._issuer = object()
+        if (activation_supervisor._health_intent_issuer is not None
+                and activation_supervisor._health_intent_issuer is not self):
+            raise ListenerActivationUnavailable("activation supervisor already has a health issuer")
+        activation_supervisor._health_intent_issuer = self
+
+    @classmethod
+    def from_current_root_setup(cls, binding: Any, held_release: Any, own_actor: Any,
+                                activation_supervisor: "RootAuthorityListenerActivationSupervisor"
+                                ) -> "RootSetupHealthIntentIssuer":
+        return cls(binding, held_release, own_actor, activation_supervisor)
+
+    def issue_after_activation(self, endpoint_receipt_handle: str, publication: Any,
+                               active_listener_receipt: RootActiveAuthorityListenerReceipt
+                               ) -> RootSetupHealthIntent:
+        session = self.binding._session
+        try:
+            session._check_live()
+            session._refresh_authorization()
+            self.held_release.verify_current()
+            self.own_actor.verify_current(self.held_release)
+            selection = self.supervisor._selections.get(endpoint_receipt_handle)
+            if (selection is None or type(active_listener_receipt) is not RootActiveAuthorityListenerReceipt
+                    or active_listener_receipt._issuer is not self.supervisor._issuer
+                    or active_listener_receipt.endpoint_receipt_handle != endpoint_receipt_handle):
+                raise ValueError("listener activation was not issued from this exact setup selection")
+            self.supervisor.verify_current_selection(selection)
+            self.supervisor.verify_active_current(active_listener_receipt)
+            current_publication = session._resolve_current_active_policy_publication()
+            if (current_publication is not publication
+                    or current_publication.publication_handle != selection.publication_receipt_handle
+                    or current_publication.publication_sha256 != selection.publication_sha256
+                    or current_publication.service_generation_digest != selection.service_generation_digest):
+                raise ValueError("health intent publication is not the current selected publication")
+            active = session._resolve_current_active_enrollment()
+            committed = session._transaction.verify_committed_receipt(active, session._authorization)
+            producer = session.resolve_current_native_worker_service_generation_producer()
+            generation = producer.resolve_current_selected_generation(selection.selection_handle)
+            if producer.verify_active_current(generation, committed,
+                    generation.native_worker_runtime_records[0]["id"]) is not generation:
+                raise ValueError("native worker source generation is no longer current")
+            recipe = generation._recipe
+            definition = getattr(recipe, "health_definition", None)
+            definition_digest = getattr(recipe, "health_definition_sha256", None)
+            projection = definition.public_projection() if callable(
+                getattr(definition, "public_projection", None)) else None
+            if (not isinstance(projection, Mapping)
+                    or set(projection) != {"schema", "operation_id", "parameter_schema_id",
+                        "parameter_schema_sha256", "health_recipe_artifact_id", "health_recipe_sha256",
+                        "health_recipe_receipt_handle", "health_request_artifact_id", "health_request_sha256",
+                        "health_request_receipt_handle", "health_seed_artifact_id", "health_seed_sha256",
+                        "health_seed_receipt_handle", "health_expected_result_artifact_id",
+                        "health_expected_result_sha256", "health_expected_result_receipt_handle",
+                        "health_result_schema_id", "health_result_schema_sha256",
+                        "health_result_schema_receipt_handle", "health_action_id", "provider_required"}
+                    or definition_digest != _digest(dict(projection))):
+                raise ValueError("selected signed worker recipe has no exact health source definition")
+            native_selection = self.binding.resolve_current_native_policy_selection(
+                selection.selection_handle)
+            if (not native_selection.selected_worker_recipe_handles
+                    or native_selection.selected_worker_recipe_handles != (recipe.receipt_handle,)
+                    or native_selection.selected_worker_recipe_digests != (recipe.complete_recipe_sha256,)):
+                raise ValueError("health source recipe is not the exact current signed setup choice")
+            deadline = session._factory.session_store.current_deadline(session._handle)
+            now = time.monotonic()
+            expires = min(now + _MAX_TTL, deadline,
+                          selection.original_setup_deadline_monotonic,
+                          active_listener_receipt.expires_monotonic)
+            if expires <= now:
+                raise ValueError("original setup authorization deadline has expired")
+            intent_handle = secrets.token_urlsafe(36)
+            nonce = secrets.token_bytes(32)
+            body = {
+                "schema": 1, "purpose": "root-native-health-intent-v1",
+                "intent_handle": intent_handle,
+                "nonce_sha256": hashlib.sha256(nonce).hexdigest(),
+                "setup_actor_witness_handle": session._handle.session_id,
+                "setup_actor_witness_sha256": _digest({
+                    "pid": self.own_actor.pid, "uid": self.own_actor.uid, "gid": self.own_actor.gid,
+                    "start_ticks": self.own_actor.start_time,
+                    "launcher": list(self.own_actor.launcher),
+                    "interpreter": list(self.own_actor.interpreter),
+                    "modules": [list(row) for row in self.own_actor.module_origins],
+                }),
+                "activation_id": active_listener_receipt.activation_id,
+                "daemon_unit_id": active_listener_receipt.daemon_unit_id,
+                "daemon_invocation_id": active_listener_receipt.daemon_invocation_id,
+                "committed_transaction_id": committed.journal_transaction_id,
+                "bootstrap_transaction_handle": session._authorization.transaction_handle,
+                "generation_id": active.generation_id,
+                "service_generation_digest": active.generation_digest,
+                "publication_receipt_handle": publication.receipt_handle,
+                "publication_sha256": publication.publication_sha256,
+                "profile_id": selection.profile_id,
+                "enrollment_id": generation.service_records[0]["id"],
+                "source_choice_selection_handle": generation.source_choice_selection_handle,
+                "source_choice_signed_record_sha256": generation.source_choice_signed_record_sha256,
+                "source_choice_epoch": native_selection.choice_epoch,
+                "source_choice_revocation_epoch": native_selection.revocation_epoch,
+                "health_definition_sha256": definition_digest,
+                "issued_monotonic": now, "expires_monotonic": expires,
+            }
+            journal_selection = session._current_root_journal_selection()
+            journal = RootSetupHealthIntentJournal.from_root_journal(
+                journal_selection, active_listener_receipt.activation_id, create=True)
+            try:
+                journal.issue(body)
+            finally:
+                journal.close()
+            return RootSetupHealthIntent(intent_handle, _digest(body), nonce,
+                                         active_listener_receipt.activation_id, expires, self._issuer)
+        except ListenerActivationUnavailable:
+            raise
+        except Exception:
+            raise ListenerActivationUnavailable(
+                "current committed source does not authorize the fixed health intent") from None
+
+
+class RootSetupFunctionalHealthWitnessResolver:
+    """Resolve daemon completion only against the original live setup custody."""
+
+    def __init__(self, binding: Any, held_release: Any, own_actor: Any,
+                 supervisor: "RootAuthorityListenerActivationSupervisor"):
+        from .bootstrap_runtime_factory import RootSelectedInstallationBinding
+        from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
+        if (type(binding) is not RootSelectedInstallationBinding
+                or type(held_release) is not VerifiedInstallerReleaseReceipt
+                or type(own_actor) is not RootActorObservation
+                or type(supervisor) is not RootAuthorityListenerActivationSupervisor
+                or supervisor.binding is not binding or supervisor.held_release is not held_release
+                or supervisor.current_actor is not own_actor):
+            raise ListenerActivationUnavailable("exact current setup witness sources are required")
+        self.binding, self.held_release = binding, held_release
+        self.own_actor, self.supervisor = own_actor, supervisor
+
+    @classmethod
+    def from_current_root_setup(cls, binding: Any, held_release: Any,
+                                own_actor: Any) -> "RootSetupFunctionalHealthWitnessResolver":
+        session = getattr(binding, "_session", None)
+        supervisor = getattr(session, "_health_activation_supervisor", None)
+        return cls(binding, held_release, own_actor, supervisor)
+
+    def resolve_current_completed_intent(self, intent_handle: str,
+                                         completion_handle: str) -> RootSetupFunctionalHealthWitness:
+        session = self.binding._session
+        try:
+            session._check_live()
+            self.held_release.verify_current()
+            self.own_actor.verify_current(self.held_release)
+            if len(self.supervisor._transactions) != 1:
+                raise ValueError("setup has no unique retained daemon adoption")
+            active_listener = next(iter(self.supervisor._transactions.values()))
+            self.supervisor.verify_active_current(active_listener)
+            current_publication = session._resolve_current_active_policy_publication()
+            active = session._resolve_current_active_enrollment()
+            committed = session._transaction.verify_committed_receipt(active, session._authorization)
+            producer = session.resolve_current_native_worker_service_generation_producer()
+            generation = producer.resolve_current_selected_generation(
+                active_listener.publication_receipt_handle)
+            if producer.verify_active_current(
+                    generation, committed,
+                    generation.native_worker_runtime_records[0]["id"]) is not generation:
+                raise ValueError("selected health source generation is stale")
+            journal = RootSetupHealthIntentJournal.from_root_journal(
+                session._current_root_journal_selection(), active_listener.activation_id)
+            try:
+                intent, witness = journal.resolve_current_completed_pair(intent_handle, completion_handle)
+            finally:
+                journal.close()
+            recipe = generation._recipe
+            if (intent.get("purpose") != "root-native-health-intent-v1"
+                    or intent.get("committed_transaction_id") != committed.journal_transaction_id
+                    or intent.get("bootstrap_transaction_handle") != active.transaction_handle
+                    or intent.get("generation_id") != active.generation_id
+                    or intent.get("service_generation_digest") != active.generation_digest
+                    or intent.get("publication_receipt_handle") != current_publication.receipt_handle
+                    or intent.get("publication_sha256") != current_publication.publication_sha256
+                    or intent.get("source_choice_signed_record_sha256")
+                       != generation.source_choice_signed_record_sha256
+                    or intent.get("health_definition_sha256") != recipe.health_definition_sha256
+                    or witness.get("intent_sha256") != _digest(dict(intent))
+                    or witness.get("completion_handle") != completion_handle
+                    or witness.get("committed_transaction_id") != committed.journal_transaction_id
+                    or witness.get("bootstrap_transaction_handle") != active.transaction_handle
+                    or witness.get("generation_id") != active.generation_id
+                    or witness.get("service_generation_digest") != active.generation_digest
+                    or witness.get("publication_receipt_handle") != current_publication.receipt_handle
+                    or witness.get("publication_sha256") != current_publication.publication_sha256
+                    or witness.get("source_choice_signed_record_sha256")
+                       != generation.source_choice_signed_record_sha256
+                    or witness.get("health_definition_sha256") != recipe.health_definition_sha256
+                    or witness.get("daemon_unit_id") != active_listener.daemon_unit_id
+                    or witness.get("daemon_invocation_id") != active_listener.daemon_invocation_id
+                    or witness.get("daemon_pid") != active_listener.daemon_pid
+                    or witness.get("daemon_start_ticks") != active_listener.daemon_start_ticks):
+                raise ValueError("completed health witness differs from current setup and selected source")
+            return RootSetupFunctionalHealthWitness(
+                intent_handle, completion_handle, _digest(dict(witness)), dict(witness),
+                _SETUP_HEALTH_WITNESS_SEAL)
+        except ListenerActivationUnavailable:
+            raise
+        except Exception:
+            raise ListenerActivationUnavailable(
+                "completed health witness is not joined to current committed setup") from None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootVerifiedListenerActivationSelection:
     """Setup-side source selection minted from the committed publication.
 
@@ -599,10 +1328,13 @@ def _send_packet(connection: socket.socket, message: Mapping[str, Any], *, fd: i
 
 
 def _recv_packet(connection: socket.socket, *, expected_peer: tuple[int, int, int],
-                 expected_fd_count: int) -> tuple[dict[str, Any], tuple[int, ...]]:
+                 expected_fd_count: int, timeout: float = 3.0
+                 ) -> tuple[dict[str, Any], tuple[int, ...]]:
     if expected_fd_count not in {0, 1}:
         raise ListenerActivationUnavailable("activation descriptor count is outside the finite schema")
-    connection.settimeout(3.0)
+    if type(timeout) not in (int, float) or not 0 < timeout <= 300:
+        raise ListenerActivationUnavailable("channel wait is outside its fixed health/activation bound")
+    connection.settimeout(timeout)
     if not hasattr(socket, "SO_PASSCRED"):
         raise ListenerActivationUnavailable("Linux per-message credential delivery is unavailable")
     connection.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
@@ -639,9 +1371,7 @@ def _recv_packet(connection: socket.socket, *, expected_peer: tuple[int, int, in
             message = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
         except (ValueError, UnicodeError):
             raise ListenerActivationUnavailable("activation message is not valid closed JSON") from None
-        if (not isinstance(message, dict) or set(message) != _MESSAGE_FIELDS
-                or type(message.get("schema")) is not int or message["schema"] != 1):
-            raise ListenerActivationUnavailable("activation message fields differ from schema 1")
+        message = _validate_channel_message(message)
         if received_fds:
             for descriptor in received_fds:
                 os.set_inheritable(descriptor, False)
@@ -662,6 +1392,40 @@ def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError("duplicate activation JSON field")
         result[key] = value
     return result
+
+
+def _validate_channel_message(message: Any) -> dict[str, Any]:
+    """Validate a closed activation or v191 health frame."""
+    if not isinstance(message, dict) or type(message.get("schema")) is not int or message["schema"] != 1:
+        raise ListenerActivationUnavailable("channel message does not use the fixed schema")
+    operation = message.get("operation")
+    expected_fields = {
+        "daemon-ready-for-listener": _MESSAGE_FIELDS,
+        "transfer-listener": _MESSAGE_FIELDS,
+        "listener-adopted": _MESSAGE_FIELDS,
+        "health-request": _HEALTH_REQUEST_FIELDS,
+        "health-accepted": _HEALTH_ACCEPTED_FIELDS,
+        "health-completed": _HEALTH_COMPLETED_FIELDS,
+    }.get(operation)
+    if expected_fields is None or set(message) != expected_fields:
+        raise ListenerActivationUnavailable("channel message fields differ from its fixed operation schema")
+    if operation in {"health-request", "health-accepted", "health-completed"}:
+        intent_keys = (("intent_handle", "intent_sha256")
+                       if operation != "health-completed" else ("intent_handle",))
+        for key in intent_keys:
+            value = message.get(key)
+            if not isinstance(value, str) or not _HEX64.fullmatch(value):
+                raise ListenerActivationUnavailable("health intent reference is malformed")
+        if operation == "health-request":
+            nonce = message.get("nonce")
+            if not isinstance(nonce, str) or not _HEX64.fullmatch(nonce):
+                raise ListenerActivationUnavailable("health intent nonce is malformed")
+        elif operation == "health-completed":
+            handle, digest = message.get("completion_handle"), message.get("completion_sha256")
+            if (not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                    or not isinstance(digest, str) or not _HEX64.fullmatch(digest)):
+                raise ListenerActivationUnavailable("health completion reference is malformed")
+    return message
 
 
 def _verify_packet(message: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
@@ -965,6 +1729,8 @@ class RootAuthorityListenerActivationSupervisor:
         self._issuer = object()
         self._selections: dict[str, RootVerifiedListenerActivationSelection] = {}
         self._transactions: dict[str, RootActiveAuthorityListenerReceipt] = {}
+        self._health_connection: socket.socket | None = None
+        self._health_intent_issuer: RootSetupHealthIntentIssuer | None = None
         self._closed = False
 
     @classmethod
@@ -1079,6 +1845,64 @@ class RootAuthorityListenerActivationSupervisor:
         if current is not selection:
             raise ListenerActivationUnavailable("active source selection changed after issuance")
         return selection
+
+    def request_functional_health(self, intent: RootSetupHealthIntent) -> tuple[str, str]:
+        """Send one fixed request and return only the daemon's journal witness reference."""
+        if (type(intent) is not RootSetupHealthIntent
+                or self._health_intent_issuer is None
+                or intent._issuer is not self._health_intent_issuer._issuer
+                or intent.expires_monotonic <= time.monotonic()
+                or self._health_connection is None):
+            raise ListenerActivationUnavailable("current one-use health intent or retained channel is unavailable")
+        self._check_setup_actor()
+        receipt = next((item for item in self._transactions.values()
+                        if item.activation_id == intent.activation_id), None)
+        if (receipt is None or receipt.activation_id != intent.activation_id
+                or receipt.expires_monotonic <= time.monotonic()):
+            raise ListenerActivationUnavailable("health request has no current adopted listener")
+        selection = self.verify_current_selection(
+            self._selections[receipt.endpoint_receipt_handle])
+        health = RootSetupHealthIntentJournal.from_root_journal(
+            self.binding._session._current_root_journal_selection(), intent.activation_id)
+        daemon_selection = _selection_from_release(self.held_release, intent.activation_id)
+        peer = self.inspector.inspect_authority_daemon(daemon_selection)
+        try:
+            if (peer.pid != receipt.daemon_pid or peer.invocation_id != receipt.daemon_invocation_id
+                    or peer.start_ticks != receipt.daemon_start_ticks):
+                raise ListenerActivationUnavailable("health channel daemon peer changed")
+            expected = (peer.pid, 0, 0)
+            if _read_peer_cred(self._health_connection) != expected:
+                raise ListenerActivationUnavailable("retained health channel peer credentials changed")
+            self.verify_current_selection(selection)
+            message = {"schema": 1, "operation": "health-request",
+                       "intent_handle": intent.intent_handle,
+                       "intent_sha256": intent.intent_sha256,
+                       "nonce": intent.nonce.hex()}
+            _send_packet(self._health_connection, message)
+            accepted, fds = _recv_packet(self._health_connection,
+                                         expected_peer=expected, expected_fd_count=0)
+            if fds or (accepted.get("operation") != "health-accepted"
+                       or accepted.get("intent_handle") != intent.intent_handle
+                       or accepted.get("intent_sha256") != intent.intent_sha256):
+                raise ListenerActivationUnavailable("daemon did not accept the exact health intent")
+            # A health run may take up to the fixed 300-second recipe limit.
+            # The 30-second intent is consumed at acceptance, never extended.
+            completed, fds = _recv_packet(self._health_connection,
+                                          expected_peer=expected, expected_fd_count=0,
+                                          timeout=300.0)
+            if (fds or completed.get("operation") != "health-completed"
+                    or completed.get("intent_handle") != intent.intent_handle):
+                raise ListenerActivationUnavailable("daemon returned no closed completion reference")
+            witness = health.resolve_current_completed_intent(
+                intent.intent_handle, completed["completion_handle"])
+            digest = _digest(dict(witness))
+            if (digest != completed["completion_sha256"]
+                    or witness.get("intent_sha256") != intent.intent_sha256):
+                raise ListenerActivationUnavailable("daemon completion frame differs from the durable witness")
+            return completed["completion_handle"], digest
+        finally:
+            health.close()
+            peer.close()
 
     def _verify_ack_for_export(self, export: Any, acknowledgment: Any) -> None:
         if (type(export) is not __import__(
@@ -1272,6 +2096,8 @@ class RootAuthorityListenerActivationSupervisor:
             finally:
                 final_peer.close()
             self._transactions[endpoint_receipt_handle] = active
+            self._health_connection = connection
+            connection = None
             return active
         except BaseException:
             if activation_fd >= 0 and record_created:
@@ -1319,12 +2145,51 @@ class RootAuthorityListenerActivationSupervisor:
                                     self.binding._session._resolve_current_active_policy_publication())
         return receipt
 
+    def resolve_current_functional_health_witness(self, intent_handle: str,
+                                                   completion_handle: str) -> Mapping[str, Any]:
+        self._check_setup_actor()
+        session = self.binding._session
+        if len(self._transactions) != 1:
+            raise ListenerActivationUnavailable("current setup has no unique active listener witness")
+        active_listener = next(iter(self._transactions.values()))
+        if type(intent_handle) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", intent_handle):
+            raise ListenerActivationUnavailable("health completion handle is malformed")
+        self.verify_active_current(active_listener)
+        current_publication = session._resolve_current_active_policy_publication()
+        active = session._resolve_current_active_enrollment()
+        committed = session._transaction.verify_committed_receipt(active, session._authorization)
+        generation = session.resolve_current_native_worker_service_generation_producer().resolve_current_selected_generation(
+            session._current_native_policy_selection_handle)
+        journal = RootSetupHealthIntentJournal.from_root_journal(
+            session._current_root_journal_selection(), active_listener.activation_id)
+        try:
+            witness = journal.resolve_current_completed_intent(intent_handle, completion_handle)
+            if (witness.get("committed_transaction_id") != committed.journal_transaction_id
+                    or witness.get("bootstrap_transaction_handle") != active.transaction_handle
+                    or witness.get("generation_id") != active.generation_id
+                    or witness.get("service_generation_digest") != active.generation_digest
+                    or witness.get("publication_receipt_handle") != current_publication.receipt_handle
+                    or witness.get("publication_sha256") != current_publication.publication_sha256
+                    or witness.get("source_choice_signed_record_sha256")
+                       != generation.source_choice_signed_record_sha256
+                    or witness.get("daemon_unit_id") != active_listener.daemon_unit_id
+                    or witness.get("daemon_invocation_id") != active_listener.daemon_invocation_id
+                    or witness.get("daemon_pid") != active_listener.daemon_pid
+                    or witness.get("daemon_start_ticks") != active_listener.daemon_start_ticks):
+                raise ListenerActivationUnavailable("completed health witness differs from current committed setup")
+            return witness
+        finally:
+            journal.close()
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         self._selections.clear()
         self._transactions.clear()
+        if self._health_connection is not None:
+            self._health_connection.close()
+            self._health_connection = None
 
     def _check_setup_actor(self) -> None:
         if self._closed:
@@ -1365,6 +2230,8 @@ class RootAuthorityListenerActivationReceiver:
         self._active_receipt: RootActiveAuthorityListenerReceipt | None = None
         self._active_listener: socket.socket | None = None
         self._adopted_monotonic: float | None = None
+        self._health_connection: socket.socket | None = None
+        self._health_intent_journal: RootSetupHealthIntentJournal | None = None
 
     @classmethod
     def from_current_installed_daemon(cls, runtime: Any, activation_id: str,
@@ -1489,6 +2356,10 @@ class RootAuthorityListenerActivationReceiver:
             self._active_receipt = active
             self._active_listener = listener
             self._adopted_monotonic = adopted_at
+            self._health_connection = connection
+            connection = None
+            self._setup_peer_pidfd = setup_peer_pidfd
+            setup_peer_pidfd = -1
             return listener, active
         except BaseException:
             if listener is not None:
@@ -1499,8 +2370,8 @@ class RootAuthorityListenerActivationReceiver:
                 connection.close()
             if activation_fd >= 0:
                 os.close(activation_fd)
-            self._setup_peer_pidfd = None
             if setup_peer_pidfd >= 0:
+                self._setup_peer_pidfd = None
                 os.close(setup_peer_pidfd)
             peer.close()
 
@@ -1592,6 +2463,95 @@ class RootAuthorityListenerActivationReceiver:
                 "same daemon unit and adopted listener are no longer current") from None
         finally:
             peer.close()
+
+    def close(self) -> None:
+        if self._health_intent_journal is not None:
+            self._health_intent_journal.close()
+            self._health_intent_journal = None
+        if self._health_connection is not None:
+            self._health_connection.close()
+            self._health_connection = None
+        if self._active_listener is not None:
+            self._active_listener.close()
+            self._active_listener = None
+        if self._setup_peer_pidfd is not None:
+            try:
+                os.close(self._setup_peer_pidfd)
+            except OSError:
+                pass
+            self._setup_peer_pidfd = None
+
+    def current_active_receipt(self) -> RootActiveAuthorityListenerReceipt:
+        """Return the exact daemon-retained adopted receipt after fresh observation."""
+        receipt = self._active_receipt
+        if type(receipt) is not RootActiveAuthorityListenerReceipt:
+            raise ListenerActivationUnavailable("daemon has no retained active listener receipt")
+        self.observe_active_current(receipt)
+        return receipt
+
+    def attach_health_intent_journal(self, journal: RootSetupHealthIntentJournal) -> None:
+        receipt = self.current_active_receipt()
+        if (type(journal) is not RootSetupHealthIntentJournal
+                or journal.receiver not in (None, self)
+                or journal.active_receipt not in (None, receipt)
+                or journal.activation_id != self.activation_id):
+            raise ListenerActivationUnavailable("health journal does not match the adopted daemon receiver")
+        if (self._health_intent_journal is not None
+                and self._health_intent_journal is not journal):
+            raise ListenerActivationUnavailable("daemon receiver already owns another health journal")
+        journal.receiver, journal.active_receipt = self, receipt
+        self._health_intent_journal = journal
+
+    def receive_health_intent(self, journal: RootSetupHealthIntentJournal
+                              ) -> RootAcceptedHealthIntent:
+        """Accept one current setup intent over the retained authenticated channel."""
+        receipt = self.current_active_receipt()
+        connection = self._health_connection
+        if (type(journal) is not RootSetupHealthIntentJournal
+                or journal is not self._health_intent_journal
+                or journal.receiver is not self or journal.active_receipt is not receipt
+                or connection is None or journal.activation_id != self.activation_id):
+            raise ListenerActivationUnavailable("daemon health channel lacks its exact receiver journal")
+        record = self._read_current_adopted_record()
+        expected_peer = self._verify_setup_peer(record)
+        if _read_peer_cred(connection) != expected_peer:
+            raise ListenerActivationUnavailable("health request came from a different setup actor")
+        self.observe_active_current(receipt)
+        request, descriptors = _recv_packet(connection, expected_peer=expected_peer,
+                                            expected_fd_count=0)
+        if descriptors or request.get("operation") != "health-request":
+            raise ListenerActivationUnavailable("health channel did not carry a fixed request")
+        accepted = journal.accept(request["intent_handle"], request["intent_sha256"],
+                                  request["nonce"], self, receipt)
+        self.observe_active_current(receipt)
+        _send_packet(connection, {"schema": 1, "operation": "health-accepted",
+                                  "intent_handle": accepted.intent_handle,
+                                  "intent_sha256": accepted.intent_sha256})
+        return accepted
+
+    def send_health_completion(self, intent: RootAcceptedHealthIntent,
+                               completion_handle: str) -> tuple[str, str]:
+        """Send only a durable completion row already committed by the health consumer."""
+        receipt = self.current_active_receipt()
+        journal = self._health_intent_journal
+        connection = self._health_connection
+        if (type(intent) is not RootAcceptedHealthIntent or intent._journal is not journal
+                or intent.activation_id != self.activation_id or connection is None
+                or journal is None or journal.receiver is not self
+                or journal.active_receipt is not receipt):
+            raise ListenerActivationUnavailable("completion is not tied to this accepted daemon intent")
+        witness = journal.resolve_current_completed_intent(intent.intent_handle, completion_handle)
+        digest = _digest(dict(witness))
+        record = self._read_current_adopted_record()
+        expected_peer = self._verify_setup_peer(record)
+        if _read_peer_cred(connection) != expected_peer:
+            raise ListenerActivationUnavailable("setup actor changed before completion response")
+        self.observe_active_current(receipt)
+        _send_packet(connection, {"schema": 1, "operation": "health-completed",
+                                  "intent_handle": intent.intent_handle,
+                                  "completion_handle": completion_handle,
+                                  "completion_sha256": digest})
+        return completion_handle, digest
 
     def _read_current_adopted_record(self) -> Mapping[str, Any]:
         root_fd = activation_fd = -1

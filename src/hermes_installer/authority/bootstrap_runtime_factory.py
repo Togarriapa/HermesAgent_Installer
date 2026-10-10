@@ -841,6 +841,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native worker start source receipts are not owned by this setup session")
         return self._session._resolve_prepared_native_worker_start_source_module_receipts()
 
+    def resolve_prepared_native_health_fixture_receipts(
+            self) -> tuple[RootInstalledReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native health fixtures are not owned by this setup session")
+        return self._session._resolve_prepared_native_health_fixture_receipts()
+
     def resolve_application_runtime_probe_artifact(self, application_id: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("application probe artifact is not owned by this setup session")
@@ -8977,6 +8983,62 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return tuple(output)
 
+    def _resolve_prepared_native_health_fixture_receipts(
+            self) -> tuple[RootInstalledReleaseMemberReceipt, ...]:
+        """Mint the five fixed health-fixture receipts for the selected plan only."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or prepared.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending(
+                "native health fixtures require current empty prepared custody")
+        rows = (
+            ("hermes-agent-health-request-v1", "fixtures/native-health/request.txt",
+             "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182),
+            ("hermes-agent-health-seed-v1", "fixtures/native-health/seed-value.txt",
+             "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67),
+            ("hermes-agent-health-expected-result-v1", "fixtures/native-health/expected-tool-result.json",
+             "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240),
+            ("hermes-agent-health-overlay-read-result-v1", "fixtures/native-health/tool-result.schema.json",
+             "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526),
+            ("hermes-agent-health-fixture-v1", "fixtures/native-health/recipe.json",
+             "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootInstalledReleaseMemberReceipt] = []
+        for artifact_id, relative_path, digest, size_bytes in rows:
+            matches = [row for row in release.files if row.artifact_id == artifact_id]
+            if (len(matches) != 1 or artifact_id not in plan.allowed_artifact_ids):
+                raise BootstrapEnrollmentPending(
+                    "fixed native health fixture is not authorized by the selected release plan")
+            row = matches[0]
+            if (row.relative_path != relative_path or row.sha256 != digest
+                    or row.size_bytes != size_bytes or row.roles != ("native-health-fixture",)
+                    or row.mode != 0o444):
+                raise BootstrapEnrollmentPending(
+                    "fixed native health fixture differs from its exact reviewed release row")
+            prior = next((item for item in self._installed_release_member_receipts.values()
+                          if item.artifact_id == artifact_id
+                          and item._session_id == self._handle.session_id
+                          and item.release_commit == release.release_commit), None)
+            if prior is None:
+                prior = RootInstalledReleaseMemberReceipt(
+                    artifact_id, relative_path, digest, size_bytes, release.release_commit,
+                    release.deployment_receipt_sha256, secrets.token_urlsafe(36),
+                    self._handle.session_id, self._seal, self, role="native-health-fixture")
+                self._installed_release_member_receipts[prior.receipt_handle] = prior
+            if prior.role != "native-health-fixture":
+                raise BootstrapEnrollmentPending("held native health fixture receipt has another role")
+            data = prior.read_current()
+            if len(data) != size_bytes or hashlib.sha256(data).hexdigest() != digest:
+                raise BootstrapEnrollmentPending("held native health fixture bytes changed")
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
     def _mint_native_registration_schema_receipt(
             self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Mint one of the fixed local-result schema receipts from the held root catalog.
@@ -9719,6 +9781,20 @@ class RootBootstrapSession:
                              for path, (artifact_id, digest, size) in expected_by_path.items()
                              if artifact_id == receipt.artifact_id), None)
         if expected is None:
+            expected = next(((artifact_id, relative_path, digest, size, "native-health-fixture")
+                             for artifact_id, relative_path, digest, size in (
+                ("hermes-agent-health-request-v1", "fixtures/native-health/request.txt",
+                 "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182),
+                ("hermes-agent-health-seed-v1", "fixtures/native-health/seed-value.txt",
+                 "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67),
+                ("hermes-agent-health-expected-result-v1", "fixtures/native-health/expected-tool-result.json",
+                 "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240),
+                ("hermes-agent-health-overlay-read-result-v1", "fixtures/native-health/tool-result.schema.json",
+                 "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526),
+                ("hermes-agent-health-fixture-v1", "fixtures/native-health/recipe.json",
+                 "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
+            ) if artifact_id == receipt.artifact_id), None)
+        if expected is None:
             raise BootstrapEnrollmentPending("installed release member has no purpose-specific resolver")
         artifact_id, relative_path, sha256, size_bytes, role = expected
         row = next((item for item in release.files if item.artifact_id == artifact_id), None)
@@ -9731,6 +9807,7 @@ class RootBootstrapSession:
                 or receipt.size_bytes != row.size_bytes
                 or (artifact_id == _APPLICATION_BUILD_DRIVER[0] and row.mode != 0o444)
                 or (role == "module" and row.mode != 0o444)
+                or (role == "native-health-fixture" and row.mode != 0o444)
                 or receipt.artifact_id != artifact_id or receipt.release_commit != release.release_commit
                 or receipt.deployment_receipt_sha256 != release.deployment_receipt_sha256):
             raise BootstrapEnrollmentPending("installed release member differs from its fixed receipt")
@@ -9749,6 +9826,11 @@ class RootBootstrapSession:
                             and origin[4] == sha256]) != 1):
                 raise BootstrapEnrollmentPending(
                     "native worker producer is outside the verified root actor import closure")
+        elif role == "native-health-fixture":
+            plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+            if artifact_id not in plan.allowed_artifact_ids:
+                raise BootstrapEnrollmentPending(
+                    "native health fixture is no longer allowed by the selected plan")
         elif role == "module" and artifact_id in {
                 item[0] for item in _INSTALLER_MEMBER_PINS.values()}:
             plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
@@ -9913,9 +9995,34 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("actual Hermes registration module receipts are unavailable")
         self._factory._actor.verify_current(self._factory._release)
 
-    def record_functional_health(self, _active_receipt: EnrollmentReceipt, _health_receipt: Any) -> None:
+    def record_functional_health(self, active_receipt: EnrollmentReceipt,
+                                 completion_reference: Any) -> Any:
+        """Resolve the actual daemon journal witness; never trust a caller result."""
         self._check_live()
-        raise BootstrapEnrollmentPending("functional health requires the root-native health observer receipt consumer")
+        if (type(active_receipt) is not EnrollmentReceipt
+                or not isinstance(completion_reference, tuple)
+                or len(completion_reference) != 2
+                or any(not isinstance(item, str) for item in completion_reference)):
+            raise BootstrapEnrollmentPending("functional health requires an opaque intent/completion reference")
+        try:
+            current = self._resolve_current_active_enrollment()
+            committed = self._transaction.verify_committed_receipt(current, self._authorization)
+            if (active_receipt.transaction_handle != current.transaction_handle
+                    or active_receipt.generation_id != current.generation_id
+                    or active_receipt.generation_digest != current.generation_digest
+                    or active_receipt.state != "committed"
+                    or committed.generation_id != active_receipt.generation_id):
+                raise ValueError("functional health reference is for another active commit")
+            from .listener_activation import RootSetupFunctionalHealthWitnessResolver
+            resolver = RootSetupFunctionalHealthWitnessResolver.from_current_root_setup(
+                self.selected_installation, self._factory._release, self._factory._actor,
+            )
+            return resolver.resolve_current_completed_intent(*completion_reference)
+        except BootstrapEnrollmentPending:
+            raise
+        except Exception as exc:
+            raise BootstrapEnrollmentPending(
+                f"functional-health completion is not current ({type(exc).__name__})") from None
 
     def _make_source_provisioner(self) -> Any:
         from ..hermes_source import PinnedHermesSourceProvisioner
