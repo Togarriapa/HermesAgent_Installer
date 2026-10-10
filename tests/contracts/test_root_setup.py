@@ -53,6 +53,30 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertEqual(unknown.errno_name, "UNKNOWN")
         self.assertNotIn("987654", root_setup._safe_reason(unknown))
 
+        unknown.errno_name = private_path
+        self.assertEqual(
+            root_setup._safe_reason(unknown),
+            "Root setup failed at source_cas.materialize.",
+        )
+        unknown.step = private_path
+        self.assertEqual(
+            root_setup._safe_reason(unknown),
+            "Root setup could not verify its required authority (OSError).",
+        )
+
+        class MalformedDiagnostic(BootstrapSystemCallFailure):
+            def __getattribute__(self, name: str) -> object:
+                if name in {"step", "errno_name"}:
+                    return private_path
+                return super().__getattribute__(name)
+
+        subclass_failure = MalformedDiagnostic("source_cas.materialize", errno.EACCES)
+        self.assertEqual(
+            root_setup._safe_reason(subclass_failure),
+            "Root setup could not verify its required authority (OSError).",
+        )
+        self.assertNotIn(private_path, root_setup._safe_reason(subclass_failure))
+
         trust_failure = RuntimeError("untrusted detail must remain suppressed")
         self.assertEqual(
             root_setup._safe_reason(trust_failure),
