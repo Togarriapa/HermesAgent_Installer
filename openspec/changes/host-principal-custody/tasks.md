@@ -233,3 +233,23 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T134.2 boundary/loader/custody: validated selected role delivery and actual import event proof, root held member/PIDFD/mount currentness, no catalog-only loaded claim
 
 - [ ] HI-T134.3 source/factory/runtime: root validated loaded-role proof to current selected observer registration/action joins; missing/changed role/import denies
+
+- [ ] HI-T137.1 factory/native policy preparation: Implement actual root TTY selected native component/action/target configuration and sealed preactive policy registry feeding existing assembly; finite choice/target/current identity/source proof failures and phase renewal.
+
+- [ ] HI-T137.2 component target/source owners: Implement finite reviewed per-component target/account/vault/permission observation adapters and protected source-role/observer definition producer; preserve configurable pending for absent auth/rights/runtime, no installation-test writes/messages.
+
+- [ ] HI-T137.3 registration projection/source observer/native assembler/active compiler: Produce exact 61 action/42 registration/workflow/process-role/schema/observer joins from actual staged records, real root source receipts; compile then atomically publish real outputs without active-before-assembly cycle, verify all-family coverage and missing proof denial.
+
+- [ ] PR-T138.1 factory/consent: Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias.
+
+- [ ] HI-T138.2 source input/host authority: Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests.
+
+- [ ] RB-T138.3 web/native integration: Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance.
+
+- [ ] HI-T140.1 native source/projection/factory: Consume current held module pin, re-observe exact registration/action/schema source joins and current registration capture; stale source receipts/hash deny.
+
+- [ ] RB-T140.2 web/native integration: Preserve genuine raw receipt/result/media/operation joins and PUBLIC-only egress positive with private ancestry/revocation negatives; actual runtime/account/ARM acceptance remains open.
+
+- [ ] HI-T141.1 finance/native source/projection/factory: Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny.
+
+- [ ] HI-T141.2 finance/native integration: Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim.

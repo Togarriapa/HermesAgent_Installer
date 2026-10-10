@@ -186,3 +186,7 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T136.3 build/source owners: Fixed noneditable/no-default-groups deployment recipe and actual source/ABI/import-origin/offline tests; keep platform/toolchain gaps explicit.
 
 - [ ] SK-T136.4 models/host authority: Signed supporting source receipt digest and durable exact v135 evidence membership; preserve member digest domain.
+
+- [ ] SK-T139.1 factory/release builder: Pin literal root template in genuine release/source descriptor, implement actual root-held filesystem observer and same normal configuration existing-child model selection; absent/unowned/symlink/writable/root/source mismatch denies.
+
+- [ ] SK-T139.2 models/active publisher: Consume actual root/child/source observations and signed durable selection/current adoption, complete model member verification independent deployment; no arbitrary paths/copies/downloads or inferred embedding.

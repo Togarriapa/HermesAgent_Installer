@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hermes_installer.authority.source_observers import (
     LiveSourceProducer,
     NativeInitialInputDelivery,
+    RootPublicNativeInputObservation,
     RootNativeExecutionSelectionRegistry,
     RootSelectedNativeExecution,
     SourceObserverEnrollment,
@@ -112,9 +113,15 @@ class _Package:
     adapter_records: dict = None
     action_records: dict = None
     process_role_records: dict = None
+    registration_records: dict = None
 
     def __post_init__(self):
         action = _Adapter()
+        registration = SimpleNamespace(
+            registration_id="registration.native.input",
+            observer_enrollment_ids=("observer.native.primary",),
+            action_bindings=(SimpleNamespace(action_binding_id=action.action_binding_id),),
+        )
         role = SimpleNamespace(
             role_id="native-process-role", package_id=self.package_id,
             native_package_generation=self.generation, profile_id=self.profile_id,
@@ -130,6 +137,7 @@ class _Package:
         object.__setattr__(self, "adapter_records", {"hermes-main": action})
         object.__setattr__(self, "action_records", {action.action_binding_id: action})
         object.__setattr__(self, "process_role_records", {role.role_id: role})
+        object.__setattr__(self, "registration_records", {registration.registration_id: registration})
 
 
 class _Service:
@@ -252,6 +260,14 @@ def _enrollment(**changes):
         target_id="provider.fixed",
         recipient="public-provider",
         allowed_parent_source_kinds=frozenset({"native-input"}),
+        native_package_generation="gen-4",
+        source_action_binding_id="hermes-main:action:authenticated-input",
+        role_source_receipt_handle="role-source-receipt",
+        role_module_name="hermes_installer.runtime.native_role",
+        role_closure_member_path="roles/native_role.py",
+        role_source_revision="reviewed-role",
+        role_source_tree_sha256=_digest("8"),
+        source_registration_ids=("registration.native.input",),
     )
     fields.update(changes)
     return SourceObserverEnrollment(**fields)
@@ -286,6 +302,28 @@ def _consumer_context(service, receipt, *, profile="gateway-profile", uid=2002):
 
 
 class SourceObserverContracts(unittest.TestCase):
+    def test_public_input_observation_is_digest_only_and_public_classification_is_typed(self):
+        fields = dict(
+            observation_handle="o" * 40,
+            retained_input_selection_handle="s" * 40,
+            input_sha256=_digest("a"), input_size_bytes=1,
+            source_observation_handle="n" * 40,
+            public_permission_selection_handle="p" * 40,
+            principal_id="principal", profile_id="profile", namespace_id="namespace",
+            profile_generation="generation", service_generation_digest=_digest("b"),
+            source_classification=Sensitivity.PUBLIC,
+            parent_source_receipt_handles=("parent-handle",),
+            controller_binding_handle="controller-binding",
+            issued_monotonic=10.0, expires_monotonic=20.0,
+            _issuer_token=object(),
+        )
+        proof = RootPublicNativeInputObservation(**fields)
+        self.assertFalse(hasattr(proof, "payload_bytes"))
+        self.assertFalse(hasattr(proof, "parent_receipts"))
+        with self.assertRaises(ValueError):
+            RootPublicNativeInputObservation(
+                **{**fields, "source_classification": Sensitivity.PRIVATE})
+
     def test_private_provider_route_candidates_are_finite_and_protected(self):
         fields = dict(
             observer_enrollment_id="observer.native.primary", source_kind="native-input",
@@ -298,15 +336,23 @@ class SourceObserverContracts(unittest.TestCase):
             capture_schema_id="schema.capture.request", source_action_id="authenticated-input",
             target_id="provider.fixed", recipient="public-provider",
             allowed_parent_source_kinds=[], private_provider_route_ids=["route.private.codex"],
+            public_web_scope_ids=["scope.public.alpha", "scope.public.beta"],
         )
         selected = SourceObserverEnrollment.from_protected_record(fields)
         self.assertEqual(selected.private_provider_route_ids, ("route.private.codex",))
+        self.assertEqual(selected.public_web_scope_ids,
+                         ("scope.public.alpha", "scope.public.beta"))
         legacy = dict(fields)
         legacy.pop("private_provider_route_ids")
+        legacy.pop("public_web_scope_ids")
         self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).private_provider_route_ids, ())
+        self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).public_web_scope_ids, ())
         with self.assertRaises(AuthorityDenied):
             SourceObserverEnrollment.from_protected_record(
                 {**fields, "private_provider_route_ids": ["route.private.codex", "route.private.codex"]})
+        with self.assertRaises(AuthorityDenied):
+            SourceObserverEnrollment.from_protected_record(
+                {**fields, "public_web_scope_ids": ["scope.public.beta", "scope.public.alpha"]})
 
     def setUp(self):
         self.service = _Service()
@@ -369,6 +415,46 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             selections._private_consent_selection_handle(self.enrollment, running)
         self.addCleanup(self.registry.close)
+
+    def test_public_permission_selection_is_independent_and_never_coexists_with_private_choice(self):
+        handle = "p" * 43
+        principal = SimpleNamespace(
+            uid=self.enrollment.producer_uid,
+            profile_id=self.enrollment.profile_id,
+            principal_id=self.enrollment.principal_id,
+            namespace_id=self.enrollment.namespace_id,
+        )
+
+        class _PermissionRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("permission.selection", "wrong principal")
+                return handle
+
+        self.service.public_input_permission_registry = _PermissionRegistry()
+        self.service.bindings_by_uid = {principal.uid: principal}
+        selections = object.__new__(RootNativeExecutionSelectionRegistry)
+        selections.service = self.service
+        running = SimpleNamespace(source=SimpleNamespace(
+            profile_id=principal.profile_id,
+            principal_id=principal.principal_id,
+            namespace_id=principal.namespace_id,
+        ))
+        self.assertEqual(
+            selections._public_input_permission_selection_handle(self.enrollment, running), handle)
+        class _PrivateRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("consent.selection", "wrong principal")
+                return "q" * 43
+
+        self.service.private_input_consent_registry = _PrivateRegistry()
+        with self.assertRaises(AuthorityDenied):
+            selections._validate_input_permission_choice(self.enrollment, running)
 
     def test_native_input_delivery_wire_is_bounded_and_contains_no_payload(self):
         delivery = NativeInitialInputDelivery(
@@ -435,7 +521,14 @@ class SourceObserverContracts(unittest.TestCase):
             self.selected_package.entrypoint_sha256, self.selected_package.resolver_sha256,
             123, "mount-1", _digest("1"), frozenset({"ro", "nosuid", "nodev"}),
             8, 99, identity, "native-role-module", _digest("9"), "loader-ready-event",
-            ("authenticated-input",), 9.0, 39.0, _digest("2"))
+            (), 9.0, 39.0, _digest("2"),
+            role_id="native-process-role", role_source_receipt_handle="role-source-receipt",
+            role_module_name="hermes_installer.runtime.native_role",
+            role_closure_member_path="roles/native_role.py",
+            role_source_revision="reviewed-role", role_source_tree_sha256=_digest("8"),
+            role_module_device=8, role_module_inode=99, role_module_sha256=_digest("9"),
+            observed_registration_ids=("registration.native.input",),
+        )
 
     def role_proof(self, **changes):
         proof = self.loaded_package_proof(
