@@ -816,3 +816,10 @@ The installer SHALL obtain Node and Bun source bytes through a finite selected-p
 #### Scenario: Toolchain private CAS has no selected source observation
 - **WHEN** an archive was independently fetched without the actual selected source observer
 - **THEN** it cannot mint a trusted toolchain receipt merely from matching local CAS syntax
+
+### Requirement: Stable private binding and current observation separation v151
+The installer SHALL select private endpoint/model binding IDs before startup and resolve genuine current runtime observations only after actual listener/load/source proof.
+
+#### Scenario: Configured private endpoint has no live process
+- **WHEN** only the protected endpoint binding exists
+- **THEN** no runtime route or deployment receipt is fabricated from that configured identity

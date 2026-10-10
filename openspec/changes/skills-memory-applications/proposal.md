@@ -111,3 +111,5 @@ Lock-derived offline dependency install v147: `plans/amendments/2026-10-10-lock-
 Offline probe provenance v148: `plans/amendments/2026-10-10-offline-probe-environment-clarification-v148.md`; container Python is fixture evidence, not observed PM receipt. Exact official uv and unchanged lock tests distinct production toolchain proof.
 
 Selected toolchain source observer v150: `plans/amendments/2026-10-10-selected-toolchain-source-observer-v150.md`; actual finite plan-bound source observer FD feeds toolchain extraction, no disconnected CAS/global cap widening. All AC open.
+
+Stable private endpoint/model binding v151: `plans/amendments/2026-10-10-stable-private-endpoint-binding-v151.md`; source-selected IDs before process observation, genuine runtime receipt proofs after startup. All AC open.

@@ -212,3 +212,7 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T150.1 toolchain producer/artifact broker: Implement finite selected-plan-bound64MiB source observer/held FD and actual exact catalog/plan source rows; require current explicit package acquisition choice and exactNode/Bunpolicy.
 
 - [ ] SK-T150.2 toolchain registry/application build: Use genuine observer result instead of disconnected HTTP/CAS path; source/member/plan mismatch negatives and actual isolated executable/version/notice observation.
+
+- [ ] SK-T151.1 host enrollment/factory/active compiler: Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins.
+
+- [ ] SK-T151.2 models/private providers/runtime composer: Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute.

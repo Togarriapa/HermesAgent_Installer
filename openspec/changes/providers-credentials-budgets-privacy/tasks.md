@@ -65,3 +65,7 @@ Private input recipient consent v100: `plans/amendments/2026-10-10-private-input
 - [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
 
 - [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.
+
+- [ ] SK-T151.1 host enrollment/factory/active compiler: Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins.
+
+- [ ] SK-T151.2 models/private providers/runtime composer: Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute.
