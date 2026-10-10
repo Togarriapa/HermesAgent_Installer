@@ -17,7 +17,7 @@ import re
 import secrets
 import stat
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -75,6 +75,10 @@ _COMPOSIO_POLICY_ARTIFACT_ID = "installer-composio-whatsapp-catalog-read-policy-
 _COMPOSIO_POLICY_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
 _COMPOSIO_POLICY_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 _RECEIPT_TEMPLATE_ID = "installer-bootstrap-receipt-bindings-template-v1"
+_CAPABILITY_MAP_TEMPLATE_ID = "installer-reviewed-native-capability-map-v1"
+_CAPABILITY_MAP_TEMPLATE_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
+_CAPABILITY_MAP_TEMPLATE_PATH = "templates/reviewed-native-capability-map-v1.json"
+_CAPABILITY_MAP_TEMPLATE_SIZE = 2026
 _RECEIPT_TEMPLATE_SHA256 = "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609"
 _RECEIPT_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 _RECEIPT_TEMPLATE_SIZE = 10195
@@ -188,6 +192,32 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
         return self._session._resolve_private_installation_roots(selection)
+
+    def resolve_native_bootstrap_assembly(
+            self, prepared_setup_receipt_handle: str,
+            native_materialization_receipt_handle: str) -> "RootNativeBootstrapAssemblySelection":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
+        return self._session._resolve_native_bootstrap_assembly(
+            prepared_setup_receipt_handle, native_materialization_receipt_handle)
+
+    def resolve_current_native_bootstrap_assembly(
+            self, selection_handle: str) -> "RootNativeBootstrapAssemblySelection":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
+        return self._session._resolve_current_native_bootstrap_assembly(selection_handle)
+
+    def resolve_native_assembly_definitions(self, selection_handle: str) -> "RootNativeAssemblyDefinitions":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
+        return self._session._resolve_native_assembly_definitions(selection_handle)
+
+    def resolve_native_assembly_member(self, selection_handle: str,
+                                       artifact_receipt_handle: str) -> bytes:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native assembly binding is not owned by this setup session")
+        return self._session._resolve_native_assembly_member(
+            selection_handle, artifact_receipt_handle)
 
     def verify_native_publication_receipt(self, reservation: Any, publication_receipt: Any) -> bool:
         """Re-resolve the durable active CAS before native output receipts are spent."""
@@ -330,6 +360,71 @@ class _BoundNativeSelection:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootNativeBootstrapAssemblySelection:
+    """One-use proof binding prepared setup, source, runtime and native compiler facts."""
+
+    schema: int
+    selection_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_digest: str
+    prepared_generation_id: str
+    protected_enrollment_digest: str
+    enrollment_id: str
+    service_profile_id: str
+    service_generation: str
+    resource_profile_id: str
+    package_id: str
+    native_package_generation: str
+    compiler_artifact_id: str
+    compiler_sha256: str
+    compiler_release_receipt_handle: str
+    compiler_module_closure_sha256: str
+    pm_runtime_receipt_handle: str
+    materialization_receipt_handle: str
+    hermes_source_receipt_handle: str
+    resources_source_receipt_handle: str
+    definitions_handle: str
+    definitions_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _registry_seal: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeAssemblyMember:
+    """A retained selected file identity; its bytes are resolved by the root registry."""
+
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    mode: int
+    artifact_receipt_handle: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeAssemblyDefinitions:
+    """Immutable selected source/action/schema projection for the native assembler."""
+
+    selection_handle: str
+    definitions_sha256: str
+    adapter_records: tuple[Mapping[str, Any], ...]
+    dependency_records: tuple[Mapping[str, Any], ...]
+    native_schema_records: tuple[Mapping[str, Any], ...]
+    native_schema_bytes: tuple[tuple[str, bytes], ...]
+    source_issuer_records: tuple[Mapping[str, Any], ...]
+    native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    action_registration_records: tuple[Mapping[str, Any], ...]
+    candidate_records: tuple[Mapping[str, Any], ...]
+    closure_members: tuple[RootNativeAssemblyMember, ...]
+    boundary_overlay_receipt_handle: str
+    boundary_overlay_bytes: bytes
+    boundary_overlay_source_commit: str
+    effect_selection_receipt_handles: tuple[str, ...]
+    _registry_seal: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _RootPrivateInstallationRoots:
     home_root: Path
     data_root: Path
@@ -356,6 +451,19 @@ class VerifiedIdentityPolicyTemplate:
     identity_effect_authority: bool
     identity_read_paths: tuple[str, ...]
     max_identity_lease_seconds: int
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class VerifiedReviewedNativeCapabilityMap:
+    """Installed, release-pinned finite capability source for stage-zero setup."""
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    document: Mapping[str, Any] = field(repr=False)
+    _session_handle: str = field(repr=False)
+    _registry_seal: str = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1171,6 +1279,43 @@ class RootInitialCompilationRegistry:
         self.verify_initial_session(session)
         return session
 
+    def bind_selected_principal(self, stage0_session_handle: str,
+                                principal_receipt_handle: str,
+                                principal_registry: Any) -> RootInitialCompilationSession:
+        """Advance the same stage-zero context after root Authentik selection.
+
+        The session and transaction IDs remain fixed so the identity and
+        principal receipts stay bound to the original root actor observation.
+        Only the registry can attach the typed principal receipt to the sealed
+        choices and refresh its actor journal record.
+        """
+        from .setup_principal import RootSetupPrincipalSelectionRegistry
+        if not isinstance(principal_registry, RootSetupPrincipalSelectionRegistry):
+            raise BootstrapEnrollmentPending("initial policy requires the concrete root principal registry")
+        session = self.resolve_initial_session(stage0_session_handle)
+        if (not isinstance(principal_receipt_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", principal_receipt_handle)
+                or session._choices.selected_principal_binding_receipt_handle is not None):
+            raise BootstrapEnrollmentPending("stage-zero principal receipt is malformed or already selected")
+        selected = principal_registry.resolve_selected_principal(
+            principal_receipt_handle, session.compilation_session_handle,
+            session.compilation_transaction_handle, session.plan_sha256)
+        choices = replace(session._choices,
+                          selected_principal_binding_receipt_handle=principal_receipt_handle)
+        choice_body = {
+            "mode": choices.mode, "target_account_name": choices.target_account_name,
+            "selected_principal_binding_receipt_handle": principal_receipt_handle,
+            "selected_component_ids": list(choices.selected_component_ids),
+            "owned_adoption_receipt_handles": list(choices.owned_adoption_receipt_handles),
+        }
+        updated = replace(session, choices_sha256=hashlib.sha256(
+            _canonical(choice_body, ensure_ascii=False)).hexdigest(), _choices=choices)
+        self.verify_initial_session(session)
+        self._sessions[stage0_session_handle] = updated
+        self._write_actor_receipt(updated)
+        # Re-resolution checks the replacement is now the sole current object.
+        return self.resolve_initial_session(stage0_session_handle)
+
     def resolve_setup_plan(self, session: RootInitialCompilationSession) -> VerifiedRootSetupPlan:
         """Return the exact installed plan bound to a live stage-zero session."""
         self.verify_initial_session(session)
@@ -1224,6 +1369,80 @@ class RootInitialCompilationRegistry:
             _IDENTITY_TEMPLATE_ID, descriptor.sha256, value["policy_revision"],
             False, expected_paths, 30)
 
+    def resolve_reviewed_capability_map(
+            self, stage0_session_handle: str) -> VerifiedReviewedNativeCapabilityMap:
+        """Resolve only the immutable reviewed capability map from this live release.
+
+        This is source material, not an authorization decision. Selected capabilities
+        still require current identity, effect-rule, and enrolled-action receipts.
+        """
+        session = self.resolve_initial_session(stage0_session_handle)
+        descriptor, raw = self._release_file(_CAPABILITY_MAP_TEMPLATE_ID)
+        if (not isinstance(raw, bytes) or len(raw) != _CAPABILITY_MAP_TEMPLATE_SIZE
+                or hashlib.sha256(raw).hexdigest() != _CAPABILITY_MAP_TEMPLATE_SHA256):
+            raise BootstrapEnrollmentPending("reviewed native capability map bytes changed after pin verification")
+        value = InstalledBootstrapPolicyResolver._json(raw, "reviewed native capability map")
+        fields = {"id", "namespace_id_recipe", "namespace_policy", "normal_selection_rule",
+                  "ordinary_member_capability_candidates", "prepared_capabilities", "profile_id",
+                  "projection", "schema", "system_gate", "system_member_additional_capability_sources"}
+        candidates = ["provider-dispatch", "memory-retrieval", "memory-capture", "memory-extraction",
+                      "memory-embedding", "memory-export", "memory-backup", "memory-restore", "memory-delete"]
+        sources = ["selected-native-adapter-records.capability",
+                   "selected-resource-execution-records.capability",
+                   "selected-mcp-binding-records.capability",
+                   "selected-application-runtime-records.capability"]
+        if (descriptor.relative_path != _CAPABILITY_MAP_TEMPLATE_PATH
+                or descriptor.sha256 != _CAPABILITY_MAP_TEMPLATE_SHA256
+                or descriptor.size_bytes != _CAPABILITY_MAP_TEMPLATE_SIZE
+                or "template" not in descriptor.roles
+                or not isinstance(value, dict) or set(value) != fields
+                or value.get("id") != _CAPABILITY_MAP_TEMPLATE_ID
+                or type(value.get("schema")) is not int or value["schema"] != 1
+                or value.get("profile_id") != "hermes-agent-native-v1"
+                or value.get("prepared_capabilities") != []
+                or value.get("ordinary_member_capability_candidates") != candidates
+                or value.get("system_member_additional_capability_sources") != sources
+                or value.get("namespace_policy") != "per-selected-principal-native-profile-v1"
+                or value.get("namespace_id_recipe") !=
+                   "hermes-native-<first32hex(SHA256(UTF8(principal_id + NUL + profile_id)))>"):
+            raise BootstrapEnrollmentPending("installed release lacks the exact v91 reviewed capability map")
+        self.verify_initial_session(session)
+        return VerifiedReviewedNativeCapabilityMap(
+            _CAPABILITY_MAP_TEMPLATE_ID, _CAPABILITY_MAP_TEMPLATE_PATH,
+            _CAPABILITY_MAP_TEMPLATE_SHA256, _CAPABILITY_MAP_TEMPLATE_SIZE,
+            MappingProxyType(copy.deepcopy(value)), session.compilation_session_handle, self._seal)
+
+    def resolve_adopted_reviewed_capability_map(
+            self, normal_session_handle: RootSetupSessionHandle) -> VerifiedReviewedNativeCapabilityMap:
+        """Re-resolve the same pinned map under a live adopted setup session."""
+        if (self._session_store is None or not isinstance(normal_session_handle, RootSetupSessionHandle)
+                or normal_session_handle.session_id not in self._adopted_handoffs):
+            raise BootstrapEnrollmentPending("normal setup session has no adopted initial publication")
+        live = self._session_store._live(normal_session_handle)
+        authorization = self._session_store._proof(live)
+        handoff = self._adopted_handoffs[normal_session_handle.session_id]
+        if (handoff.normal_setup_session_id != normal_session_handle.session_id
+                or handoff.normal_transaction_handle != authorization.transaction_handle
+                or handoff.plan_sha256 != authorization.plan_digest
+                or handoff.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("adopted setup handoff no longer authorizes its reviewed map")
+        self.actor.verify_current(self.release)
+        self._validate_release_closure()
+        descriptor, raw = self._release_file(_CAPABILITY_MAP_TEMPLATE_ID)
+        if (descriptor.relative_path != _CAPABILITY_MAP_TEMPLATE_PATH
+                or descriptor.sha256 != _CAPABILITY_MAP_TEMPLATE_SHA256
+                or descriptor.size_bytes != _CAPABILITY_MAP_TEMPLATE_SIZE
+                or hashlib.sha256(raw).hexdigest() != _CAPABILITY_MAP_TEMPLATE_SHA256):
+            raise BootstrapEnrollmentPending("adopted setup reviewed capability map pin changed")
+        document = InstalledBootstrapPolicyResolver._json(raw, "reviewed native capability map")
+        if (not isinstance(document, dict) or document.get("id") != _CAPABILITY_MAP_TEMPLATE_ID
+                or document.get("prepared_capabilities") != []):
+            raise BootstrapEnrollmentPending("adopted setup reviewed capability map is malformed")
+        return VerifiedReviewedNativeCapabilityMap(
+            _CAPABILITY_MAP_TEMPLATE_ID, _CAPABILITY_MAP_TEMPLATE_PATH,
+            _CAPABILITY_MAP_TEMPLATE_SHA256, _CAPABILITY_MAP_TEMPLATE_SIZE,
+            MappingProxyType(copy.deepcopy(document)), normal_session_handle.session_id, self._seal)
+
     def _allowed_plan_artifact_ids(self, session: RootInitialCompilationSession) -> tuple[str, ...]:
         descriptor, raw = self._release_file(session.plan_artifact_id)
         value = self._json(raw, "selected installer plan")
@@ -1264,7 +1483,8 @@ class RootInitialCompilationRegistry:
             raise BootstrapEnrollmentPending("selected plan allowlist does not join the installed artifact catalog")
         return allowed_ids
 
-    def verify_initial_session(self, session: RootInitialCompilationSession) -> None:
+    def verify_initial_session(self, session: RootInitialCompilationSession, *,
+                               published_receipt: Any | None = None) -> None:
         if (not isinstance(session, RootInitialCompilationSession)
                 or session.phase != "initial-compilation"
                 or self._sessions.get(session.compilation_session_handle) is not session
@@ -1283,7 +1503,22 @@ class RootInitialCompilationRegistry:
         else:
             if stat.S_ISLNK(selection_info.st_mode) or not stat.S_ISREG(selection_info.st_mode):
                 raise BootstrapEnrollmentPending("unexpected root selection object blocks initial setup")
-            raise BootstrapEnrollmentPending("initial setup requires verified absence of an existing root selection")
+            # The sole permitted transition from absence is this registry's
+            # publisher-minted prepared publication for the same transaction.
+            # It is needed to complete the one-use stage-zero handoff after the
+            # atomic root selection CAS, never for compiling or overwriting.
+            from .setup_policy_publication import RootSetupPublicationReceipt
+            if not isinstance(published_receipt, RootSetupPublicationReceipt):
+                raise BootstrapEnrollmentPending("initial setup requires verified absence of an existing root selection")
+            raw = _read_secure_root_bytes(_SELECTION_PATH, 2 * 1024 * 1024, 0o600)
+            installed = self._json(raw, "published initial root selection")
+            generation = installed.get("policy_generation") if isinstance(installed, dict) else None
+            if (not isinstance(generation, dict)
+                    or installed.get("catalog_sha256") != published_receipt.current_selection_catalog_sha256
+                    or generation.get("publication_sha256") != published_receipt.publication_sha256
+                    or published_receipt.transaction_handle != session.compilation_transaction_handle
+                    or published_receipt.state != "prepared"):
+                raise BootstrapEnrollmentPending("published root selection is not this stage-zero transaction")
         self.actor.verify_current(self.release)
         self._validate_release_closure()
         actor_receipt = _read_secure_root_bytes(
@@ -1477,7 +1712,7 @@ class RootInitialCompilationRegistry:
         if len(matches) != 1:
             raise BootstrapEnrollmentPending("publication receipt does not join one current compiler claim")
         publication_handle, (session, compiled, _digest, _claimed) = matches[0]
-        self.verify_initial_session(session)
+        self.verify_initial_session(session, published_receipt=receipt)
         if (receipt.transaction_handle != session.compilation_transaction_handle
                 or receipt.policy_sha256 != hashlib.sha256(compiled.policy_bytes).hexdigest()
                 or receipt.artifact_catalog_sha256 != hashlib.sha256(compiled.artifact_catalog_bytes).hexdigest()
@@ -1612,7 +1847,7 @@ class RootInitialCompilationRegistry:
                             _PLAN_TEMPLATE_ID,
                             _TEMPLATE_ID, _IDENTITY_TEMPLATE_ID,
                             _PREPARED_BASE_TEMPLATE_ID, _COMPOSIO_POLICY_ARTIFACT_ID,
-                            _RECEIPT_TEMPLATE_ID)
+                            _RECEIPT_TEMPLATE_ID, _CAPABILITY_MAP_TEMPLATE_ID)
             if any(artifact_id not in files for artifact_id in required_ids):
                 raise BootstrapEnrollmentPending("installed release closure is missing a fixed setup input")
             template = files[_TEMPLATE_ID]
@@ -1620,6 +1855,7 @@ class RootInitialCompilationRegistry:
             prepared_base_template = files[_PREPARED_BASE_TEMPLATE_ID]
             composio_policy = files[_COMPOSIO_POLICY_ARTIFACT_ID]
             receipt_template = files[_RECEIPT_TEMPLATE_ID]
+            capability_map = files[_CAPABILITY_MAP_TEMPLATE_ID]
             plan_template = files[_PLAN_TEMPLATE_ID]
             plan = files[self.release.selected_plan_artifact_id]
             catalog = files[_CATALOG_ID]
@@ -1644,6 +1880,11 @@ class RootInitialCompilationRegistry:
                     or receipt_template.size_bytes != _RECEIPT_TEMPLATE_SIZE
                     or "template" not in receipt_template.roles):
                 raise BootstrapEnrollmentPending("installed release lacks the exact v72 receipt-binding template")
+            if (capability_map.sha256 != _CAPABILITY_MAP_TEMPLATE_SHA256
+                    or capability_map.relative_path != _CAPABILITY_MAP_TEMPLATE_PATH
+                    or capability_map.size_bytes != _CAPABILITY_MAP_TEMPLATE_SIZE
+                    or "template" not in capability_map.roles):
+                raise BootstrapEnrollmentPending("installed release lacks the exact v91 capability-map template")
             if (plan_template.sha256 != "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5"
                     or plan_template.relative_path != "templates/root-setup-plan-template-v1.json"
                     or plan_template.size_bytes != 920
@@ -2409,10 +2650,136 @@ class RootSetupPolicyFactory:
             current[final] = value
 
 
+class RootInitialSetupAggregate:
+    """Concrete first-install composition before a selection catalog exists.
+
+    This aggregate is created only by the installed Linux root actor from the
+    already verified release and current PID observation. It owns stage-zero
+    identity intake, root key selection, strict policy compilation and the
+    filesystem publisher; none of those dependencies are supplied by the
+    caller as callbacks or policy maps.
+    """
+
+    def __init__(self, release: Any, actor: Any, *,
+                 root_journal: Path = Path("/var/lib/hermes-installer/authority-journal")):
+        if root_journal != Path("/var/lib/hermes-installer/authority-journal"):
+            raise BootstrapEnrollmentPending("first setup uses only the fixed root authority journal")
+        from .enrollment import RootAuthorityKeySelectionRegistry, RootCredentialVault
+        from .initial_policy_compiler import RootFirstStagePolicyCompiler
+        from .setup_capabilities import ReviewedNativeCapabilitySelection
+        from .setup_policy_publication import RootSetupPolicyGenerationPublisher
+        from .setup_principal import (RootSetupAuthentikIdentityObserver,
+                                      RootSetupIdentityIntake,
+                                      RootSetupPrincipalSelectionRegistry)
+        self.release, self.actor, self.root_journal = release, actor, root_journal
+        self.initial_registry = RootInitialCompilationRegistry(release, actor, root_journal)
+        self.vault = RootCredentialVault()
+        self.identity_intake = RootSetupIdentityIntake.from_initial_compilation(
+            self.initial_registry, self.initial_registry.actor_verifier, self.vault, root_journal)
+        capability_selection = ReviewedNativeCapabilitySelection.from_initial_compilation(
+            self.initial_registry)
+        self.identity_observer = RootSetupAuthentikIdentityObserver.from_initial_compilation(
+            self.initial_registry, self.identity_intake, self.vault, root_journal)
+        self.principal_registry = RootSetupPrincipalSelectionRegistry.from_initial_compilation(
+            self.initial_registry, self.identity_observer, capability_selection, root_journal)
+        self.key_registry = RootAuthorityKeySelectionRegistry.from_installed_release(
+            release, self.initial_registry.actor_verifier, root_journal,
+            initial_compilation_registry=self.initial_registry)
+        self.compiler = RootFirstStagePolicyCompiler.from_installed_release(
+            release, actor, initial_compilation_registry=self.initial_registry,
+            principal_selection_registry=self.principal_registry,
+            authority_key_selection_registry=self.key_registry)
+        self.publisher = RootSetupPolicyGenerationPublisher.from_root_setup(
+            release, self.initial_registry, root_journal, self.initial_registry)
+        self._closed = False
+        self._transferred = False
+
+    @classmethod
+    def from_current_root_process(cls) -> "RootInitialSetupAggregate":
+        from .installer_release import InstalledRootReleaseVerifier
+        release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+        try:
+            return cls(release, actor)
+        except Exception:
+            actor.close()
+            release.close()
+            raise
+
+    def begin_install(self, target_account_name: str) -> RootInitialCompilationSession:
+        self._require_open()
+        return self.initial_registry.begin_initial_compilation(RootSetupChoices(
+            "install", target_account_name, None, (), ()))
+
+    def select_initial_identity(self, session_handle: str, *, https_origin: str,
+                                system_group_id: str, recipient_group_id: str,
+                                secure_existing_vault_reference: str | None = None) -> str:
+        """Collect root-only Authentik evidence and bind the selected principal."""
+        self._require_open()
+        session = self.initial_registry.resolve_initial_session(session_handle)
+        policy_handle = self.identity_intake.select_authentik_policy(
+            session_handle, https_origin=https_origin,
+            system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+        self.identity_intake.collect_authentik_actor_credential(
+            session_handle, policy_handle,
+            secure_existing_vault_reference=secure_existing_vault_reference)
+        identity_handle = self.identity_observer.observe_selected_authentik_identity(
+            session_handle, policy_handle)
+        principal_handle = self.principal_registry.select_principal(session_handle, identity_handle)
+        self.initial_registry.bind_selected_principal(
+            session.compilation_session_handle, principal_handle, self.principal_registry)
+        return principal_handle
+
+    def publish_prepared_selection(self, session_handle: str) -> RootInitialPublicationHandoff:
+        """Compile/publish prepared authority and return the one-use root handoff."""
+        self._require_open()
+        session = self.initial_registry.resolve_initial_session(session_handle)
+        if session.principal_selection_receipt_handle is None:
+            raise BootstrapEnrollmentPending("root-authenticated principal selection is required before publication")
+        compiled = self.compiler.compile_initial_policy_for_session(session)
+        publication_handle = self.initial_registry.store_compilation(session, compiled)
+        receipt = self.publisher.publish(publication_handle, session.expected_predecessor_catalog_sha256)
+        handoff_handle = self.initial_registry.resolve_handoff_for_receipt(receipt.receipt_handle)
+        return self.initial_registry.resolve_handoff(handoff_handle)
+
+    def adopt_prepared_selection(self, handoff_handle: str) -> tuple["RootBootstrapRuntimeFactory", "RootBootstrapSession"]:
+        """Transfer held release/actor custody into the ordinary setup session."""
+        self._require_open()
+        factory = RootBootstrapRuntimeFactory(
+            _release=self.release, _actor=self.actor,
+            _initial_compilation_registry=self.initial_registry)
+        self._transferred = True
+        try:
+            session = factory.begin_from_initial_publication(handoff_handle)
+            return factory, session
+        except Exception:
+            factory.close()
+            self._closed = True
+            raise
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for name in ("key_registry",):
+            value = getattr(self, name, None)
+            close = getattr(value, "close", None)
+            if callable(close):
+                close()
+        if not self._transferred:
+            self.actor.close()
+            self.release.close()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise BootstrapEnrollmentPending("root initial setup aggregate is closed")
+        self.actor.verify_current(self.release)
+
+
 class RootBootstrapRuntimeFactory:
     """Production root-owned assembly for setup, prepared enrollment and activation."""
 
-    def __init__(self, *, _release: Any | None = None, _actor: Any | None = None):
+    def __init__(self, *, _release: Any | None = None, _actor: Any | None = None,
+                 _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None):
         if os.getuid() != 0 or os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
             raise BootstrapEnrollmentPending("root bootstrap runtime exists only in the installed Linux root process")
         from .installer_release import (InstalledRootReleaseVerifier,
@@ -2426,6 +2793,12 @@ class RootBootstrapRuntimeFactory:
         _actor.verify_current(_release)
         self._release = _release
         self._actor = _actor
+        if (_initial_compilation_registry is not None
+                and (not isinstance(_initial_compilation_registry, RootInitialCompilationRegistry)
+                     or _initial_compilation_registry.release is not _release
+                     or _initial_compilation_registry.actor is not _actor)):
+            raise BootstrapEnrollmentPending("initial publication registry is not bound to this held release actor")
+        self._initial_compilation_registry = _initial_compilation_registry
         self.resolver = InstalledBootstrapPolicyResolver(_SELECTION_PATH)
         # Resolving the catalog authenticates the installed catalog bytes before
         # any root store or session object is constructed.
@@ -2453,6 +2826,7 @@ class RootBootstrapRuntimeFactory:
             plan_resolver=self.resolver,
             actor_verifier=InstalledRootSetupActorVerifier(),
             receipt_registry=receipt_registry,
+            initial_compilation_registry=_initial_compilation_registry,
             session_root=journal_root / "setup-sessions",
             transaction_root=journal_root / "bootstrap-transactions",
             authority_path=Path("/etc/hermes-installer/authority.json"),
@@ -2506,12 +2880,22 @@ class RootBootstrapRuntimeFactory:
         self._actor.verify_current(self._release)
         handle = self.session_store.begin_local(mode=mode, selected_plan_artifact_id=_PLAN_ID,
                                                 target_account_name=target_account_name)
+        return self._wrap_live_session(handle)
+
+    def begin_from_initial_publication(self, handoff_handle: str) -> "RootBootstrapSession":
+        """Adopt the same-process stage-zero publication into a normal session."""
+        if self._initial_compilation_registry is None:
+            raise BootstrapEnrollmentPending("fresh setup has no retained stage-zero publication registry")
+        handle = self.session_store.begin_from_initial_publication(handoff_handle)
+        return self._wrap_live_session(handle)
+
+    def _wrap_live_session(self, handle: RootSetupSessionHandle) -> "RootBootstrapSession":
         try:
             live = self.session_store._live(handle)
             authorization = self.session_store._proof(live)
             policy = self.resolver.resolve_policy(
                 authorization.plan_artifact_id,
-                compilation_phase="prepared" if mode == "install" else "active")
+                compilation_phase="prepared" if authorization.mode == "install" else "active")
             identity_policy = policy.identity_policy
             marker = Path("/var/lib/hermes-installer/identities") / f"{identity_policy['service_account_name']}.json"
             identity = SystemIdentityAdapter(marker, name=identity_policy["service_account_name"])
@@ -2812,3 +3196,17 @@ from .setup_principal import (  # noqa: E402
 )
 from .initial_policy_compiler import RootFirstStagePolicyCompiler  # noqa: E402
 from .active_policy_compiler import RootActivePolicyCompilationRegistry  # noqa: E402
+from .setup_capabilities import ReviewedNativeCapabilitySelection  # noqa: E402
+from .setup_policy_publication import RootSetupPolicyGenerationPublisher  # noqa: E402
+
+__all__ = [
+    "CompiledRootSetupPublication", "RootActivePolicyCompilationRegistry",
+    "RootBootstrapRuntimeFactory", "RootBootstrapSession",
+    "RootInitialCompilationRegistry", "RootInitialCompilationSession",
+    "RootInitialPublicationHandoff", "RootInitialSetupAggregate",
+    "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember",
+    "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",
+    "RootSetupChoices", "RootSetupPolicyGenerationPublisher",
+    "RootSetupPrincipalSelectionRegistry", "RootFirstStagePolicyCompiler",
+    "ReviewedNativeCapabilitySelection", "VerifiedReviewedNativeCapabilityMap",
+]
