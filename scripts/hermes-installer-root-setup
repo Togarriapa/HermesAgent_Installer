@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+# Resolve the launcher once, then use only the adjacent sealed interpreter in
+# an installed release. A source checkout uses the OS bootstrap interpreter;
+# root_setup verifies the source/bootstrap actor before any setup effects.
+launcher=$(/usr/bin/readlink -f -- "$0")
+launcher_dir=$(/usr/bin/dirname -- "$launcher")
+release_root=$(/usr/bin/dirname -- "$launcher_dir")
+if [ -x "$release_root/runtime/bin/python" ]; then
+    interpreter="$release_root/runtime/bin/python"
+else
+    interpreter=/usr/bin/python3
+fi
+
+exec "$interpreter" -I -S -c '
+import pathlib
+import sys
+launcher = pathlib.Path(sys.argv.pop(1)).resolve(strict=True)
+sys.argv[0] = str(launcher)
+sys.path.insert(0, str(launcher.parent.parent / ("lib/python" if (launcher.parent.parent / "lib/python").is_dir() else "src")))
+from hermes_installer.root_setup import main
+raise SystemExit(main())
+' "$launcher" "$@"

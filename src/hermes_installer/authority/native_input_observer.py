@@ -192,13 +192,6 @@ class RootNativeInputObserver:
             self._close_target(target)
             raise AuthorityDenied("native.input.context", "root could not issue selected initial-input context") from None
         try:
-            # Keep an independent live peer duplicate for the post-capture
-            # delivery check; capture transfers ownership of target.peer_pidfd.
-            delivery_pidfd = os.dup(target.peer_pidfd)
-        except OSError:
-            self._close_target(target)
-            raise AuthorityDenied("native.input.peer", "selected task PIDFD could not be duplicated") from None
-        try:
             event_id = None
             try:
                 captured_target, target = target, None
@@ -209,12 +202,6 @@ class RootNativeInputObserver:
                     selection_registry=registry,
                     parent_receipt_handles=source.verified_source_receipt_handles,
                 )
-                delivered = self.source_observers.take_source_receipt(
-                    str(source_handle), peer_uid=uid, peer_pid=captured_target.peer_pid,
-                    peer_pidfd=delivery_pidfd,
-                )
-                if str(delivered) != str(source_handle):
-                    raise AuthorityDenied("native.input.delivery", "source receipt was not delivered to the selected producer")
                 with service._lock:
                     receipt = service._source_receipt_handles.get(str(source_handle))
                 if (receipt is None or receipt.sensitivity not in {
@@ -251,7 +238,6 @@ class RootNativeInputObserver:
                     cancel(parent_context.grant_id)
                 raise
         finally:
-            os.close(delivery_pidfd)
             self._close_target(target)
 
     def retain_task_input_receipt(self, receipt: Any) -> None:

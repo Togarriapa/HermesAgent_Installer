@@ -121,6 +121,34 @@ _FILES = {
             1,
         ),),
     },
+    "agent/turn_facade.py": {
+        "source_sha256": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+        "edits": (
+            (
+                "            if task_started:\n"
+                "                task_finished = True\n"
+                "                finish_task_run(**task_context, result=result)\n"
+                "            return result\n",
+                "            if task_started:\n"
+                "                task_finished = True\n"
+                "                finish_task_run(**task_context, result=result)\n"
+                "            from hermes_installer.native_invocations import finish_selected_native_turn\n"
+                "            finish_selected_native_turn(self, result)\n"
+                "            return result\n",
+                1,
+            ),
+            (
+                "                    with suppress(Exception):\n"
+                "                        _review_queue.note_turn_finished()\n",
+                "                    with suppress(Exception):\n"
+                "                        _review_queue.note_turn_finished()\n"
+                "                    with suppress(Exception):\n"
+                "                        from hermes_installer.native_invocations import clear_native_turn_scope\n"
+                "                        clear_native_turn_scope()\n",
+                1,
+            ),
+        ),
+    },
     "agent/chat_completion_helpers.py": {
         "source_sha256": "fbd79987a8257f79de6ed291d398f455456385f828631dd8d9d0e6cea3ba46f2",
         "edits": (
