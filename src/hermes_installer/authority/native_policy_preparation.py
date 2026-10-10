@@ -63,6 +63,9 @@ class RootNativePolicyConfigurationChoice:
     selected_component_ids: tuple[str, ...]
     selected_registration_ids: tuple[str, ...]
     selected_action_binding_ids: tuple[str, ...]
+    # These four local owner-overlay operations have a dedicated root CAS
+    # policy lane; they are not PluginActionSchema/action-binding IDs.
+    selected_owner_overlay_registration_ids: tuple[str, ...]
     controller_binding_handle: str
     private_input_consent_selection_handle: str | None
     issued_monotonic: float
@@ -101,6 +104,7 @@ class RootNativePolicyPreparationSelection:
     selected_component_ids: tuple[str, ...]
     selected_registration_ids: tuple[str, ...]
     selected_action_binding_ids: tuple[str, ...]
+    selected_owner_overlay_registration_ids: tuple[str, ...]
     target_selection_handles: tuple[str, ...]
     source_role_selection_handles: tuple[str, ...]
     private_input_consent_selection_handle: str | None
@@ -297,13 +301,18 @@ class RootNativePolicyPreparationRegistry:
             raise NativePolicyPreparationDenied("root TTY resolver did not return the exact retained choice")
         if (len(set(choice.selected_component_ids)) != len(choice.selected_component_ids)
                 or len(set(choice.selected_registration_ids)) != len(choice.selected_registration_ids)
-                or len(set(choice.selected_action_binding_ids)) != len(choice.selected_action_binding_ids)):
+                or len(set(choice.selected_action_binding_ids)) != len(choice.selected_action_binding_ids)
+                or len(set(choice.selected_owner_overlay_registration_ids))
+                   != len(choice.selected_owner_overlay_registration_ids)):
             raise NativePolicyPreparationDenied("native policy choice is empty or duplicates a selected identifier")
         component_ids, registration_components = _reviewed_native_choice_catalog()
         if (not set(choice.selected_component_ids) <= component_ids
                 or not set(choice.selected_registration_ids) <= set(registration_components)
                 or any(registration_components[item] not in set(choice.selected_component_ids)
-                       for item in choice.selected_registration_ids)):
+                       for item in choice.selected_registration_ids)
+                or not set(choice.selected_owner_overlay_registration_ids) <= _OWNER_OVERLAY_REGISTRATION_IDS
+                or (choice.selected_owner_overlay_registration_ids
+                    and "resource-overlay-store" not in choice.selected_component_ids)):
             raise NativePolicyPreparationDenied("native policy choice exceeds the held finite source catalog")
         try:
             durable_handle = self._binding.record_durable_setup_choice(choice)
@@ -339,7 +348,7 @@ class RootNativePolicyPreparationRegistry:
             choice.service_generation, choice.resource_profile_selection_handle,
             choice.package_id, choice.native_package_generation,
             choice.selected_component_ids, choice.selected_registration_ids,
-            choice.selected_action_binding_ids, (), (),
+            choice.selected_action_binding_ids, choice.selected_owner_overlay_registration_ids, (), (),
             choice.private_input_consent_selection_handle, durable_handle,
             snapshot.choice_epoch, payload_digest,
             choice.controller_binding_handle,
@@ -745,7 +754,8 @@ def _validate_choice(choice: RootNativePolicyConfigurationChoice, now: float) ->
             or type(choice.revocation_epoch) is not int or choice.revocation_epoch < 0
             or not all(type(items) is tuple and all(isinstance(v, str) and v for v in items)
                        for items in (choice.selected_component_ids, choice.selected_registration_ids,
-                                     choice.selected_action_binding_ids))):
+                                     choice.selected_action_binding_ids,
+                                     choice.selected_owner_overlay_registration_ids))):
         raise NativePolicyPreparationDenied("root TTY native policy choice is malformed or stale")
 
 
@@ -757,6 +767,7 @@ def _choice_payload(choice: RootNativePolicyConfigurationChoice) -> dict[str, An
         "namespace_binding_sha256", "service_profile_id", "service_generation",
         "resource_profile_selection_handle", "package_id", "native_package_generation",
         "selected_component_ids", "selected_registration_ids", "selected_action_binding_ids",
+        "selected_owner_overlay_registration_ids",
         "controller_binding_handle", "private_input_consent_selection_handle",
         "issued_monotonic", "expires_monotonic", "revocation_epoch")}
     for name, value in tuple(payload.items()):
@@ -772,7 +783,8 @@ def _selection_payload(selection: RootNativePolicyPreparationSelection) -> dict[
         "namespace_selection_handle", "principal_binding_sha256", "namespace_binding_sha256",
         "service_profile_id", "service_generation", "resource_profile_selection_handle",
         "package_id", "native_package_generation", "selected_component_ids",
-        "selected_registration_ids", "selected_action_binding_ids", "target_selection_handles",
+        "selected_registration_ids", "selected_action_binding_ids",
+        "selected_owner_overlay_registration_ids", "target_selection_handles",
         "source_role_selection_handles", "private_input_consent_selection_handle",
         "setup_choice_selection_handle", "choice_payload_sha256", "controller_binding_handle",
         "choice_epoch", "issued_monotonic", "expires_monotonic", "revocation_epoch")}
@@ -799,6 +811,7 @@ def _selection_matches_choice_payload(selection: RootNativePolicyPreparationSele
         "selected_component_ids": list(selection.selected_component_ids),
         "selected_registration_ids": list(selection.selected_registration_ids),
         "selected_action_binding_ids": list(selection.selected_action_binding_ids),
+        "selected_owner_overlay_registration_ids": list(selection.selected_owner_overlay_registration_ids),
         "controller_binding_handle": selection.controller_binding_handle,
         "private_input_consent_selection_handle": selection.private_input_consent_selection_handle,
     }
@@ -814,6 +827,7 @@ def _source_coverage(selection: RootNativePolicyPreparationSelection,
     _components, registration_components = _reviewed_native_choice_catalog()
     rows: list[NativePolicyCoverageRecord] = []
     selected_registration_ids = set(selection.selected_registration_ids)
+    selected_overlay_registration_ids = set(selection.selected_owner_overlay_registration_ids)
     selected_components = set(selection.selected_component_ids)
     for source in captured:
         registration_id = f"{source.adapter_id}:tool:{source.native_tool_name}"
@@ -821,9 +835,12 @@ def _source_coverage(selection: RootNativePolicyPreparationSelection,
         missing = set(missing_by_component.get(component_id, ()))
         # A TTY choice proves only intent. Each selected registration still
         # needs independent target, action/schema, permission and observer joins.
-        if registration_id not in selected_registration_ids and component_id not in selected_components:
+        is_selected = (registration_id in selected_registration_ids
+                       or registration_id in selected_overlay_registration_ids
+                       or component_id in selected_components)
+        if not is_selected:
             missing.add("root-tty-selection")
-        if registration_id in selected_registration_ids or component_id in selected_components:
+        if is_selected:
             if not missing:
                 missing.update(("target-evidence", "action-source-receipt", "permission-evidence",
                                 "source-role-observer-definition", "schema-observation"))
@@ -928,3 +945,11 @@ __all__ = ["NativePolicyCoverageRecord", "NativePolicyPreparationDenied",
            "NativePolicySourcePending", "RootNativePolicyConfigurationChoice",
            "RootNativePolicyPreparationRegistry", "RootNativePolicyPreparationSelection",
            "RootPreparedNativeCaptureProfile", "RootPreparedNativePolicyRecords"]
+
+
+_OWNER_OVERLAY_REGISTRATION_IDS = frozenset({
+    "resource-overlay-store:tool:resource_overlay_read",
+    "resource-overlay-store:tool:resource_overlay_history",
+    "resource-overlay-store:tool:resource_overlay_write",
+    "resource-overlay-store:tool:resource_overlay_delete",
+})

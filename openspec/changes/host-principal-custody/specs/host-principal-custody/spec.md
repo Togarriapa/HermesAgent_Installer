@@ -738,3 +738,10 @@ The installer SHALL separately validate and retain actual selected MCP discovery
 #### Scenario: Tools call is labelled discovery
 - **WHEN** actual retained request method is tools/call
 - **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it
+
+### Requirement: Owner overlay operations v172
+The installer SHALL authorize source-established owner overlay methods through separate protected operation rows and genuine current owned profile CAS grants.
+
+#### Scenario: Local registration has no selected view receipt
+- **WHEN** source inventory names a local method without a current owned view/target/schema/source join
+- **THEN** it remains precisely pending and never becomes an executable backend action
