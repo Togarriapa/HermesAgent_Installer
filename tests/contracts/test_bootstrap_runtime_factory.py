@@ -16,6 +16,7 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
+    RootReleaseModuleReceipt,
     RootPreparedReleaseMemberReceipt,
     RootInitialCompilationRegistry,
     RootBootstrapSession,
@@ -190,6 +191,61 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             release.files[0].roles = ("module",)
             with self.assertRaisesRegex(BootstrapEnrollmentPending, "differs from its fixed receipt"):
                 receipt.read_current()
+
+    def test_action_schema_modules_require_exact_release_and_import_closure(self):
+        import hashlib
+
+        paths = (
+            "src/hermes_installer/components/plugin_accounts_schemas.py",
+            "src/hermes_installer/components/plugin_document_schemas.py",
+            "src/hermes_installer/components/plugin_finance_schemas.py",
+            "src/hermes_installer/components/plugin_homelab_schemas.py",
+            "src/hermes_installer/components/plugin_local_voice_web_schemas.py",
+        )
+        descriptors = []
+        artifact_files = {}
+        origins = []
+        for index, relative_path in enumerate(paths):
+            raw = Path(relative_path).read_bytes()
+            artifact_id = f"release-artifact-{index}"
+            digest = hashlib.sha256(raw).hexdigest()
+            descriptors.append(SimpleNamespace(
+                artifact_id=artifact_id, relative_path=relative_path, sha256=digest,
+                size_bytes=len(raw), roles=("module",)))
+            artifact_files[artifact_id] = Path(relative_path)
+            origins.append(("module", f"/release/{relative_path}", "origin", "loader", digest))
+        release = SimpleNamespace(
+            files=descriptors, release_root=Path("/release"), release_commit="commit",
+            deployment_receipt_sha256="d" * 64,
+            open_file=lambda artifact_id: os.open(artifact_files[artifact_id], os.O_RDONLY))
+        actor = SimpleNamespace(module_origins=origins, verify_current=lambda _release: None)
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(plan_artifact_id="plan")
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), provision_receipt_handle="prepared",
+            generation_id="generation")
+        session._handle = SimpleNamespace(session_id="session")
+        session._seal = "session-seal"
+        session._release_member_receipts = {}
+        session._prepared_release_member_receipts = {}
+        session._factory = SimpleNamespace(
+            _release=release, _actor=actor,
+            resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(
+                allowed_artifact_ids=tuple(artifact_files))))
+
+        receipts = session._resolve_prepared_native_action_schema_module_receipts()
+        self.assertEqual(len(receipts), 5)
+        self.assertTrue(all(type(item) is RootReleaseModuleReceipt for item in receipts))
+        self.assertEqual(tuple(item.relative_path for item in receipts), paths)
+        self.assertEqual(tuple(item.read_current() for item in receipts),
+                         tuple(Path(path).read_bytes() for path in paths))
+        self.assertIs(receipts[0], session._resolve_prepared_native_action_schema_module_receipts()[0])
+
+        actor.module_origins = origins[:-1]
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
+            session._resolve_prepared_native_action_schema_module_receipts()
 
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module

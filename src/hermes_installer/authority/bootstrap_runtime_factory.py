@@ -738,6 +738,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native target source modules are not owned by this setup session")
         return self._session._resolve_prepared_native_target_module_receipts()
 
+    def resolve_prepared_native_action_schema_module_receipts(self) -> tuple[RootReleaseModuleReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native action schema modules are not owned by this setup session")
+        return self._session._resolve_prepared_native_action_schema_module_receipts()
+
     def resolve_prepared_worker_role_module_receipts(self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("worker role source receipts are not owned by this setup session")
@@ -6452,6 +6457,68 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return tuple(output)
 
+    def _resolve_prepared_native_action_schema_module_receipts(
+            self) -> tuple[RootReleaseModuleReceipt, ...]:
+        """Resolve the five code-reviewed action-schema modules from the release.
+
+        The artifact IDs are read from the selected release inventory rather
+        than guessed from module names.  Path, bytes, plan membership and the
+        current root actor's actual import origin are all fixed and checked.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "native action schema modules require current empty prepared custody")
+        pins = (
+            ("src/hermes_installer/components/plugin_accounts_schemas.py",
+             "7608bddb4206156f179f18dd5418cea7e5807003295017a26acbb4a6c7d9d9c4", 6766),
+            ("src/hermes_installer/components/plugin_document_schemas.py",
+             "710d2f1877d2e5a40ddbf0e5ce83f2b14243bf1a459183065143a18aa55c2d25", 7281),
+            ("src/hermes_installer/components/plugin_finance_schemas.py",
+             "e379719b684d85bb467b567ac9f69664db8028688e131e9ba3401c80b277a8a6", 8687),
+            ("src/hermes_installer/components/plugin_homelab_schemas.py",
+             "c8438dac1ca54dfddbee8d9d3140466e8c075a6a46084edd0385438b82188111", 8932),
+            ("src/hermes_installer/components/plugin_local_voice_web_schemas.py",
+             "35ed72ffbc516c20d447685481cc4b49850a71c11b892ce085e57bb0e946ee84", 10880),
+        )
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        output: list[RootReleaseModuleReceipt] = []
+        for relative_path, digest, size_bytes in pins:
+            rows = [row for row in release.files if row.relative_path == relative_path
+                    and row.sha256 == digest and row.size_bytes == size_bytes
+                    and "module" in row.roles and row.artifact_id in plan.allowed_artifact_ids]
+            if len(rows) != 1:
+                raise BootstrapEnrollmentPending(
+                    "native action schema module is not uniquely pinned in the selected release")
+            row = rows[0]
+            origins = [origin for origin in actor.module_origins
+                       if origin[1] == str(release.release_root / relative_path)
+                       and origin[4] == digest]
+            if len(origins) != 1:
+                raise BootstrapEnrollmentPending(
+                    "native action schema module is outside the current root actor import closure")
+            prior = next((item for item in self._prepared_release_member_receipts.values()
+                          if item.artifact_id == row.artifact_id
+                          and item._prepared_generation_id == prepared.generation_id), None)
+            if prior is None:
+                handle = secrets.token_urlsafe(36)
+                prior = RootReleaseModuleReceipt(
+                    row.artifact_id, relative_path, digest, size_bytes,
+                    release.release_commit, release.deployment_receipt_sha256,
+                    handle, self._handle.session_id, self._seal, self,
+                    prepared.generation_id)
+                self._release_member_receipts[handle] = prior
+                self._prepared_release_member_receipts[handle] = prior
+            prior.read_current()
+            output.append(prior)
+        actor.verify_current(release)
+        return tuple(output)
+
     def _resolve_prepared_worker_role_module_receipts(
             self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
         """Retain release-pinned worker role modules without claiming actor imports.
@@ -6483,6 +6550,7 @@ class RootBootstrapSession:
             if len(rows) != 1:
                 raise BootstrapEnrollmentPending(
                     "worker role module is not uniquely pinned in the selected installed release")
+            row = rows[0]
             prior = next((item for item in self._prepared_release_file_receipts.values()
                           if item.artifact_id == row.artifact_id
                           and item.prepared_generation_id == prepared.generation_id), None)
