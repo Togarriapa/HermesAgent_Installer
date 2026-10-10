@@ -1889,12 +1889,11 @@ class NativeInitialInputDelivery:
                 or type(self.input_size_bytes) is not int
                 or not 1 <= self.input_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
                 or not math.isfinite(self.expires_monotonic)
-                or (self.turn_handle is not None
-                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None)):
+                or self.turn_handle is not None and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None):
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        wire = {
+        result = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -1903,8 +1902,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            wire["turn_handle"] = self.turn_handle
-        return wire
+            result["turn_handle"] = self.turn_handle
+        return result
 
 
 @dataclass(slots=True)

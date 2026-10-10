@@ -583,28 +583,45 @@ class RootSelectedApplicationRuntimeRouter:
                  source_receipts: RootComponentSourceReceiptRegistry,
                  runtime_receipts: RootApplicationRuntimeReceiptRegistry,
                  selected_invocation_resolver: Any,
+                 workload_authority: Any, workload_runner: Any,
                  monotonic: Callable[[], float] = time.monotonic) -> None:
         if (not callable(getattr(service, "_binding", None))
                 or not callable(getattr(bindings, "resolve_selected_application_runtime", None))
                 or type(source_receipts) is not RootComponentSourceReceiptRegistry
                 or type(runtime_receipts) is not RootApplicationRuntimeReceiptRegistry
-                or not callable(getattr(selected_invocation_resolver, "resolve_selected_application_invocation", None))):
+                or not callable(getattr(selected_invocation_resolver, "resolve_selected_application_invocation", None))
+                or not callable(getattr(selected_invocation_resolver, "is_selected_application_invocation_current", None))):
             raise ValueError("selected application router requires all concrete root receipt and invocation resolvers")
+        try:
+            from hermes_installer.authority.application_workload_execution import (
+                RootApplicationWorkloadAuthority, ManagedApplicationWorkloadRunner,
+            )
+        except ImportError as exc:
+            raise ValueError("selected application router requires the sealed workload authority and runner") from exc
+        if (type(workload_authority) is not RootApplicationWorkloadAuthority
+                or type(workload_runner) is not ManagedApplicationWorkloadRunner
+                or getattr(workload_runner, "authority", None) is not workload_authority
+                or getattr(workload_authority, "service", None) is not service):
+            raise ValueError("selected application router authority, runner, and service identity must match")
         self.service = service
         self.bindings = bindings
         self.source_receipts = source_receipts
         self.runtime_receipts = runtime_receipts
         self.selected_invocation_resolver = selected_invocation_resolver
+        self.workload_authority = workload_authority
+        self.workload_runner = workload_runner
         self.monotonic = monotonic
         self._runs: dict[str, RootApplicationRunReceipt] = {}
         self._lock = threading.RLock()
 
     def resolve(self, application_id: str, profile_id: str) -> RootSelectedApplicationRuntime:
         """Resolve a current row; never fall back to fixture or caller paths."""
-        selection = self.bindings.resolve_selected_application_runtime(application_id, profile_id)
+        selection = self.bindings.resolve_selected_application_runtime(
+            application_id, profile_id=profile_id,
+        )
         if type(selection) is not RootSelectedApplicationRuntime:
             raise SelectedApplicationUnavailable("root binding returned an untyped selected application")
-        if (selection.service_generation_digest != getattr(self.bindings.enrollment_catalog, "digest", None)
+        if (selection.service_generation_digest != _service_digest(self.bindings.enrollment_catalog)
                 or selection.enabled is not True or selection.max_workers != 1
                 or selection.metered_budget_usd != "0"):
             raise SelectedApplicationUnavailable("selected application is disabled, stale, or exceeds default limits")
@@ -632,25 +649,108 @@ class RootSelectedApplicationRuntimeRouter:
     def dispatch(self, invocation_context_handle: str, application_id: str,
                  canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
                  peer_pidfd: int | None, cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
-        """Dispatch only after the root invocation resolver binds the exact call."""
+        """Compatibility service seam with a non-authoritative app selector."""
+        if not isinstance(application_id, str) or not _ID.fullmatch(application_id):
+            raise SelectedApplicationUnavailable("selected application selector is malformed")
+        return self._dispatch(
+            invocation_context_handle, canonical_arguments,
+            expected_application_id=application_id, peer_uid=peer_uid,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+        )
+
+    def dispatch_workload(self, invocation_context_handle: str,
+                 canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
+                 peer_pidfd: int | None, cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
+        """Production finite-workload entry point; app selection stays root-owned."""
+        return self._dispatch(
+            invocation_context_handle, canonical_arguments,
+            expected_application_id=None, peer_uid=peer_uid,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+        )
+
+    def _dispatch(self, invocation_context_handle: str, canonical_arguments: bytes, *,
+                  expected_application_id: str | None, peer_uid: int, peer_pid: int,
+                  peer_pidfd: int | None, cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
+        """Admit one fixed workload from a current root-observed request.
+
+        ``application_id`` is retained only as a compatibility selector for
+        the protected service seam. It is checked against the root admission;
+        it never selects a recipe, runtime path, or runner.
+        """
         if (not isinstance(invocation_context_handle, str) or not _OPAQUE.fullmatch(invocation_context_handle)
-                or not isinstance(application_id, str) or not _ID.fullmatch(application_id)
                 or not isinstance(canonical_arguments, bytes) or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024
                 or type(peer_uid) is not int or peer_uid <= 0 or type(peer_pid) is not int or peer_pid <= 0
                 or peer_pidfd is None or type(peer_pidfd) is not int or peer_pidfd < 0
                 or not callable(cancelled) or cancelled()):
             raise SelectedApplicationUnavailable("selected application invocation is malformed or cancelled")
-        invocation = self.selected_invocation_resolver.resolve_selected_application_invocation(
-            invocation_context_handle, peer_uid=peer_uid, peer_pid=peer_pid,
-            peer_pidfd=peer_pidfd, canonical_arguments=canonical_arguments,
-        )
-        if (getattr(invocation, "application_id", None) != application_id
-                or getattr(invocation, "arguments_sha256", None) != hashlib.sha256(canonical_arguments).hexdigest()
-                or getattr(invocation, "expires_monotonic", 0) <= self.monotonic()):
-            raise SelectedApplicationUnavailable("root invocation does not bind this exact selected application request")
-        # The exact grant/process operation is installed by the AuthorityService
-        # seam against this typed resolver. Until that one-use helper is present,
-        # fail closed instead of emitting a synthetic success receipt.
-        raise SelectedApplicationUnavailable(
-            "selected application process-start/result capsule adapter is not yet attached to root composition"
-        )
+        try:
+            request = json.loads(canonical_arguments.decode("utf-8"))
+            if (not isinstance(request, dict) or set(request) != {"id", "arguments"}
+                    or _canonical(request) != canonical_arguments
+                    or not isinstance(request["id"], str)
+                    or not isinstance(request["arguments"], dict)):
+                raise ValueError
+            from hermes_installer.components.workloads import Workload
+            workload = Workload(request["id"], MappingProxyType(request["arguments"]))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+            raise SelectedApplicationUnavailable("selected workload request is not the exact canonical workload object") from None
+        try:
+            invocation = self.selected_invocation_resolver.resolve_selected_application_invocation(
+                invocation_context_handle, canonical_arguments,
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+        except Exception:
+            raise SelectedApplicationUnavailable("root selected action is unavailable or stale") from None
+        if (getattr(invocation, "invocation_handle", None) != invocation_context_handle
+                or getattr(invocation, "request_sha256", None) != hashlib.sha256(canonical_arguments).hexdigest()
+                or getattr(invocation, "expires_monotonic", 0) <= self.monotonic()
+                or not self.selected_invocation_resolver.is_selected_application_invocation_current(invocation)):
+            raise SelectedApplicationUnavailable("root invocation does not bind this exact selected workload request")
+        try:
+            from hermes_installer.authority.application_workload_execution import (
+                RootApplicationWorkloadAdmission, RootApplicationWorkloadAuthority,
+                ManagedApplicationWorkloadRunner,
+            )
+            if (type(self.workload_authority) is not RootApplicationWorkloadAuthority
+                    or type(self.workload_runner) is not ManagedApplicationWorkloadRunner):
+                raise TypeError
+            admission = self.workload_authority.admit_selected_workload(invocation, workload)
+        except Exception:
+            raise SelectedApplicationUnavailable("root application workload admission is unavailable") from None
+        if (type(admission) is not RootApplicationWorkloadAdmission
+                or admission.request_sha256 != hashlib.sha256(canonical_arguments).hexdigest()
+                or admission.service_generation_digest != invocation.service_generation_digest
+                or (expected_application_id is not None
+                    and admission.application_id != expected_application_id)
+                or admission.profile_id != invocation.profile_id
+                or admission.profile_generation != invocation.profile_generation
+                or admission.expires_monotonic <= self.monotonic()
+                or admission.max_steps < 1 or admission.max_steps > 4):
+            raise SelectedApplicationUnavailable("root admission does not bind this request and selected workload")
+        selection = self.resolve(admission.application_id, admission.profile_id)
+        if (selection.profile_generation != admission.profile_generation
+                or selection.principal_id != admission.principal_id
+                or selection.service_generation_digest != admission.service_generation_digest
+                or selection.source_generation_receipt_handle != admission.source_receipt_handle
+                or selection.runtime_receipt_handle != admission.runtime_receipt_handle):
+            raise SelectedApplicationUnavailable("workload admission and current application receipts differ")
+        try:
+            result = self.workload_runner.run_selected_workload(admission.admission_handle)
+        except Exception:
+            raise SelectedApplicationUnavailable("selected application workload failed or became unavailable") from None
+        if not self.workload_authority.is_application_admission_current(admission.admission_handle):
+            raise SelectedApplicationUnavailable("application admission became stale during workload execution")
+        current_selection = self.resolve(admission.application_id, admission.profile_id)
+        if (type(result) is not RootApplicationRunReceipt
+                or current_selection != selection
+                or result.application_id != current_selection.application_id
+                or result.profile_id != current_selection.profile_id
+                or result.profile_generation != current_selection.profile_generation
+                or result.service_generation_digest != current_selection.service_generation_digest
+                or result.source_receipt_handle != current_selection.source_generation_receipt_handle
+                or result.runtime_receipt_handle != current_selection.runtime_receipt_handle
+                or result.request_sha256 != admission.request_sha256
+                or result.state not in {"complete", "failed", "cancelled", "ambiguous"}
+                or result.expires_monotonic <= self.monotonic()):
+            raise SelectedApplicationUnavailable("runner returned no current result bound to this admission")
+        return result

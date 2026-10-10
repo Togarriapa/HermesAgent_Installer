@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Sequence
 
 from . import __version__
-from .bootstrap import BootstrapError, HermesBootstrap
 from .state import Journal, OwnedRoot, OwnershipError, process_lock
 from .lifecycle import GenerationStore, LifecycleBlocked, LifecycleError, LifecycleRecovery
 from .config import ConfigError, InstallerConfig, load_config, validate_config, write_example
@@ -52,18 +51,25 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("component", nargs="?", help="Limit status to a component")
     command("doctor", "Run read-only host diagnostics")
     verify = command("verify", "Run executable acceptance probes on an identified target")
-    verify.add_argument("--target", type=Path, help="Authorized target manifest")
+    verify.add_argument("--target", type=Path, help="Owner-only scoped target lease JSON")
     verify.add_argument("--output", type=Path, help="Evidence output directory")
+    verify.add_argument("--acceptance", action="append", choices=tuple(f"AC{i:02d}" for i in range(1, 19)),
+                        help="Run one explicitly scoped acceptance workflow (repeatable)")
+    verify.add_argument("--request", type=Path, help="Bounded operator probe request JSON")
+    verify.add_argument("--result", type=Path, help="Bounded operator probe result JSON")
     resources = command("resources", "Inspect the packaged offline resource registry")
     resources.add_argument("action", choices=("plan", "status"), help="Show the verified source crosswalk and pending native adapters")
     configure = command("configure", "Configure an external provider or MCP")
     configure.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
     configure.add_argument("name", nargs="?", help="Adapter or connection name")
+    configure.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     connection = command("test-connection", "Test a configured provider or MCP")
     connection.add_argument("target", choices=("provider", "mcp", "remote-desktop"))
     connection.add_argument("name", nargs="?", help="Adapter or connection name")
+    connection.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     memory = command("select-memory", "Select the single long-term memory backend")
     memory.add_argument("choice", choices=("openviking", "claude-mem", "agent-memory"))
+    memory.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     source = command("resolve-source", "Resolve a source URL to an immutable revision")
     source.add_argument("url")
     component = sub.add_parser("component", help="Manage an installed component")
@@ -89,6 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _configuration(path: Path | None) -> InstallerConfig:
     return load_config(path) if path else validate_config({"schema_version": 1})
+
+
+def _root_launcher_status() -> tuple[str, str | None, str]:
+    """Read the root entrypoint's pathless status without escalating or launching it."""
+    try:
+        from .root_setup import launcher_status
+        status = launcher_status()
+        return status.state, status.blocker_code, status.message
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return "unverified", "ROOT_ATTESTATION_REQUIRED", "The installed launcher has not been verified by its root actor."
 
 
 def _run_setup(args: argparse.Namespace) -> CommandResult:
@@ -232,6 +248,81 @@ def _run_setup(args: argparse.Namespace) -> CommandResult:
         return CommandResult("setup", OutcomeState.FAILED, str(exc), exit_code=2)
 
 
+def _run_configuration_command(args: argparse.Namespace, config: InstallerConfig) -> CommandResult:
+    from .configuration_cli import run_configuration_command
+    from .setup_wizard import PrivateFileCredentialStore
+
+    action = args.command
+    if action == "configure" and not sys.stdin.isatty():
+        return CommandResult(action, OutcomeState.FAILED,
+            "Interactive configuration requires a terminal; no credential was collected.", exit_code=2)
+    state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
+    resume = f"hermes-installer {action}"
+    target = getattr(args, "target", None)
+    if action == "select-memory":
+        target = "memory"
+    name = getattr(args, "name", None)
+    if target:
+        resume += " " + shlex.quote(target)
+    if name:
+        resume += " " + shlex.quote(name)
+    if getattr(args, "choice", None):
+        resume += " " + shlex.quote(args.choice)
+    if getattr(args, "url", None):
+        resume += " " + shlex.quote(args.url)
+    if args.config:
+        resume += " --config " + shlex.quote(str(args.config))
+    save_config = getattr(args, "save_config", None)
+    if save_config:
+        resume += " --save-config " + shlex.quote(str(save_config))
+    journal = None
+    try:
+        state_root = OwnedRoot(state_path)
+        state_root.ensure()
+        with process_lock(state_root.path("installer.lock")):
+            journal = Journal(state_root.path("journal.sqlite3"))
+            journal.checkpoint("installer:configuration:" + action, "running", {
+                "target": target, "name": name, "config_path": str(args.config) if args.config else None,
+                "resume": resume})
+            result = run_configuration_command(
+                action, config_data={"schema_version": config.schema_version,
+                    "timezone": config.timezone, "paths": config.paths,
+                    "components": config.components, "privacy": config.privacy,
+                    "remote_desktop": config.remote_desktop},
+                journal=journal, credential_store=PrivateFileCredentialStore(state_root.root),
+                interactive=action == "configure", resume_command=resume,
+                target=target, name=name, choice=getattr(args, "choice", None),
+                url=getattr(args, "url", None))
+            saved_path = None
+            if result.state != OutcomeState.FAILED and save_config:
+                config_value = next((finding.details.get("config") for finding in result.findings
+                                     if isinstance(finding.details.get("config"), dict)), None)
+                if config_value is None:
+                    raise ValueError("Configuration adapter did not return a validated config")
+                saved_path = _write_private_config(save_config, config_value)
+                findings = tuple(Finding(item.code, item.message, item.state,
+                    {**item.details, "saved_config": str(saved_path)}) for item in result.findings)
+                result = CommandResult(result.command, result.state, result.message, findings,
+                    result.resume_command, result.exit_code)
+            journal.checkpoint("installer:configuration:" + action, result.state.value, {
+                "exit_code": result.exit_code, "resume": result.resume_command or resume})
+            journal.event("installer:configuration:" + action, "command", result.state.value, {
+                "exit_code": result.exit_code, "target": target, "name": name})
+            return result
+    except (OSError, OwnershipError, RuntimeError, ValueError, ConfigError, sqlite3.Error) as exc:
+        if journal is not None:
+            try:
+                journal.checkpoint("installer:configuration:" + action, "failed", {
+                    "error_type": type(exc).__name__, "resume": resume})
+                journal.event("installer:configuration:" + action, "command", "failed", {
+                    "error_type": type(exc).__name__})
+            except (OSError, RuntimeError, sqlite3.Error):
+                pass
+        return CommandResult(action, OutcomeState.FAILED,
+            f"Configuration state could not be safely accessed: {type(exc).__name__}.",
+            resume_command=resume, exit_code=1)
+
+
 def _write_private_config(path: Path, config: dict[str, object]) -> Path:
     """Create a new mode-0600 config file without following links or replacing data."""
     target = path.expanduser().absolute()
@@ -373,21 +464,6 @@ def _quiescent_journal(state_path: Path):
         with contextlib.suppress(OSError):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
-
-
-def _resume_checkpoint_exists(state_path: Path) -> bool:
-    """Read-only gate so a fresh resume cannot create a root, marker, database, or WAL."""
-    try:
-        with _quiescent_journal(state_path) as db:
-            row = db.execute("SELECT 1 FROM operations WHERE id='installer:selection'").fetchone()
-        return row is not None
-    except RuntimeError as exc:
-        # A committed WAL needs SQLite recovery under the exclusive installer lock.
-        # Active writers are also allowed through this structural gate; process_lock
-        # below will reject them without opening the journal.
-        return "journal has an active or uncheckpointed WAL" in str(exc) or "installer operation is active" in str(exc)
-    except (OSError, sqlite3.Error, ValueError):
-        return False
 
 
 def _run_data_command(args: argparse.Namespace, config: InstallerConfig) -> CommandResult:
@@ -608,9 +684,29 @@ def run(args: argparse.Namespace) -> CommandResult:
             f"Read-only {action}: verified {len(bindings)} declarations from the packaged bundle; materialization is planned, selected-target discovery and native operation remain pending.",
             (finding,), resume_command="hermes-installer resources status")
     if args.command == "verify":
+        if os.geteuid() == 0:
+            if args.target is not None:
+                return CommandResult("verify", OutcomeState.FAILED,
+                    "Root verification derives target identity from protected enrollment; --target is not accepted.",
+                    exit_code=2)
+            if args.output is None:
+                return CommandResult("verify", OutcomeState.FAILED,
+                    "A private output directory name is required for root verification.", exit_code=2)
+            from .verification.runtime_workflows import run_root_verify_cli
+            return run_root_verify_cli(
+                output_path=args.output,
+                requested_acceptance=tuple(args.acceptance or ()),
+                request_path=args.request, result_path=args.result,
+            )
         if args.target is None or args.output is None:
-            return CommandResult("verify", OutcomeState.FAILED, "An authorized target manifest and evidence directory are required.", resume_command="hermes-installer verify --target <authorized-target.json> --output <evidence-dir>", exit_code=2)
-        return CommandResult("verify", OutcomeState.PENDING, "Target verification adapter is not implemented yet; no target was contacted.", resume_command=f"hermes-installer verify --target {args.target} --output {args.output}")
+            return CommandResult("verify", OutcomeState.FAILED, "A scoped target lease and private evidence directory are required.", resume_command="hermes-installer verify --target <scope.json> --output <evidence-dir>", exit_code=2)
+        from .verification.runtime_workflows import run_verify_cli
+        return run_verify_cli(
+            target_path=args.target, output_path=args.output,
+            checkout=Path(__file__).resolve().parents[2],
+            requested_acceptance=tuple(args.acceptance or ()),
+            request_path=args.request, result_path=args.result,
+        )
     if args.command in {"install", "resume"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
@@ -625,50 +721,20 @@ def run(args: argparse.Namespace) -> CommandResult:
             return CommandResult("install", OutcomeState.READY, "Dry run completed; no installer files, packages, services, or accounts were changed.", _host_findings(config))
         if config.components.get("hermes_agent") is False:
             return CommandResult(args.command, OutcomeState.FAILED, "Hermes Agent is explicitly disabled in configuration; no Agent stages were run.", exit_code=2)
-        data_path = Path(config.paths.get("data_root", "~/HermesInstaller/data")).expanduser()
-        state_path = Path(config.paths.get("state_root", "~/HermesInstaller/state")).expanduser()
-        resume_command = "./install.sh resume" + (f" --config {shlex.quote(str(args.config))}" if args.config else "")
-        try:
-            if args.command == "resume" and not _resume_checkpoint_exists(state_path):
-                return CommandResult("resume", OutcomeState.FAILED, "There is no readable installer checkpoint to resume; the state directory was not created.", exit_code=2)
-            data_root = OwnedRoot(data_path)
-            state_root = OwnedRoot(state_path)
-            state_root.ensure()
-            selection = {"schema_version": config.schema_version, "timezone": config.timezone,
-                "paths": config.paths, "components": config.components, "privacy": config.privacy,
-                "remote_desktop": config.remote_desktop}
-            with process_lock(state_root.path("installer.lock")):
-                data_root.ensure()
-                # Journal initialization can create/recover WAL state; keep it under
-                # the exclusive lock shared by status's immutable-reader gate.
-                journal = Journal(state_root.path("journal.sqlite3"))
-                prior = journal.operation("installer:selection")
-                if args.command == "resume" and prior is None:
-                    return CommandResult("resume", OutcomeState.FAILED, "There is no installer operation to resume; no stages were started.", exit_code=2)
-                if prior is not None and prior["payload"].get("config") != selection:
-                    return CommandResult(args.command, OutcomeState.FAILED, "Configuration differs from the durable installer selection; restore the original validated config before resuming.", resume_command=resume_command, exit_code=2)
-                if prior is None:
-                    journal.checkpoint("installer:selection", "active", {"config": selection,
-                        "config_path": str(args.config) if args.config else None})
-                report = HermesBootstrap(data_root, journal).install(include_desktop=config.components.get("hermes_desktop", True))
-                journal.checkpoint("installer:selection", "bootstrap-complete", {"config": selection,
-                    "config_path": str(args.config) if args.config else None, "commit": report.commit,
-                    "generation": report.generation, "agent_ready": report.agent_ready,
-                    "desktop_built": report.desktop_built})
-        except (BootstrapError, OwnershipError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
-            return CommandResult(args.command, OutcomeState.FAILED, str(exc),
-                resume_command=resume_command, exit_code=1)
-        findings = (
-            Finding("hermes.agent.bootstrap", "Pinned Hermes source and runtime stages completed", OutcomeState.READY if report.agent_ready else OutcomeState.PENDING, {"commit": report.commit, "generation": report.generation}),
-            Finding("hermes.desktop.build", "Official ARM64 Desktop artifact was produced" if report.desktop_built else "Official Desktop artifact remains unavailable", OutcomeState.READY if report.desktop_built else OutcomeState.PENDING),
-            Finding("hermes.configuration", report.configuration_state, OutcomeState.PENDING),
-        )
-        state = OutcomeState.PENDING
-        if report.agent_ready and (not config.components.get("hermes_desktop", True) or report.desktop_built):
-            message = "Pinned Hermes Agent and selected Desktop build verified; provider, user-session service, and remaining configuration steps are pending."
-        else:
-            message = "Pinned bootstrap finished with runtime verification pending; no public service was activated."
-        return CommandResult(args.command, state, message, findings, resume_command)
+        launcher_state, blocker_code, launcher_message = _root_launcher_status()
+        # Install/update execution belongs to the separately installed root-local
+        # setup entrypoint. The pathless launcher-status check is informational
+        # only; an unverified caller must not create state roots or fall back to worker-side
+        # downloads/process execution. Root setup revalidates the durable selection
+        # and owns the transaction, enrollment, and managed effects.
+        resume_command = (f"sudo -- hermes-installer-root-setup {args.command}"
+                          if launcher_state == "verified" else "hermes-installer status")
+        return CommandResult(args.command, OutcomeState.PENDING,
+            f"{launcher_message} No installer state, data root, package, service, or account was changed.",
+            (Finding("lifecycle.root-setup", "Root-local launcher status gates privileged setup effects.", OutcomeState.PENDING,
+                     {"launcher_verified": launcher_state == "verified", "blocker_code": blocker_code,
+                      "effects_started": False}),),
+            resume_command=resume_command)
     if args.command == "data":
         facts = discover_host()
         if not facts.supported_arm64_linux:
@@ -698,16 +764,29 @@ def run(args: argparse.Namespace) -> CommandResult:
                     {"active_generation": identity, "active_digest": active.digest if active else None,
                      "candidate_generation": None, "candidate_available": False}),),
                 resume_command=f"hermes-installer update check" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
-        message = "Update activation is blocked until a pinned candidate and managed Hermes health probe are enrolled; no generation was switched."
+        launcher_state, blocker_code, launcher_message = _root_launcher_status()
+        root_action = "update" if action == "apply" else None
+        message = f"{launcher_message} No update or rollback effect was started; managed generation activation requires the root-owned transaction and live health observer."
         return CommandResult("update", OutcomeState.PENDING, message,
             (Finding("lifecycle.update", message, OutcomeState.PENDING,
-                {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled"}),),
-            resume_command=f"hermes-installer update {action}" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
-    if args.command in {"configure", "test-connection", "select-memory", "resolve-source", "component"}:
+                {"candidate_generation": None, "health_probe": "protected-managed-process-not-enrolled",
+                 "launcher_verified": launcher_state == "verified", "blocker_code": blocker_code,
+                 "effects_started": False}),),
+            resume_command=(f"sudo -- hermes-installer-root-setup {root_action}"
+                            if launcher_state == "verified" and root_action is not None
+                            else "hermes-installer status"))
+    if args.command in {"configure", "test-connection", "select-memory", "resolve-source"}:
         facts = discover_host()
         if not facts.supported_arm64_linux:
             return CommandResult(args.command, OutcomeState.FAILED, "This operation is restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
-        return CommandResult(args.command, OutcomeState.PENDING, "The selected component adapter is not available yet; no external account or service was changed.", resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""))
+        return _run_configuration_command(args, config)
+    if args.command == "component":
+        facts = discover_host()
+        if not facts.supported_arm64_linux:
+            return CommandResult("component", OutcomeState.FAILED, "Component lifecycle operations are restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
+        return CommandResult("component", OutcomeState.PENDING,
+            "Component lifecycle remains unavailable until its protected service selector and verified runtime binding are enrolled.",
+            resume_command=f"hermes-installer component {shlex.quote(args.action)} {shlex.quote(args.name)}" + (f" --config {shlex.quote(str(args.config))}" if args.config else ""))
     raise AssertionError(f"Unhandled CLI command: {args.command}")
 
 
