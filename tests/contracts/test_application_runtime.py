@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -164,6 +165,44 @@ def test_production_factory_passes_original_action_arguments_without_selector() 
     assert receipt.state == "complete"
     assert calls[0][0] == "i" * 40
     assert calls[0][1] == canonical
+
+
+def test_authority_application_rpc_uses_kernel_peer_and_no_caller_selector() -> None:
+    from hermes_installer.authority.service import AuthorityService
+
+    canonical = b'{"query":"fixture"}'
+    receipt = RootApplicationRunReceipt(
+        1, "r" * 40, "browser-use", "profile", "generation", "f" * 64,
+        "s" * 40, "u" * 40, "operation.browser.v1", hashlib.sha256(canonical).hexdigest(),
+        "t" * 40, "c" * 40, "complete", 10.0, 20.0,
+    )
+    calls = []
+
+    class Router:
+        def dispatch_workload(self, invocation, arguments, **kwargs):
+            calls.append((invocation, arguments, kwargs))
+            return receipt
+
+    service = object.__new__(AuthorityService)
+    service.selected_application_router = Router()
+    payload = {
+        "schema": 1,
+        "invocation_handle": "i" * 40,
+        "canonical_arguments_b64": base64.b64encode(canonical).decode("ascii"),
+    }
+    result = service._dispatch(501, 77, 8, "application.dispatch", payload,
+                               cancelled=lambda: False)
+    assert result == receipt.to_wire()
+    assert calls[0][0:2] == ("i" * 40, canonical)
+    assert calls[0][2]["peer_uid"] == 501
+    assert calls[0][2]["peer_pid"] == 77
+    assert calls[0][2]["peer_pidfd"] == 8
+    assert callable(calls[0][2]["cancelled"])
+    with pytest.raises(Exception, match="malformed"):
+        service._dispatch(
+            501, 77, 8, "application.dispatch",
+            {**payload, "application_id": "caller-selected"}, cancelled=lambda: False,
+        )
 
 
 @dataclass(frozen=True)

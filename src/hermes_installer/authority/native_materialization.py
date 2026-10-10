@@ -22,6 +22,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Protocol
 
 from hermes_installer.authority.pm_runtime import NativePMRuntimeResolver
+from hermes_installer.authority.native_output_receipts import (
+    RootMaterializationReceiptRegistry,
+    RuntimeArtifactReceipt,
+)
 from hermes_installer.registry.native import NativeRegistry
 from hermes_installer.registry.native_install import (
     PINNED_HERMES_REVISION,
@@ -128,6 +132,7 @@ class RootNativeMaterialization:
                  registry: NativeRegistry, home_root: Path, data_root: Path,
                  journal_root: Path, hermes_source: Path,
                  pm_runtime_resolver: NativePMRuntimeResolver,
+                 output_registry: RootMaterializationReceiptRegistry | None = None,
                  authority_uid: int = 0,
                  monotonic=time.monotonic):
         if (not isinstance(registry, NativeRegistry)
@@ -145,12 +150,32 @@ class RootNativeMaterialization:
         self._journal_root = _absolute_root(journal_root)
         self._hermes_source = _absolute_root(hermes_source)
         self._pm_runtime_resolver = pm_runtime_resolver
+        self._output_registry = output_registry
         if len({self._home_root, self._data_root, self._journal_root}) != 3:
             raise NativeMaterializationDenied("selected home, data, and journal roots must be distinct")
         self._authority_uid = authority_uid
         self._monotonic = monotonic
         self._database = self._journal_root / "native-materialization.sqlite3"
         self._initialize_journal()
+
+    def compile_selected(self, selection: Any) -> tuple[RuntimeArtifactReceipt, ...]:
+        """Compile current root-selected definitions into the five output roles.
+
+        ``selection`` must be factory-issued. The assembler re-resolves it and
+        every retained member through the sealed binding before publishing.
+        """
+        self._require_authority()
+        if self._output_registry is None:
+            raise NativeMaterializationDenied("root native output receipt registry is unavailable")
+        from hermes_installer.authority.native_assembler import (
+            NativeAssemblyDenied,
+            RootNativePackageAssembler,
+        )
+        try:
+            assembler = RootNativePackageAssembler(self._binding, self._output_registry)
+            return assembler.compile_selected(selection)
+        except NativeAssemblyDenied as exc:
+            raise NativeMaterializationDenied(str(exc)) from None
 
     def stage_selected(self, enrollment_id: str, service_generation: str,
                        resource_profile_id: str) -> NativeMaterializationReceipt:

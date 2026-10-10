@@ -116,6 +116,18 @@ class XauthorityPreparationTests(unittest.TestCase):
         self.assertTrue(mount.read_only and mount.nofollow and mount.nosuid and mount.nodev)
         self.assertEqual(mount.source_inode, prepared.inode)
         self.assertTrue(self.registry.verify_mount_binding(mount))
+        source_lease = self.registry.open_mount_source(mount)
+        try:
+            self.assertEqual(os.fstat(source_lease.file_fd).st_ino, prepared.inode)
+            self.assertEqual(os.pread(source_lease.file_fd, source_lease.size_bytes, 0), data)
+            self.assertEqual(source_lease.content_sha256, prepared.content_sha256)
+            self.assertNotIn(data[-32:].hex(), repr(source_lease))
+            self.assertTrue(self.registry.verify_mount_source(source_lease, mount))
+        finally:
+            source_lease.close()
+        with self.assertRaises(OSError):
+            os.fstat(source_lease.file_fd)
+        self.assertFalse(self.registry.verify_mount_source(source_lease, mount))
         self.assertFalse(self.registry.verify_mount_binding(
             replace(mount, target_path=Path("/run/hermes-installer/other"))))
         self.registry.discard_prepared(prepared)
