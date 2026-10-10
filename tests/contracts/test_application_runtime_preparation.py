@@ -17,6 +17,7 @@ from hermes_installer.authority.application_runtime_preparation import (
     RootApplicationLockedPackageArtifactReceipt,
     RootApplicationOfflinePackageClosureRegistry,
     RootApplicationPackageLicenseObservation,
+    inspect_application_build_backend,
     _PackageArtifactEntry,
     _PackageLicenseEntry,
     _FrozenClaimMap,
@@ -38,6 +39,37 @@ def _wheel_row(name: str, filename: str) -> str:
 
 
 class ApplicationRuntimePreparationTests(unittest.TestCase):
+    def test_build_backend_inspector_matches_only_pinned_source_requirements(self):
+        graphify = inspect_application_build_backend(
+            "graphify",
+            b'[build-system]\nrequires = ["setuptools>=83.0.0"]\n'
+            b'build-backend = "setuptools.build_meta"\n',
+        )
+        self.assertEqual(graphify.requirements, ("setuptools>=83.0.0",))
+        browser = inspect_application_build_backend(
+            "browser-use",
+            b'[build-system]\nrequires = ["hatchling==1.32.0"]\n'
+            b'build-backend = "hatchling.build"\n',
+        )
+        self.assertEqual(browser.backend, "hatchling.build")
+        with self.assertRaises(ApplicationRuntimePreparationDenied):
+            inspect_application_build_backend(
+                "browser-use",
+                b'[build-system]\nrequires = ["hatchling>=1.32.0"]\n'
+                b'build-backend = "hatchling.build"\n',
+            )
+        with self.assertRaises(ApplicationRuntimePreparationDenied):
+            inspect_application_build_backend("hyperframes", b"not Python")
+
+    def test_current_package_closure_lookup_fails_without_a_retained_closure(self):
+        registry = object.__new__(RootApplicationOfflinePackageClosureRegistry)
+        registry.source_registry = type(
+            "SourceRegistry", (), {"resolve_selection": lambda self, _handle: object()})()
+        registry._closure_entries = {}
+        with self.assertRaisesRegex(ApplicationRuntimePreparationDenied,
+                                    "no unique retained package closure"):
+            registry.resolve_current_package_closure_for_selection("s" * 48)
+
     def test_authority_signer_retains_exact_pending_package_observations(self):
         uid = os.getuid() or 1
         service = AuthorityService(
