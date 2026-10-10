@@ -377,7 +377,123 @@
       "metadata_delivery": "Existing native.response.take returns ProviderResponseMetadata with turn_handle and final_response_delivery_handle in its authenticated out-of-band DTO, alongside producer_context_handle/tool_call_bindings. Only root-stored actual response observation populates them. Gateway transports only the existing lookup handle header; neither turn nor tool claims enter model-visible body. For a non-final response final_response_delivery_handle is null.",
       "tool_hook": "Existing root observed invocation/result observers attach their retained exact call/result records to the turn resolved through the root parent context. No new generic source capture RPC; no worker transcript/parent labels. Finish rejects any unresolved request, stream, tool, delegate or failed/cancelled turn.",
       "finish_consumer": "At actual pinned successful TurnFacadeMixin return, worker passes the lexical delivered turn_handle and matching root final_response_delivery_handle to native.turn.finish. Root rechecks all retained observations; missing handle or mismatch is pending/unavailable, never completion proof."
+    },
+    "canonical_transcript_builder": {
+      "schema": 1,
+      "owner_module": "hermes_installer.authority.native_turn_observation",
+      "API": "build_root_turn_transcript(events:tuple[RootTurnTranscriptEvent,...])->bytes root-private pure constructor; exported for concrete registry composition, no worker RPC or transcript arguments. Registry supplies only already validated actual retained root event tuple in root ledger sequence.",
+      "document": "Exact canonical object {schema:1,format:\"root-observed-turn-events-v1\",events:[{sequence,event_kind,receipt_handle,source_kind,payload_sha256,payload_size_bytes,payload_b64}]}. sequence is integer0..N-1 assigned by root retained turn ledger; strings from actual immutable typed events, payload_b64 standard base64 exact retained payload bytes. SHA256/size independently computed from those exact bytes; no reconstructed text guessed from labels.",
+      "encoding": "UTF8 sorted keys compact separators ensure_ascii=false no newline; canonical full document\u22641048576bytes, events\u22644096, duplicate event receipt/kind/sequence pairs denied. Empty or incomplete input/request/terminal response closure fails; excess bound denies capture with exact next step, never truncates successful transcript.",
+      "semantics": "This is an explicit root observed event transcript representation, not claimed SDK messages schema. Actual canonical provider requests and complete responses/tool/delegation results stay byte exact within event records. Memory route serializer may carry this canonical JSON as text under existing captured-content schema; extraction and embedding still require current explicit background consent/private route/new grants. No worker argument is ancestry or final turn proof.",
+      "content_boundary": "Only root retained selected input/request/response/tool/delegation content events enter constructor. Management credentials, JWT headers, vault values, process logs and unrelated raw audio are not content events. Audio initial input has its approved artifact metadata event; any actual authorized STT result is a separate observed result. Private/UNKNOWN sensitivity and exact parent closure preserved; never public classification by this serialization."
     }
   },
-  "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness."
+  "lifecycle_row_placement": "lifecycle_binding is nested in each active service_generations.memory_enrollments row, exact fields from protected_lifecycle_binding; no sibling mutable catalog. A null binding records unavailable startup, not a fabricated recipe; populated binding requires all actual source/runtime/engine/prestart joins. Existing started service cannot claim memory functional proof from readiness/liveness.",
+  "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only.",
+  "capture_enablement_consent": {
+    "schema": 1,
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK01"
+    ],
+    "owner_module": "hermes_installer.authority.memory_capture_consent",
+    "type": "RootMemoryCaptureConsent",
+    "API": "RootMemoryCaptureConsentRegistry.from_authority_service(service,root_setup_choice_registry,memory_enrollment_catalog,root_journal)->root registry. issue_selected_capture_consent(current_explicit_choice_receipt_handle,selected_memory_binding)->opaque background_consent_handle root-local; resolve_capture_consent(handle,*,completed_turn_receipt_handle,selected_memory_binding)->RootMemoryCaptureConsent; revoke_capture_consent(handle,current_authorized_owner_request)->root revocation receipt. AuthorityService delegates these finite calls; no worker mint/authorized_bool/ambient toggle.",
+    "fields": {
+      "schema": "literal 1",
+      "receipt_handle": "opaque root registry lookup",
+      "consent_id": "root random unique ID",
+      "principal_id": "actual verified selected owner",
+      "profile_id": "actual selected private profile",
+      "namespace_id": "actual selected owner namespace",
+      "memory_owner_generation": "positive current owner epoch",
+      "service_enrollment_id": "exact selected memory service",
+      "service_generation": "opaque selected service generation",
+      "provider": "closed openviking|claude-mem|agentmemory",
+      "route_ids": "finite exact approved capture/extraction/embedding route IDs",
+      "private_recipient_ids": "finite actual private route recipients; no public/wildcard",
+      "policy_revision": "actual root selected current memory policy",
+      "choice_receipt_handle": "actual retained explicit profile-specific opt-in observation",
+      "source_selection_digest": "actual selected memory/provider/profile/route/consent policy closure digest",
+      "state": "enabled|revoked",
+      "issued_monotonic": "root float",
+      "revocation_epoch": "positive root persisted consent epoch",
+      "signature": "existing authority signed domain-separated canonical record"
+    },
+    "source": "Current root authenticated setup/owner TTY explicit choice observation binds exact selected owner/private profile/provider/capture+optional private extraction/embedding scope. Default absent/false remains disabled. Enabling capture never automatically grants extraction/embedding or account/metered permission. The choice is retained under existing root-owned journal, bound setup actor/current selected principal receipt/plan and profile selection. Not caller-owned journal state or arbitrary token.",
+    "persistence": "Root memory authority_state_root_id selection and owner0 mode0700 nofollow root journal store retains immutable consent record plus mutable revocation/current-owner index under existing transactional protection. Enablement is persistent policy preference, not a long-lived effect grant. Every turn capture resolves actual current consent/owner/service/policy and complete retained turn source closure; then issues fresh per-job BackgroundConsent/context/effect grants bounded by current source/profile/route lease. Persistent opt-in contains no stale source receipts to impersonate later events.",
+    "revocation": "Authorized selected owner/root setup revoke atomically increments revocation epoch; current lookup denies immediately; queued/inflight memory reservations and child issuance must recheck epoch before each effect and cancel/wipe payload as existing memory ledger semantics require. Receipt audit retains no transcript or secret. No retroactive erase claim for already committed backend memory without separately authorized delete.",
+    "wire": "background_consent_handle is opaque pathless preference lookup only, not SourceReceipt/HostContext/EffectAuthorization. RootMemoryCaptureCoordinator consumes only resolved current registry object plus actual completed turn receipt, never caller consent fields. Authority signature excludes signature field, domain root-memory-capture-consent-v1. Enabled object must resolve current registry state, signature alone cannot bypass revocation."
+  },
+  "private_engine_endpoint_v108": {
+    "schema": 1,
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK-F03"
+    ],
+    "source_facts": [
+      "Official vLLM documents distinct chat completions and embeddings APIs; embeddings requires actual embedding model, chat requires text-generation model/chat template. GLM5.2 official model card shows compatible chat endpoint. These API documents are protocol references, not pinned local server/model artifacts or evidence that a private endpoint is configured."
+    ],
+    "sources": [
+      "https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/",
+      "https://huggingface.co/zai-org/GLM-5.2"
+    ],
+    "protocol_artifact": {
+      "artifact_id": "installer-private-memory-compatible-api-v1",
+      "path": "plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108/private-memory-compatible-api-v1.json",
+      "sha256": "0158fa3c3b8dcc6befb008f3b617ca084f0470b05eb9b99f2f12b27735eca2d4",
+      "size_bytes": 2357
+    },
+    "active_key": "private_memory_engine_selections",
+    "row_fields": [
+      "id",
+      "profile_id",
+      "namespace_id",
+      "memory_provider",
+      "memory_owner_generation",
+      "extract_route_id",
+      "embed_route_id",
+      "extraction_served_model_id",
+      "embedding_served_model_id",
+      "embedding_dimensions",
+      "endpoint_selection_receipt_handle",
+      "extraction_model_deployment_receipt_handle",
+      "embedding_model_deployment_receipt_handle",
+      "protocol_artifact_id",
+      "protocol_sha256",
+      "credential_reference_ids",
+      "private_consent_selection_handle",
+      "policy_revision"
+    ],
+    "join": "Digest-covered service_generations private_memory_engine_selections rows, enclosing verified service-generation digest attached outside row. memory_enrollments.private_extraction_embedding_routes.extract/embed exactly equal selected row route IDs. Each route already protected private eligible capability (text-generation vs embedding), exact recipient endpoint/account/credential/current privacy proof and private consent. profile/namespace/provider/owner generation exact current joins, no root-global engines{} fallback.",
+    "selection_source": "Root setup explicit private endpoint selection consumes existing actual provider endpoint ownership/deployment receipt and current eligible route receipt; no caller model ID, dimensions, privacy bool or endpoint declaration can mint readiness. Required extraction model is GLM-5.2 (zai-org/GLM-5.2 or exact served alias bound by actual deployment artifact). Embedding model separately selected actual immutable model/deployment/license/runtime receipt with exact served model+dimensions; no default invented model or GLM embedding substitution. Missing actual model/deployment/ownership/license/ARM proof keeps selection pending. No model/server/package downloads or new metered service provisioning authorized by this protocol refinement.",
+    "owner_modules": {
+      "provider": "hermes_installer.providers.private_memory",
+      "memory": "hermes_installer.memory.private_engine"
+    },
+    "provider_factory": "RootPrivateMemoryRouteResolver.from_root_runtime(bindings,provider_route_registry,private_consent_registry,model_deployment_registry,root_effect_broker).resolve_selected_memory_engine(memory_enrollment_id,owner_generation) -> RootSelectedPrivateMemoryEngineRoutes",
+    "route_dto_fields": [
+      "selection_id",
+      "profile_id",
+      "namespace_id",
+      "memory_provider",
+      "memory_owner_generation",
+      "service_generation_digest",
+      "extract_route_id",
+      "embed_route_id",
+      "extraction_served_model_id",
+      "embedding_served_model_id",
+      "embedding_dimensions",
+      "protocol_sha256",
+      "endpoint_selection_receipt_handle",
+      "extraction_model_deployment_receipt_handle",
+      "embedding_model_deployment_receipt_handle",
+      "expires_monotonic"
+    ],
+    "memory_factory": "RootPrivateMemoryEngine.from_selected_routes(selected_routes,private_provider_dispatcher); engine registry key(profile_id,namespace_id,provider). Implements existing extract(text,context,timeout,cancelled)->list[str], embed(facts,context,timeout,cancelled)->list[list[float]]. Root dispatcher checks actual current job consent/source ancestry/private route capability/model/dimensions/endpoint on EVERY request and retry then fresh effect; extraction output inherits private source closure and embedding does not declassify.",
+    "lifecycle": "Configured external owned endpoint adapter never manages remote server startup. Local engine starts only through exact v64/v80 lifecycle_binding and preinstalled artifact/config/runtime receipts; no unpinned vllm serve, @latest, lazy iii/OpenViking/embedding install or copied LLM secrets. OpenViking /ready remains readiness only; AgentMemory /agentmemory/livez remains liveness only. Selected semantic extraction/retrieval proof is separate.",
+    "status": "Protocol/producer obligations now exact, no private endpoint/model/account currently proven. Original required engine flows/GLM5.2/semantic memory and all18 acceptance stay open."
+  }
 }
