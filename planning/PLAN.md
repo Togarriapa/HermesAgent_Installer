@@ -172,3 +172,5 @@ Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-boots
 Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
 
 Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.
+
+BD-T232.1 source-fixture evidence: `evidence/development/EV-BD-T232.1-bootstrap-pending-diagnostics-20261010.json`; target stage/cause unknown, source review and all acceptance remain OPEN.
