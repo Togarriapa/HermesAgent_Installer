@@ -96,6 +96,180 @@ def test_active_claim_commits_to_tagged_principal_and_current_namespace_bindings
         _validate_claim_output_hashes(replace(claim, namespace_selection_handle="G" * 43))
 
 
+def _local_owner_adoption_for_claim(claim):
+    from hermes_installer.authority.active_policy_compiler import ActiveSetupChoiceProjection
+    from hermes_installer.authority.owner_overlay_publication import (
+        _CHOICE_FIELDS, _OPERATION_FIELDS, _OWNER_FIELDS, _PACKAGE_FIELDS,
+        _RESOURCE_FIELDS, _VIEW_FIELDS, _mint_published_local_owner_adoption,
+    )
+
+    handle, digest = "G" * 43, "a" * 64
+    choice = {key: "value" for key in _CHOICE_FIELDS}
+    choice.update({key: digest for key in (
+        "signed_record_sha256", "choice_payload_sha256", "principal_binding_sha256",
+        "namespace_binding_sha256", "service_generation_digest",
+        "release_deployment_receipt_sha256", "selection_catalog_sha256")})
+    choice.update({
+        "selection_handle": "H" * 43, "purpose": "native-policy-preparation",
+        "principal_id": "local-owner:fixture", "profile_id": "hermes-agent-native-v1",
+        "namespace_id": "fixture-namespace", "service_generation_id": claim.prepared_generation_id,
+        "principal_selection_handle": claim.principal_selection_receipt_handle,
+        "namespace_selection_handle": claim.namespace_selection_handle,
+        "principal_binding_sha256": claim.principal_binding_sha256,
+        "namespace_binding_sha256": claim.namespace_binding_sha256,
+        "service_generation_digest": claim.expected_service_generation_digest,
+        "selection_catalog_sha256": claim.selection_catalog_sha256,
+        "setup_session_handle": claim.setup_session_id,
+        "transaction_handle": claim.transaction_handle,
+        "choice_epoch": 1, "revocation_epoch": 1,
+        "prepared_generation": claim.prepared_generation_id,
+        "issued_at_unix": 1.0, "setup_deadline_unix": 100.0,
+        "source_member_receipt_handles": ["I" * 43],
+    })
+    projection = ActiveSetupChoiceProjection(
+        selection_handle=choice["selection_handle"], purpose=choice["purpose"],
+        key_id=choice["key_id"], signed_record_sha256=choice["signed_record_sha256"],
+        choice_payload_sha256=choice["choice_payload_sha256"], choice_epoch=1, revocation_epoch=1,
+        issued_at_unix=1.0, setup_deadline_unix=100.0,
+        release_deployment_receipt_sha256=choice["release_deployment_receipt_sha256"],
+        setup_session_handle=claim.setup_session_id, transaction_handle=claim.transaction_handle,
+        plan_id=choice["plan_id"], prepared_generation=claim.prepared_generation_id,
+        principal_selection_handle=claim.principal_selection_receipt_handle,
+        namespace_selection_handle=claim.namespace_selection_handle,
+        private_profile_selection_handle=choice["private_profile_selection_handle"],
+        source_member_receipt_handles=("I" * 43,), principal_id=choice["principal_id"],
+        profile_id=choice["profile_id"], namespace_id=choice["namespace_id"],
+        principal_binding_sha256=claim.principal_binding_sha256,
+        namespace_binding_sha256=claim.namespace_binding_sha256,
+        service_generation_id=claim.prepared_generation_id,
+        service_generation_digest=claim.expected_service_generation_digest,
+        selection_catalog_sha256=claim.selection_catalog_sha256, _compiler_seal=claim._seal)
+    owner = {key: "value" for key in _OWNER_FIELDS}
+    owner.update({"principal_id": choice["principal_id"], "profile_id": choice["profile_id"],
+                  "namespace_id": choice["namespace_id"], "principal_binding_sha256": claim.principal_binding_sha256,
+                  "namespace_binding_sha256": claim.namespace_binding_sha256, "account_name": "fixture-owner",
+                  "account_uid": 1000, "primary_gid": 1000, "machine_target_sha256": digest,
+                  "service_uid": 1001, "service_gid": 1001,
+                  "service_generation_id": claim.prepared_generation_id,
+                  "service_generation_digest": claim.expected_service_generation_digest})
+    resources = {key: "value" for key in _RESOURCE_FIELDS}
+    resources.update({"resources_profile_id": "fixture-resources", "source_receipt_handle": handle,
+                      "source_sha256": digest, "member_receipt_handles": [handle],
+                      "member_sha256s": [digest], "resource_profile_selection_handle": handle,
+                      "resource_profile_selection_sha256": digest})
+    package = {key: "value" for key in _PACKAGE_FIELDS}
+    package.update({"package_id": "fixture-package", "profile_id": "hermes-agent-native-v1",
+                    "generation": "fixture-package-generation", "compiled_closure_sha256": digest,
+                    "entrypoint_sha256": digest, "resolver_sha256": digest,
+                    "owner_overlay_operation_records_sha256": digest,
+                    "native_cas_transition_receipt_handle": handle,
+                    "native_cas_transition_sha256": digest})
+    view = {key: "value" for key in _VIEW_FIELDS}
+    view.update({"service_profile_id": "hermes-agent-native-v1", "resource_profile_id": "fixture-resources",
+                 "data_root_id": "fixture-data-root", "data_root_selection_handle": handle,
+                 "data_root_receipt_handle": handle, "data_root_device": 1, "data_root_inode": 2,
+                 "data_root_owner_uid": 1001, "data_root_owner_gid": 1001,
+                 "relative_path": "native-profile-overlays/hermes-agent-native-v1/fixture-resources",
+                 "view_device": 1, "view_inode": 3, "view_owner_uid": 0, "view_owner_gid": 0,
+                 "view_mode": 0o700, "ownership_marker_sha256": digest,
+                 "profile_view_selection_handle": handle, "profile_view_receipt_handle": handle,
+                 "target_id": "fixture-target", "target_selection_handle": handle,
+                 "target_receipt_handle": handle, "effect_enrollment_ids": ["fixture-effect"]})
+    operation = {key: None for key in _OPERATION_FIELDS}
+    operation.update({"registration_id": "resource-overlay-store:tool:resource_overlay_read",
+                      "method": "read", "operation": "plugin.resource-overlay-store.read",
+                      "capability": "plugin:resource-overlay-store", "effect_enrollment_id": "fixture-effect",
+                      "target_id": "fixture-target", "profile_id": "hermes-agent-native-v1",
+                      "profile_generation": claim.prepared_generation_id,
+                      "principal_id": choice["principal_id"], "namespace_id": choice["namespace_id"],
+                      "package_id": "fixture-package", "package_generation": "fixture-package-generation",
+                      "argument_schema_id": "fixture-args", "argument_schema_receipt_handle": handle,
+                      "argument_schema_sha256": digest, "result_schema_id": "fixture-result",
+                      "result_schema_sha256": digest, "result_schema_receipt_handle": handle,
+                      "handler_artifact_id": "fixture-handler", "handler_sha256": digest,
+                      "handler_source_receipt_handle": handle,
+                      "profile_view_selection_handle": handle, "profile_view_receipt_handle": handle,
+                      "data_root_selection_handle": handle, "data_root_receipt_handle": handle,
+                      "target_selection_handle": handle, "target_receipt_handle": handle,
+                      "prepared_source_observer_selection_handle": handle,
+                      "process_role_id": "fixture-role", "source_issuer_id": "fixture-source",
+                      "source_observer_enrollment_ids": ["fixture-observer"]})
+    return projection, _mint_published_local_owner_adoption(
+        adoption_handle=handle, identity_kind="linux-local-owner-v1", signed_choice=choice,
+        adopted_at_unix=None, setup_deadline_unix=100.0, owner=owner, resources=resources,
+        native_package=package, operation_records=(operation,), view_custody=view,
+        source_members=({"role": "fixture-source", "artifact_id": "fixture-module",
+                         "receipt_handle": handle, "relative_path": "fixture.py",
+                         "sha256": digest, "size_bytes": 1, "mode": 0o400},))
+
+
+def test_owner_overlay_claim_rows_bind_local_domain_namespace_and_receipt_closure():
+    from hermes_installer.authority.active_policy_compiler import (
+        _manifest, _owner_overlay_adoption_source_handles, _choice_projection_record,
+    )
+
+    base = _claim()
+    claim = replace(base, principal_selection_receipt_handle="G" * 43,
+                    principal_identity_kind="linux-local-owner-v1",
+                    principal_binding_sha256="a" * 64,
+                    namespace_selection_handle="F" * 43,
+                    namespace_binding_sha256="b" * 64)
+    choice, adoption = _local_owner_adoption_for_claim(claim)
+    sources = _owner_overlay_adoption_source_handles((adoption,))
+    claim = replace(claim, choice_adoptions=(choice,),
+                    source_receipt_handles=tuple(dict.fromkeys((*claim.source_receipt_handles, *sources))),
+                    owner_overlay_adoptions=(adoption,))
+    manifest = _manifest(claim)
+    assert manifest["owner_overlay_adoptions"] == [adoption.to_claim_row()]
+    assert set(sources).issubset(set(manifest["source_receipt_handles"]))
+    with pytest.raises(BootstrapEnrollmentPending, match="crossed the active identity domain"):
+        _manifest(replace(claim, principal_identity_kind="authentik-subject-v1"))
+    with pytest.raises(BootstrapEnrollmentPending, match="signed current claim identity"):
+        _manifest(replace(claim, namespace_binding_sha256="c" * 64))
+
+
+def test_recovered_owner_overlay_rows_join_claim_identity_and_publisher_timestamp():
+    from hermes_installer.authority.active_policy_compiler import (
+        _choice_projection_record, _owner_overlay_adoption_source_handles,
+        _verify_recovered_owner_overlay_join,
+    )
+
+    claim = replace(_claim(), principal_selection_receipt_handle="G" * 43,
+                    principal_identity_kind="linux-local-owner-v1",
+                    principal_binding_sha256="a" * 64,
+                    namespace_selection_handle="F" * 43,
+                    namespace_binding_sha256="b" * 64)
+    projection, adoption = _local_owner_adoption_for_claim(claim)
+    source_handles = _ordered_unique_receipt_handles(
+        (*claim.source_receipt_handles, *_owner_overlay_adoption_source_handles((adoption,))),
+        "recovery test")
+    claim = replace(claim, choice_adoptions=(projection,), source_receipt_handles=source_handles,
+                    owner_overlay_adoptions=(adoption,))
+    manifest = _manifest(claim)
+    published = adoption.to_claim_row(include_digest=False)
+    published["adopted_at_unix"] = 50.0
+    published["adoption_sha256"] = hashlib.sha256(_canonical(published)).hexdigest()
+    choice_row = _choice_projection_record(projection)
+    choice_row["adopted_at_unix"] = 50.0
+    inputs = {"owner_overlay_adoption_sha256": hashlib.sha256(
+        _canonical([published])).hexdigest(), "choice_projections": [choice_row]}
+    descriptor = {"owner_overlay_adoption_records": [published]}
+    _verify_recovered_owner_overlay_join(manifest, inputs, descriptor)
+
+    wrong_domain = dict(manifest, principal_identity_kind="authentik-subject-v1")
+    with pytest.raises(BootstrapEnrollmentPending, match="crossed the active identity domain"):
+        _verify_recovered_owner_overlay_join(wrong_domain, inputs, descriptor)
+    crossed = dict(published)
+    crossed["adopted_at_unix"] = 51.0
+    crossed.pop("adoption_sha256")
+    crossed["adoption_sha256"] = hashlib.sha256(_canonical(crossed)).hexdigest()
+    bad_inputs = {**inputs, "owner_overlay_adoption_sha256": hashlib.sha256(
+        _canonical([crossed])).hexdigest()}
+    with pytest.raises(BootstrapEnrollmentPending, match="differs from its signed local-owner claim"):
+        _verify_recovered_owner_overlay_join(manifest, bad_inputs,
+                                             {"owner_overlay_adoption_records": [crossed]})
+
+
 def test_active_source_receipt_closure_is_ordered_unique_and_covers_explicit_receipts():
     claim = _claim()
     raw = ("A" * 43, "B" * 43, "9" * 64, "F" * 43, "A" * 43, "B" * 43, "9" * 64, "F" * 43)
@@ -236,7 +410,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "expires_monotonic": original.expires_monotonic,
         "state": "claimed",
     }
-    descriptor = {"inputs": {
+    descriptor = {"owner_overlay_adoption_records": [], "inputs": {
         "source_receipt_handles": list(source_handles),
         "observed_root_receipt_handle": original.observed_root_receipt_handle,
         "selection_catalog_sha256": original.selection_catalog_sha256,
@@ -247,6 +421,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "transaction_handle": original.transaction_handle,
         "runtime_receipt_handles": list(original.runtime_receipt_handles),
         "materialization_receipt_handles": list(original.materialization_receipt_handles),
+        "owner_overlay_adoption_sha256": hashlib.sha256(_canonical([])).hexdigest(),
     }}
     monkeypatch.setattr(PolicyPublicationReceiptResolver, "resolve_current", lambda: receipt)
     monkeypatch.setattr(publication, "_read_generation_descriptor", lambda *_args: (

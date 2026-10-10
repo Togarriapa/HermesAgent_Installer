@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import builtins
 import hashlib
+import json
 import os
 import time
 from dataclasses import fields, replace
@@ -246,6 +247,22 @@ def test_actual_source_owner_composition_projects_four_and_compiles_five_outputs
     members = {row.artifact_receipt_handle: graph.binding.resolve_native_assembly_member(
         graph.assembly.selection_handle,row.artifact_receipt_handle) for row in definitions.closure_members}
     package = assemble_native_package(graph.assembly,definitions,members)
+    resolver = json.loads(package.action_resolver)
+    operation_rows = resolver["owner_overlay_operation_records"]
+    assert [row["registration_id"] for row in operation_rows] == sorted(
+        row["registration_id"] for row in operation_rows)
+    assert {row["method"] for row in operation_rows} == {"read", "history", "write", "delete"}
+    assert {row["registration_id"] for row in operation_rows} == {
+        row.registration_id for row in projection.registrations}
+    assert not any(row.get("action_id", row.get("id")) in {
+        item["registration_id"] for item in operation_rows
+    } for row in resolver.get("actions", []))
+    altered_rows = list(definitions.owner_overlay_operation_records)
+    altered_rows[0] = {**dict(altered_rows[0]), "profile_view_selection_handle": "forged-view"}
+    with pytest.raises(NativeAssemblyDenied, match="source operation"):
+        assemble_native_package(graph.assembly,
+                                replace(definitions, owner_overlay_operation_records=tuple(altered_rows)),
+                                members)
     assert all((package.entrypoint_manifest,package.action_resolver,package.boundary_overlay,
                 package.compiled_closure,package.candidate_index))
     from hermes_installer.authority.native_output_receipts import _verify_payload, NativeOutputMember

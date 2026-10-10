@@ -338,6 +338,9 @@ def verify_installed_launcher() -> bool:
     """
     from .authority.installer_release import InstalledRootReleaseVerifier
 
+    pointer = InstalledRootReleaseVerifier.verify_installed_release()
+    pointer.close()
+    _import_v180_native_support_closure()
     release, actor = InstalledRootReleaseVerifier.from_current_root_process()
     try:
         actor.verify_current(release)
@@ -345,6 +348,30 @@ def verify_installed_launcher() -> bool:
     finally:
         actor.close()
         release.close()
+
+
+def _import_v180_native_support_closure() -> None:
+    """Load the finite native support and worker source closure before actor observation."""
+    from .components import native_plugins, public_registries
+    from . import native_boundary_patch, native_plugin_bindings, native_plugin_loader
+    from .authority import (
+        local_resource_effects,
+        native_assembler,
+        native_definition_composition,
+        native_policy_preparation,
+        native_registration_projection,
+        native_source_definitions,
+        native_worker_start_recipe,
+        pm_runtime,
+    )
+    from .registry import resource_backends
+
+    # Keep explicit references so this remains a finite, intentional import set.
+    _ = (native_assembler, native_registration_projection, native_plugins, public_registries,
+         native_definition_composition, native_policy_preparation,
+         native_source_definitions, local_resource_effects, native_worker_start_recipe,
+         native_plugin_loader, native_boundary_patch, native_plugin_bindings,
+         resource_backends, pm_runtime)
 
 
 def run_root_setup_action(
@@ -423,6 +450,9 @@ def run_root_setup_action(
     # module load, including legitimate fixed modules; importing arbitrary
     # modules here would weaken that boundary, so keep this finite import at
     # the installed-release handoff only.
+    from .authority.installer_release import InstalledRootReleaseVerifier
+    # The predecessor probe above already verified the installed pointer.
+    _import_v180_native_support_closure()
     from .authority.bootstrap_runtime_factory import (
         RootBootstrapRuntimeFactory,
         RootInitialSetupAggregate,

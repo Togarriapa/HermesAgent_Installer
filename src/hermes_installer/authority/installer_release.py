@@ -98,10 +98,57 @@ REVIEWED_SOURCE_MODULES = (
     ("installer-native-boundary-module-v137",
      "src/hermes_installer/native_boundary.py",
      "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
-    ("installer-native-source-definitions-module-v137",
+    ("installer-module:hermes_installer.authority.native_source_definitions",
      "lib/python/hermes_installer/authority/native_source_definitions.py",
-     "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
- )
+     "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c", 23_672, "module"),
+    ("installer-module:hermes_installer.authority.bootstrap_runtime_factory",
+     "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
+     "1156ea17992ddfd0b04819dc5afbc9426611cc2a745ebfb61800df86b08a0c14", 579_669, "module"),
+    ("installer-module:hermes_installer.authority.local_resource_effects",
+     "lib/python/hermes_installer/authority/local_resource_effects.py",
+     "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6", 47_854, "module"),
+    ("installer-module:hermes_installer.authority.native_assembler",
+     "lib/python/hermes_installer/authority/native_assembler.py",
+     "311e07fb52ae001e44d4be17cf4ed8a09277118e0aca34b6ff45c22b9b6e2055", 21_265, "module"),
+    ("installer-module:hermes_installer.authority.native_output_receipts",
+     "lib/python/hermes_installer/authority/native_output_receipts.py",
+     "37f18a0d9c2e7082955f82bb27221dae3ae4781c6278b5e0c1a254233fbf7b5f", 109_864, "module"),
+    ("installer-module:hermes_installer.authority.native_policy_preparation",
+     "lib/python/hermes_installer/authority/native_policy_preparation.py",
+     "93695570e20218ea1e40a0707ef7d6f51e1646e74e5c5338ba1fd83fef737752", 60_196, "module"),
+    ("installer-module:hermes_installer.authority.native_registration_projection",
+     "lib/python/hermes_installer/authority/native_registration_projection.py",
+     "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b", 82_047, "module"),
+    ("installer-module:hermes_installer.authority.native_definition_composition",
+     "lib/python/hermes_installer/authority/native_definition_composition.py",
+     "a60e3b2dadb8e1733767035209f988c2fcbb9feb0ff15e5fd0539da9877d16aa", 8_355, "module"),
+    ("installer-module:hermes_installer.authority.application_runtime_archive",
+     "lib/python/hermes_installer/authority/application_runtime_archive.py",
+     "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197", 31_457, "module"),
+    ("installer-module:hermes_installer.authority.application_runtime_relocation",
+     "lib/python/hermes_installer/authority/application_runtime_relocation.py",
+     "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc", 12_120, "module"),
+    ("installer-module:hermes_installer.authority.remote_observations",
+     "lib/python/hermes_installer/authority/remote_observations.py",
+     "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31", 93_746, "module"),
+)
+APPLICATION_BUILD_DRIVER = (
+    "installer-application-environment-builder-v1",
+    "lib/python/hermes_installer/authority/application_environment_builder.py",
+    "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",
+    45_807,
+    "application-build-driver",
+)
+REQUIRED_NATIVE_SUPPORT_MODULE_IDS = (
+    "installer-module:hermes_installer.authority.native_assembler",
+    "installer-module:hermes_installer.authority.native_registration_projection",
+    "installer-module:hermes_installer.components.native_plugins",
+    "installer-module:hermes_installer.components.public_registries",
+    "installer-module:hermes_installer.authority.native_definition_composition",
+    "installer-module:hermes_installer.authority.native_policy_preparation",
+    "installer-module:hermes_installer.authority.native_source_definitions",
+    "installer-module:hermes_installer.authority.local_resource_effects",
+)
 REQUIRED_LAUNCHER_MODULES = (
     ("installer-module:hermes_installer", "lib/python/hermes_installer/__init__.py"),
     ("installer-module:hermes_installer.authority", "lib/python/hermes_installer/authority/__init__.py"),
@@ -509,6 +556,20 @@ class InstalledRootReleaseVerifier:
             expected_origin = str(release.release_root / item.relative_path)
             if module is not None and origin == expected_origin:
                 modules.append((module_name, origin, item.device, item.inode, item.sha256))
+        for artifact_id in REQUIRED_NATIVE_SUPPORT_MODULE_IDS:
+            matches = [item for item in module_rows if item.artifact_id == artifact_id
+                       and item.roles == ("module",)]
+            if len(matches) != 1:
+                raise InstallerReleaseError("exact native support module is absent from the release closure")
+            item = matches[0]
+            module_name = _module_name(item.relative_path)
+            module = sys.modules.get(module_name)
+            expected_origin = str(release.release_root / item.relative_path)
+            if (module is None
+                    or getattr(getattr(module, "__spec__", None), "origin", None) != expected_origin
+                    or not any(row[0] == module_name and row[1] == expected_origin
+                               and row[4] == item.sha256 for row in modules)):
+                raise InstallerReleaseError("exact native support module was not imported before actor observation")
         if not modules:
             raise InstallerReleaseError("no imported installer module matches the deployed release closure")
         pid = os.getpid()
@@ -575,7 +636,7 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for row in rows:
         for role in row.roles:
             by_role.setdefault(role, []).append(row)
-    for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture", "application-effect-fixture"):
+    for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture", "application-effect-fixture", "application-build-driver"):
         if role not in by_role:
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
@@ -624,6 +685,13 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
         if (row is None or row.roles != (role,)
                 or (row.relative_path, row.sha256, row.size_bytes) != (relative_path, digest, size)):
             raise InstallerReleaseError("finite native target source module differs from its reviewed pin")
+    driver_id, driver_path, driver_digest, driver_size, driver_role = APPLICATION_BUILD_DRIVER
+    driver_rows = by_role[driver_role]
+    if (len(driver_rows) != 1 or (driver_rows[0].artifact_id, driver_rows[0].relative_path,
+                                  driver_rows[0].sha256, driver_rows[0].size_bytes,
+                                  driver_rows[0].roles) !=
+            (driver_id, driver_path, driver_digest, driver_size, (driver_role,))):
+        raise InstallerReleaseError("application build driver differs from its exact execution-only closure")
     for artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS:
         rows_for_member = [row for row in rows if row.artifact_id == artifact_id]
         if (len(rows_for_member) != 1 or rows_for_member[0].roles != (role,)
@@ -735,6 +803,8 @@ def _amendment_digest(rows: list[VerifiedReleaseFile]) -> str:
 
 
 def _artifact_id_for(path: str, roles: list[str]) -> str:
+    if "application-build-driver" in roles and path == APPLICATION_BUILD_DRIVER[1]:
+        return APPLICATION_BUILD_DRIVER[0]
     if "launcher" in roles:
         return "installer-root-setup-launcher-v1"
     if "interpreter" in roles:
@@ -793,8 +863,16 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
         raise InstallerReleaseError("template closure files must carry only the template role")
     if path.startswith("templates/") and path not in fixed_templates:
         raise InstallerReleaseError("release contains an unrecognized installed template path")
-    if path.startswith("lib/python/") and roles != ["module"]:
+    if path.startswith("lib/python/") and roles != ["module"] and not (
+            path == APPLICATION_BUILD_DRIVER[1] and roles == ["application-build-driver"]):
         raise InstallerReleaseError("lib/python release files must have the exact module role")
+    if path == APPLICATION_BUILD_DRIVER[1] and "module" in roles:
+        raise InstallerReleaseError("execution-only application build driver cannot be an actor module")
+    if "application-build-driver" in roles:
+        if (roles != [APPLICATION_BUILD_DRIVER[4]] or path != APPLICATION_BUILD_DRIVER[1]
+                or (digest, size) != (APPLICATION_BUILD_DRIVER[2], APPLICATION_BUILD_DRIVER[3])
+                or (mode is not None and mode != 0o444)):
+            raise InstallerReleaseError("application build driver differs from its exact execution-only pin")
     if "module" in roles and not (path.startswith("lib/python/")
                                   or path in {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "module"}):
         raise InstallerReleaseError("module role is outside the finite source/import closure")

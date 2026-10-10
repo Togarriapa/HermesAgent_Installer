@@ -88,6 +88,119 @@ def _owner_overlay_adoption_rows(values: tuple[Any, ...]) -> list[dict[str, Any]
     return rows
 
 
+def _owner_overlay_adoption_source_handles(values: tuple[Any, ...]) -> tuple[str, ...]:
+    """Return the exact receipt ancestry carried by sealed local-owner rows.
+
+    The claim manifest already covers the full row.  Also include its typed
+    source/custody receipts in the claim's source closure so publication cannot
+    accidentally sever the row from the compilation evidence that produced it.
+    """
+    rows = _owner_overlay_adoption_rows(values)
+    handles: list[str] = []
+    for row in rows:
+        choice = row["signed_choice"]
+        handles.extend(choice["source_member_receipt_handles"])
+        resources = row["resources"]
+        handles.append(resources["source_receipt_handle"])
+        handles.extend(resources["member_receipt_handles"])
+        handles.append(row["native_package"]["native_cas_transition_receipt_handle"])
+        view = row["view_custody"]
+        handles.extend((view["data_root_receipt_handle"],
+                        view["profile_view_receipt_handle"],
+                        view["target_receipt_handle"]))
+        handles.extend(member["receipt_handle"] for member in row["source_members"])
+        for operation in row["operation_records"]:
+            handles.extend(value for key, value in operation.items()
+                           if key.endswith("_receipt_handle") and value is not None)
+    return _ordered_unique_receipt_handles(handles, "owner-overlay source")
+
+
+def _verify_recovered_owner_overlay_join(manifest: Mapping[str, Any], inputs: Mapping[str, Any],
+                                         descriptor: Mapping[str, Any]) -> None:
+    """Join pre-CAS claim rows to publisher-timestamped descriptor rows."""
+    from .owner_overlay_publication import validate_owner_overlay_adoption_row
+
+    claim_rows = manifest.get("owner_overlay_adoptions")
+    raw_rows = descriptor.get("owner_overlay_adoption_records")
+    if not isinstance(claim_rows, list) or not isinstance(raw_rows, list) or len(raw_rows) > 4:
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption rows are malformed")
+    try:
+        published = [validate_owner_overlay_adoption_row(row) for row in raw_rows]
+    except (TypeError, ValueError):
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption rows are invalid") from None
+    if (len(claim_rows) != len(published)
+            or inputs.get("owner_overlay_adoption_sha256") != _sha(_canonical(published))):
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption digest differs from publication")
+    if not claim_rows:
+        if published:
+            raise BootstrapEnrollmentPending("publication introduced an unclaimed local-owner adoption")
+        return
+    if manifest.get("principal_identity_kind") != "linux-local-owner-v1":
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption crossed the active identity domain")
+    source_handles = manifest.get("source_receipt_handles")
+    choice_rows = manifest.get("choice_adoptions")
+    published_choices = inputs.get("choice_projections")
+    if not isinstance(source_handles, list) or not isinstance(choice_rows, list) or not isinstance(published_choices, list):
+        raise BootstrapEnrollmentPending("recovered owner-overlay claim ancestry is malformed")
+    by_handle = {row.get("selection_handle"): row for row in published_choices
+                 if isinstance(row, Mapping) and isinstance(row.get("selection_handle"), str)}
+    if len(by_handle) != len(published_choices):
+        raise BootstrapEnrollmentPending("published choice projections are ambiguous")
+    for claimed, adopted in zip(claim_rows, published):
+        if not isinstance(claimed, Mapping) or claimed.get("identity_kind") != "linux-local-owner-v1":
+            raise BootstrapEnrollmentPending("durable owner-overlay claim row has an invalid identity domain")
+        unsigned_claim = dict(claimed)
+        claim_digest = unsigned_claim.pop("adoption_sha256", None)
+        if not isinstance(claim_digest, str) or claim_digest != _sha(_canonical(unsigned_claim)):
+            raise BootstrapEnrollmentPending("durable owner-overlay claim digest is invalid")
+        expected_published = dict(claimed)
+        expected_published["adopted_at_unix"] = adopted["adopted_at_unix"]
+        expected_published["adoption_sha256"] = adopted["adoption_sha256"]
+        signed = claimed.get("signed_choice")
+        owner = claimed.get("owner")
+        if not isinstance(signed, Mapping) or not isinstance(owner, Mapping):
+            raise BootstrapEnrollmentPending("durable owner-overlay identity binding is malformed")
+        choice = by_handle.get(signed.get("selection_handle"))
+        normalized_choice = ({key: value for key, value in choice.items()
+                              if key not in {"adopted_at_unix", "publication_receipt_handle",
+                                             "publication_sha256", "generation_id"}}
+                             if isinstance(choice, Mapping) else None)
+        timestamp = adopted["adopted_at_unix"]
+        signed_projection = ({key: signed.get(key) for key in normalized_choice}
+                             if normalized_choice is not None else None)
+        if (adopted != expected_published
+                or normalized_choice != signed_projection
+                or not isinstance(choice, Mapping)
+                or choice.get("adopted_at_unix") != timestamp
+                or not isinstance(timestamp, (int, float))
+                or not signed.get("issued_at_unix") <= timestamp <= claimed.get("setup_deadline_unix", -1)
+                or owner.get("principal_binding_sha256") != manifest.get("principal_binding_sha256")
+                or owner.get("namespace_binding_sha256") != manifest.get("namespace_binding_sha256")
+                or signed.get("principal_selection_handle") != manifest.get("principal_selection_receipt_handle")
+                or signed.get("namespace_selection_handle") != manifest.get("namespace_selection_handle")
+                or signed.get("principal_binding_sha256") != manifest.get("principal_binding_sha256")
+                or signed.get("namespace_binding_sha256") != manifest.get("namespace_binding_sha256")
+                or owner.get("service_generation_id") != manifest.get("prepared_generation_id")
+                or owner.get("service_generation_digest") != manifest.get("expected_service_generation_digest")):
+            raise BootstrapEnrollmentPending("published owner-overlay row differs from its signed local-owner claim")
+        choice_handles = signed.get("source_member_receipt_handles", [])
+        resources = claimed.get("resources", {})
+        package = claimed.get("native_package", {})
+        view = claimed.get("view_custody", {})
+        members = claimed.get("source_members", [])
+        operations = claimed.get("operation_records", [])
+        ancestry = [*choice_handles, resources.get("source_receipt_handle"),
+                    *resources.get("member_receipt_handles", []),
+                    package.get("native_cas_transition_receipt_handle"),
+                    view.get("data_root_receipt_handle"), view.get("profile_view_receipt_handle"),
+                    view.get("target_receipt_handle"),
+                    *(row.get("receipt_handle") for row in members),
+                    *(value for row in operations for key, value in row.items()
+                      if key.endswith("_receipt_handle") and value is not None)]
+        if not set(_ordered_unique_receipt_handles(ancestry, "recovered owner-overlay")).issubset(source_handles):
+            raise BootstrapEnrollmentPending("recovered owner-overlay ancestry is outside the claim source closure")
+
+
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -230,6 +343,29 @@ def _ensure_private_directory(path: Path) -> None:
 
 def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
     """Public immutable claim domain. Private live objects and byte bodies are excluded."""
+    owner_rows = _owner_overlay_adoption_rows(claim.owner_overlay_adoptions)
+    if owner_rows:
+        if claim.principal_identity_kind != "linux-local-owner-v1":
+            raise BootstrapEnrollmentPending("owner-overlay adoption crossed the active identity domain")
+        choices = [_choice_projection_record(row) for row in claim.choice_adoptions]
+        sources = set(claim.source_receipt_handles)
+        required_sources = set(_owner_overlay_adoption_source_handles(
+            claim.owner_overlay_adoptions))
+        for row in owner_rows:
+            owner = row["owner"]
+            choice = row["signed_choice"]
+            if (owner["principal_binding_sha256"] != claim.principal_binding_sha256
+                    or owner["namespace_binding_sha256"] != claim.namespace_binding_sha256
+                    or choice not in choices
+                    or choice["principal_selection_handle"] != claim.principal_selection_receipt_handle
+                    or choice["namespace_selection_handle"] != claim.namespace_selection_handle
+                    or choice["principal_binding_sha256"] != claim.principal_binding_sha256
+                    or choice["namespace_binding_sha256"] != claim.namespace_binding_sha256
+                    or owner["service_generation_id"] != claim.prepared_generation_id
+                    or owner["service_generation_digest"] != claim.expected_service_generation_digest):
+                raise BootstrapEnrollmentPending("owner-overlay adoption differs from its signed current claim identity")
+        if not required_sources.issubset(sources):
+            raise BootstrapEnrollmentPending("owner-overlay receipts are absent from the active source closure")
     return {
         "schema": claim.schema,
         "publication_handle": claim.publication_handle,
@@ -246,7 +382,7 @@ def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
         "principal_binding_sha256": claim.principal_binding_sha256,
         "namespace_selection_handle": claim.namespace_selection_handle,
         "namespace_binding_sha256": claim.namespace_binding_sha256,
-        "owner_overlay_adoptions": _owner_overlay_adoption_rows(claim.owner_overlay_adoptions),
+        "owner_overlay_adoptions": owner_rows,
         "runtime_receipt_handles": list(claim.runtime_receipt_handles),
         "materialization_receipt_handles": list(claim.materialization_receipt_handles),
         "precompile_reservation_handle": claim._reservation_handle,
@@ -762,10 +898,6 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("PM runtime receipt does not match the current prepared session")
 
         principal = self._resolve_current_principal(session)
-        if (principal.identity_kind == "linux-local-owner-v1"
-                and principal.selected_capability_ceiling):
-            raise BootstrapEnrollmentPending(
-                "selected local-owner overlay capabilities have no current publication adoption collector")
         identity_binding, namespace_selector, namespace_binding, identity_sources = \
             self._resolve_principal_publication_binding(session, principal)
         principal_handle = getattr(principal, "receipt_id", None)
@@ -775,6 +907,17 @@ class RootActivePolicyCompilationRegistry:
             session, closure)
         choice_adoptions = self._compile_choice_adoptions(
             session, prepared, selection_document["catalog_sha256"])
+        from .owner_overlay_publication import collect_owner_overlay_adoptions
+        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            capability.reservation_handle)
+        owner_overlay_adoptions = collect_owner_overlay_adoptions(
+            session, prepared_bundle, principal, choice_adoptions,
+            self.materialization_receipts, reservation, closure)
+        if (principal.identity_kind == "linux-local-owner-v1"
+                and principal.selected_capability_ceiling
+                and not owner_overlay_adoptions):
+            raise BootstrapEnrollmentPending(
+                "selected local-owner overlay capabilities have no current publication adoption")
         issued = time.monotonic()
         live = self.sessions._live(setup_session_handle)
         expires = min(issued + 120.0, float(live.expires_monotonic), capability.expires_monotonic)
@@ -793,7 +936,8 @@ class RootActivePolicyCompilationRegistry:
             *(handle for role_row in closure.role_rows
               for handle in role_row.source_receipt_handles),
             *(handle for row in choice_adoptions
-              for handle in row.source_member_receipt_handles)),
+              for handle in row.source_member_receipt_handles),
+            *_owner_overlay_adoption_source_handles(owner_overlay_adoptions)),
             "active source")
         provisional = RootActivePolicyCompilationClaim(
             schema=2, plan_artifact_id=session._authorization.plan_artifact_id,
@@ -827,7 +971,7 @@ class RootActivePolicyCompilationRegistry:
             _root_prepared_native_bundle=prepared_bundle,
             choice_adoptions=choice_adoptions,
             role_closure_sha256=closure.role_closure_sha256,
-            owner_overlay_adoptions=(),
+            owner_overlay_adoptions=owner_overlay_adoptions,
         )
         claim_digest = _sha(_canonical(_manifest(provisional)))
         claim = RootActivePolicyCompilationClaim(
@@ -1251,6 +1395,8 @@ class RootActivePolicyCompilationRegistry:
 
         descriptor, _file_digests, file_bytes = _read_generation_descriptor(receipt, 0)
         inputs = descriptor.get("inputs")
+        if isinstance(inputs, Mapping):
+            _verify_recovered_owner_overlay_join(manifest, inputs, descriptor)
         if (not isinstance(inputs, Mapping)
                 or inputs.get("source_receipt_handles") != source_handles
                 or inputs.get("observed_root_receipt_handle") != observed_handle
@@ -1895,6 +2041,34 @@ class RootActivePolicyCompilationRegistry:
                 or namespace_handle != claim.namespace_selection_handle
                 or namespace_binding != claim.namespace_binding_sha256):
             raise BootstrapEnrollmentPending("active claim principal or namespace identity binding changed")
+        self._verify_owner_overlay_adoptions(claim, session, principal)
+
+    def _verify_owner_overlay_adoptions(self, claim: RootActivePolicyCompilationClaim,
+                                        session: Any, principal: Any) -> None:
+        from .owner_overlay_publication import collect_owner_overlay_adoptions
+        capability = self._precompile_caps.get(claim._reservation_handle)
+        if (capability is None or capability._compiler_seal is not self._seal
+                or capability._root_setup_session is not session
+                or capability._root_prepared_native_bundle is not claim._root_prepared_native_bundle
+                or capability.receipt_ids != claim.materialization_receipt_handles):
+            raise BootstrapEnrollmentPending("owner-overlay verification lost its exact precompile capability")
+        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            capability.reservation_handle)
+        if (reservation != capability._root_reservation
+                or reservation.prepared_generation_id != claim.prepared_generation_id
+                or reservation.assembly_selection_handle != capability.assembly_selection_handle):
+            raise BootstrapEnrollmentPending("owner-overlay verification lost its current native reservation")
+        current = collect_owner_overlay_adoptions(
+            session, claim._root_prepared_native_bundle, principal,
+            claim.choice_adoptions, self.materialization_receipts, reservation,
+            capability._root_role_closure)
+        if current != claim.owner_overlay_adoptions:
+            raise BootstrapEnrollmentPending("owner-overlay source, package, view, or capability adoption changed")
+        if (principal.identity_kind == "linux-local-owner-v1"
+                and principal.selected_capability_ceiling and not current):
+            raise BootstrapEnrollmentPending("selected local-owner capability adoption is absent")
+        if (principal.identity_kind != "linux-local-owner-v1" and current):
+            raise BootstrapEnrollmentPending("owner-overlay adoption crossed the local-owner identity domain")
 
     @staticmethod
     def _handles(values: Sequence[str], label: str) -> tuple[str, ...]:
