@@ -1316,5 +1316,104 @@
       "https://docs.astral.sh/uv/reference/cli/"
     ],
     "acceptance": "Small wheels TLS/hash/license source inspection only, no execution/full environment/ARM application qualification. All original AC/baseline unchanged."
+  },
+  "toolchain_policy_member_binding_v155": {
+    "schema": 1,
+    "requirements": [
+      "SK-T144",
+      "SK-T150"
+    ],
+    "why": "The large selected toolchain source observer requires an exact genuine installed source-policy member, not a nonexistent source_artifact_ids plan field or disconnected static catalog policy.",
+    "policy_member": {
+      "artifact_id": "installer-application-toolchain-source-policy-v144",
+      "relative_path": "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",
+      "sha256": "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6",
+      "size_bytes": 7060,
+      "roles": [
+        "amendment"
+      ],
+      "schema": 1,
+      "selected_rows_member": "toolchain_sources",
+      "selected_tool_ids": [
+        "application-node-26.7.0-linux-arm64",
+        "application-bun-1.4.3-linux-arm64"
+      ]
+    },
+    "selection_join": "Existing selected verified installer release/plan includes this exact amendment through its reviewed closure. RootInstalledReleaseBuilder finite REVIEWED_SOURCE_ARTIFACTS descriptor binds the exact member identity/path/hash/size/role. Verified release resolve_reviewed_source_artifact(id) returns a genuine held source member observation after full descriptor/source dependency/currentness checks; no caller ID/path/hash or invented plan.source_artifact_ids authority. Missing reviewed descriptor/member dependency denies.",
+    "consumer": "RootSelectedApplicationToolchainSourceObserver.from_root_setup consumes that actual held policy member, validates canonical schema=1 and exact finite toolchain_sources rows, joins genuine early preparation input selection/source-lock/current choice and actual selected catalog Node/Bun source rows. open_blob download observation is separate actual archive/hash/license proof; policy bytes do not attest acquired or installed runtime. Generic 256KiB source observer remains unchanged.",
+    "tasks": [
+      {
+        "id": "SK-T155.1",
+        "owner": "broker/release/toolchain producer",
+        "work": "Exact finite policy release source descriptor and held resolver; source observer consumes actual selected member and early selection before acquiring only finite Node/Bun archives."
+      }
+    ],
+    "acceptance": "All AC open; no acquisition/runtime/Hyperframes readiness inferred; baseline unchanged."
+  },
+  "backend_source_observer_v157": {
+    "schema": 1,
+    "requirements": [
+      "SK-T132",
+      "SK-T147",
+      "SK-T152"
+    ],
+    "why": "v152 backend constructor names toolchain_source_observer but v150 observer is intentionally Node/Bun-only. Backend wheels and embedded licenses require a separate exact policy-selected source observation, not a widened generic observer.",
+    "policy_member": {
+      "artifact_id": "installer-application-pep517-backend-sources-v1",
+      "relative_path": "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
+      "sha256": "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623",
+      "size_bytes": 15907,
+      "roles": [
+        "amendment"
+      ],
+      "schema": 1,
+      "rows": "packages and profiles exact v152 source table; actual pyproject build-system/backend/source receipt joins required"
+    },
+    "observer": {
+      "owner_module": "hermes_installer.authority.application_backend_sources",
+      "class": "RootSelectedApplicationBackendSourceObserver",
+      "constructor": "from_root_setup(selected_installation_binding,verified_installer_release,source_preparation_registry,setup_choice_registry,root_journal)",
+      "observe": "observe_selected_backend_source(preparation_input_selection_handle,package_name)->VerifiedApplicationBackendSourceObservation",
+      "verify": "verify_current(observation,preparation_input_selection_handle)",
+      "open": "open_blob(observation)->duplicate held read-only FD",
+      "license": "observe_embedded_backend_licenses(observation,preparation_input_selection_handle)->RootApplicationBackendLicenseObservation",
+      "fields": [
+        "schema",
+        "source_observation_handle",
+        "policy_artifact_id",
+        "policy_sha256",
+        "policy_member_receipt_handle",
+        "preparation_input_selection_handle",
+        "source_preparation_receipt_handle",
+        "pyproject_receipt_handle",
+        "qualification_choice_handle",
+        "package_name",
+        "package_version",
+        "filename",
+        "source_url_sha256",
+        "sha256",
+        "size_bytes",
+        "device",
+        "inode",
+        "mode",
+        "metadata_sha256",
+        "license_observation_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "checks": "Exact genuine held policy release source member via resolve_reviewed_source_artifact; descriptor membership/selected plan dependency/current release. Only package rows in exact selected v152 profile closure, selected actual source pyproject backend/requires and target ABI/platform. Caller package_name is only selector into that finite closure, never URL/path/version/hash authority. Existing acquire-locked-runtime-packages phase authorization covers reviewed selected backend closure; fresh <=30s phase snapshot per GET, stable choice/source/setup deadline limits retained receipt lifetime without renewing old evidence.",
+      "acquisition": "Exact files.pythonhosted.org HTTPS wheel URLs from held table, port443, no redirects/userinfo/credential/auth headers/ambient proxy. Exact per-row size/SHA, source-specific <=1MiB compressed bytes (all eight source rows <=818216), no general downloader widening. Root-private atomic CAS, nofollow held FDs/device/inode/singlelink/current bytes checks. No installation/import or executable hook during source observation.",
+      "wheel_validation": "Bound archive metadata parsing to <=16MiB uncompressed and <=2048 unique regular members; reject absolute/dotdot/duplicate/symlink/hardlink/special paths. Verify canonical METADATA selected package/version/dependency/Requires-Python facts, actual RECORD hashes and all v152 license member path/SHA/size tuples. Embedded license bytes read only from held exact wheel; no external invented license receipt or declaration-only eligibility. Preserve all vendor licenses/notices, including v152 setuptools autocommand LGPL evidence. Missing/changed member/license denies.",
+      "retention": "Genuine root registry membership and immutable source/CAS receipt lineage. Metadata SHA observed from actual wheel; never treat table or caller hash as acquisition proof. Supporting license handle binds exact wheel/policy/source selection/member records and current root journal. No parallel signer; use existing actual source receipt journal/finite setup choice signing bridge only for intended domains."
+    },
+    "consumer": "RootApplicationBuildBackendClosureRegistry.from_root_setup replaces toolchain_source_observer parameter with backend_source_observer. It must call this actual observer before producing v152 RootApplicationBuildBackendArtifactReceipt and closure. v150 remains finite Node/Bun; runtime-lock package registry remains distinct; no backend wheel mislabeled project lock member.",
+    "tasks": [
+      {
+        "id": "SK-T157.1",
+        "owner": "builder/broker/backend source producer",
+        "work": "Finite held backend policy descriptor, actual wheel+embedded-license observer/CAS and closure consumer wiring; negative missing policy/wrong backend/size/hash/member/license/current choice tests."
+      }
+    ],
+    "acceptance": "Source-only contract; no actual acquisition/install/build/probe/ARM qualification inferred, all AC open and baseline unchanged."
   }
 }

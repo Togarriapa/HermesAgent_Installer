@@ -830,3 +830,17 @@ The installer SHALL bind project wheel builds to exact separately reviewed backe
 #### Scenario: Backend adds an undeclared build requirement
 - **WHEN** a backend requests a package outside the selected reviewed offline closure
 - **THEN** the build denies without fetching network packages or widening the original lock and backend table
+
+### Requirement: Toolchain policy member binding v155
+The installer SHALL resolve the selected finite Node/Bun policy from its exact reviewed release member before source acquisition.
+
+#### Scenario: Source policy member is absent from the selected release
+- **WHEN** an otherwise cataloged tool is requested without the reviewed selected policy member
+- **THEN** acquisition denies and no caller artifact ID or invented plan field substitutes for that member proof
+
+### Requirement: Backend source observer v157
+The installer SHALL acquire and observe selected PEP517 backend wheel and embedded license bytes through a separate finite source-policy-bound observer.
+
+#### Scenario: Backend wheel is absent from project runtime lock
+- **WHEN** the exact separately reviewed backend policy selects that source
+- **THEN** the observer verifies actual wheel and license bytes against that policy without fabricating project lock membership or widening Node/Bun acquisition

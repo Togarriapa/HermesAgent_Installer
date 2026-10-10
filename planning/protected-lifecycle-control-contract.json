@@ -1490,5 +1490,67 @@
       }
     ],
     "acceptance": "All original AC/baseline unchanged. Source role/layout/disclosure producers required; no actual runtime/public target acceptance inferred."
+  },
+  "prepared_source_module_layout_v154": {
+    "schema": 1,
+    "requirements": [
+      "HI-T123",
+      "HI-T137",
+      "HI-T149"
+    ],
+    "why": "Actual builder stages prepared worker source at src members, while root-imported definition adapter is installed under lib/python. Source membership cannot require root import or substitute later live worker proof. Final reviewed adapter corrects logical closure versus release member paths.",
+    "release_role": {
+      "role": "source-module",
+      "role_fields": "Append finite release descriptor role source-module. Exactly the two worker members below, roles=[source-module], root-owned immutable regular bytes; no wildcard src sweep. Preserve all existing roles and unique interpreter/runtime-member constraints.",
+      "actor_closure": "Exclude source-module rows from root actor import closure. Root-imported definition adapter remains roles=[module], actual installed identity installer-module:hermes_installer.authority.native_source_definitions. Raw source catalog identity is separate.",
+      "receipt": "RootPreparedReleaseMemberReceipt proves held verified release membership/current bytes only. RootReleaseModuleReceipt separately proves root actor imported source; LoadedNativePackageProof/current loaded_process_roles separately proves later actual worker mounted origins/PIDFD. Neither earlier receipt implies later evidence."
+    },
+    "worker_members": [
+      {
+        "artifact_id": "installer-native-invocations-module-v137",
+        "relative_path": "src/hermes_installer/native_invocations.py",
+        "logical_closure_member_path": "hermes_installer/native_invocations.py",
+        "module_name": "hermes_installer.native_invocations",
+        "sha256": "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226",
+        "size_bytes": 40107,
+        "roles": [
+          "source-module"
+        ]
+      },
+      {
+        "artifact_id": "installer-native-boundary-module-v137",
+        "relative_path": "src/hermes_installer/native_boundary.py",
+        "logical_closure_member_path": "hermes_installer/native_boundary.py",
+        "module_name": "hermes_installer.native_boundary",
+        "sha256": "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb",
+        "size_bytes": 14356,
+        "roles": [
+          "source-module"
+        ]
+      }
+    ],
+    "definition_adapter": {
+      "source_commit": "2d19ce81336d0dac686d8f1bcc45e2ab862da6aa",
+      "source_artifact_id": "installer-native-source-definitions-module-v137",
+      "source_relative_path": "src/hermes_installer/authority/native_source_definitions.py",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_source_definitions",
+      "installed_relative_path": "lib/python/hermes_installer/authority/native_source_definitions.py",
+      "module_name": "hermes_installer.authority.native_source_definitions",
+      "sha256": "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c",
+      "size_bytes": 10311,
+      "roles": [
+        "module"
+      ],
+      "source": "Actual reviewed committed module bytes, not intermediate 77ed pin. Source catalog acquisition identity binds raw source; installed actor descriptor identity binds exact copied installed bytes. Never alias IDs or paths."
+    },
+    "producer": "RootInstalledReleaseBuilder finite REVIEWED_SOURCE_MODULES worker staging emits source-module. InstalledRootReleaseVerifier fixed layout validates exact member/path/role/hash/size and rejects actor-import claims for workers. Factory resolve_prepared_worker_role_module_receipts reopens held worker members; resolve_prepared_native_source_definition_module_receipt requires real imported adapter receipt. Source definition registry emits only explicit separate selected role/action/schema/source facts, missing capture/action rows stay pending until real producer, not inferred adapter labels.",
+    "tasks": [
+      {
+        "id": "HI-T154.1",
+        "owner": "broker/release/factory/source observer",
+        "work": "Publish exact final source catalog and installed module/source-module descriptors; verify separate membership/import proofs and current bytes; preserve actual later worker role/PIDFD validation."
+      }
+    ],
+    "acceptance": "Source proof and layout correction only; no functional runtime or acceptance claim; all original AC remain open and baseline unchanged."
   }
 }
