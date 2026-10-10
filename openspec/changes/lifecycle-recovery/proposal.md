@@ -85,3 +85,8 @@ Release plan/active compiler v53: `plans/amendments/2026-10-09-release-plan-acti
 Live health control/output kinds v55: `plans/amendments/2026-10-09-live-health-control-output-kinds-v55.md`; existing tasks remain open until actual proof.
 
 First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-bootstrap-actor-v62.md`; existing scope/tasks remain open.
+
+
+## Conditional Authentik and local-owner setup v181
+
+Restore original R0058/R0060/R0143 conditional capability scope. Contract and sequential producer/evidence details: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. No runtime implementation or acceptance is claimed; all AC01..18 OPEN.
