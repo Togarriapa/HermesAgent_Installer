@@ -1157,5 +1157,18 @@
   "xpra_output_store_clarification": {
     "identity": "Reuse actual ContentAddressedBuildStore BuildOutput artifact_id for deterministic non-executable archive: build-output:<actual archive SHA256>:file:d. Only the exact ID returned by root typed held output observation is acceptable, never synthesizing a trusted row from a digest string.",
     "resolve": "RootXpraOverlayReceiptRegistry resolves the actual BuildOutput through existing protected store, reopens stable root held bytes and verifies SHA/size/type/source transformation. Root active publication copies the verified derived artifact row into selected artifact catalog; source and transformed tree hashes remain distinct from tar SHA. Missing actual source/output observation prevents activation, never a fabricated static catalog hash."
+  },
+  "reviewed_native_capability_selection": {
+    "artifact_id": "installer-reviewed-native-capability-map-v1",
+    "source_path": "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json",
+    "installed_path": "templates/reviewed-native-capability-map-v1.json",
+    "roles": [
+      "template"
+    ],
+    "sha256": "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+    "size_bytes": 2026,
+    "API": "RootSetupPrincipalSelectionRegistry.resolve_reviewed_capability_selection(current_identity_receipt_handle,selected_effect_policy_receipt_handle)->RootReviewedCapabilitySelection root-private. Verifies actual installed source artifact and selected current identity/System group IDs, then exact finite source projection above; no caller capability tuple. Root prepared policy has empty tuple, not active worker authority.",
+    "selection_fields": "principal_id,profile_id,namespace_id,capabilities,identity_receipt_handle,effect_policy_receipt_handle,map_artifact_id,map_sha256,issued_monotonic,expires_monotonic; sealed root only. Active principal binding uses actual selected dedicated NSS UID and exact namespace/profile tuple; must recheck actual current Authentik policy before protected writes.",
+    "release_role": "Release builder includes exact new template artifact bytes/role in verified module/template closure. Deployed plan may reference this policy as separately selected release template; original v81 five-artifact list stays immutable and does not become an unexplained sixth item. Root registry resolves it by explicit artifact ID+SHA in verified installed release, never ambient path."
   }
 }
