@@ -294,3 +294,95 @@ def test_fresh_control_admission_is_bound_to_retained_process_and_original_deadl
         fresh_controller = locals().get("fresh")
         if fresh_controller is not None:
             fresh_controller._controller_lease.close()
+
+
+def test_start_evidence_lease_does_not_shorten_original_process_deadline() -> None:
+    """Short source/controller receipts authorize launch; consent bounds process lifetime."""
+    import os
+    import sys
+    import time
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import pytest
+    from hermes_installer.authority.memory_lifecycle_registry import RootMemoryLifecycleRegistry
+    from hermes_installer.authority.selected_startup_authority import RootControllerProcessIdentityLease
+    from hermes_installer.memory.lifecycle_authority import RootMemoryServiceLifecycle
+    from test_memory_lifecycle_authority import FakeCatalog, enrolled_agentmemory
+    from test_selected_startup_authority import _current_identity
+
+    if not (sys.platform.startswith("linux") and hasattr(os, "pidfd_open") and os.geteuid() == 0):
+        pytest.skip("requires the controlled Linux root PIDFD fixture")
+
+    now = time.monotonic()
+    enrollment = enrolled_agentmemory()
+    enrollment = replace(
+        enrollment,
+        lifecycle_binding=replace(enrollment.lifecycle_binding, original_deadline_seconds=60),
+    )
+    identity = _current_identity(os.getpid())
+    controller = RootControllerProcessIdentityLease(
+        proof_handle="a" * 43, startup_authorization_handle="b" * 43,
+        pid=os.getpid(), uid=0, start_ticks=identity["start_ticks"],
+        pidfd=os.pidfd_open(os.getpid(), 0), cgroup_identity=identity["cgroup_identity"],
+        mount_namespace_inode=identity["mount_namespace_inode"],
+        network_namespace_inode=identity["network_namespace_inode"],
+        proof_sha256="c" * 64, expires_monotonic=now + 25,
+        _current_check=lambda: True,
+    )
+    source = SimpleNamespace(
+        source_closure_sha256="e" * 64,
+        receipt_handles=enrollment.lifecycle_binding.prestart_receipt_handles,
+        enablement_selection_handle="choice", expires_monotonic=now + 20,
+        is_current=lambda: True,
+    )
+    consent = SimpleNamespace(
+        consent_id="consent", consent_revision=enrollment.background_consent_revision,
+        expires_monotonic=now + 120, profile_id=enrollment.profile_id,
+        service_enrollment_id=enrollment.service_enrollment_id,
+        purpose="memory-service-lifecycle", is_current=lambda: True,
+    )
+    routes = SimpleNamespace(expires_monotonic=now + 20)
+    selection = SimpleNamespace(selection_handle="choice")
+    catalog = FakeCatalog()
+    catalog.digest = "d" * 64
+    lifecycle = RootMemoryServiceLifecycle(
+        authority_service=SimpleNamespace(
+            issue_root_selected_service_effect=lambda *_args: None,
+            consume_root_selected_service_effect=lambda *_args: None,
+        ),
+        custody=SimpleNamespace(perform_root_selected_service_effect=lambda *_args, **_kwargs: None),
+        monotonic=lambda: now,
+    )
+    registry = object.__new__(RootMemoryLifecycleRegistry)
+    registry.bindings = SimpleNamespace(enrollment_catalog=catalog)
+    registry.lifecycle = lifecycle
+    registry.source_receipt_registry = object()
+    registry.lifecycle_consent_registry = object()
+    registry.controller_proof_resolver = object()
+    registry.private_route_resolver = SimpleNamespace(is_current=lambda _routes: True)
+    registry.enablement_registry = SimpleNamespace(is_current=lambda _selection: True)
+    registry.connector_registry = object()
+    registry.monotonic = lambda: now
+    registry._lock = __import__("threading").RLock()
+    registry._admissions = {}
+    registry._source_closures = {}
+    registry._consents = {}
+    registry._routes = {}
+    registry._start_receipts = {}
+    registry._readiness_receipts = {}
+    registry._receipts = {}
+    registry._control_origins = {}
+    registry._control_admissions = {}
+    registry._authority_handles = {}
+    registry._resolve_evidence = lambda *_args: (
+        catalog.digest, enrollment, source, consent, routes, controller, selection)
+    try:
+        handle = registry.admit_selected_memory(
+            enrollment.target_id, "consent-handle", "controller-handle")
+        admission = registry.resolve_admission(handle)
+        assert admission.expires_monotonic <= now + 20
+        assert admission.original_deadline == now + 60
+        assert admission.original_deadline > admission.expires_monotonic
+    finally:
+        controller.close()

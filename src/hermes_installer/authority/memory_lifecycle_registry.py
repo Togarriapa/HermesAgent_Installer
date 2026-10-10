@@ -262,14 +262,21 @@ class RootMemoryLifecycleRegistry:
         consent_deadline = getattr(consent, "expires_monotonic", None)
         route_deadline = getattr(routes, "expires_monotonic", None)
         source_deadline = getattr(source, "expires_monotonic", None)
-        deadlines = (consent_deadline, route_deadline, source_deadline, controller.expires_monotonic)
-        if any(isinstance(value, bool) or type(value) not in (int, float)
-               or not math.isfinite(value) or value <= now for value in deadlines):
+        # The service lifetime is bounded by its durable lifecycle consent and
+        # the enrolled recipe. Source, route, and controller receipts are fresh
+        # per-effect evidence; their <=30s leases must not shorten the owned
+        # process deadline. They still cap this particular start admission.
+        if (isinstance(consent_deadline, bool) or type(consent_deadline) not in (int, float)
+                or not math.isfinite(consent_deadline) or consent_deadline <= now
+                or any(isinstance(value, bool) or type(value) not in (int, float)
+                       or not math.isfinite(value) or value <= now
+                       for value in (route_deadline, source_deadline, controller.expires_monotonic))):
             controller.close()
             raise RootMemoryLifecycleRegistryDenied("one or more selected memory evidence leases expired")
         life = enrollment.lifecycle_binding
-        original_deadline = min(now + life.original_deadline_seconds, *deadlines)
-        expires = min(original_deadline, now + 30.0)
+        original_deadline = min(now + life.original_deadline_seconds, float(consent_deadline))
+        expires = min(original_deadline, now + 30.0, float(route_deadline),
+                      float(source_deadline), float(controller.expires_monotonic))
         if expires <= now:
             controller.close()
             raise RootMemoryLifecycleRegistryDenied("selected memory lifecycle deadline is exhausted")
