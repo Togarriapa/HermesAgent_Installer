@@ -32,8 +32,9 @@ from hermes_installer.managed_process import (
     provision_service_identity,
 )
 from hermes_installer.managed_process_custodian import (
-    LoadedNativePackageProof, ManagedProcessEffectHandler, ManagedProfileCustody,
+    LivePeerIdentity, LoadedNativePackageProof, ManagedProcessEffectHandler, ManagedProfileCustody,
     NativePackageMountReceipt, RootSelectedHealthLoadedPackageProof, _argv_matches_recipe,
+    RootCompletedSelectedHealthTerminalProof, RootSelectedHealthControl,
     RootSelectedHealthInputWriteReceipt, RootSelectedHealthTerminalReceipt,
 )
 from hermes_installer.state import Journal, OwnedRoot
@@ -102,6 +103,152 @@ def test_selected_health_loaded_package_identity_survives_fresh_observation_only
     assert first.observed_monotonic != refreshed.observed_monotonic
     changed = selected(2.0, replace(mount, mount_source_inode=99))
     assert changed.proof_id != first.proof_id
+
+
+def _completed_health_manager_fixture(*, now: float = 2.0, exit_code: int | None = 0):
+    manager = object.__new__(ManagedProcessEffectHandler)
+    manager._lock = __import__("threading").RLock()
+    manager.monotonic = lambda: now
+    manager._health_terminal_seal = object()
+    manager._health_completed_terminals = {}
+    manager._health_terminal_receipts = {}
+    seal = manager._health_terminal_seal
+    source_binding = object()
+    verified_commit = object()
+    control_handle = "c" * 32
+    process_id = "e" * 32
+    generation = "generation-1"
+    profile_id = "profile-1"
+    digest = "a" * 64
+    loader_id = "l" * 16
+    control = RootSelectedHealthControl(
+        schema=1, control_handle=control_handle, managed_process_handle="m" * 32,
+        process_id=process_id, operation_id="hermes-agent-health-v1",
+        enrollment_id="enrollment-1", profile_id=profile_id,
+        process_generation=generation, service_generation_digest=digest,
+        bootstrap_transaction_handle="b" * 32, committed_enrollment_receipt_id="r" * 32,
+        health_fixture_artifact_id="fixture-1", health_fixture_sha256="b" * 64,
+        issued_monotonic=1.0, expires_monotonic=40.0, _manager=manager, _seal=object(),
+    )
+    receipt = RootSelectedHealthTerminalReceipt(
+        schema=1, terminal_receipt_handle="d" * 32, control_handle=control_handle,
+        process_id=process_id, profile_id=profile_id, generation=generation,
+        service_generation_digest=digest, process_uid=1001, process_gid=1001,
+        unit="hermes-installer-" + "u" * 32 + ".service",
+        cgroup="/system.slice/hermes-installer-" + "u" * 32 + ".service",
+        start_ticks=55, exit_code=exit_code, timed_out=False, cancelled=False,
+        started_monotonic=1.0, finished_monotonic=2.0, stdout_size_bytes=0,
+        stderr_size_bytes=0, stdout_sha256=hashlib.sha256(b"").hexdigest(),
+        stderr_sha256=hashlib.sha256(b"").hexdigest(), output_overflow=False,
+        loader_ready_event_id=loader_id, cgroup_empty=True, main_pidfd_gone=True,
+        launcher_reaped=True, cleanup_verified=True, observed_monotonic=2.0,
+    )
+    source_material = SimpleNamespace(
+        verified_commit=verified_commit, source_binding=source_binding,
+        enrollment_id="enrollment-1", profile_id=profile_id,
+        process_generation=generation, service_generation_digest=digest,
+        health_fixture_artifact_id="fixture-1", health_fixture_sha256="b" * 64,
+        health_result_schema_id="health-result-v1", native_package_id="package-1",
+        native_package_generation="package-generation-1", native_closure_sha256="e" * 64,
+    )
+    admission = SimpleNamespace(
+        admission_handle="a" * 32, _source_material=source_material,
+        _verified_commit=verified_commit, _source_binding=source_binding,
+        enrollment_id="enrollment-1", profile_id=profile_id,
+        process_generation=generation, service_generation_digest=digest,
+        health_fixture_artifact_id="fixture-1", health_fixture_sha256="b" * 64,
+        health_result_schema_id="health-result-v1", native_package_id="package-1",
+        native_package_generation="package-generation-1", native_closure_sha256="e" * 64,
+    )
+    from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+    authority = object.__new__(RootNativeHealthStartAuthority)
+    authority.is_current = lambda observed: observed is admission
+    manager.native_health_start_authority = authority
+    launch = SimpleNamespace(
+        launch_handle="h" * 32, profile_id=profile_id,
+        profile_generation=generation, service_generation_digest=digest,
+    )
+    observed = SimpleNamespace(
+        launch_handle=launch.launch_handle, process_id=process_id, process_pid=4321,
+        process_start_ticks=55, cgroup_identity=receipt.cgroup,
+        process_uid=1001, process_gid=1001, mount_namespace_inode=31,
+        network_namespace_inode=41,
+    )
+    identity = LivePeerIdentity(
+        profile_id=profile_id, generation=generation, kernel_uid=1001,
+        start_ticks=55, executable_sha256="c" * 64, cgroup_identity=receipt.cgroup,
+        namespace_identity="mnt:31;net:41",
+    )
+    loaded = SimpleNamespace(
+        proof_id="d" * 64, process_id=process_id, profile_id=profile_id,
+        generation=generation, kernel_uid=1001, service_generation_digest=digest,
+        package_id="package-1", compiled_closure_sha256="e" * 64,
+        mount_proof=object(),
+    )
+    manager._health_terminal_receipts[receipt.terminal_receipt_handle] = (receipt, 32.0)
+    proof = None
+    if exit_code == 0:
+        proof = RootCompletedSelectedHealthTerminalProof(
+            schema=1, control_handle=control_handle, control=control, admission=admission,
+            source_material=source_material, terminal_receipt=receipt, launch_proof=launch,
+            observed_worker_view=observed, process_identity=identity,
+            loaded_package_proof=loaded, loaded_package_proof_id=loaded.proof_id,
+            loader_ready_event_id=loader_id, process_id=process_id, process_pid=4321,
+            process_start_ticks=55, process_uid=1001, process_gid=1001,
+            profile_id=profile_id, process_generation=generation,
+            service_generation_digest=digest, unit=receipt.unit, invocation_id="f" * 32,
+            cgroup_identity=receipt.cgroup, mount_namespace_inode=31,
+            network_namespace_inode=41, executable_sha256=identity.executable_sha256,
+            expires_monotonic=32.0, _manager=manager, _seal=seal,
+        )
+        manager._health_completed_terminals[control_handle] = (proof, 32.0)
+    return manager, proof, receipt
+
+
+def test_completed_health_terminal_resolves_from_retained_cleanup_not_live_pid():
+    manager, proof, receipt = _completed_health_manager_fixture()
+    assert manager.resolve_completed_selected_health_terminal(
+        proof.control_handle, receipt.terminal_receipt_handle) is proof
+    assert proof.is_current()
+    assert proof.terminal_receipt.cleanup_verified
+
+    with pytest.raises(AuthorityDenied, match="unavailable|mismatched"):
+        manager.resolve_completed_selected_health_terminal("x" * 32, receipt.terminal_receipt_handle)
+
+    manager.native_health_start_authority.is_current = lambda _admission: False
+    assert not proof.is_current()
+    with pytest.raises(AuthorityDenied, match="unavailable|stale|mismatched"):
+        manager.resolve_completed_selected_health_terminal(
+            proof.control_handle, receipt.terminal_receipt_handle)
+
+
+def test_completed_health_terminal_denies_expired_or_failed_cleanup_record():
+    manager, proof, receipt = _completed_health_manager_fixture(now=33.0)
+    with pytest.raises(AuthorityDenied, match="stale|mismatched"):
+        manager.resolve_completed_selected_health_terminal(
+            proof.control_handle, receipt.terminal_receipt_handle)
+
+    failed_manager, _failed_proof, failed_receipt = _completed_health_manager_fixture(exit_code=1)
+    with pytest.raises(AuthorityDenied, match="unavailable"):
+        failed_manager.resolve_completed_selected_health_terminal(
+            "c" * 32, failed_receipt.terminal_receipt_handle)
+
+    changed_manager, changed_proof, changed_receipt = _completed_health_manager_fixture()
+    changed_proof.source_material.service_generation_digest = "f" * 64
+    assert not changed_proof.is_current()
+    with pytest.raises(AuthorityDenied, match="stale|mismatched"):
+        changed_manager.resolve_completed_selected_health_terminal(
+            changed_proof.control_handle, changed_receipt.terminal_receipt_handle)
+
+
+def test_root_worker_view_materialization_requires_manager_issued_proof_context():
+    manager = object.__new__(ManagedProcessEffectHandler)
+    manager._lock = __import__("threading").RLock()
+    manager._native_worker_view_contexts = {}
+    manager._native_worker_launch_owner = None
+    manager._native_worker_view_seal = object()
+    with pytest.raises(AuthorityDenied, match="malformed|transaction"):
+        manager.materialize_root_selected_native_worker_view(object(), "a" * 32)
 
 
 class _FixtureAuthorityVerifier(AuthorityClient):

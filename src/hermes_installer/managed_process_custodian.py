@@ -491,6 +491,111 @@ class RootSelectedHealthInputWriteReceipt:
                 or not math.isfinite(self.written_monotonic)):
             raise ValueError("selected health input write receipt is malformed")
 
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootCompletedSelectedHealthTerminalProof:
+    """Historical selected-health facts joined to manager-proved cleanup.
+
+    This proof is intentionally postmortem: it preserves the exact admission,
+    launch, loaded-package and process identity observed for the selected run,
+    plus the manager's stopped-unit receipt. It never asserts that a dead PID,
+    package mount, or launch proof is still live.
+    """
+
+    schema: int
+    control_handle: str
+    control: RootSelectedHealthControl = field(repr=False, compare=False)
+    admission: Any = field(repr=False, compare=False)
+    source_material: Any = field(repr=False, compare=False)
+    terminal_receipt: RootSelectedHealthTerminalReceipt = field(repr=False, compare=False)
+    launch_proof: Any = field(repr=False, compare=False)
+    observed_worker_view: Any = field(repr=False, compare=False)
+    process_identity: LivePeerIdentity
+    loaded_package_proof: Any = field(repr=False, compare=False)
+    loaded_package_proof_id: str
+    loader_ready_event_id: str
+    process_id: str
+    process_pid: int
+    process_start_ticks: int
+    process_uid: int
+    process_gid: int
+    profile_id: str
+    process_generation: str
+    service_generation_digest: str
+    unit: str
+    invocation_id: str
+    cgroup_identity: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    executable_sha256: str
+    expires_monotonic: float
+    _manager: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        receipt = self.terminal_receipt
+        if (type(self.schema) is not int or self.schema != 1
+                or type(self.control) is not RootSelectedHealthControl
+                or type(receipt) is not RootSelectedHealthTerminalReceipt
+                or not isinstance(self.control_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.control_handle)
+                or self.control.control_handle != self.control_handle
+                or receipt.control_handle != self.control_handle
+                or receipt.process_id != self.process_id
+                or receipt.profile_id != self.profile_id
+                or receipt.generation != self.process_generation
+                or receipt.service_generation_digest != self.service_generation_digest
+                or receipt.process_uid != self.process_uid or receipt.process_gid != self.process_gid
+                or receipt.unit != self.unit or receipt.start_ticks != self.process_start_ticks
+                or receipt.loader_ready_event_id != self.loader_ready_event_id
+                or not receipt.cleanup_verified or not receipt.cgroup_empty
+                or not receipt.main_pidfd_gone or not receipt.launcher_reaped
+                or receipt.exit_code != 0 or receipt.timed_out or receipt.cancelled
+                or receipt.output_overflow
+                or self.admission is None or self.source_material is None
+                or getattr(self.admission, "_source_material", None) is not self.source_material
+                or self.launch_proof is None or self.observed_worker_view is None
+                or self.process_identity is None or self.loaded_package_proof is None
+                or getattr(self.loaded_package_proof, "proof_id", None) != self.loaded_package_proof_id
+                or not re.fullmatch(r"[0-9a-f]{64}", self.loaded_package_proof_id)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.loader_ready_event_id)
+                or not re.fullmatch(r"[0-9a-f]{32}", self.process_id)
+                or type(self.process_pid) is not int or self.process_pid <= 0
+                or type(self.process_start_ticks) is not int or self.process_start_ticks <= 0
+                or type(self.process_uid) is not int or self.process_uid <= 0
+                or type(self.process_gid) is not int or self.process_gid < 0
+                or not all(isinstance(getattr(self, name), str) and getattr(self, name)
+                           for name in ("profile_id", "process_generation", "unit", "invocation_id",
+                                        "cgroup_identity"))
+                or not re.fullmatch(r"[0-9a-f]{32}", self.invocation_id)
+                or not self.cgroup_identity.startswith("/system.slice/")
+                or type(self.mount_namespace_inode) is not int or self.mount_namespace_inode <= 0
+                or type(self.network_namespace_inode) is not int or self.network_namespace_inode <= 0
+                or not re.fullmatch(r"[0-9a-f]{64}", self.service_generation_digest)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.executable_sha256)
+                or any(type(getattr(self.process_identity, name)) is not expected
+                       for name, expected in (("kernel_uid", int), ("start_ticks", int)))
+                or self.process_identity.profile_id != self.profile_id
+                or self.process_identity.generation != self.process_generation
+                or self.process_identity.kernel_uid != self.process_uid
+                or self.process_identity.start_ticks != self.process_start_ticks
+                or self.process_identity.cgroup_identity != self.cgroup_identity
+                or self.process_identity.executable_sha256 != self.executable_sha256
+                or self.process_identity.namespace_identity != (
+                    f"mnt:{self.mount_namespace_inode};net:{self.network_namespace_inode}")
+                or isinstance(self.expires_monotonic, bool)
+                or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.expires_monotonic)
+                or self._manager is None or self._seal is None):
+            raise ValueError("completed selected-health proof is malformed or lacks exact cleanup joins")
+
+    def is_current(self) -> bool:
+        verify = getattr(self._manager, "_completed_selected_health_terminal_current", None)
+        return bool(callable(verify) and verify(self, self._seal) is self)
+
+    def __repr__(self) -> str:
+        return "RootCompletedSelectedHealthTerminalProof(<root-private historical proof>)"
+
 @dataclass(slots=True)
 class _Handle:
     process_id: str
@@ -529,6 +634,9 @@ class _Handle:
     native_loader_ready_event_id: str | None = None
     native_worker_launch_proof: Any | None = None
     native_worker_observed_view: Any | None = None
+    unit_invocation_id: str | None = None
+    native_health_process_identity: Any | None = None
+    native_health_loaded_package_proof: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,6 +653,22 @@ class ManagedTaskHandle:
     def stdin_write_receipt_handle(self) -> str | None:
         """Manager-backed receipt handle, absent until the actual write/EOF."""
         return self._stdin_write_receipt[0]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _NativeWorkerViewMaterializationContext:
+    """One-use manager-owned inputs for the exact fixed worker view."""
+
+    proof: Any
+    profile: ManagedProfileCustody
+    process_id: str
+    helper_path: Path
+    interpreter_path: Path
+    native_mount_source: Path
+    native_mount_receipt: NativePackageMountReceipt
+    contract_path: Path
+    contract_sha256: str
+    issuer: object = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1123,6 +1247,12 @@ class ManagedProcessEffectHandler:
         self._health_terminal_receipts: dict[
             str, tuple[RootSelectedHealthTerminalReceipt, float]
         ] = {}
+        self._health_completed_terminals: dict[
+            str, tuple[RootCompletedSelectedHealthTerminalProof, float]
+        ] = {}
+        self._health_terminal_seal = object()
+        self._native_worker_view_contexts: dict[str, _NativeWorkerViewMaterializationContext] = {}
+        self._native_worker_view_seal = object()
         self._health_input_write_receipts: dict[
             str, tuple[RootSelectedHealthInputWriteReceipt, float]
         ] = {}
@@ -1749,6 +1879,42 @@ class ManagedProcessEffectHandler:
         owner.attach_selected_worker_view(proof, view)
         return view
 
+    def materialize_root_selected_native_worker_view(
+            self, proof: Any, process_id: str) -> Any:
+        """Consume one manager-created source context and issue its exact view.
+
+        This is a concrete manager operation, not a caller path resolver: the
+        context is installed only by the fixed native-worker launch path and
+        holds the already verified PM/runtime/package/helper/contract sources.
+        The opaque proof and transaction are each consumed by identity.
+        """
+        from hermes_installer.authority.native_worker_launch import (
+            RootSelectedNativeWorkerView, RootVerifiedNativeHermesWorkerLaunch,
+        )
+        if (type(proof) is not RootVerifiedNativeHermesWorkerLaunch
+                or not isinstance(process_id, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)):
+            raise AuthorityDenied("native_worker.view", "selected view request is malformed")
+        with self._lock:
+            context = self._native_worker_view_contexts.pop(process_id, None)
+        owner = self._native_worker_launch_owner
+        if (context is None or context.issuer is not self._native_worker_view_seal
+                or context.proof is not proof or context.process_id != process_id
+                or self.profiles.get(context.profile.profile_id) is not context.profile
+                or owner is None or self.verify_current_native_worker_launch(proof) is not proof):
+            raise AuthorityDenied("native_worker.view", "manager-owned selected view transaction is stale")
+        view = self._materialize_selected_native_worker_view(
+            context.profile, proof, process_id, context.helper_path,
+            context.interpreter_path, context.native_mount_source,
+            context.native_mount_receipt, context.contract_path,
+            context.contract_sha256,
+        )
+        if (type(view) is not RootSelectedNativeWorkerView
+                or owner.resolve_selected_native_worker_view(proof) is not view
+                or view.process_id != process_id):
+            raise AuthorityDenied("native_worker.view", "owner did not retain the exact selected worker view")
+        return view
+
     def _start_native_worker_gate(self, profile: ManagedProfileCustody, proof: Any, *,
                                   selection: Any, operation_recipe: Mapping[str, Any],
                                   cwd: Path, payload: bytes, timeout: float,
@@ -1875,10 +2041,20 @@ class ManagedProcessEffectHandler:
                     or hashlib.sha256(contract_path.read_bytes()).hexdigest()
                        != hashlib.sha256(contract_bytes).hexdigest()):
                 raise AuthorityDenied("native_worker.contract", "root-owned fixed contract changed")
-            view = self._materialize_selected_native_worker_view(
-                profile, proof, process_id, helper_path, interpreter_path,
-                native_mount_source, native_mount_receipt, contract_path,
-                hashlib.sha256(contract_bytes).hexdigest())
+            view_context = _NativeWorkerViewMaterializationContext(
+                proof=proof, profile=profile, process_id=process_id,
+                helper_path=helper_path, interpreter_path=interpreter_path,
+                native_mount_source=native_mount_source,
+                native_mount_receipt=native_mount_receipt,
+                contract_path=contract_path,
+                contract_sha256=hashlib.sha256(contract_bytes).hexdigest(),
+                issuer=self._native_worker_view_seal,
+            )
+            with self._lock:
+                if process_id in self._native_worker_view_contexts:
+                    raise AuthorityDenied("native_worker.view", "worker view transaction already exists")
+                self._native_worker_view_contexts[process_id] = view_context
+            view = self.materialize_root_selected_native_worker_view(proof, process_id)
             self._ensure_root_runtime_directory(Path("/run/hermes-installer/native-loader"), 0o700)
             loader_channel = create_native_loader_channel(Path("/run/hermes-installer/native-loader"))
             socket_root = profile.authority_socket or Path(
@@ -2062,7 +2238,7 @@ class ManagedProcessEffectHandler:
                 native_mount_receipt=native_mount_receipt,
                 network_namespace_fd=namespace_fd,
                 lock=threading.RLock(), registered_profile=profile,
-                native_worker_launch_proof=proof)
+                native_worker_launch_proof=proof, unit_invocation_id=invocation_id)
             child_fd = namespace_fd = parent_fd = -1
             with self._lock:
                 self._handles[process_id] = handle
@@ -2493,6 +2669,16 @@ class ManagedProcessEffectHandler:
                     or not admission._controller_lease.is_current()
                     or not control.is_current()):
                 raise AuthorityDenied("native.health.run", "same worker, package, or selected view is no longer current")
+            if (not isinstance(handle.unit_invocation_id, str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", handle.unit_invocation_id)
+                    or handle.native_loader_ready_event_id is None):
+                raise AuthorityDenied("native.health.run", "fixed unit or loader READY binding is unavailable")
+            with self._lock:
+                current_control = self._health_controls.get(control.control_handle)
+                if current_control is None or current_control[0] is not control or current_control[1] is not handle:
+                    raise AuthorityDenied("native.health.run", "health run control changed during resolution")
+                handle.native_health_process_identity = process_identity
+                handle.native_health_loaded_package_proof = loaded_package
             run_fields = getattr(RootSelectedNativeHealthRun, "__dataclass_fields__", {})
             if "intent_handle" not in run_fields or "parent_closure_digest" not in run_fields:
                 # Older observers collapsed distinct source event ancestry
@@ -2803,11 +2989,21 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("native.health.terminal", "health terminal deadline or cancellation is invalid")
         with self._lock:
             retained = self._health_controls.get(control_handle)
-            input_written = any(receipt.control_handle == control_handle
-                                for receipt, _expiry in self._health_input_write_receipts.values())
-        if retained is None or retained[0] is not control or not input_written:
+            input_receipts = [receipt for receipt, expiry in self._health_input_write_receipts.values()
+                              if receipt.control_handle == control_handle and expiry > self.monotonic()]
+        if retained is None or retained[0] is not control or len(input_receipts) != 1:
             raise AuthorityDenied("native.health.terminal", "health process control or one-use input receipt is stale")
         handle, admission = retained[1], retained[2]
+        launch_proof = handle.native_worker_launch_proof
+        observed_view = handle.native_worker_observed_view
+        process_identity = handle.native_health_process_identity
+        loaded_package_proof = handle.native_health_loaded_package_proof
+        if (launch_proof is None or observed_view is None or process_identity is None
+                or loaded_package_proof is None
+                or getattr(loaded_package_proof, "proof_id", None) is None
+                or handle.native_loader_ready_event_id is None
+                or not isinstance(handle.unit_invocation_id, str)):
+            raise AuthorityDenied("native.health.terminal", "pre-stop authenticated worker facts were not retained")
         deadline = min(float(deadline_monotonic), control.expires_monotonic, handle.expires)
         if deadline <= self.monotonic():
             raise AuthorityDenied("native.health.terminal", "health process lifetime already expired")
@@ -2915,9 +3111,63 @@ class ManagedProcessEffectHandler:
             for key, (_old, expiry) in tuple(self._health_terminal_receipts.items()):
                 if expiry <= now:
                     self._health_terminal_receipts.pop(key, None)
+                    self._health_completed_terminals.pop(_old.control_handle, None)
             if len(self._health_terminal_receipts) >= 256:
                 raise AuthorityDenied("native.health.terminal", "health terminal receipt registry is full")
-            self._health_terminal_receipts[receipt.terminal_receipt_handle] = (receipt, now + 30.0)
+            receipt_expiry = now + 30.0
+            self._health_terminal_receipts[receipt.terminal_receipt_handle] = (receipt, receipt_expiry)
+            namespace = process_identity.namespace_identity
+            namespace_match = re.fullmatch(r"mnt:([1-9][0-9]*);net:([1-9][0-9]*)", namespace)
+            if (receipt.exit_code == 0 and not receipt.timed_out and not receipt.cancelled
+                    and not receipt.output_overflow and receipt.cleanup_verified
+                    and receipt.cgroup_empty and receipt.main_pidfd_gone and receipt.launcher_reaped
+                    and namespace_match is not None):
+                try:
+                    from hermes_installer.authority.native_worker_launch import (
+                        RootObservedNativeWorkerView, RootVerifiedNativeHermesWorkerLaunch,
+                    )
+                    from hermes_installer.authority.native_health_observer import RootNativeHealthStartAdmission
+                    if (type(admission) is not RootNativeHealthStartAdmission
+                            or type(launch_proof) is not RootVerifiedNativeHermesWorkerLaunch
+                            or type(observed_view) is not RootObservedNativeWorkerView
+                            or not getattr(admission, "admission_handle", None)
+                            or getattr(admission, "_source_material", None) is None):
+                        raise ValueError("terminal source join is not the root-selected native health admission")
+                    expiry = min(receipt_expiry, admission.expires_monotonic,
+                                 admission._controller_lease.expires_monotonic)
+                    if expiry <= now:
+                        raise ValueError("health admission or controller lease expired before terminal capture")
+                    completed = RootCompletedSelectedHealthTerminalProof(
+                        schema=1, control_handle=control_handle, control=control,
+                        admission=admission, source_material=admission._source_material,
+                        terminal_receipt=receipt, launch_proof=launch_proof,
+                        observed_worker_view=observed_view,
+                        process_identity=process_identity,
+                        loaded_package_proof=loaded_package_proof,
+                        loaded_package_proof_id=loaded_package_proof.proof_id,
+                        loader_ready_event_id=handle.native_loader_ready_event_id,
+                        process_id=handle.process_id, process_pid=handle.pid,
+                        process_start_ticks=handle.start_ticks,
+                        process_uid=handle.profile.owner_uid, process_gid=handle.profile.owner_gid,
+                        profile_id=handle.profile.profile_id,
+                        process_generation=handle.profile.generation,
+                        service_generation_digest=control.service_generation_digest,
+                        unit=handle.unit, invocation_id=handle.unit_invocation_id,
+                        cgroup_identity=handle.cgroup,
+                        mount_namespace_inode=int(namespace_match.group(1)),
+                        network_namespace_inode=int(namespace_match.group(2)),
+                        executable_sha256=process_identity.executable_sha256,
+                        expires_monotonic=expiry, _manager=self,
+                        _seal=self._health_terminal_seal,
+                    )
+                    if (self._completed_selected_health_terminal_current(
+                            completed, self._health_terminal_seal) is not completed):
+                        raise ValueError("manager rejected its completed terminal record")
+                    self._health_completed_terminals[control_handle] = (completed, expiry)
+                except Exception:
+                    self._health_terminal_receipts.pop(receipt.terminal_receipt_handle, None)
+                    raise AuthorityDenied(
+                        "native.health.terminal", "completed health cleanup did not retain exact source identity") from None
         return receipt
 
     def resolve_selected_health_terminal_receipt(
@@ -2933,11 +3183,141 @@ class ManagedProcessEffectHandler:
             if entry is None:
                 raise AuthorityDenied("native.health.terminal", "health terminal receipt is unavailable")
             receipt, expiry = entry
-            if (expiry <= self.monotonic() or receipt.control_handle != control_handle
-                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+            if expiry <= self.monotonic():
                 self._health_terminal_receipts.pop(terminal_receipt_handle, None)
                 raise AuthorityDenied("native.health.terminal", "health terminal receipt is stale or mismatched")
+            if (receipt.control_handle != control_handle
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt is mismatched")
             return receipt
+
+    def resolve_completed_selected_health_terminal(
+            self, control_handle: str,
+            terminal_receipt_handle: str) -> RootCompletedSelectedHealthTerminalProof:
+        """Resolve the exact successful, manager-cleaned health run historically.
+
+        The result preserves facts observed while the PID was live and binds
+        them to the stopped-unit receipt. It makes no current PID, package or
+        launch assertion; all effect admission and live-source calls still use
+        the normal currentness APIs.
+        """
+        receipt = self.resolve_selected_health_terminal_receipt(
+            control_handle, terminal_receipt_handle)
+        with self._lock:
+            retained = self._health_completed_terminals.get(control_handle)
+            if retained is None:
+                raise AuthorityDenied("native.health.terminal", "successful completed health proof is unavailable")
+            proof, expiry = retained
+            if (proof.terminal_receipt is not receipt
+                    or proof.terminal_receipt.terminal_receipt_handle != terminal_receipt_handle
+                    or expiry <= self.monotonic()
+                    or self._completed_selected_health_terminal_current(
+                        proof, self._health_terminal_seal) is not proof):
+                self._health_completed_terminals.pop(control_handle, None)
+                raise AuthorityDenied("native.health.terminal", "completed health proof is stale or mismatched")
+            return proof
+
+    def _completed_selected_health_terminal_current(
+            self, proof: RootCompletedSelectedHealthTerminalProof,
+            seal: object) -> RootCompletedSelectedHealthTerminalProof | None:
+        if (type(proof) is not RootCompletedSelectedHealthTerminalProof
+                or seal is not self._health_terminal_seal
+                or proof._manager is not self or proof._seal is not seal):
+            return None
+        with self._lock:
+            retained = self._health_completed_terminals.get(proof.control_handle)
+            terminal = self._health_terminal_receipts.get(proof.terminal_receipt.terminal_receipt_handle)
+            if (retained is None or retained[0] is not proof or terminal is None
+                    or terminal[0] is not proof.terminal_receipt
+                    or retained[1] != proof.expires_monotonic
+                    or retained[1] > terminal[1]
+                    or retained[1] <= self.monotonic()
+                    or terminal[1] <= self.monotonic()):
+                return None
+        receipt = proof.terminal_receipt
+        control = proof.control
+        material = getattr(proof.admission, "_source_material", None)
+        authority = self.native_health_start_authority
+        try:
+            from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+            authority_current = (type(authority) is RootNativeHealthStartAuthority
+                                 and authority.is_current(proof.admission))
+        except Exception:
+            authority_current = False
+        launch = proof.launch_proof
+        observed = proof.observed_worker_view
+        if (not authority_current
+                or control.control_handle != proof.control_handle
+                or getattr(proof.admission, "admission_handle", None) is None
+                or material is not proof.source_material
+                or getattr(material, "verified_commit", None)
+                   is not getattr(proof.admission, "_verified_commit", None)
+                or getattr(material, "source_binding", None)
+                   is not getattr(proof.admission, "_source_binding", None)
+                or getattr(material, "enrollment_id", None) != proof.admission.enrollment_id
+                or getattr(material, "profile_id", None) != proof.profile_id
+                or getattr(material, "process_generation", None) != proof.process_generation
+                or getattr(material, "service_generation_digest", None) != proof.service_generation_digest
+                or getattr(material, "health_fixture_artifact_id", None)
+                   != proof.admission.health_fixture_artifact_id
+                or getattr(material, "health_fixture_sha256", None)
+                   != proof.admission.health_fixture_sha256
+                or getattr(material, "health_result_schema_id", None)
+                   != proof.admission.health_result_schema_id
+                or getattr(material, "native_package_id", None) != proof.admission.native_package_id
+                or getattr(material, "native_package_generation", None)
+                   != proof.admission.native_package_generation
+                or getattr(material, "native_closure_sha256", None)
+                   != proof.admission.native_closure_sha256
+                or receipt.control_handle != control.control_handle
+                or receipt.process_id != proof.process_id
+                or receipt.profile_id != proof.profile_id
+                or receipt.generation != proof.process_generation
+                or receipt.service_generation_digest != proof.service_generation_digest
+                or receipt.unit != proof.unit or receipt.start_ticks != proof.process_start_ticks
+                or receipt.loader_ready_event_id != proof.loader_ready_event_id
+                or not receipt.cleanup_verified or not receipt.cgroup_empty
+                or not receipt.main_pidfd_gone or not receipt.launcher_reaped
+                or receipt.exit_code != 0 or receipt.timed_out or receipt.cancelled
+                or receipt.output_overflow
+                or getattr(launch, "launch_handle", None) != getattr(observed, "launch_handle", None)
+                or getattr(launch, "profile_id", None) != proof.profile_id
+                or getattr(launch, "profile_generation", None) != proof.process_generation
+                or getattr(launch, "service_generation_digest", None) != proof.service_generation_digest
+                or getattr(proof.loaded_package_proof, "proof_id", None) != proof.loaded_package_proof_id
+                or getattr(proof.loaded_package_proof, "process_id", None) != proof.process_id
+                or getattr(proof.loaded_package_proof, "profile_id", None) != proof.profile_id
+                or getattr(proof.loaded_package_proof, "generation", None) != proof.process_generation
+                or getattr(proof.loaded_package_proof, "kernel_uid", None) != proof.process_uid
+                or getattr(proof.loaded_package_proof, "service_generation_digest", None)
+                   != proof.service_generation_digest
+                or getattr(proof.loaded_package_proof, "mount_proof", None) is None
+                or getattr(proof.loaded_package_proof, "package_id", None)
+                   != getattr(material, "native_package_id", None)
+                or getattr(proof.loaded_package_proof, "compiled_closure_sha256", None)
+                   != getattr(material, "native_closure_sha256", None)
+                or getattr(observed, "process_id", None) != proof.process_id
+                or getattr(observed, "process_pid", None) != proof.process_pid
+                or getattr(observed, "process_start_ticks", None) != proof.process_start_ticks
+                or getattr(observed, "cgroup_identity", None) != proof.cgroup_identity
+                or getattr(observed, "process_uid", None) != proof.process_uid
+                or getattr(observed, "process_gid", None) != proof.process_gid
+                or getattr(observed, "mount_namespace_inode", None) != proof.mount_namespace_inode
+                or getattr(observed, "network_namespace_inode", None) != proof.network_namespace_inode
+                or getattr(observed, "selected_view_sha256", None)
+                   != getattr(launch, "selected_view_sha256", None)
+                or proof.control.process_id != proof.process_id
+                or proof.control.profile_id != proof.profile_id
+                or proof.control.process_generation != proof.process_generation
+                or proof.control.service_generation_digest != proof.service_generation_digest
+                or proof.process_identity.start_ticks != proof.process_start_ticks
+                or proof.process_identity.kernel_uid != proof.process_uid
+                or proof.process_identity.cgroup_identity != proof.cgroup_identity
+                or proof.process_identity.executable_sha256 != proof.executable_sha256
+                or proof.process_identity.namespace_identity != (
+                    f"mnt:{proof.mount_namespace_inode};net:{proof.network_namespace_inode}")):
+            return None
+        return proof
 
     def set_task_input_coordinator(self, coordinator: Any) -> None:
         """Install the concrete root-native pre-stdin coordinator once."""
