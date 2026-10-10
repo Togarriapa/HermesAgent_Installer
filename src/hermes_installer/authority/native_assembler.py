@@ -84,6 +84,7 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         overlay_source = definitions.boundary_overlay_source_commit
         closure_defs = tuple(definitions.closure_members)
         schema_bytes = dict(definitions.native_schema_bytes)
+        owner_overlay_records = [_thaw(row) for row in definitions.owner_overlay_operation_records]
     except (AttributeError, TypeError, ValueError):
         raise NativeAssemblyDenied("root-selected native definition projection is incomplete") from None
     if (package_id != "hermes-agent-native-package-v1"
@@ -101,6 +102,8 @@ def assemble_native_package(selection: _Selection, definitions: Any,
             or set(schema_bytes) != {row["id"] for row in schema_rows}):
         raise NativeAssemblyDenied("native schema documents do not match selected schema records")
     _validate_process_role_records(selection, process_roles, closure_defs)
+    _validate_owner_overlay_records(selection, owner_overlay_records, native_registrations,
+                                    schema_rows, closure_defs)
     process_roles_sha256 = hashlib.sha256(_canonical(process_roles)).hexdigest()
 
     resolver = {
@@ -114,6 +117,7 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         "native_schemas": schema_rows,
         "process_role_records_sha256": process_roles_sha256,
         "effect_selection_receipt_handles": list(definitions.effect_selection_receipt_handles),
+        "owner_overlay_operation_records": owner_overlay_records,
     }
     resolver_bytes = _canonical(resolver)
     resolver_sha = hashlib.sha256(resolver_bytes).hexdigest()
@@ -204,6 +208,109 @@ def assemble_native_package(selection: _Selection, definitions: Any,
     archive_bytes, archive_members = _deterministic_tar(tar_files)
     return NativePackageBytes(manifest_bytes, resolver_bytes, overlay,
                               archive_bytes, candidate_bytes, archive_members)
+
+
+_OWNER_OVERLAY_FIELDS = frozenset({
+    "registration_id", "method", "operation", "capability", "target_id", "recipient",
+    "effect_enrollment_id", "profile_id", "profile_generation", "principal_id", "namespace_id",
+    "package_id", "package_generation", "argument_schema_id", "argument_schema_sha256",
+    "argument_schema_receipt_handle", "result_schema_id", "result_schema_sha256",
+    "result_schema_receipt_handle", "handler_artifact_id", "handler_sha256",
+    "handler_source_receipt_handle", "profile_view_selection_handle", "profile_view_receipt_handle",
+    "data_root_selection_handle", "data_root_receipt_handle", "target_selection_handle",
+    "target_receipt_handle", "prepared_source_observer_selection_handle",
+    "source_observer_enrollment_ids", "process_role_id", "source_issuer_id",
+})
+_OWNER_OVERLAY_METHODS = {
+    "resource-overlay-store:tool:resource_overlay_read": ("read", "plugin.resource-overlay-store.read", "read"),
+    "resource-overlay-store:tool:resource_overlay_history": ("history", "plugin.resource-overlay-store.read", "read"),
+    "resource-overlay-store:tool:resource_overlay_write": ("write", "plugin.resource-overlay-store.write", "write"),
+    "resource-overlay-store:tool:resource_overlay_delete": ("delete", "plugin.resource-overlay-store.write", "write"),
+}
+
+
+def _validate_owner_overlay_records(selection: _Selection, rows: list[dict[str, Any]],
+                                    registrations: list[dict[str, Any]],
+                                    schemas: list[dict[str, Any]],
+                                    closure: tuple[Any, ...]) -> None:
+    """Validate the separate four-operation lane against genuine selected source rows."""
+    if not isinstance(rows, list) or len(rows) > 4:
+        raise NativeAssemblyDenied("owner-overlay operation lane exceeds its fixed row bound")
+    ids = [row.get("registration_id") if isinstance(row, dict) else None for row in rows]
+    if ids != sorted(ids) or len(set(ids)) != len(ids):
+        raise NativeAssemblyDenied("owner-overlay operation rows are not uniquely canonical")
+    by_registration = {row.get("registration_id"): row for row in registrations}
+    schema_ids = {row.get("id") for row in schemas}
+    closure_digests = {row.sha256 for row in closure}
+    shared_bindings: dict[str, Any] | None = None
+    shared_keys = ("profile_id", "profile_generation",
+                   "principal_id", "namespace_id", "package_id", "package_generation",
+                   "profile_view_selection_handle", "profile_view_receipt_handle",
+                   "data_root_selection_handle", "data_root_receipt_handle")
+    for row in rows:
+        if set(row) != _OWNER_OVERLAY_FIELDS:
+            raise NativeAssemblyDenied("owner-overlay operation row fields differ from v172")
+        fixed = _OWNER_OVERLAY_METHODS.get(row["registration_id"])
+        if (fixed is None or (row["method"], row["operation"], row["capability"])
+                != (fixed[0], fixed[1], "plugin:resource-overlay-store")
+                or row["recipient"] is not None
+                or row["package_id"] != selection.package_id
+                or row["package_generation"] != selection.native_package_generation
+                or row["argument_schema_id"] not in schema_ids
+                or row["result_schema_id"] not in schema_ids
+                or row["handler_sha256"] not in closure_digests
+                or not isinstance(row["source_observer_enrollment_ids"], list)
+                or not row["source_observer_enrollment_ids"]):
+            raise NativeAssemblyDenied("owner-overlay operation row does not join its fixed selected source")
+        registration = by_registration.get(row["registration_id"])
+        references = (
+            "target_id", "effect_enrollment_id", "profile_id", "profile_generation", "principal_id",
+            "namespace_id", "argument_schema_receipt_handle", "result_schema_receipt_handle",
+            "handler_artifact_id", "handler_source_receipt_handle", "profile_view_selection_handle",
+            "profile_view_receipt_handle", "data_root_selection_handle", "data_root_receipt_handle",
+            "target_selection_handle", "target_receipt_handle",
+            "prepared_source_observer_selection_handle", "process_role_id", "source_issuer_id",
+        )
+        digests = ("argument_schema_sha256", "result_schema_sha256", "handler_sha256")
+        invalid = []
+        if registration is None or registration.get("handler_kind") != "owner-overlay": invalid.append("registration-kind")
+        elif registration.get("argument_schema_id") != row["argument_schema_id"]: invalid.append("argument-schema-id")
+        elif registration.get("result_schema_id") != row["result_schema_id"]: invalid.append("result-schema-id")
+        elif registration.get("registration_source_sha256") != row["handler_sha256"]: invalid.append("source-digest")
+        elif registration.get("registration_source_receipt_handle") != row["handler_source_receipt_handle"]: invalid.append("source-receipt")
+        optional_references = {"data_root_selection_handle", "data_root_receipt_handle",
+                               "target_receipt_handle"}
+        bad_references = [key for key in references
+                          if ((row.get(key) is None and key not in optional_references)
+                              or (row.get(key) not in (None, "")
+                                  and (not isinstance(row[key], str) or not row[key]
+                                       or len(row[key]) > 256))
+                              or (row.get(key) == "" and key not in optional_references))]
+        if bad_references:
+            invalid.append("reference")
+        if row.get("recipient") is not None:
+            invalid.append("recipient")
+        if (any(not isinstance(row.get(key), str) or len(row[key]) != 64
+                or any(char not in "0123456789abcdef" for char in row[key]) for key in digests)):
+            invalid.append("digest")
+        observer_ids = row["source_observer_enrollment_ids"]
+        if (not isinstance(observer_ids, (list, tuple))
+                or any(not isinstance(item, str) or not item for item in observer_ids)
+                or list(observer_ids) != sorted(set(observer_ids))):
+            invalid.append("observer-order")
+        current_bindings = {key: row[key] for key in shared_keys}
+        if shared_bindings is None:
+            shared_bindings = current_bindings
+        elif current_bindings != shared_bindings:
+            invalid.append("shared-current-selection")
+        if (registration is None or registration.get("handler_kind") != "owner-overlay"
+                or registration.get("argument_schema_id") != row["argument_schema_id"]
+                or registration.get("result_schema_id") != row["result_schema_id"]
+                or registration.get("registration_source_sha256") != row["handler_sha256"]
+                or registration.get("registration_source_receipt_handle") != row["handler_source_receipt_handle"]
+                or invalid):
+            raise NativeAssemblyDenied("owner-overlay source operation differs from its registration projection: "
+                                       + ",".join(invalid or ["source-join"]))
 
 
 class RootNativePackageAssembler:
