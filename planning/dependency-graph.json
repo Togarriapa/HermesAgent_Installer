@@ -2777,5 +2777,16 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "owner_result_and_native_execution_v188": {
+    "amendment": "plans/amendments/2026-10-10-owner-result-source-selector-v188.md",
+    "wire_contract": "planning/owner-result-source-selector-v188.json",
+    "order": [
+      "HI-T188.1 \u2192 VD-T188.2",
+      "HI-T188.3 \u2192 VD-T188.4"
+    ],
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

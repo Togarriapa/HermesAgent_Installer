@@ -899,3 +899,23 @@ The installer SHALL implement the actual both-process supervisor/peer/activation
 #### Scenario: Cross-process proof invalid
 - **WHEN** remote actor is treated as local, only UID0 or same-process channel is known, or peer/unit/source/CAS/FD differs
 - **THEN** adoption/startup SHALL deny and owned cleanup/conflict preservation remain mandatory with all acceptance pending
+
+
+### Requirement: Exact paired owner result source v188
+The installer SHALL enforce the separately signed result enrollment, issuer/channel and actual root handler member joins in `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`.
+
+#### Scenario: Genuine completed local effect
+- **WHEN** the exact signed result observer and current root handler source join the consumed invocation grant and actual completed CAS/read
+- **THEN** root MAY issue the fixed owner tool-result capture with actual invocation parents
+
+#### Scenario: Result source selection absent or changed
+- **WHEN** only a matching generic backend observer exists or selected result/source/schema/parent/currentness is invalid
+- **THEN** result issuance SHALL deny without inventing authority or repeating a completed effect
+
+
+### Requirement: Finite native module execution v188
+The manager SHALL admit the fixed reviewed Hermes CLI recipe only using the privately issued current active worker/source/runtime/package proof in v188, preserving generic interpreter child validation.
+
+#### Scenario: No genuine native launch proof
+- **WHEN** recipe, source, runtime, package or active network proof is missing or changed
+- **THEN** startup SHALL deny with no lease and verified owned cleanup

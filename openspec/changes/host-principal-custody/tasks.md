@@ -396,3 +396,8 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 
 - [ ] `HI-T187.1` Produce verified installed root daemon supervisor/unit/launch and distinct peer observations. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
 - [ ] `HI-T187.2` Implement actual both-process authenticated activation channel and one-use exact listener FD adoption. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+
+
+- [ ] HI-T188.1 Implement exact paired owner result source publication/active issuer and completed-effect capture. See `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; all AC remain OPEN.
+
+- [ ] HI-T188.3 Implement exact typed active native Hermes module launch at manager admission/barrier. See v188; acceptance OPEN.
