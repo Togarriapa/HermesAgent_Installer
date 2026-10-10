@@ -208,7 +208,7 @@ Financial alias source bound v121: `plans/amendments/2026-10-10-financial-alias-
 
 Native process role association v123: `plans/amendments/2026-10-10-native-process-role-association-v123.md`; actual role/source/loaded observer joins and acceptance remain open.
 
-- [ ] HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.
+- [x] HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.
 
 - [ ] HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.
 
@@ -253,3 +253,11 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T141.1 finance/native source/projection/factory: Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny.
 
 - [ ] HI-T141.2 finance/native integration: Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim.
+
+- [ ] HI-T142.1 native target/factory/publisher: Actual source-owned TTY public scope configuration, retained target/config source observation, first active projection and exact effect/source FK validation.
+
+- [ ] HI-T142.2 host enrollment/authority: Strict active table/getter and PUBLIC per-input permission join; missing/conflicting source, PRIVATE ancestry, stale selection and out-of-scope URLs deny.
+
+- [ ] HI-T143.1 bootstrap enrollment/factory/consent: Existing key custody normal-session adoption/resume and finite durable choice signer/registry, genuine TTY source methods and release member receipts; no parallel key/service.
+
+- [ ] HI-T143.2 factory/active publisher/runtime composer: Actual signed choice adoption into selected generation and fresh runtime purpose projections; changed source/key/subject/epoch, expired snapshots and unadopted intent deny.

@@ -911,6 +911,14 @@ class RootSetupSessionStore:
             raise BootstrapEnrollmentError("root authority journal directory identity changed")
         return live
 
+    def current_deadline(self, session_handle: RootSetupSessionHandle) -> float:
+        """Return the monotonic expiry of a fully revalidated live setup session."""
+        live = self._live(session_handle)
+        deadline = live.record.get("expires_monotonic")
+        if type(deadline) not in (int, float) or deadline <= time.monotonic():
+            raise BootstrapEnrollmentPending("root setup session deadline is unavailable or expired")
+        return float(deadline)
+
     def _handle_for_session(self, session_id: str) -> RootSetupSessionHandle:
         live = self._sessions.get(session_id)
         if live is None:
@@ -1691,7 +1699,13 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments],
              "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
              "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
-             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings]}
+             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings],
+             # v128 selections exist only after root-verified observation and
+             # explicit selection. Enrollment never infers either from policy
+             # aliases, model lists, or the prepared setup transaction.
+             "private_memory_endpoint_selections": [],
+             "private_memory_model_selections": [],
+             "public_web_scopes": [dict(row) for row in getattr(policy, "public_web_scopes", ())]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:

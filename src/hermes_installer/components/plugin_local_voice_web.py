@@ -6,6 +6,7 @@ contains no shell, socket, microphone, credential, or persistence discovery.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email.message import Message
 import hashlib
 from ipaddress import ip_address
 import json
@@ -208,11 +209,9 @@ class PublicWebPlugin:
 
     def retrieve(self, *, url: str) -> dict[str, Any]:
         canonical = _public_https_url(url)
-        value = _invoke_plugin_effect(self.dispatcher, "web", "retrieve", {"url": canonical})
-        if (value.get("untrusted_source") is not True or value.get("authority") != "none"
-                or not isinstance(value.get("source_receipt"), dict)):
-            raise PluginAdapterError("protected web read result lacks untrusted source provenance")
-        return value
+        value, _operation_id = _invoke_plugin_effect(
+            self.dispatcher, "web", "retrieve", {"url": canonical}, include_operation_id=True)
+        return _serialize_web_result(value, requested_url=canonical, operation_id=_operation_id)
 
 
 def _bounded_text(value: object, label: str, maximum: int) -> None:
@@ -221,7 +220,8 @@ def _bounded_text(value: object, label: str, maximum: int) -> None:
 
 
 def _invoke_plugin_effect(effects: PluginEffectResolver, adapter_id: str, action_id: str,
-                          arguments: dict[str, Any]) -> dict[str, Any]:
+                          arguments: dict[str, Any], *,
+                          include_operation_id: bool = False) -> Any:
     invoke = getattr(effects, "invoke", None)
     if not callable(invoke):
         raise PluginAdapterError("protected selected-plugin effects are unavailable")
@@ -274,7 +274,89 @@ def _invoke_plugin_effect(effects: PluginEffectResolver, adapter_id: str, action
         raise PluginAdapterError("root plugin effect result is not valid JSON data") from None
     if len(encoded_result) > 2_097_152:
         raise PluginAdapterError("root plugin effect result exceeds its byte limit")
+    if include_operation_id:
+        return result, envelope["operation_id"]
     return result
+
+
+def _serialize_web_result(value: object, *, requested_url: str, operation_id: str) -> dict[str, Any]:
+    """Validate the selected root result and serialize only the reviewed web shape.
+
+    This is metadata/content presentation, not authority. The root broker owns
+    TLS, destination checks, cancellation, source artifact retention and the
+    opaque source receipt; every returned page remains untrusted.
+    """
+    fields = {"url", "content_type", "content", "untrusted_source", "authority",
+              "redirects", "source_receipt"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise PluginAdapterError("root web result differs from the reviewed result schema")
+    final_url = value["url"]
+    try:
+        if _public_https_url(final_url) != final_url:
+            raise ValueError
+    except (PluginAdapterError, TypeError):
+        raise PluginAdapterError("root web result contains a noncanonical URL") from None
+    content_type = value["content_type"]
+    content = value["content"]
+    redirects = value["redirects"]
+    if (not isinstance(content_type, str) or not 1 <= len(content_type) <= 256
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in content_type)
+            or not isinstance(content, str) or len(content) > 2_000_000
+            or any(ord(ch) == 0 for ch in content)
+            or type(value["untrusted_source"]) is not bool or value["untrusted_source"] is not True
+            or value["authority"] != "none"
+            or not isinstance(redirects, list) or not 1 <= len(redirects) <= 32):
+        raise PluginAdapterError("root web result exceeds its reviewed bounds or trust labels")
+    if redirects[0] != requested_url or redirects[-1] != final_url:
+        raise PluginAdapterError("root web redirect chain does not bind the requested and final URLs")
+    for hop in redirects:
+        try:
+            if _public_https_url(hop) != hop:
+                raise ValueError
+        except (PluginAdapterError, TypeError):
+            raise PluginAdapterError("root web redirect chain contains an invalid URL") from None
+    receipt = value["source_receipt"]
+    if not _valid_web_source_receipt(receipt, content=content, content_type=content_type,
+                                     final_url=final_url, redirect_chain=redirects,
+                                     operation_id=operation_id):
+        raise PluginAdapterError("root web result lacks a current bounded source artifact receipt")
+    # Copy to a plain JSON DTO so custom Mapping objects or backend instances
+    # cannot leak methods, additional fields, or mutable authority claims.
+    serialized_receipt = {key: receipt[key] for key in (
+        "artifact_id", "sha256", "size_bytes", "media_type", "profile_id",
+        "owner_generation", "operation_id", "source_receipt_handle", "expires_monotonic")}
+    return {"url": final_url, "content_type": content_type, "content": content,
+            "untrusted_source": True, "authority": "none", "redirects": list(redirects),
+            "source_receipt": serialized_receipt}
+
+
+def _valid_web_source_receipt(receipt: object, *, content: str, content_type: str,
+                              final_url: str, redirect_chain: list[str], operation_id: str) -> bool:
+    fields = {"artifact_id", "sha256", "size_bytes", "media_type", "profile_id",
+              "owner_generation", "operation_id", "source_receipt_handle", "expires_monotonic"}
+    if not isinstance(receipt, dict) or set(receipt) != fields:
+        return False
+    expiry = receipt.get("expires_monotonic")
+    return (
+        isinstance(receipt.get("sha256"), str)
+        and re.fullmatch(r"[a-f0-9]{64}", receipt["sha256"]) is not None
+        and receipt.get("artifact_id") == "web-content:" + receipt["sha256"]
+        and type(receipt.get("size_bytes")) is int
+        and 1 <= receipt["size_bytes"] <= 16_777_216
+        and receipt.get("media_type") == _normalized_media_type(content_type)
+        and all(_opaque_value(receipt.get(key)) for key in
+                ("profile_id", "owner_generation", "operation_id", "source_receipt_handle"))
+        and receipt.get("operation_id") == operation_id
+        and isinstance(expiry, (int, float)) and not isinstance(expiry, bool)
+        and time.monotonic() < expiry <= time.monotonic() + 600
+        and redirect_chain[-1] == final_url
+    )
+
+
+def _normalized_media_type(content_type: str) -> str:
+    parsed = Message()
+    parsed["content-type"] = content_type
+    return parsed.get_content_type().lower()
 
 
 def _opaque_handle(result: dict[str, Any], field: str) -> str:

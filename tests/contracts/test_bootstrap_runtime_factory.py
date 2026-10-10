@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import (
-    BootstrapEnrollmentPending, EnrollmentPolicy, ServiceIdentity, VerifiedRootSetupAuthorization, _generation,
+    BootstrapEnrollmentPending, EnrollmentPolicy, EnrollmentReceipt, ServiceIdentity,
+    VerifiedRootSetupAuthorization, _generation,
 )
 from hermes_installer.authority.bootstrap_runtime_factory import (
     InstalledBootstrapPolicyResolver,
@@ -16,12 +17,31 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
     RootInitialCompilationRegistry,
+    RootBootstrapSession,
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_active_enrollment_accessor_rejects_prepared_and_returns_only_current_commit(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="a" * 64)
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 64, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 100.0)
+        session._last_receipt = prepared
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._resolve_current_active_enrollment()
+
+        committed = EnrollmentReceipt(
+            1, "a" * 64, "d" * 64, "active-generation", "e" * 64,
+            "c" * 64, "committed", ("selected-enrollment",), 2.0, 100.0)
+        session._last_receipt = committed
+        self.assertIs(session._resolve_current_active_enrollment(), committed)
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 

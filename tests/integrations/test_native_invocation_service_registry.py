@@ -4,6 +4,7 @@ import base64
 import hashlib
 import os
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
@@ -55,13 +56,16 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
         capability, operation = "provider-inference", "provider.dispatch"
         producer_binding = PrincipalBinding(
             producer_uid, "producer-principal", producer_profile,
-            "producer-namespace", frozenset({capability}),
+            "producer-namespace", frozenset({capability, "plugin:web"}),
         )
         gateway_binding = PrincipalBinding(
             gateway_uid, "gateway-principal", gateway_profile,
             "gateway-namespace", frozenset({capability}),
         )
         rule = EffectRule(capability, operation, target, recipient)
+        web_target = "plugin:web:fixture:generation-1"
+        web_rule = EffectRule("plugin:web", "plugin.web.read", web_target, "public-web")
+        web_effect_calls = []
         request_bytes = b'{"model":"fixture","messages":[]}'
         request_digest = hashlib.sha256(request_bytes).hexdigest()
         response_bytes = (
@@ -93,6 +97,13 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             profile_generations={producer_profile: generation, gateway_profile: gateway_generation},
             service_generation_digest="2" * 64,
         )
+        # A public web handler is present so this regression reaches the real
+        # service policy boundary. The empty provider-result ceiling must stop
+        # the effect before the handler can perform any transport work.
+        service.rules[("plugin:web", "plugin.web.read", web_target)] = web_rule
+        service.handlers[("plugin.web.read", web_target)] = (
+            lambda **kwargs: web_effect_calls.append(kwargs)
+        )
         service._native_process_identity = lambda pid, uid: f"{pid}:{uid}"
         producer_enrollment_id = canonical_digest({
             "uid": producer_uid,
@@ -120,6 +131,46 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
         service.process_effect_handler = SimpleNamespace(resolve_live_peer=process_resolver)
 
         package = _Package()
+        object.__setattr__(package, "profile_generation", generation)
+        process_role = package.process_role_records["native-process-role"]
+        protected_action = next(iter(package.action_records.values()))
+        source_action_binding_id = "hermes-main:action:chat-complete"
+        tool_action_binding_id = "hermes-main:action:selected-tool"
+        source_action = replace(
+            protected_action, action_id="chat.complete",
+            action_binding_id=source_action_binding_id, target_id=target,
+            operation="provider.dispatch", recipient=recipient,
+            observer_enrollment_ids=("observer.provider.result",),
+        )
+        tool_action = replace(
+            protected_action, action_id="selected-tool",
+            action_binding_id=tool_action_binding_id, target_id="plugin.selected-tool",
+            operation="plugin.selected-tool.execute", recipient="native-plugin",
+            observer_enrollment_ids=(),
+        )
+        object.__setattr__(package, "action_records", {
+            source_action_binding_id: source_action, tool_action_binding_id: tool_action,
+        })
+        object.__setattr__(package, "adapter_records", {"hermes-main": source_action})
+        object.__setattr__(package, "profile_generation", generation)
+        process_role.action_binding_ids = (source_action_binding_id, tool_action_binding_id)
+        process_role.observer_enrollment_ids = ("observer.provider.result",)
+        process_role.registration_ids = ("registration.native.input", "registration.native.tool")
+        source_registration = package.registration_records["registration.native.input"]
+        source_registration.adapter_id = "hermes-main"
+        source_registration.generation = package.generation
+        source_registration.observer_enrollment_ids = ("observer.provider.result",)
+        source_registration.action_bindings = (SimpleNamespace(action_binding_id=source_action_binding_id),)
+        tool_registration = SimpleNamespace(
+            registration_id="registration.native.tool", adapter_id="hermes-main",
+            generation=package.generation, observer_enrollment_ids=(),
+            action_bindings=(SimpleNamespace(action_binding_id=tool_action_binding_id),),
+        )
+        object.__setattr__(package, "registration_records", {
+            "registration.native.input": source_registration,
+            "registration.native.tool": tool_registration,
+        })
+        object.__setattr__(package, "workflow_records", {})
         loaded_proof_fixture = _LoadedProof(
             proof_id="loaded-proof-fixture",
             package_id=package.package_id,
@@ -135,13 +186,25 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             source_root_device=8,
             source_root_inode=99,
             target_peer_identity=producer_identity,
-            loader_role_artifact_id="hermes-main",
-            loader_role_sha256="b" * 64,
+            loader_role_artifact_id=process_role.role_artifact_id,
+            loader_role_sha256=process_role.role_sha256,
             loader_ready_event_id="loader-ready-fixture",
-            observed_entrypoint_action_ids=("chat.complete",),
+            # v134 leaves action IDs empty; the root joins the selected action
+            # through its protected role registration FK below.
+            observed_entrypoint_action_ids=(),
             issued_monotonic=service.monotonic() - 1,
             expires_monotonic=service.monotonic() + 60,
             service_generation_digest="2" * 64,
+            role_id=process_role.role_id,
+            role_source_receipt_handle=process_role.role_source_receipt_handle,
+            role_module_name=process_role.module_name,
+            role_closure_member_path=process_role.closure_member_path,
+            role_source_revision=process_role.role_source_revision,
+            role_source_tree_sha256=process_role.role_source_tree_sha256,
+            role_module_device=8,
+            role_module_inode=99,
+            role_module_sha256=process_role.role_sha256,
+            observed_registration_ids=("registration.native.input", "registration.native.tool"),
         )
         source_enrollment = _enrollment(
             observer_enrollment_id="observer.provider.result",
@@ -149,6 +212,8 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             origin_id="hermes.provider.result",
             enrollment_id=producer_enrollment_id,
             source_action_id="chat.complete",
+            source_action_binding_id=source_action_binding_id,
+            source_registration_ids=("registration.native.input",),
             target_id=target,
             recipient=recipient,
             allowed_parent_source_kinds=frozenset(),
@@ -195,8 +260,10 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 package_id=package.package_id,
                 profile_id=producer_profile,
                 generation=generation,
+                package_generation=package.generation,
                 adapter_id="hermes-main",
-                action_id="chat.complete",
+                action_id="selected-tool",
+                registration_id="registration.native.tool",
                 operation="plugin.selected-tool.execute",
                 validate_arguments=lambda args: args == b'{"x":1}',
             )
@@ -246,6 +313,20 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 peer_pid=producer_pid,
             )
             grant = EffectAuthorization.from_wire(grant_wire)
+            # Staged web effects may revalidate an invocation repeatedly,
+            # but the opaque root selector cannot invent or resurrect a row.
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, target, request_digest, "h" * 43,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, "unselected-target", request_digest, "h" * 43,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, target, "0" * 64, "h" * 43,
+                )
             with self.assertRaises(AuthorityDenied):
                 registry.resolve_invocation_for_effect(
                     context, grant, "plugin.unselected.execute", request_digest,
@@ -344,6 +425,61 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             self.assertEqual(contexts_wire["arguments_sha256"], hashlib.sha256(arguments).hexdigest())
             self.assertEqual(len(contexts_wire["source_receipt_handles"]), 1)
             self.assertIn(contexts_wire["source_receipt_handles"][0], service._source_receipt_handles)
+
+            # The retained provider-result source has no selected input parent,
+            # so its signed recipient ceiling is empty. Even a profile with
+            # the public web capability and an installed handler cannot use
+            # that ancestry to reach a public recipient.
+            result_handle = contexts_wire["source_receipt_handles"][0]
+            result_receipt = service._source_receipt_handles[result_handle]
+            self.assertEqual(result_receipt.source_kind, "provider-result")
+            self.assertEqual(result_receipt.recipient_ceiling, frozenset())
+            web_request = b'{"schema":1,"url":"https://example.com/docs"}'
+            web_digest = hashlib.sha256(web_request).hexdigest()
+            web_context_wire = service._issue_context(
+                producer_uid,
+                {
+                    "purpose": "native-hermes-chat",
+                    "intent": "fixture-public-web-read",
+                    "trace_id": "trace-web-ceiling-fixture",
+                    "lease_seconds": 20,
+                    "source_contexts": [],
+                    "source_receipt_handles": [result_handle],
+                    "final_payload_digest": web_digest,
+                    "operation": "plugin.web.read",
+                },
+                peer_pid=producer_pid,
+                inherited_process_identity=f"{producer_pid}:{producer_uid}",
+            )
+            with self.assertRaises(AuthorityDenied):
+                service._authorize_effect(
+                    producer_uid,
+                    {
+                        "context": web_context_wire,
+                        "capability": "plugin:web",
+                        "target": web_target,
+                        "recipient": "public-web",
+                        "request_digest": web_digest,
+                        "retry_index": 0,
+                    },
+                    peer_pid=producer_pid,
+                )
+            self.assertEqual(web_effect_calls, [])
+
+            # The resolver is pre-effect app evidence only when the response
+            # has joined a current root turn. This fixture intentionally has
+            # no selected input/request observation, so it must not manufacture
+            # a workload invocation from the retained provider tool binding.
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_selected_application_invocation(
+                    begin_wire["invocation_handle"], arguments,
+                    peer_uid=producer_uid, peer_pid=producer_pid, peer_pidfd=producer_fd,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_selected_application_invocation(
+                    begin_wire["invocation_handle"], b'{"x":2}',
+                    peer_uid=producer_uid, peer_pid=producer_pid, peer_pidfd=producer_fd,
+                )
 
             handle = contexts_wire["source_receipt_handles"][0]
             capsule = source_observers._payload_capsules[handle][2]

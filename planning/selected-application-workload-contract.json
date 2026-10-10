@@ -965,5 +965,106 @@
       }
     ],
     "acceptance": "All original AC open; no package/model acquisition performed by Sol, no deployment readiness inferred."
+  },
+  "hyperframes_toolchain_source_v144": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "R0067",
+      "R0138",
+      "SK-T132"
+    ],
+    "why": "Hyperframes is a Bun workspace/Node CLI, not Python; exact toolchain receipt producer/source selections were absent. Existing reviewed Node source can be reused separately; exact Bun selection is independent review, not an upstream project pin.",
+    "source_profile": {
+      "application_id": "hyperframes",
+      "workflow_id": "qualify-hyperframes-v1",
+      "source_identity": "heygen-com/hyperframes",
+      "source_revision": "46f6cb356785bed79e1ce7b79d7e7accc697786a",
+      "manifest_paths": [
+        "package.json",
+        "packages/cli/package.json"
+      ],
+      "lock_path": "bun.lock",
+      "facts": "Exact CLI Node>=22; root scripts use Bun, no packageManager exact Bun version. Root prepare hook may run lefthook; no unrestricted lifecycle hooks/cloud workspace build."
+    },
+    "toolchain_sources": [
+      {
+        "tool_id": "application-node-26.7.0-linux-arm64",
+        "version": "26.7.0",
+        "platform": "linux-arm64",
+        "url": "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-arm64.tar.xz",
+        "sha256": "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d",
+        "size_bytes": 32581212,
+        "archive_kind": "tar.xz",
+        "source_basis": "Existing reviewed OmniRoute Node source plus official SHASUMS256 exact row; reuse component-owned isolated toolchain, no global replacement",
+        "executable_member": "bin/node"
+      },
+      {
+        "tool_id": "application-bun-1.4.3-linux-arm64",
+        "version": "1.4.3",
+        "platform": "linux-arm64",
+        "source_revision": "c6da4a4d3010e5553438c60f6bd76d981976867c",
+        "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-aarch64.zip",
+        "sha256": "efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21",
+        "size_bytes": 41786424,
+        "archive_kind": "zip",
+        "source_basis": "Exact official release API asset publisher SHA/size; payload/runtime not yet observed",
+        "executable_member": "bun-linux-aarch64/bun",
+        "license_url": "https://raw.githubusercontent.com/oven-sh/bun/c6da4a4d3010e5553438c60f6bd76d981976867c/LICENSE.md",
+        "license_sha256": "056696884250b0d682365260cf1487a6501b1665a343ec60e23a1e647043c572",
+        "license_size_bytes": 5807,
+        "license_rule": "Source license and exact packaged third-party notices retained; declaration alone not full binary/runtime dependency eligibility"
+      }
+    ],
+    "acquisition": "Only selected exact public source receipts under existing acquire-locked-runtime-packages purpose/current root TTY choice; no latest/canary/installer script/global install/self-update. Node TLS direct no redirects. Bun ONLY exact pinned public release asset may follow <=2 HTTPS hops to release-assets.githubusercontent.com port443 with no userinfo/auth/credential/header forwarding or downgrade, signed query redacted, exact final size/SHA enforced. All other artifacts keep existing no-redirect unless separately specified. No caller destination.",
+    "producer": {
+      "owner": "application environment build/toolchain source producer",
+      "module": "hermes_installer.authority.application_toolchains",
+      "registry": "RootApplicationToolchainRegistry",
+      "constructor": "from_root_setup(verified_release,current_actor_verifier,root_setup_session_store,artifact_source_observer,root_journal,setup_choice_registry)",
+      "methods": "observe_selected_toolchain(runtime_preparation_selection_handle,tool_id)->opaque handle; resolve_selected_toolchain(handle,runtime_preparation_selection_handle)->RootApplicationToolchainObservation",
+      "fields": [
+        "schema",
+        "receipt_handle",
+        "tool_id",
+        "version",
+        "platform",
+        "source_artifact_id",
+        "source_sha256",
+        "source_size_bytes",
+        "license_observation_handles",
+        "package_notice_observation_sha256",
+        "executable_member",
+        "executable_sha256",
+        "executable_device",
+        "executable_inode",
+        "executable_mode",
+        "runtime_manifest_sha256",
+        "toolchain_root_selection_handle",
+        "runtime_preparation_selection_handle",
+        "choice_selection_handle",
+        "recipe_sha256",
+        "issued_monotonic",
+        "expires_monotonic",
+        "signature"
+      ],
+      "trust": "Actual root source acquisition SHA/size/type/path/duplicate/special/escape validation, held private isolated tree and exact executable member/mode/hash FD. Current genuine setup source/lock/choice/controller bound, retained in genuine root registry membership and durable source observation journal, with exact signed v143 choice linkage; signature field is that choice record signature, never a source/effect signature minted by the choice signer. Runtime/build authority separately verifies current held source proof; no fake managed runtime result. No input path/tool ID supplied by worker. Persistent immutable source evidence bounded setup deadline, every build fresh current<=30s selection. Runtime probe and complete installed environment receipt separate.",
+      "storage": "Root protected journal application-toolchains with immutable exact artifact content tree and held root/executable; selected root registry identity, no arbitrary output/home/global path. Existing generation/CAS conventions, no unowned replacement."
+    },
+    "fixed_build": "Hyperframes recipe uses actual held Bun executable, frozen-lockfile/offline/--ignore-scripts and selected held package closure. Native scripts/workspace CLI build only separately reviewed fixed script member closure with no network. Node executable separate actual toolchain; fixed probe verifies real versions/platform/module/native origins under output tree. Chromium/FFmpeg/sharp/onnxruntime dependencies and ARM64 probes independently required, not inferred from source/version. No Python-only Hyperframes receipt.",
+    "offline_lock_rule": "Original bun.lock integrity/source remains exact. For Python existing uv0.12.3 offline lock check passed original Browser Use lock with PM3.14; no relabel0.12.23/no incompatibility inferred. Flat wheelhouse --find-links changes lock source in measured uv and cannot satisfy lock-exact recipe. Supported cache population must be separately actually observed before enrollment; never mutate upstream lock/undocumented cache or assert mere CAS consumability.",
+    "tasks": [
+      {
+        "id": "SK-T144.1",
+        "owner": "app build/source broker",
+        "work": "Exact finite Node/Bun source/license/notice catalog selection and held isolated toolchain producer; actual digest/member/currentness failures and no global effects."
+      },
+      {
+        "id": "SK-T144.2",
+        "owner": "application environment build/probe",
+        "work": "Actual offline lock-preserving Bun package closure/build and separate Node/Bun/native origin probe; missing artifact/license/cache/native support exact unavailable prerequisites."
+      }
+    ],
+    "acceptance": "Source publisher selection only, no binary execution/native ARM64/build/live application acceptance claimed; all original AC open."
   }
 }
