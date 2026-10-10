@@ -774,3 +774,38 @@ The installer SHALL select an already-present model directory only through the f
 #### Scenario: Model store or selected tree absent
 - **WHEN** the exact store/child/source inventory is absent, unowned, writable or changed
 - **THEN** selection remains pending with its exact prerequisite and no arbitrary path, download, copy or inferred model load substitutes
+
+### Requirement: Finite Hyperframes Node and Bun toolchain source v144
+The installer SHALL select exact independently verified Node and Bun source artifacts and observe held isolated toolchain bytes before the fixed offline environment build and distinct native runtime probe.
+
+#### Scenario: Upstream workspace has no exact Bun declaration
+- **WHEN** Hyperframes needs a Bun toolchain
+- **THEN** only the reviewed finite source selection is acquired and qualified without guessing a project pin, enabling lifecycle scripts or claiming native compatibility
+
+### Requirement: Fresh memory owned process control admission v145
+The installer SHALL reobserve current authorization for status and stop after initial admission expiry while retaining exact original process ownership and deadline.
+
+#### Scenario: Memory service outlives its start proof
+- **WHEN** the original short admission expires while the owned process remains within its original deadline
+- **THEN** productive control requires a fresh same-process admission and revocation cleanup remains bound to retained PIDFD ownership without extending the old proof
+
+### Requirement: Completed source choice ordering v146
+The installer SHALL distinguish held root observation from completed signed choice and full source verification, accurately name release identity and authenticate complete public scope payloads from retained configuration.
+
+#### Scenario: Fixed root is observed before child choice
+- **WHEN** only the fixed model store root is held
+- **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Lock-derived hash-constrained offline dependency install v147
+The installer SHALL preserve the original selected lock while deriving hashed requirements and installing only the verified target-active package closure offline, and SHALL require a separate actual noneditable source-project wheel and environment probe before qualification.
+
+#### Scenario: Export omits source project
+- **WHEN** the hash-constrained dependency install succeeds using no-emit-project
+- **THEN** no application runtime is qualified until its exact source-built project wheel and complete installed origin/probe receipts also pass
+
+### Requirement: Offline probe interpreter provenance v148
+The installer SHALL distinguish the container interpreter used in dependency recipe experiments from genuine selected PM runtime observations.
+
+#### Scenario: Container version matches selected PM version
+- **WHEN** the fixture interpreter reports Python3.14.7
+- **THEN** no PM origin or actual setup environment receipt is inferred from that version match

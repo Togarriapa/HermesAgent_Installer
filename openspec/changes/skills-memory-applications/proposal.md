@@ -99,3 +99,13 @@ GLM source/license pins v135: `plans/amendments/2026-10-10-glm-source-license-pi
 Locked package/license receipts v136: `plans/amendments/2026-10-10-locked-package-source-license-receipts-v136.md`; finite actual acquisition phase, root-held artifacts/license evidence and noneditable isolated deployment; license/platform/deployment acceptance remains pending.
 
 Existing model-store source v139: `plans/amendments/2026-10-10-existing-model-store-selection-source-v139.md`; actual fixed root/child FD selection and source observations distinct private profile/deployment. No model acquisition or acceptance promotion.
+
+Hyperframes finite toolchain source v144: `plans/amendments/2026-10-10-hyperframes-toolchain-source-v144.md`; separate held Node/Bun source receipts, exact offline lock and native probe, no Python substitution/global install. All AC open.
+
+Memory process control re-admission v145: `plans/amendments/2026-10-10-memory-process-control-readmission-v145.md`; fresh current short status/stop proof joins original owned process, immutable deadline and revocation cleanup. All AC open.
+
+Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
+
+Lock-derived offline dependency install v147: `plans/amendments/2026-10-10-lock-export-offline-wheel-install-v147.md`; official unchanged-lock export + hash-constrained offline pip sync, exact active package receipt closure, separate actual project wheel/backend and full env probe. All AC open.
+
+Offline probe provenance v148: `plans/amendments/2026-10-10-offline-probe-environment-clarification-v148.md`; container Python is fixture evidence, not observed PM receipt. Exact official uv and unchanged lock tests distinct production toolchain proof.
