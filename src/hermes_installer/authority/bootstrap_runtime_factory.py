@@ -7757,8 +7757,25 @@ class RootBootstrapSession:
         if not has_owner_operations:
             return policy
 
-        publication = self._resolve_current_active_policy_publication()
-        from .setup_policy_publication import RootSetupPublicationReceipt
+        self._check_live()
+        self._factory._release.verify_current()
+        self._factory._actor.verify_current(self._factory._release)
+        from .setup_policy_publication import (
+            PolicyPublicationReceiptResolver, RootSetupPublicationReceipt,
+        )
+        try:
+            publication = PolicyPublicationReceiptResolver.resolve_current()
+        except BootstrapEnrollmentPending as exc:
+            if str(exc) in {
+                "no root policy generation is currently selected",
+                "current root selection has no policy generation",
+            }:
+                return policy
+            raise BootstrapEnrollmentPending(
+                "owner-overlay observer join lacks a revalidated current publication") from None
+        except Exception:
+            raise BootstrapEnrollmentPending(
+                "owner-overlay observer join lacks a revalidated current publication") from None
         if type(publication) is not RootSetupPublicationReceipt:
             raise BootstrapEnrollmentPending("owner-overlay observers lack a typed current publication")
         prepared = self._last_receipt
