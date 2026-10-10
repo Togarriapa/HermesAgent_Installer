@@ -77,7 +77,12 @@ def _owner_overlay_adoption_rows(values: tuple[Any, ...]) -> list[dict[str, Any]
         if type(value) is not RootPublishedLocalOwnerAdoption:
             raise BootstrapEnrollmentPending("active claim contains a foreign owner-overlay adoption")
         row = value.to_claim_row()
-        if not isinstance(row, Mapping) or set(row) != expected:
+        if (not isinstance(row, Mapping) or set(row) != expected | {"adoption_sha256"}
+                or row.get("identity_kind") != "linux-local-owner-v1"
+                or not isinstance(row.get("adoption_handle"), str)
+                or not _HANDLE.fullmatch(row["adoption_handle"])
+                or not isinstance(row.get("adoption_sha256"), str)
+                or not _HEX.fullmatch(row["adoption_sha256"])):
             raise BootstrapEnrollmentPending("owner-overlay adoption claim row has an invalid schema")
         rows.append(dict(row))
     return rows
