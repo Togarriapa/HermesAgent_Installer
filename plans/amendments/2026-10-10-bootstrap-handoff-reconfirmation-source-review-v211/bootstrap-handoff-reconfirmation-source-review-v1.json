@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md",
+  "parent_review": "planning/bootstrap-handoff-tty-reconfirmation-v208.json",
+  "reference_commit": "26cf496fa354fcdd7798d8af67bfa9547ffe4751",
+  "reference_tree": "144a5cf08f86475f487fd6bb1cea1082e8c41500",
+  "replaces_only_members": [
+    {
+      "source_commit": "26cf496fa354fcdd7798d8af67bfa9547ffe4751",
+      "source_path": "src/hermes_installer/root_setup.py",
+      "module_name": "hermes_installer.root_setup",
+      "source_artifact_id": null,
+      "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+      "installed_member": "lib/python/hermes_installer/root_setup.py",
+      "sha256": "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",
+      "size_bytes": 62517,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "BD-F02",
+        "HI-T149.1",
+        "BD-T208.1",
+        "VD-T208.2"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    }
+  ],
+  "catalog_rows_to_apply": [],
+  "metadata_structural_reference": {
+    "source_commit": "26cf496fa354fcdd7798d8af67bfa9547ffe4751",
+    "source_path": "src/hermes_installer/authority/installer_release_build.py",
+    "sha256": "b93ebb4278e573694dd2d4c6dcdcd710927ef7d14888bb2490045aa4a51b0b45",
+    "size_bytes": 254876,
+    "state": "actual candidate source snapshot/import metadata; no expected self pin"
+  },
+  "source_review_complete": true,
+  "pin_application_complete": false,
+  "runtime_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "reported_tests": {
+    "root_setup_passed": 28,
+    "release_factory_passed": 86,
+    "release_factory_skipped": 7,
+    "expected_old_root_setup_pin_failures": 1,
+    "compileall": "pass",
+    "diff_check": "pass",
+    "remaining": "Apply exact leaf and rerun full unexcluded suite; mismatch is outstanding evidence, not waiver."
+  },
+  "diagnostic_contract": "planning/typed-bootstrap-runtime-diagnostics-v203.json",
+  "source_review": "Sol inspected exact committed3-path diff and recomputed bytes. Only root_setup installed member replaces v204. All other leaf tuples remain unchanged. One builder call routes fresh reconfirmation immediately before handoff; metadata source is not a self-pin."
+}
