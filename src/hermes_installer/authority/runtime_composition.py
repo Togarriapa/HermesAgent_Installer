@@ -417,6 +417,8 @@ class RootAuthorityRuntime:
     build_execution_service: Any | None
     native_mcp_unavailable_reason: str | None = None
     native_mcp_discovery_registry: Any | None = None
+    selected_resources: Any | None = None
+    selected_resource_unavailable_reason: str | None = None
 
     @property
     def process_manager(self) -> Any:
@@ -1010,6 +1012,64 @@ def compose_root_authority_runtime(
         source_observers=observer_records,
     )
 
+    selected_resources = None
+    selected_resource_unavailable_reason: str | None = None
+    selected_resource_records = getattr(enrollment, "selected_resource_execution_records", ())
+    if selected_resource_records:
+        resolve_selected = getattr(bindings, "resolve_selected_resource_execution", None)
+        if not isinstance(selected_resource_records, tuple) or not callable(resolve_selected):
+            selected_resource_unavailable_reason = (
+                "active selected resource rows lack the root materialization receipt resolver"
+            )
+        else:
+            try:
+                from hermes_installer.registry.resources_runtime import (
+                    SelectedResourceExecution, SelectedResourceRegistry,
+                )
+
+                selected_rows: list[Any] = []
+                seen_selected: set[tuple[str, str, str]] = set()
+                for raw in selected_resource_records:
+                    if not isinstance(raw, Mapping):
+                        raise AuthorityDenied(
+                            "resource.selection", "active selected resource row is malformed",
+                        )
+                    resource_id = raw.get("resource_id")
+                    generation = raw.get("resource_generation")
+                    profile_id = raw.get("profile_id")
+                    key = (resource_id, generation, profile_id)
+                    if (any(not isinstance(value, str) or not value for value in key)
+                            or key in seen_selected):
+                        raise AuthorityDenied(
+                            "resource.selection", "active selected resource identity is missing or duplicated",
+                        )
+                    seen_selected.add(key)
+                    selected = resolve_selected(
+                        resource_id, resource_generation=generation, profile_id=profile_id,
+                    )
+                    if (type(selected) is not SelectedResourceExecution
+                            or selected.identity.resource_id != resource_id
+                            or selected.generation_digest != enrollment.protected_enrollment_digest
+                            or selected.profile_id != profile_id
+                            or type(selected.enabled) is not bool):
+                        raise AuthorityDenied(
+                            "resource.selection", "materialized selected resource differs from active protected row",
+                        )
+                    selected_rows.append(selected)
+                selected_resources = SelectedResourceRegistry(
+                    selected_rows,
+                    expected_generation_digest=enrollment.protected_enrollment_digest,
+                )
+            except Exception as exc:
+                selected_resources = None
+                selected_resource_unavailable_reason = (
+                    f"active selected resource materialization rejected ({type(exc).__name__})"
+                )
+    elif jobs:
+        selected_resource_unavailable_reason = (
+            "active resource jobs have no digest-bound selected materialization rows"
+        )
+
     memory_runtime = None
     if enrollment.memory_enrollments:
         if (bindings.enrollment_catalog is None
@@ -1393,4 +1453,6 @@ def compose_root_authority_runtime(
         job_authority=job_authority, build_execution_service=build_execution_service,
         native_mcp_unavailable_reason=native_mcp_unavailable_reason,
         native_mcp_discovery_registry=mcp_discovery_registry,
+        selected_resources=selected_resources,
+        selected_resource_unavailable_reason=selected_resource_unavailable_reason,
     )
