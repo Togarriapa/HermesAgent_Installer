@@ -178,3 +178,25 @@ def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Pat
             _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
     finally:
         os.close(fd)
+    (model_root / "unexpected.txt").unlink()
+
+    os.chmod(model_root / "weights/shard.bin", 0o600)
+    (model_root / "weights/shard.bin").write_bytes(b"changed tensor bytes")
+    os.chmod(model_root / "weights/shard.bin", 0o400)
+    fd = os.open(model_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(PrivateDeploymentDenied):
+            _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
+    finally:
+        os.close(fd)
+
+    os.chmod(model_root / "weights/shard.bin", 0o600)
+    (model_root / "weights/shard.bin").write_bytes(first)
+    os.chmod(model_root / "weights/shard.bin", 0o400)
+    (model_root / "unlisted-link").symlink_to("config.json")
+    fd = os.open(model_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(PrivateDeploymentDenied):
+            _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
+    finally:
+        os.close(fd)
