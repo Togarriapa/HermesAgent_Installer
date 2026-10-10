@@ -149,6 +149,7 @@ def _build_private_engine_registry(
     from hermes_installer.memory.private_engine import (
         PrivateMemoryEngineUnavailable, RootPrivateMemoryEngine,
     )
+    from hermes_installer.providers.private_memory import PrivateMemoryRouteDenied
     for key, target in targets.items():
         enrollment = target.enrollment
         if enrollment is None:
@@ -160,6 +161,7 @@ def _build_private_engine_registry(
             selected_routes, dispatcher = resolved
             if (selected_routes.profile_id != target.profile_id
                     or selected_routes.namespace_id != target.namespace_id
+                    or selected_routes.memory_enrollment_id != enrollment.service_enrollment_id
                     or selected_routes.memory_provider != target.provider
                     or selected_routes.memory_owner_generation != enrollment.memory_owner_generation
                     or selected_routes.service_generation_digest != active_generation_digest
@@ -167,7 +169,7 @@ def _build_private_engine_registry(
                     or selected_routes.embed_route_id != enrollment.private_extraction_embedding_routes.get("embed")):
                 raise ValueError("selected private inference routes differ from protected memory enrollment")
             engines[key] = RootPrivateMemoryEngine.from_selected_routes(selected_routes, dispatcher)
-        except (AuthorityDenied, PrivateMemoryEngineUnavailable) as exc:
+        except (AuthorityDenied, PrivateMemoryEngineUnavailable, PrivateMemoryRouteDenied) as exc:
             # Absent selection/consent/deployment remains unavailable. Other
             # malformed protected joins are surfaced as startup errors above.
             unavailable[key] = str(exc)
