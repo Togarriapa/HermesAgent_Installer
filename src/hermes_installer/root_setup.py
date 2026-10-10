@@ -1035,8 +1035,16 @@ def _safe_reason(error: BaseException) -> str:
     if isinstance(error, BootstrapEnrollmentPending):
         return "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
     if isinstance(error, BootstrapSystemCallFailure):
-        errno_part = f" [{error.errno_name}]" if error.errno_name != "UNKNOWN" else ""
-        return f"Root setup failed at {error.step}{errno_part}."
+        if type(error) is not BootstrapSystemCallFailure:
+            return "Root setup could not verify its required authority (OSError)."
+        step = error.step
+        if type(step) is not str or step not in BootstrapSystemCallFailure.STEPS:
+            return "Root setup could not verify its required authority (OSError)."
+        errno_name = error.errno_name
+        if type(errno_name) is not str or errno_name not in BootstrapSystemCallFailure.ERRNO_NAMES:
+            errno_name = "UNKNOWN"
+        errno_part = f" [{errno_name}]" if errno_name != "UNKNOWN" else ""
+        return f"Root setup failed at {step}{errno_part}."
     return f"Root setup could not verify its required authority ({type(error).__name__})."
 
 
