@@ -379,6 +379,17 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("setup controller proof is not owned by this session")
         return self._session._verify_current_setup_controller()
 
+    def prepare_selected_native_bundle(self) -> "RootPreparedNativeBundle":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native prepared bundle is not owned by this setup session")
+        return self._session.prepare_selected_native_bundle()
+
+    def resolve_current_prepared_native_bundle(
+            self, bundle: "RootPreparedNativeBundle") -> "RootPreparedNativeBundle":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native prepared bundle is not owned by this setup session")
+        return self._session._resolve_current_prepared_native_bundle(bundle)
+
     def resolve_native_bootstrap_assembly(
             self, prepared_setup_receipt_handle: str,
             native_materialization_receipt_handle: str) -> "RootNativeBootstrapAssemblySelection":
@@ -3334,6 +3345,7 @@ class RootBootstrapSession:
         self._verified_resources: dict[str, tuple[Any, Any]] = {}
         self._native_materializer: Any | None = None
         self._native_materialization_receipts: dict[str, Any] = {}
+        self._prepared_native_bundle: RootPreparedNativeBundle | None = None
         self._native_assembly_selections: dict[str, RootNativeBootstrapAssemblySelection] = {}
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
@@ -3880,6 +3892,8 @@ class RootBootstrapSession:
         observers, or boundary overlay have been proven.
         """
         self._check_live()
+        if self._prepared_native_bundle is not None:
+            return self._resolve_current_prepared_native_bundle(self._prepared_native_bundle)
         prepared = self._last_receipt
         if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
                 or not prepared.provision_receipt_handle):
@@ -3903,12 +3917,49 @@ class RootBootstrapSession:
                 or self._native_materialization_receipts[materialized.receipt_handle] is not materialized):
             raise BootstrapEnrollmentPending("native materialization did not return a retained root receipt")
         profile = self.resolve_selected_resource_profile(resource_handle)
-        return RootPreparedNativeBundle(
+        bundle = RootPreparedNativeBundle(
             self._handle.session_id, self._authorization.transaction_handle,
             prepared.generation_id, prepared.generation_digest,
             source_handle, pm_handle, profile.resources_source_receipt_handle,
             resource_handle, materialized.receipt_handle, materialized, self._seal,
         )
+        self._prepared_native_bundle = bundle
+        return bundle
+
+    def _resolve_current_prepared_native_bundle(
+            self, bundle: RootPreparedNativeBundle) -> RootPreparedNativeBundle:
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (not isinstance(bundle, RootPreparedNativeBundle)
+                or bundle is not self._prepared_native_bundle
+                or not secrets.compare_digest(bundle._session_seal, self._seal)
+                or prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or bundle.setup_session_id != self._handle.session_id
+                or bundle.transaction_handle != self._authorization.transaction_handle
+                or bundle.prepared_generation_id != prepared.generation_id
+                or bundle.prepared_generation_digest != prepared.generation_digest
+                or self._native_materialization_receipts.get(bundle.materialization_receipt_handle)
+                   is not bundle.materialization_receipt):
+            raise BootstrapEnrollmentPending("prepared native bundle is stale or not retained by this setup session")
+        source = self._resolve_current_hermes_source()
+        pm_runtime = self._resolve_current_pm_runtime()
+        profile = self.resolve_selected_resource_profile(bundle.resource_profile_selection_receipt_handle)
+        enrollment_ids = [row["record"].get("enrollment_id")
+                          for row in self._policy.service_record_templates
+                          if isinstance(row.get("record"), Mapping)]
+        if (source.receipt_handle != bundle.hermes_source_receipt_handle
+                or pm_runtime.receipt_handle != bundle.pm_runtime_receipt_handle
+                or profile.resources_source_receipt_handle != bundle.resources_source_receipt_handle
+                or profile.profile_id != bundle.materialization_receipt.resource_profile_id
+                or len(enrollment_ids) != 1
+                or bundle.materialization_receipt.enrollment_id != enrollment_ids[0]
+                or bundle.materialization_receipt.service_generation != prepared.generation_id
+                or bundle.materialization_receipt.protected_enrollment_digest != prepared.generation_digest
+                or bundle.materialization_receipt.service_profile_id != self._policy.identity_policy["service_profile_id"]):
+            raise BootstrapEnrollmentPending("prepared native bundle source, profile, runtime or materialization join changed")
+        self._verify_current_setup_controller()
+        return bundle
 
     def _persist_resource_profile_choice(self, receipt: RootSelectedResourceProfile,
                                          tty_proof: Any) -> None:
