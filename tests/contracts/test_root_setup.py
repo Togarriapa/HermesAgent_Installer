@@ -26,6 +26,7 @@ from hermes_installer.root_setup import (
     launcher_status,
     main,
     run_root_setup_action,
+    run_source_bootstrap_update,
 )
 
 
@@ -784,6 +785,92 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertIn("controlling terminal", output.getvalue())
         self.assertNotIn("sudo -- hermes-installer-root-setup install", output.getvalue())
         self.assertNotIn("/tmp", output.getvalue())
+
+    def test_source_update_is_exact_separate_dispatch_before_installed_actor(self) -> None:
+        output = io.StringIO()
+        with patch("hermes_installer.root_setup.run_source_bootstrap_update",
+                   return_value=root_setup._result(
+                       RootSetupAction.UPDATE, RootSetupState.PENDING, "distribution",
+                       "source bridge reached")) as source_update, \
+             patch("hermes_installer.root_setup.run_root_setup_action",
+                   side_effect=AssertionError("source-update must not enter installed dispatch")), \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   side_effect=AssertionError("source-update must not claim the old actor")), \
+             contextlib.redirect_stderr(output):
+            code = main(["source-update"])
+        source_update.assert_called_once_with()
+        self.assertEqual(code, 4)
+        self.assertIn("source bridge reached", output.getvalue())
+
+        with self.assertRaises(SystemExit) as extra:
+            main(["source-update", "--candidate", "a" * 40])
+        self.assertEqual(extra.exception.code, 2)
+
+    def test_source_update_reuses_only_verified_present_predecessor_and_update_tty(self) -> None:
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "old-release",
+            "verify_current": lambda self: None,
+        })()
+        class Held:
+            closed = False
+
+            def verify_current(self):
+                return None
+
+            def close(self):
+                self.closed = True
+
+        held = Held()
+        registry = RootBootstrapCandidateSelectionRegistry()
+        choices = object()
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch.object(root_setup, "_fd_is_open", return_value=False), \
+             patch.object(root_setup.sys.stdin, "isatty", return_value=True), \
+             patch.object(root_setup.sys.stderr, "isatty", return_value=True), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor) as observe, \
+             patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                   return_value=held) as resolve, \
+             patch.object(root_setup, "RootBootstrapCandidateSelectionRegistry",
+                          return_value=registry), \
+             patch.object(registry, "issue_explicit_tty_choice", return_value=choices) as issue, \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release") as bootstrap, \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   side_effect=AssertionError("preexec bridge is not the old installed actor")):
+            result = run_source_bootstrap_update()
+        observe.assert_called_once_with()
+        resolve.assert_called_once_with("old-release", consume=False)
+        issue.assert_called_once_with(RootSetupAction.UPDATE)
+        bootstrap.assert_called_once_with(choices, registry, update_predecessor=predecessor)
+        self.assertTrue(held.closed)
+        self.assertEqual(result.state, RootSetupState.PENDING)
+        self.assertEqual(result.phase, "distribution")
+
+    def test_source_update_refuses_fd3_and_non_present_predecessor_before_tty_acquisition(self) -> None:
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch.object(root_setup, "_fd_is_open", return_value=True), \
+             patch.object(root_setup.sys.stdin, "isatty", return_value=True), \
+             patch.object(root_setup.sys.stderr, "isatty", return_value=True), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor") as observe:
+            result = run_source_bootstrap_update()
+        observe.assert_not_called()
+        self.assertEqual(result.state, RootSetupState.PENDING)
+
+        absent = type("Predecessor", (), {
+            "state": "absent", "verified_release_receipt_handle": None,
+            "verify_current": lambda self: None,
+        })()
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch.object(root_setup, "_fd_is_open", return_value=False), \
+             patch.object(root_setup.sys.stdin, "isatty", return_value=True), \
+             patch.object(root_setup.sys.stderr, "isatty", return_value=True), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=absent), \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release") as bootstrap:
+            result = run_source_bootstrap_update()
+        bootstrap.assert_not_called()
+        self.assertEqual(result.phase, "admission")
+        self.assertEqual(result.state, RootSetupState.PENDING)
 
     def test_qualification_dispatch_is_finite_and_never_enters_setup_lifecycle(self) -> None:
         with patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \

@@ -934,9 +934,80 @@ def run_root_setup_action(
                             release.close()
 
 
+def run_source_bootstrap_update() -> RootSetupResult:
+    """Enter the fixed-origin UPDATE bootstrap without impersonating the installed actor.
+
+    This public bridge is staging-only. The selected source must re-exec into
+    its measured isolated runtime before the source actor can build or publish.
+    """
+    action = RootSetupAction.UPDATE
+    try:
+        _require_root_linux()
+    except RuntimeError as exc:
+        return _result(action, RootSetupState.FAILED, "admission", _safe_reason(exc))
+    if not sys.stdin.isatty() or not sys.stderr.isatty():
+        return _result(action, RootSetupState.PENDING, "admission",
+                       "Source update requires the root controlling terminal for candidate selection.")
+    if _fd_is_open(3):
+        return _result(action, RootSetupState.PENDING, "admission",
+                       "Source update cannot adopt an existing descriptor-3 transition.")
+
+    from .authority.bootstrap_enrollment import (
+        BootstrapEnrollmentPending, bootstrap_runtime_error_step,
+    )
+    from .authority.installer_release_build import (
+        InstallerReleaseBuildError,
+        bootstrap_selected_release,
+        observe_deployment_predecessor,
+        resolve_verified_deployment_release,
+    )
+
+    predecessor = None
+    held_release = None
+    selection_registry = None
+    try:
+        with bootstrap_runtime_error_step("installed_release.predecessor"):
+            predecessor = observe_deployment_predecessor()
+            predecessor.verify_current()
+        if (predecessor.state != "present-verified"
+                or predecessor.verified_release_receipt_handle is None):
+            return _result(action, RootSetupState.PENDING, "admission",
+                           "Source update requires an existing fully verified installed predecessor.")
+        held_release = resolve_verified_deployment_release(
+            predecessor.verified_release_receipt_handle, consume=False)
+        held_release.verify_current()
+        selection_registry = RootBootstrapCandidateSelectionRegistry()
+        with bootstrap_runtime_error_step("bootstrap.tty_selection"):
+            choices = selection_registry.issue_explicit_tty_choice(action)
+        bootstrap_selected_release(
+            choices, selection_registry, update_predecessor=predecessor)
+        return _result(action, RootSetupState.PENDING, "distribution",
+                       "Source update bootstrap returned without its required same-process handoff.")
+    except BootstrapEnrollmentPending as exc:
+        return _result(action, RootSetupState.PENDING, "distribution", _safe_reason(exc))
+    except EOFError:
+        return _result(action, RootSetupState.PENDING, "admission",
+                       "Root terminal input ended before source update selection completed.")
+    except (OSError, RuntimeError, ValueError, InstallerReleaseBuildError) as exc:
+        return _result(action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
+    finally:
+        if selection_registry is not None:
+            selection_registry.close()
+        if held_release is not None:
+            held_release.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "source-update":
+        if arguments != ["source-update"]:
+            parser.error("use exactly: source-update")
+        result = run_source_bootstrap_update()
+        print(result.message, file=sys.stderr)
+        if result.state is RootSetupState.PENDING and result.resume_command:
+            print(f"Resume with: {result.resume_command}", file=sys.stderr)
+        return result.exit_code
     if arguments and arguments[0] == "authority-daemon-adopt":
         if (len(arguments) != 3 or arguments[1] != "--activation-id"
                 or not re.fullmatch(r"[0-9a-f]{32}", arguments[2])):
@@ -1279,4 +1350,5 @@ def _verify_native_output_receipts(receipts: object, *, session: object,
 __all__ = ["LauncherStatus", "RootBootstrapCandidateSelectionRegistry", "RootSetupAction",
            "RootSetupExplicitChoices", "RootSetupResult", "RootSetupState",
            "VerifiedRootBootstrapCandidateSelection",
-           "launcher_status", "main", "run_root_setup_action", "verify_installed_launcher"]
+           "launcher_status", "main", "run_root_setup_action", "run_source_bootstrap_update",
+           "verify_installed_launcher"]
