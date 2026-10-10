@@ -51,3 +51,8 @@ Use the concrete RootActiveNetworkGenerationOwner/runtime signed-choice and acti
 ## Concrete signed worker and active overlay producers v183
 
 Follow `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`: exact held recipe→signed choice→service-generation producer→active PM/native custody, and signed local-owner/source/view adoption→current NSS/loaded invocation/one-use four-method grant. No setup object or static metadata becomes active authority. Source pins pending committed review, all AC01..18 OPEN.
+
+
+## Network wire/digest clarification v184
+
+Exact field sets/FKs/source and lifecycle mapping: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md` / `planning/network-row-wire-v184.json`. Generated AF_UNIX rows stay separate from existing TCP private-loopback rows; enclosing digest exists only on runtime projection. Pre-READY mount permits loader binding; effects require later actual READY/source/invocation/grant proof. All AC01..18 OPEN.

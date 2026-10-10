@@ -372,3 +372,9 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] `HI-T183.4` Implement independent active NSS/source/view/loaded invocation/grant four-method owner. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
 
 - [ ] `HI-T183.0` Implement and source-review the exact fixed held Hermes/native-loader startup recipe source producer in `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`; no guessed argv or denial-only completion.
+
+
+## v184 exact wire clarification
+
+- [ ] `HI-T184.1` Implement exact schema2 finite network/runtime/source FK rows and acyclic canonical digest mapping. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+- [ ] `HI-T184.2` Consume current row mapping and transient enclosing digest in real owner/manager lifecycle. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.

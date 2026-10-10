@@ -93,3 +93,8 @@ Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retain
 
 - [ ] `HI-T183.3` Publish signed tagged local-owner and exact overlay source/view/target/effect adoption. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
 - [ ] `HI-T183.4` Implement independent active NSS/source/view/loaded invocation/grant four-method owner. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+
+
+## v184 exact wire clarification
+
+- [ ] `VD-T184.3` Verify exact parser/roundtrip/hash/FK failures and pre-READY bind vs later effect-proof ordering. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
