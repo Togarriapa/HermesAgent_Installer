@@ -2858,5 +2858,23 @@
     "implementation_acceptance_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "safe_bootstrap_diagnostics_v196": {
+    "amendment": "plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md",
+    "reference_commit": "fff388978141a027ddb036e94b4d08b2f5346116",
+    "tasks": {
+      "BD-T196.1": [
+        "BD-F02",
+        "HI-T149.1"
+      ],
+      "VD-T196.2": [
+        "BD-T196.1",
+        "VD-T180.6"
+      ]
+    },
+    "source_review_complete": true,
+    "pin_application_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

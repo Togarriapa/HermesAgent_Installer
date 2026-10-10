@@ -138,3 +138,7 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 
 
 Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.
+
+
+- [ ] `BD-T196.1` Implement/revalidate closed safe bootstrap step/errno output and redaction/trust failure regressions; exact source reviewed in `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md`, pin application/target outcome OPEN.
+- [ ] `VD-T196.2` Apply exact two source tuple updates and verify focused source/installed metadata plus actual redacted target outcome; no skipped/old-pin failure becomes acceptance. All AC01..AC18 OPEN.

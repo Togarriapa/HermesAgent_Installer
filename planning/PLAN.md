@@ -104,3 +104,6 @@ Health event ancestry v194: `plans/amendments/2026-10-10-health-event-causal-anc
 
 
 Final coherent source review v195: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` / `planning/final-coherent-source-pin-review-v195.json`; exact source0add8c33, closed source/member/catalog/helper/preload application under existing VD-T180.6/VD-T183.5. Pin application, full runtime/target evidence and all AC01..AC18 OPEN; frozen160 baseline unchanged.
+
+
+Safe bootstrap diagnostics v196: `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md` / `planning/safe-bootstrap-diagnostics-source-review-v196.json`; BD-T196.1/VD-T196.2 OPEN, exact fff38897 source review updates only two v195 leaves, no guard or runtime authority change. All AC01..AC18 OPEN; immutable baseline unchanged.
