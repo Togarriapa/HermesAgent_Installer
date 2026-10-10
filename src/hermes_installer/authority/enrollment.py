@@ -441,6 +441,7 @@ class RootAuthorityKeySelectionRegistry:
             "normal-" + hashlib.sha256(session_id.encode("ascii")).hexdigest() + ".json")
 
     def _validate_normal_signer_record(self, row: Any, proof: Any, handoff: Any) -> dict[str, Any]:
+        release_receipt_handle = self._release_receipt_handle_for_handoff(handoff)
         fields = {"schema", "normal_setup_session_id", "normal_transaction_handle", "normal_plan_digest",
                   "compilation_session_handle", "compilation_transaction_handle", "publication_handoff_handle",
                   "publication_receipt_handle", "publication_sha256", "release_receipt_handle", "key_id",
@@ -454,7 +455,7 @@ class RootAuthorityKeySelectionRegistry:
                 or row.get("compilation_session_handle") != handoff.compilation_session_handle
                 or row.get("publication_sha256") != handoff.publication_sha256
                 or row.get("publication_receipt_handle") != handoff.publication_receipt_handle
-                or row.get("release_receipt_handle") != self.release.receipt_handle
+                or row.get("release_receipt_handle") != release_receipt_handle
                 or not re.fullmatch(r"authority-key-[0-9a-f]{32}", str(row.get("key_id")))
                 or type(row.get("key_device")) is not int or type(row.get("key_inode")) is not int
                 or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("key_sha256")))
@@ -468,6 +469,26 @@ class RootAuthorityKeySelectionRegistry:
                 or row["issued_unix"] > time.time()):
             raise AuthorityDenied("setup.choice", "normal setup signer record does not match current handoff")
         return row
+
+    def _release_receipt_handle_for_handoff(self, handoff: Any) -> str:
+        """Resolve the exact registry-issued release handle carried by the adopted session."""
+        from .bootstrap_runtime_factory import RootInitialCompilationSession, RootInitialPublicationHandoff
+        initial = getattr(handoff, "_initial_session", None)
+        if (not isinstance(handoff, RootInitialPublicationHandoff)
+                or not isinstance(initial, RootInitialCompilationSession)
+                or initial._release is not self.release
+                or initial._actor is not self.initial_compilation_registry.actor
+                or handoff._registry_seal != getattr(self.initial_compilation_registry, "_seal", None)
+                or initial.compilation_session_handle != handoff.compilation_session_handle
+                or initial.compilation_transaction_handle != handoff.compilation_transaction_handle
+                or not isinstance(initial.verified_release_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", initial.verified_release_receipt_handle)):
+            raise AuthorityDenied("setup.choice", "publication handoff lacks its current verified release receipt")
+        try:
+            self.release.verify_current()
+        except Exception:
+            raise AuthorityDenied("setup.choice", "selected installer release is no longer current") from None
+        return initial.verified_release_receipt_handle
 
     def resolve_selected_key(self, receipt_handle: str,
                              initial_compilation_session_handle: str) -> RootAuthorityKeyReceipt:
@@ -1091,6 +1112,7 @@ class SourceIssuerRecord:
     observer_enrollment_id: str
     source_action_ids: tuple[str, ...]
     private_provider_route_ids: tuple[str, ...] = ()
+    public_web_scope_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1145,6 +1167,9 @@ class ProtectedEnrollment:
     private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_model_selection_records: tuple[Mapping[str, Any], ...] = ()
+    public_web_scope_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -1168,7 +1193,9 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
                 "generation", "observer_enrollment_id", "source_action_ids"}
     channels = set(_SOURCE_ACTIONS_BY_CHANNEL)
     for row in value:
-        if not isinstance(row, dict) or set(row) not in (required, required | {"private_provider_route_ids"}):
+        optional_fields = {"private_provider_route_ids", "public_web_scope_ids"}
+        if (not isinstance(row, dict) or not required.issubset(row)
+                or set(row) - required - optional_fields):
             raise AuthorityDenied("enrollment.source", "protected source issuer fields are invalid")
         item = row
         channel = _read_id(item["issuer_channel_id"], "issuer channel")
@@ -1181,6 +1208,7 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
         actions = item["source_action_ids"]
         parents = item["allowed_parent_channels"]
         private_routes = item.get("private_provider_route_ids", [])
+        public_scopes = item.get("public_web_scope_ids", [])
         if (channel not in channels or not isinstance(role_sha, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", role_sha)
                 or not isinstance(actions, list) or not actions or len(actions) > 16
@@ -1192,16 +1220,23 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
                 or len(parents) != len(set(parents))
                 or not isinstance(private_routes, list) or len(private_routes) > 64
                 or any(not isinstance(route, str) for route in private_routes)
-                or len(private_routes) != len(set(private_routes))):
+                or len(private_routes) != len(set(private_routes))
+                or not isinstance(public_scopes, list) or len(public_scopes) > 32
+                or any(not isinstance(scope, str) for scope in public_scopes)
+                or len(public_scopes) != len(set(public_scopes))
+                or public_scopes != sorted(public_scopes)):
             raise AuthorityDenied("enrollment.source", "protected source issuer row is malformed")
         for route in private_routes:
             _read_id(route, "source private provider route")
+        for scope in public_scopes:
+            _read_id(scope, "source public web scope")
         if observer_id in seen_ids:
             raise AuthorityDenied("enrollment.source", "protected source issuer is duplicated")
         seen_ids.add(observer_id)
         result.append(SourceIssuerRecord(
             channel, profile, role_artifact, role_sha, capture_schema,
             tuple(parents), generation, observer_id, tuple(actions), tuple(private_routes),
+            tuple(public_scopes),
         ))
     return tuple(result)
 
@@ -1381,6 +1416,8 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "remote_startup_enrollments", "private_loopback_networks",
             "selected_resource_executions",
             "selected_application_runtimes",
+            "private_memory_endpoint_selections", "private_memory_model_selections",
+            "public_web_scopes",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -1400,12 +1437,48 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "source_issuers", "native_mcp_tool_bindings",
                    "resource_controller_roles", "remote_observation_enrollments",
                    "remote_startup_enrollments", "private_loopback_networks",
-                   "selected_resource_executions", "selected_application_runtimes")
+                   "selected_resource_executions", "selected_application_runtimes",
+                   "private_memory_endpoint_selections", "private_memory_model_selections",
+                   "public_web_scopes")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
+    # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
+    try:
+        from hermes_installer.protected_enrollment import (
+            RootSelectedPrivateMemoryEndpointBinding,
+            RootSelectedPrivateMemoryModelBinding,
+            RootSelectedPublicWebScope,
+        )
+        endpoints = {}
+        for row in item["private_memory_endpoint_selections"]:
+            selected = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            if selected.binding_id in endpoints:
+                raise ValueError("duplicate endpoint binding ID")
+            endpoints[selected.binding_id] = selected
+        models = set()
+        for row in item["private_memory_model_selections"]:
+            selected = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            if selected.binding_id in models or selected.endpoint_binding_id not in endpoints:
+                raise ValueError("duplicate model binding or unknown endpoint foreign key")
+            models.add(selected.binding_id)
+        public_scopes = []
+        for row in item["public_web_scopes"]:
+            selected = RootSelectedPublicWebScope.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            public_scopes.append(selected.enrollment_id)
+        if public_scopes != sorted(set(public_scopes)):
+            raise ValueError("public web scopes are duplicated or unsorted")
+    except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError) as exc:
+        raise AuthorityDenied("enrollment.generation", "protected selection catalog is invalid") from exc
     native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
     composio_channel_records = _parse_composio_channel_enrollment_records(
         item["composio_channel_enrollments"],
@@ -2714,6 +2787,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             selected_application_runtimes=service_generations["selected_application_runtimes"],
             native_schema_artifacts=service_generations["native_schema_artifacts"],
             native_mcp_tool_bindings=service_generations["native_mcp_tool_bindings"],
+            private_memory_endpoint_selections=service_generations["private_memory_endpoint_selections"],
+            private_memory_model_selections=service_generations["private_memory_model_selections"],
+            public_web_scopes=service_generations["public_web_scopes"],
         )
         generation_profiles = {}
         for service_record in service_generations["service_records"]:
@@ -2763,6 +2839,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_loopback_networks"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_resource_executions"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_application_runtimes"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_endpoint_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["public_web_scopes"]),
     )
 
 

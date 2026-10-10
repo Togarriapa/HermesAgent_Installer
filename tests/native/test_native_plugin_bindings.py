@@ -16,11 +16,13 @@ from hermes_installer.native_plugin_bindings import (
 
 
 def resolver_wire(*, rows=None):
+    process_role_records_sha256 = hashlib.sha256(b"[]").hexdigest()
     body = {
         "schema": 1,
         "package_id": "native-package-fixture",
         "profile_id": "profile-fixture",
         "generation": "generation-fixture",
+        "process_role_records_sha256": process_role_records_sha256,
         "adapters": list(rows if rows is not None else [{
             "adapter_id": "fixture-plugin",
             "manifest_sha256": "a" * 64,
@@ -130,7 +132,8 @@ class NativePluginBindingTests(unittest.TestCase):
         wrong_generation = resolver_wire()
         wrong_generation["adapters"][0]["generation"] = "generation-other"
         canonical = {key: wrong_generation[key] for key in
-                     ("schema", "package_id", "profile_id", "generation", "adapters")}
+                     ("schema", "package_id", "profile_id", "generation",
+                      "process_role_records_sha256", "adapters")}
         wrong_generation["resolver_sha256"] = hashlib.sha256(json.dumps(
             canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
             allow_nan=False).encode("utf-8")).hexdigest()

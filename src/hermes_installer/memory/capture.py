@@ -16,7 +16,9 @@ from hermes_installer.memory.broker import (
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 
 
-_HANDLE = re.compile(r"[A-Za-z0-9_-]{20,128}\Z", re.ASCII)
+# Match the native observer's exact opaque handle bounds so malformed short
+# values are rejected before entering its one-use reservation path.
+_HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z", re.ASCII)
 
 
 class MemoryCaptureUnavailable(RuntimeError):
@@ -127,3 +129,28 @@ class RootMemoryCaptureCoordinator:
             target=target, context=context, completed_turn=record,
             transcript=transcript, consent=consent,
         )
+
+
+def attach_root_memory_capture_coordinator(*, service: Any,
+                                           targets: Mapping[tuple[str, str, str], MemoryTarget],
+                                           queue: Any, owner_state: Any,
+                                           expected_active_generation_digest: str) -> RootMemoryCaptureCoordinator:
+    """Build and attach the single production whole-turn memory consumer.
+
+    This is intentionally a root-composition helper, not an RPC. It accepts
+    the exact observer already attached to AuthorityService and refuses to
+    manufacture one from worker-provided identities or transcript data.
+    """
+    registry = getattr(service, "native_turn_observation_registry", None)
+    if not callable(getattr(service, "authorize_completed_memory_turn", None)):
+        raise MemoryCaptureUnavailable("root completed-turn memory authorization is unavailable")
+    attach = getattr(registry, "attach_memory_capture_coordinator", None)
+    if not callable(attach):
+        raise MemoryCaptureUnavailable("root native completed-turn observer is unavailable")
+    coordinator = RootMemoryCaptureCoordinator(
+        service=service, turn_registry=registry, targets=targets, queue=queue,
+        owner_state=owner_state,
+        expected_active_generation_digest=expected_active_generation_digest,
+    )
+    attach(coordinator)
+    return coordinator

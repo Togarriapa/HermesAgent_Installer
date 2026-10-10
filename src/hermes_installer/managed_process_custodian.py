@@ -3504,13 +3504,15 @@ class ManagedProcessEffectHandler:
                 if launcher.poll() is not None:
                     sink = self._diagnostic_sink
                     if sink is not None:
-                        parts = [f"launcher-exit={launcher.returncode}".encode("ascii")]
+                        parts = [f"unit={unit} launcher-exit={launcher.returncode}".encode("ascii")]
                         for name, stream in ((b"stdout", launcher.stdout), (b"stderr", launcher.stderr)):
                             if stream is None:
                                 continue
                             try:
                                 output = stream.read(1024)
                             except (OSError, ValueError):
+                                output = b""
+                            if not isinstance(output, bytes):
                                 output = b""
                             parts.append(name + b"=" + output[:1024])
                         # `systemd-run --quiet --wait --collect` intentionally
@@ -3524,7 +3526,10 @@ class ManagedProcessEffectHandler:
                             (b"unit-properties", [str(self.systemctl), "--system", "show", unit,
                                 "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus",
                                 "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
-                                "-p", "RestrictAddressFamilies"]),
+                                "-p", "RestrictAddressFamilies", "-p", "RuntimeDirectory",
+                                "-p", "RuntimeDirectoryMode", "-p", "PrivateMounts",
+                                "-p", "MountFlags", "-p", "NoExecPaths", "-p", "NoSuidPaths",
+                                "-p", "NoDevicePaths"]),
                             (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
                                 "-n", "8", "-o", "cat", "--unit", unit]),
                         ):
@@ -4779,6 +4784,21 @@ def create_managed_process_handler(profiles: Mapping[str, ManagedProfileCustody]
     return ManagedProcessEffectHandler(profiles, **kwargs)
 
 
+@dataclass(frozen=True, slots=True)
+class _RootPreparedBuildRuntime:
+    """Private kernel limits projected from the prepared setup template."""
+    profile_id: str
+    owner_uid: int
+    owner_gid: int
+    service_user: str
+    generation: str
+    max_lifetime_seconds: float
+    memory_max_bytes: int
+    cpu_quota_percent: int | None
+    io_weight: int | None
+    tasks_max: int
+
+
 class ManagedBuildJobRunner:
     """Run one root-selected build recipe in a private transient systemd unit.
 
@@ -4813,6 +4833,218 @@ class ManagedBuildJobRunner:
         self._active: set[tuple[str, str]] = set()
         self._records: dict[str, Mapping[str, Any]] = {}
         self._lock = threading.RLock()
+        self._setup_build_grant_issuer: Any | None = None
+
+    def bind_setup_build_grant_issuer(self, issuer: Any) -> None:
+        """Bind the one root setup issuer used by the fixed Xpra build path."""
+        from hermes_installer.authority.xpra_build_selection import RootXpraSetupBuildGrantIssuer
+        if (os.geteuid() != 0 or type(issuer) is not RootXpraSetupBuildGrantIssuer
+                or not callable(getattr(getattr(issuer, "producer", None), "revalidate", None))):
+            raise ValueError("setup build grant issuer is unavailable")
+        with self._lock:
+            if self._setup_build_grant_issuer not in (None, issuer):
+                raise ValueError("a different root setup build issuer is already bound")
+            self._setup_build_grant_issuer = issuer
+
+    def run_selected_setup_build(self, inputs: Any, *, selection: Any, grant: Any,
+                                 controller_pidfd: int, timeout: float,
+                                 cancelled: Callable[[], bool]):
+        """Run only the prepared Xpra setup recipe under its distinct sealed grant.
+
+        This path never fabricates a worker HostContext or EffectAuthorization,
+        and never resolves or registers an active worker process profile. The
+        setup selection, one-use issuer, held output directory FD and live
+        setup-controller PIDFD form a separate root-owned admission.
+        """
+        from hermes_installer.authority.bootstrap_runtime_factory import RootPreparedBuildServiceSelection
+        from hermes_installer.authority.build_execution import (
+            BUILD_MOUNT_TARGETS, ManagedBuildResult, _canonical, managed_process_identity_digest,
+        )
+        from hermes_installer.authority.xpra_build_selection import (
+            BUILD_OPERATION_ID, BUILD_TARGET, RootSelectedXpraBuildSelection,
+            RootXpraSetupBuildGrant, XpraBuildSelectionDenied,
+        )
+
+        manager = self.manager
+        with self._lock:
+            issuer = self._setup_build_grant_issuer
+        if (os.geteuid() != 0 or not sys.platform.startswith("linux")
+                or type(selection) is not RootSelectedXpraBuildSelection
+                or type(grant) is not RootXpraSetupBuildGrant
+                or issuer is None or type(getattr(selection, "setup_build_subject", None))
+                    is not RootPreparedBuildServiceSelection
+                or type(controller_pidfd) is not int or controller_pidfd < 0
+                or not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                or not 0 < timeout <= 300):
+            raise AuthorityDenied("build.setup", "root setup build admission is unavailable")
+        subject = selection.setup_build_subject
+        profile = selection.build_profile
+        expected_input_fields = (
+            "target_id", "generation", "service_generation_digest", "build_service_enrollment_id",
+            "build_service_generation", "operation_id", "selection_digest", "source_artifact_id",
+            "source_sha256", "source_root", "source_tree_files", "source_tree_manifest_sha256",
+            "toolchain_artifact_id", "toolchain_sha256", "toolchain_root", "toolchain_tree_files",
+            "toolchain_tree_manifest_sha256", "builder_artifact_id", "builder_sha256",
+            "builder_executable", "argv_recipe", "environment", "output_specs", "output_root",
+            "output_root_fd", "output_root_id", "output_owner_uid", "output_owner_gid",
+            "max_lifetime_seconds",
+        )
+        if any(not hasattr(inputs, name) for name in expected_input_fields):
+            raise AuthorityDenied("build.inputs", "selected setup build inputs are incomplete")
+        if (inputs.target_id != BUILD_TARGET or inputs.operation_id != BUILD_OPERATION_ID
+                or inputs.output_root is not None or type(inputs.output_root_fd) is not int
+                or inputs.output_root_fd < 0 or inputs.output_root_id != selection.output_root_id
+                or inputs.build_service_enrollment_id != subject.id
+                or inputs.build_service_generation != subject.generation
+                or inputs.output_owner_uid != subject.service_uid
+                or inputs.output_owner_gid != subject.service_gid
+                or inputs.generation != profile.generation
+                or inputs.service_generation_digest != profile.service_generation_digest
+                or inputs.builder_artifact_id != selection.builder_artifact_id
+                or inputs.builder_sha256 != selection.builder_sha256
+                or inputs.source_artifact_id != selection.source_artifact_id
+                or inputs.source_sha256 != selection.source_sha256
+                or inputs.toolchain_artifact_id != selection.toolchain_artifact_id
+                or inputs.toolchain_sha256 != selection.toolchain_sha256
+                or inputs.source_tree_manifest_sha256 != selection.compiled_source_manifest_sha256
+                or inputs.original_source_manifest_sha256 != selection.source_manifest_sha256
+                or inputs.builder_executable != selection.pm_runtime.python_path
+                or inputs.max_lifetime_seconds > profile.max_lifetime_seconds
+                or tuple(inputs.argv_recipe) != tuple(profile.argv_recipe)
+                or dict(inputs.environment) != dict(profile.environment)
+                or not isinstance(inputs.selection_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", inputs.selection_digest)
+                or type(inputs.max_lifetime_seconds) is not int
+                or not 1 <= inputs.max_lifetime_seconds <= 300):
+            raise AuthorityDenied("build.setup_binding", "setup build inputs differ from the sealed Xpra selection")
+        source_rows = tuple(getattr(selection.source.tree, "tree_files", ()))
+        expected_source_files = {
+            item.path: item for item in source_rows if getattr(item, "kind", "file") == "file"
+        }
+        provided_source_files = {getattr(item, "path", None): item for item in inputs.source_tree_files}
+        if (set(provided_source_files) != set(expected_source_files)
+                or any((getattr(provided_source_files[name], "sha256", None),
+                        getattr(provided_source_files[name], "size_bytes", None),
+                        getattr(provided_source_files[name], "executable", None))
+                       != (expected_source_files[name].sha256, expected_source_files[name].size_bytes,
+                           expected_source_files[name].executable)
+                       for name in expected_source_files)):
+            raise AuthorityDenied("build.setup_source", "staged source projection differs from the selected archive")
+        module_receipt = selection.module_receipt
+        toolchain_rows = tuple(inputs.toolchain_tree_files)
+        if (len(toolchain_rows) != 1
+                or getattr(toolchain_rows[0], "path", None) != module_receipt.relative_path
+                or getattr(toolchain_rows[0], "sha256", None) != module_receipt.sha256
+                or getattr(toolchain_rows[0], "size_bytes", None) != module_receipt.size_bytes
+                or getattr(toolchain_rows[0], "executable", None) is not False):
+            raise AuthorityDenied("build.setup_toolchain", "staged transform module differs from its installed receipt")
+        expected_specs = set(profile.output_specs)
+        if set(inputs.output_specs) != expected_specs or any(
+                getattr(inputs.output_specs[name], "relative_path", None)
+                    != profile.output_specs[name].relative_path
+                or getattr(inputs.output_specs[name], "kind", None) != profile.output_specs[name].kind
+                or getattr(inputs.output_specs[name], "maximum_bytes", None)
+                    != profile.output_specs[name].maximum_bytes
+                or getattr(inputs.output_specs[name], "executable_role", None)
+                    != profile.output_specs[name].executable_role
+                or getattr(inputs.output_specs[name], "target_facts", None)
+                    != profile.output_specs[name].target_facts
+                for name in expected_specs):
+            raise AuthorityDenied("build.setup_outputs", "setup output specification differs from the fixed recipe")
+        expected_digest = hashlib.sha256(_canonical({
+            "selection_handle": selection.selection_handle,
+            "recipe_sha256": selection.recipe_sha256,
+            "grant_id": grant.grant_id,
+            "operation_id": BUILD_OPERATION_ID,
+            "parameters": {},
+        })).hexdigest()
+        if inputs.selection_digest != expected_digest:
+            raise AuthorityDenied("build.setup_binding", "setup build request digest is not canonical")
+
+        output_fd = controller_fd = -1
+        daemon_lifetime_fd = -1
+        try:
+            output_fd = os.dup(inputs.output_root_fd)
+            controller_fd = os.dup(controller_pidfd)
+            output_stat = os.fstat(output_fd)
+            capability_fd = selection.output_root.open_current()
+            try:
+                capability_stat = os.fstat(capability_fd)
+            finally:
+                os.close(capability_fd)
+            if ((output_stat.st_dev, output_stat.st_ino) != (capability_stat.st_dev, capability_stat.st_ino)
+                    or not stat.S_ISDIR(output_stat.st_mode) or output_stat.st_uid != subject.service_uid
+                    or output_stat.st_gid != subject.service_gid or stat.S_IMODE(output_stat.st_mode) != 0o700
+                    or os.listdir(output_fd)):
+                raise AuthorityDenied("build.output", "prepared output-root descriptor is stale or not fresh")
+            if manager._pidfd_target(controller_fd) != selection._session._factory.session_store._live(
+                    selection._session._handle).record["root_actor_identity"]["pid"] or _pidfd_exited(controller_fd):
+                raise AuthorityDenied("build.controller", "selected setup controller PIDFD is not current")
+            daemon_lifetime_fd = os.pidfd_open(os.getpid(), 0)
+            producer = getattr(issuer, "producer", None)
+            if (producer is None or getattr(producer, "session", None) is not selection._session
+                    or subject.verify_current() != subject):
+                raise AuthorityDenied("build.setup_subject", "prepared build subject is no longer current")
+
+            # Grant consumption is the one-use start admission. All checks that
+            # can run before it are complete; after it, only this method owns
+            # the terminal lifecycle and output descriptor.
+            issuer.consume(grant, selection)
+            root_profile = _RootPreparedBuildRuntime(
+                profile_id=subject.profile_id, owner_uid=subject.service_uid,
+                owner_gid=subject.service_gid, service_user=pwd.getpwuid(subject.service_uid).pw_name,
+                generation=subject.generation, max_lifetime_seconds=min(300.0, float(inputs.max_lifetime_seconds)),
+                memory_max_bytes=536_870_912, cpu_quota_percent=None, io_weight=None,
+                tasks_max=64,
+            )
+            groups = os.getgrouplist(root_profile.service_user, subject.service_gid)
+            if pwd.getpwuid(subject.service_uid).pw_gid != subject.service_gid or set(groups) != {subject.service_gid}:
+                raise AuthorityDenied("build.setup_subject", "prepared build service account changed")
+            output_path = Path(f"/proc/self/fd/{output_fd}")
+            fd_inputs = replace(inputs, output_root=output_path)
+
+            def revalidate_setup() -> bool:
+                if cancelled() or _pidfd_exited(controller_fd) or _pidfd_exited(daemon_lifetime_fd):
+                    return False
+                try:
+                    producer.revalidate(selection)
+                    current_subject = subject.verify_current()
+                    current_live = selection._session._factory.session_store._live(selection._session._handle)
+                    return (current_subject == subject
+                            and current_live.record.get("root_actor_identity", {}).get("pid")
+                                == manager._pidfd_target(controller_fd))
+                except Exception:
+                    return False
+
+            reservation = (BUILD_TARGET, subject.generation)
+            with self._lock:
+                if reservation in self._active or self._MOUNT_RESERVATION in self._active:
+                    raise AuthorityDenied("build.setup", "fixed setup build mounts are already reserved")
+                self._active.update((reservation, self._MOUNT_RESERVATION))
+            try:
+                return self._run_one(
+                    fd_inputs, root_profile, None, None, os.getpid(), daemon_lifetime_fd,
+                    float(timeout), cancelled, ManagedBuildResult, managed_process_identity_digest,
+                    BUILD_MOUNT_TARGETS, root_currentness=revalidate_setup,
+                    root_selection_digest=inputs.selection_digest, output_root_fd=output_fd,
+                    root_effect_check=lambda: (issuer._issued.get(grant.grant_id) is grant
+                        and grant.grant_id in issuer._spent
+                        and issuer.monotonic() < grant.expires_monotonic
+                        and revalidate_setup()),
+                    require_root_effect=True,
+                )
+            finally:
+                with self._lock:
+                    self._active.discard(reservation)
+                    self._active.discard(self._MOUNT_RESERVATION)
+        except (OSError, XpraBuildSelectionDenied):
+            raise AuthorityDenied("build.setup", "prepared Xpra setup build admission failed") from None
+        finally:
+            for fd in (output_fd, controller_fd, daemon_lifetime_fd):
+                if type(fd) is int and fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
 
     def run_selected_build(self, inputs: Any, *, context: HostContext,
                            authorization: EffectAuthorization, peer_pid: int,
@@ -5285,10 +5517,15 @@ class ManagedBuildJobRunner:
                 self._active.discard(reservation)
                 self._active.discard(self._MOUNT_RESERVATION)
 
-    def _run_one(self, inputs: Any, profile: ManagedProfileCustody, context: HostContext,
-                 authorization: EffectAuthorization, peer_pid: int, peer_pidfd: int,
+    def _run_one(self, inputs: Any, profile: Any, context: HostContext | None,
+                 authorization: EffectAuthorization | None, peer_pid: int, peer_pidfd: int,
                  timeout: float, cancelled: Callable[[], bool], result_type: Any,
-                 identity_digest: Callable[..., str], mount_targets: Mapping[str, str]):
+                 identity_digest: Callable[..., str], mount_targets: Mapping[str, str], *,
+                 root_currentness: Callable[[], bool] | None = None,
+                 root_selection_digest: str | None = None,
+                 root_effect_check: Callable[[], bool] | None = None,
+                 output_root_fd: int | None = None,
+                 require_root_effect: bool = False):
         manager = self.manager
         job_id = uuid.uuid4().hex
         service_generation = profile.generation
@@ -5329,8 +5566,16 @@ class ManagedBuildJobRunner:
 
         def require_active() -> None:
             nonlocal last_generation_check
-            if (cancelled() or manager.monotonic() >= deadline or _pidfd_exited(parent_fd)
-                    or self.manager.profiles.get(profile.profile_id) is not profile):
+            if cancelled() or manager.monotonic() >= deadline or _pidfd_exited(parent_fd):
+                raise AuthorityDenied("build.expired", "build lease, caller or service generation expired")
+            if root_currentness is not None:
+                now = manager.monotonic()
+                if now - last_generation_check >= 0.25:
+                    if not root_currentness():
+                        raise AuthorityDenied("build.generation", "root setup selection or controller is no longer current")
+                    last_generation_check = now
+                return
+            if self.manager.profiles.get(profile.profile_id) is not profile:
                 raise AuthorityDenied("build.expired", "build lease, caller or service generation expired")
             now = manager.monotonic()
             if now - last_generation_check >= 0.25:
@@ -5345,8 +5590,14 @@ class ManagedBuildJobRunner:
         try:
             require_active()
             self._verify_inputs(inputs)
-            self._validate_output_root(Path(inputs.output_root), profile.owner_uid, profile.owner_gid)
-            output_root_info = Path(inputs.output_root).lstat()
+            if output_root_fd is None:
+                self._validate_output_root(Path(inputs.output_root), profile.owner_uid, profile.owner_gid)
+                output_root_info = Path(inputs.output_root).lstat()
+            else:
+                output_root_info = os.fstat(output_root_fd)
+                self._validate_output_root_fd(output_root_info, profile.owner_uid, profile.owner_gid)
+                if os.listdir(output_root_fd):
+                    raise AuthorityDenied("build.output", "selected output directory is not empty")
             self._prepare_mount_targets()
             manager._ensure_root_runtime_directory(Path("/run/hermes-installer/build-jobs"), 0o700)
             job_root.mkdir(mode=0o700)
@@ -5400,7 +5651,9 @@ class ManagedBuildJobRunner:
                 "--property=BindReadOnlyPaths=" + str(inputs.source_root) + ":" + mount_targets["source"],
                 "--property=BindReadOnlyPaths=" + str(inputs.toolchain_root) + ":" + mount_targets["toolchain"],
                 "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
-                "--property=BindPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
+                "--property=BindPaths=" + (
+                    f"/proc/{os.getpid()}/fd/{output_root_fd}" if output_root_fd is not None
+                    else str(inputs.output_root)) + ":" + mount_targets["output"],
                 # Every mask is optional on a clean development host: systemd
                 # rejects the namespace if an unprefixed masked path is absent.
                 "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
@@ -5411,6 +5664,8 @@ class ManagedBuildJobRunner:
                 properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
             if profile.io_weight is not None:
                 properties.append(f"--property=IOWeight={profile.io_weight}")
+            if getattr(profile, "tasks_max", None) is not None:
+                properties.append(f"--property=TasksMax={profile.tasks_max}")
             env_args = ["--setenv=" + name + "=" + value for name, value in sorted(env.items())]
             # Drop manager/user-session variables before setting the closed build environment.
             manager_env = subprocess.run([str(manager.systemctl), "--system", "show-environment"],
@@ -5438,8 +5693,12 @@ class ManagedBuildJobRunner:
                 "--service-type=exec", "--wait", "--pipe",
                 "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
             require_active()
-            if manager.monotonic() >= authorization.monotonic_expires_at:
-                raise AuthorityDenied("build.expired", "start authorization expired before the unit launch effect")
+            if authorization is not None:
+                if manager.monotonic() >= authorization.monotonic_expires_at:
+                    raise AuthorityDenied("build.expired", "start authorization expired before the unit launch effect")
+            elif require_root_effect:
+                if root_effect_check is None or not root_effect_check():
+                    raise AuthorityDenied("build.expired", "root setup build admission expired before launch")
             launcher = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
                 close_fds=True, shell=False)
@@ -5530,7 +5789,12 @@ class ManagedBuildJobRunner:
             if launcher.poll() is None:
                 launcher.wait(timeout=1.0)
             launcher_reaped = launcher.returncode is not None
-            output_root_after = Path(inputs.output_root).lstat()
+            if root_currentness is not None:
+                # A setup build is not allowed to publish artifacts after its
+                # prepared selection/controller has gone stale, even when the
+                # child happened to exit cleanly at that boundary.
+                require_active()
+            output_root_after = os.fstat(output_root_fd) if output_root_fd is not None else Path(inputs.output_root).lstat()
             if (output_root_info is None or (output_root_info.st_dev, output_root_info.st_ino)
                     != (output_root_after.st_dev, output_root_after.st_ino)):
                 raise AuthorityDenied("build.output", "selected output root changed before terminal attestation")
@@ -5597,9 +5861,11 @@ class ManagedBuildJobRunner:
             evidence = {
                 "terminal_success_record_id": terminal_id, "target": inputs.target_id,
                 "generation": inputs.generation, "service_generation": service_generation,
-                "selection_digest": authorization.request_digest, "process_identity_digest": identity,
+                "selection_digest": (authorization.request_digest if authorization is not None
+                                     else root_selection_digest), "process_identity_digest": identity,
                 "output_root_id": inputs.output_root_id,
-                "output_root_path": str(Path(inputs.output_root)),
+                "output_root_path": ("<held-output-root-fd>" if output_root_fd is not None
+                                     else str(Path(inputs.output_root))),
                 "output_root_device": output_root_info.st_dev,
                 "output_root_inode": output_root_info.st_ino,
                 "process_id": proc_id, "uid": profile.owner_uid, "gid": profile.owner_gid,
@@ -5912,6 +6178,12 @@ class ManagedBuildJobRunner:
                 or info.st_uid != uid or info.st_gid != gid or stat.S_IMODE(info.st_mode) != 0o700
                 or any(path.iterdir())):
             raise AuthorityDenied("build.output", "selected output root is not a fresh private directory")
+
+    @staticmethod
+    def _validate_output_root_fd(info: os.stat_result, uid: int, gid: int) -> None:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_gid != gid
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise AuthorityDenied("build.output", "held output root is not a private selected directory")
 
     @staticmethod
     def _copy_build_tree(source: Path, destination: Path, tree_files: Any, uid: int, gid: int) -> None:

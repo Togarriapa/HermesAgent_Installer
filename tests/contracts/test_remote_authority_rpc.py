@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
 from hermes_installer.authority.remote_sessions import RemoteAdmissionRequest
@@ -84,3 +86,29 @@ class RemoteAuthorityRPCContracts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_native_channel_context_client_uses_opaque_handle_and_strict_bounded_response():
+    now = 10.0
+    result = {
+        "schema": 1,
+        "source_receipt_handle": "R" * 43,
+        "producer_context_delivery_handle": "C" * 43,
+        "payload_sha256": "a" * 64,
+        "payload_size_bytes": 37,
+        "expires_monotonic": 20.0,
+    }
+    calls = []
+    client = AuthorityClient(Path("/run/not-used.sock"), monotonic=lambda: now)
+    client._rpc = lambda operation, payload, **kwargs: calls.append((operation, payload, kwargs)) or result
+
+    delivery = client.take_native_channel_context("C" * 43)
+
+    assert delivery.to_wire() == result
+    assert calls[0][0] == "native.channel.context.take"
+    assert calls[0][1] == {"schema": 1, "producer_context_delivery_handle": "C" * 43}
+    assert "source_receipt_handle" not in calls[0][1]
+
+    client._rpc = lambda *_args, **_kwargs: {**result, "signed_context": {}}
+    with pytest.raises(Exception):
+        client.take_native_channel_context("C" * 43)

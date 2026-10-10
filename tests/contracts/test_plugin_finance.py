@@ -15,6 +15,7 @@ from hermes_installer.components.plugin_finance import (
     NetworkClass, NetworkEnrollment,
     SQLiteExecutionLedger, WalletAction,
     PLUGIN_ACTION_SCHEMAS,
+    _validate_financial_read_result,
 )
 from hermes_installer.components.plugin_effects import StaticPluginActionSchemas, _validate_schema
 from hermes_installer.components.plugin_finance_schemas import (
@@ -129,14 +130,16 @@ class PluginRuntime:
 
 
 class EffectSpy:
-    def __init__(self, state="read-complete"):
+    def __init__(self, state="read-complete", result=None):
         self.calls = []
         self.state = state
+        self.result = result if result is not None else {"items": [{"balance": "10", "access_token": "secret"}],
+                                                         "account_alias": "fixture-account"}
 
     def invoke(self, **kwargs):
         self.calls.append(kwargs)
         return {"schema": 1, "operation_id": "fixture-op", "state": self.state,
-                "result": {"items": [{"balance": "10", "access_token": "secret"}]},
+                "result": self.result,
                 "verification_status": "verified" if self.state == "committed" else "not-applicable",
                 "resume_action_id": None}
 
@@ -404,6 +407,52 @@ class PluginFinanceTests(unittest.TestCase):
         self.assertEqual(effects.calls[0]["arguments"]["operation"], "balances")
         self.assertNotIn("financial_data", vars(runtime))
         self.assertNotIn("access_token", str(result))
+        self.assertEqual(result["observations"][0]["account_alias"], "fixture-account")
+
+    def test_financial_read_requires_exact_root_alias_and_preserves_128_character_domain(self):
+        def run_with(result):
+            effects = EffectSpy(result=result)
+            runtime = PluginRuntime("financial-data-hub", effects)
+            context = PluginContext()
+            FinancialDataHubImplementation().register(context, runtime)
+            return context.tools["financial_data_read"]["handler"](
+                {"provider": "bank-aisp", "operation": "balances"})
+
+        with self.assertRaises(FinanceUnavailable):
+            run_with({"items": []})
+        with self.assertRaises(FinanceUnavailable):
+            run_with({"items": [], "account_alias": "a" * 129})
+        alias = "a" + "." * 127
+        result = run_with({"items": [{"balance": "12"}], "account_alias": alias})
+        self.assertEqual(result["observations"][0]["account_alias"], alias)
+
+    def test_financial_read_rejects_malformed_data_and_nonfinite_or_oversize_results(self):
+        def run_with(result):
+            context = PluginContext()
+            FinancialDataHubImplementation().register(context,
+                PluginRuntime("financial-data-hub", EffectSpy(result=result)))
+            return context.tools["financial_data_read"]["handler"](
+                {"provider": "bank-aisp", "operation": "balances"})
+
+        with self.assertRaises(FinanceDenied):
+            run_with({"items": [{"balance": "x" * 2049}], "account_alias": "checking"})
+        with self.assertRaises(FinanceUnavailable):
+            run_with({"items": [{"balance": float("nan")}], "account_alias": "checking"})
+        with self.assertRaises(FinanceDenied):
+            run_with({"items": [{"bad key": "value"}], "account_alias": "checking"})
+        with self.assertRaises(FinanceDenied):
+            run_with({"items": [{"timestamp": "t" * 65}], "account_alias": "checking"})
+        too_large = {"observations": [{"provider": "bank-aisp", "account_alias": "checking",
+            "kind": "balances", "observed_at": "2026-10-10T00:00:00Z", "source_timestamp": None,
+            "freshness": "provider-timestamp-unavailable", "data": {"balance": "x" * 2048}}
+            for _ in range(1000)]}
+        with self.assertRaises(FinanceDenied):
+            _validate_financial_read_result(too_large)
+        missing = {"observations": [{"provider": "bank-aisp", "account_alias": "checking",
+            "kind": "balances", "observed_at": "2026-10-10T00:00:00Z", "freshness": "timestamped",
+            "data": {}}]}
+        with self.assertRaises(FinanceDenied):
+            _validate_financial_read_result(missing)
 
     def test_registered_tool_schemas_reuse_exact_catalog_without_account_or_recipient(self):
         for adapter, implementation, name in (

@@ -26,6 +26,8 @@ from hermes_installer.protected_enrollment import (
     SelectedApplicationRuntimeEnrollment,
     RemoteStartupEnrollment,
     RootSelectedRemoteStartup,
+    RootSelectedPrivateMemoryEndpointBinding,
+    RootSelectedPrivateMemoryModelBinding,
 )
 
 
@@ -118,6 +120,55 @@ class RootRuntimeBindings:
     resource_credential_bindings: Mapping[tuple[str, str], ResourceCredentialBinding] = MappingProxyType({})
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     resource_backend_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_engine_selections: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+
+    @property
+    def service_generation_digest(self) -> str:
+        return self.enrollment_catalog.digest
+
+    def resolve_memory_enrollment(self, memory_enrollment_id: str, *,
+                                  service_generation_digest: str) -> Any:
+        return self.enrollment_catalog.resolve_memory_enrollment(
+            memory_enrollment_id, service_generation_digest=service_generation_digest)
+
+    def resolve_current_public_web_scopes(
+        self, web_scope_ids: tuple[str, ...] | list[str], *, principal_id: str,
+        profile_id: str, profile_generation: str, service_generation_digest: str,
+    ) -> tuple[Any, ...]:
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("public web selection belongs to a stale active generation")
+        scopes = self.enrollment_catalog.resolve_current_public_web_scopes(
+            web_scope_ids, principal_id=principal_id, profile_id=profile_id,
+            profile_generation=profile_generation,
+            service_generation_digest=service_generation_digest,
+        )
+        return tuple(self.resolve_public_web_scope(scope.enrollment_id, scope.generation)
+                     for scope in scopes)
+
+    def resolve_public_web_scope(self, enrollment_id: str, generation: str) -> Any:
+        selected = self.enrollment_catalog.resolve_public_web_scope(enrollment_id, generation)
+        artifact = self.artifact_catalog.artifacts.get(selected.target_contract_artifact_id)
+        if artifact is None or artifact.sha256 != selected.target_contract_sha256:
+            raise EnrollmentDenied("public web target contract is absent from the verified artifact catalog")
+        # Verify the installed root artifact bytes at lookup time. Its separate
+        # source receipt handle stays attached to the selected DTO for the
+        # target-selection registry/currentness join.
+        self.artifact_catalog.resolve(
+            selected.target_contract_artifact_id, selected.target_contract_sha256,
+            self.artifact_staging_directory, expected_uid=0,
+        )
+        return selected
+
+    def resolve_private_memory_engine_selection(self, selection_id: str, *,
+                                                service_generation_digest: str) -> Mapping[str, Any]:
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("private memory selection belongs to a stale service generation")
+        if not isinstance(selection_id, str) or not selection_id:
+            raise EnrollmentDenied("private memory selection ID is invalid")
+        selected = self.private_memory_engine_selections.get(selection_id)
+        if selected is None:
+            raise EnrollmentDenied("private memory engine selection is unavailable")
+        return selected
     remote_startup_records: tuple[Mapping[str, Any], ...] = ()
     private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
@@ -130,6 +181,69 @@ class RootRuntimeBindings:
     application_source_receipts: Any | None = None
     application_runtime_receipts: Any | None = None
 
+    def resolve_private_memory_endpoint_binding(
+        self, binding_id: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        """Return the current digest-bound endpoint selection, not a live endpoint proof."""
+        selected = self.enrollment_catalog.resolve_private_memory_endpoint_binding(binding_id)
+        artifacts = getattr(self.artifact_catalog, "artifacts", None)
+        if not isinstance(artifacts, Mapping):
+            raise EnrollmentDenied("private memory endpoint artifact catalog is unavailable")
+        config = artifacts.get(selected.server_config_artifact_id)
+        if config is None or getattr(config, "sha256", None) != selected.server_config_sha256:
+            raise EnrollmentDenied("private memory endpoint server configuration is not pinned")
+        if any(artifact_id not in artifacts for artifact_id in selected.runtime_artifact_ids):
+            raise EnrollmentDenied("private memory endpoint runtime artifact is not pinned")
+        return selected
+
+    def resolve_private_memory_model_binding(
+        self, binding_id: str, endpoint_binding_id: str | None = None,
+    ) -> RootSelectedPrivateMemoryModelBinding:
+        """Return the current digest-bound model selection, not installed-weight proof."""
+        selected = self.enrollment_catalog.resolve_private_memory_model_binding(
+            binding_id, endpoint_binding_id,
+        )
+        artifacts = getattr(self.artifact_catalog, "artifacts", None)
+        if not isinstance(artifacts, Mapping):
+            raise EnrollmentDenied("private memory model artifact catalog is unavailable")
+        for artifact_id, digest in (
+            (selected.license_artifact_id, selected.license_sha256),
+            (selected.runtime_artifact_id, selected.runtime_artifact_sha256),
+            (selected.load_config_artifact_id, selected.load_config_sha256),
+        ):
+            artifact = artifacts.get(artifact_id)
+            if artifact is None or getattr(artifact, "sha256", None) != digest:
+                raise EnrollmentDenied("private memory model source/runtime/config artifact is not pinned")
+        if selected.model_artifact_id.startswith("existing-model:"):
+            if selected.model_artifact_id != f"existing-model:{selected.model_tree_manifest_sha256}":
+                raise EnrollmentDenied("selected existing model artifact does not match its protected tree manifest")
+        else:
+            artifact = artifacts.get(selected.model_artifact_id)
+            if artifact is None or getattr(artifact, "sha256", None) != selected.model_artifact_sha256:
+                raise EnrollmentDenied("private memory model artifact is not pinned")
+        return selected
+
+    private_memory_engine_selections: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+
+    @property
+    def service_generation_digest(self) -> str:
+        return self.enrollment_catalog.digest
+
+    def resolve_memory_enrollment(self, memory_enrollment_id: str, *,
+                                  service_generation_digest: str) -> Any:
+        return self.enrollment_catalog.resolve_memory_enrollment(
+            memory_enrollment_id, service_generation_digest=service_generation_digest)
+
+    def resolve_private_memory_engine_selection(self, selection_id: str, *,
+                                                service_generation_digest: str) -> Mapping[str, Any]:
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("private memory selection belongs to a stale service generation")
+        if not isinstance(selection_id, str) or not selection_id:
+            raise EnrollmentDenied("private memory selection ID is invalid")
+        selected = self.private_memory_engine_selections.get(selection_id)
+        if selected is None:
+            raise EnrollmentDenied("private memory engine selection is unavailable")
+        return selected
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
         """Return one channel row only after active resource, issuer and controller joins."""
@@ -697,6 +811,18 @@ class RootRuntimeBindings:
         # getter only returns the immutable selected row.
         return row
 
+    def resolve_selected_native_process_role(
+        self, package_id: str, native_package_generation: str, role_id: str,
+    ) -> Any:
+        """Resolve one explicit v123 process-role artifact independently of actions."""
+        role = self.enrollment_catalog.resolve_selected_native_process_role(
+            package_id, native_package_generation, role_id,
+        )
+        artifact = self.artifact_catalog.artifacts.get(role.role_artifact_id)
+        if artifact is None or artifact.sha256 != role.role_sha256:
+            raise EnrollmentDenied("selected native process-role artifact is not pinned in the protected catalog")
+        return role
+
     def _remote_observation_join(self, remote_enrollment_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
         if not isinstance(remote_enrollment_id, str) or not remote_enrollment_id:
             raise EnrollmentDenied("remote observation enrollment ID is invalid")
@@ -991,6 +1117,8 @@ class RootRuntimeBindings:
                     for registration in package.registration_records.values())
         pins.extend((workflow.workflow_artifact_id, workflow.workflow_sha256)
                     for workflow in package.workflow_records.values())
+        pins.extend((role.role_artifact_id, role.role_sha256)
+                    for role in package.process_role_records.values())
         for artifact_id, digest in pins:
             spec = self.artifact_catalog.artifacts.get(artifact_id)
             if spec is None or spec.sha256 != digest:
@@ -1239,6 +1367,7 @@ def build_root_runtime_bindings(
         "resource_backend_enrollment_records", "remote_startup_records",
         "private_loopback_network_records", "selected_resource_execution_records",
         "resource_scope_binding_records", "selected_application_runtime_records",
+        "public_web_scope_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
         raise EnrollmentDenied("verified generation, device, and build records are unavailable")
@@ -1258,6 +1387,13 @@ def build_root_runtime_bindings(
         memory_enrollments=getattr(enrollment, "memory_enrollments", None),
         parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
         selected_application_runtimes=getattr(enrollment, "selected_application_runtime_records", None),
+        private_memory_endpoint_selections=getattr(
+            enrollment, "private_memory_endpoint_selection_records", None,
+        ),
+        private_memory_model_selections=getattr(
+            enrollment, "private_memory_model_selection_records", None,
+        ),
+        public_web_scopes=getattr(enrollment, "public_web_scope_records", None),
         native_schema_artifacts=getattr(enrollment, "native_schema_artifact_records", None),
         native_mcp_tool_bindings=getattr(enrollment, "native_mcp_tool_binding_records", None),
     )
@@ -1427,6 +1563,10 @@ def build_root_runtime_bindings(
             raise EnrollmentDenied("fixed service connector handler conflicts with an existing root handler")
         effect_handlers[key] = handler
 
+    private_memory_engine_selections = _parse_private_memory_engine_selections(
+        getattr(enrollment, "private_memory_engine_selections", ()),
+    )
+
     return RootRuntimeBindings(
         enrollment_catalog=service_catalog,
         build_catalog=build_catalog,
@@ -1458,11 +1598,14 @@ def build_root_runtime_bindings(
         resource_credential_bindings=_derive_resource_credential_bindings(enrollment),
         resource_controller_role_records=tuple(enrollment.resource_controller_role_records),
         resource_backend_records=tuple(enrollment.resource_backend_enrollment_records),
+        private_memory_engine_selections=private_memory_engine_selections,
         remote_startup_records=tuple(enrollment.remote_startup_records),
         private_loopback_network_records=tuple(enrollment.private_loopback_network_records),
         selected_resource_execution_records=tuple(enrollment.selected_resource_execution_records),
         resource_scope_binding_records=tuple(enrollment.resource_scope_binding_records),
         selected_application_runtime_records=tuple(enrollment.selected_application_runtime_records),
+        private_memory_endpoint_selection_records=tuple(enrollment.private_memory_endpoint_selection_records),
+        private_memory_model_selection_records=tuple(enrollment.private_memory_model_selection_records),
         native_materialization=native_materialization,
         native_registry=native_registry,
         native_discoveries=MappingProxyType(dict(native_discoveries or {})),
@@ -1470,6 +1613,64 @@ def build_root_runtime_bindings(
         application_source_receipts=application_source_receipts,
         application_runtime_receipts=application_runtime_receipts,
     )
+
+
+_PRIVATE_MEMORY_SELECTION_FIELDS = frozenset({
+    "id", "profile_id", "namespace_id", "memory_provider", "memory_owner_generation",
+    "extract_route_id", "embed_route_id", "extraction_served_model_id",
+    "embedding_served_model_id", "embedding_dimensions", "endpoint_selection_receipt_handle",
+    "extraction_model_deployment_receipt_handle", "embedding_model_deployment_receipt_handle",
+    "protocol_artifact_id", "protocol_sha256", "credential_reference_ids",
+    "private_consent_selection_handle", "policy_revision",
+})
+_MEMORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z", re.ASCII)
+_MEMORY_SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+
+
+def _parse_private_memory_engine_selections(records: Any) -> Mapping[str, Mapping[str, Any]]:
+    """Freeze strict private model-selection rows from the verified generation."""
+    if records is None:
+        return MappingProxyType({})
+    if isinstance(records, Mapping):
+        values = tuple(records.values())
+    elif isinstance(records, (tuple, list)):
+        values = tuple(records)
+    else:
+        raise EnrollmentDenied("protected private memory selection records are malformed")
+    parsed: dict[str, Mapping[str, Any]] = {}
+    for row in values:
+        if not isinstance(row, Mapping) or set(row) != _PRIVATE_MEMORY_SELECTION_FIELDS:
+            raise EnrollmentDenied("protected private memory selection fields differ from v108")
+        identity_fields = (
+            "id", "profile_id", "namespace_id", "memory_provider", "extract_route_id",
+            "embed_route_id", "extraction_served_model_id", "embedding_served_model_id",
+            "endpoint_selection_receipt_handle", "extraction_model_deployment_receipt_handle",
+            "embedding_model_deployment_receipt_handle", "protocol_artifact_id",
+            "private_consent_selection_handle", "policy_revision",
+        )
+        if any(not isinstance(row[name], str) or not _MEMORY_ID.fullmatch(row[name])
+               for name in identity_fields):
+            raise EnrollmentDenied("protected private memory selection identity is invalid")
+        if (row["memory_provider"] not in {"openviking", "agentmemory", "claude-mem"}
+                or type(row["memory_owner_generation"]) is not int
+                or row["memory_owner_generation"] < 1
+                or type(row["embedding_dimensions"]) is not int
+                or not 1 <= row["embedding_dimensions"] <= 65536
+                or not isinstance(row["protocol_sha256"], str)
+                or not _MEMORY_SHA256.fullmatch(row["protocol_sha256"])):
+            raise EnrollmentDenied("protected private memory model selection is invalid")
+        credentials = row["credential_reference_ids"]
+        if (not isinstance(credentials, (tuple, list))
+                or any(not isinstance(item, str) or not _MEMORY_ID.fullmatch(item) for item in credentials)
+                or len(credentials) != len(set(credentials))):
+            raise EnrollmentDenied("private memory selection credential references are malformed")
+        selection_id = row["id"]
+        if selection_id in parsed:
+            raise EnrollmentDenied("private memory selection ID is duplicated")
+        parsed[selection_id] = MappingProxyType({
+            **dict(row), "credential_reference_ids": tuple(credentials),
+        })
+    return MappingProxyType(parsed)
 
 
 def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mapping[str, Any],
@@ -1495,43 +1696,73 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
     parent_kind_candidates: dict[str, set[str]] = {}
     for selected_join in catalog.source_observer_joins.values():
         selected_issuer = selected_join.issuer
-        selected_kind_value = selected_kind(selected_issuer.issuer_channel_id, selected_join.adapter)
-        if selected_kind_value is not None:
-            parent_kind_candidates.setdefault(selected_issuer.issuer_channel_id, set()).add(selected_kind_value)
+        for selected_action in getattr(selected_join, "actions", {}).values():
+            selected_kind_value = selected_kind(selected_issuer.issuer_channel_id, selected_action)
+            if selected_kind_value is not None:
+                parent_kind_candidates.setdefault(selected_issuer.issuer_channel_id, set()).add(selected_kind_value)
     result: dict[str, Any] = {}
     for observer_id, join in catalog.source_observer_joins.items():
-        issuer, package, adapter = join.issuer, join.package, join.adapter
+        issuer, package = join.issuer, join.package
+        process_role = getattr(join, "process_role", None)
+        action_map = getattr(join, "actions", {})
+        if process_role is None or not isinstance(action_map, Mapping):
+            # Legacy packages can still be inspected, but their action adapter
+            # is never accepted as a process-role artifact. Source observation
+            # stays unavailable until the exact v123 role FK is present.
+            continue
         service = catalog.resolve_profile_generation(package.profile_id, package.profile_generation)
-        artifact = artifact_catalog.artifacts.get(adapter.adapter_artifact_id)
-        if artifact is None or artifact.sha256 != adapter.adapter_sha256:
-            raise EnrollmentDenied("native source observer role is absent from protected artifact catalog")
-        source_kind = selected_kind(issuer.issuer_channel_id, adapter)
-        if source_kind is None:
-            raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
+        artifact = artifact_catalog.artifacts.get(process_role.role_artifact_id)
+        if artifact is None or artifact.sha256 != process_role.role_sha256:
+            raise EnrollmentDenied("native process role is absent from protected artifact catalog")
         parent_kinds = set()
         for parent in issuer.allowed_parent_channels:
             candidates = parent_kind_candidates.get(parent, set())
             if len(candidates) != 1:
                 raise EnrollmentDenied("source observer parent channel has no fixed source kind mapping")
             parent_kinds.update(candidates)
-        for action_id in issuer.source_action_ids:
-            record = {
-                "observer_enrollment_id": observer_id, "source_kind": source_kind,
-                "origin_id": observer_id, "profile_id": service.profile_id,
-                "principal_id": service.principal_id, "namespace_id": service.namespace_identity,
-                "enrollment_id": service.enrollment_id, "generation": issuer.generation,
-                "native_package_generation": package.generation,
-                "producer_uid": service.service_uid,
-                "producer_executable_sha256": service.executable_sha256,
-                "package_id": package.package_id, "package_sha256": package.compiled_closure_sha256,
-                "role_id": adapter.adapter_id, "role_artifact_id": adapter.adapter_artifact_id,
-                "role_sha256": adapter.adapter_sha256, "channel_id": issuer.issuer_channel_id,
-                "capture_schema_id": issuer.capture_schema_id, "source_action_id": action_id,
-                "target_id": adapter.target_id, "recipient": adapter.recipient,
-                "private_provider_route_ids": list(issuer.private_provider_route_ids),
-                "allowed_parent_source_kinds": sorted(parent_kinds),
-            }
-            if observer_id in result:
-                raise EnrollmentDenied("source observer enrollment expands ambiguously")
-            result[observer_id] = SourceObserverEnrollment.from_protected_record(record)
+        actions = [action for action in action_map.values()
+                   if action.action_id in issuer.source_action_ids
+                   and action.action_binding_id in process_role.action_binding_ids]
+        if len(actions) != 1:
+            raise EnrollmentDenied("source observer does not select one exact process-role action binding")
+        action = actions[0]
+        registrations = getattr(join, "registrations", {})
+        if not isinstance(registrations, Mapping):
+            raise EnrollmentDenied("source observer registration join is invalid")
+        source_registration_ids = sorted(
+            registration_id for registration_id, registration in registrations.items()
+            if observer_id in getattr(registration, "observer_enrollment_ids", ())
+            and any(binding.action_binding_id == action.action_binding_id
+                    for binding in getattr(registration, "action_bindings", ()))
+        )
+        source_kind = selected_kind(issuer.issuer_channel_id, action)
+        if source_kind is None:
+            raise EnrollmentDenied("source observer channel has no fixed source kind mapping")
+        record = {
+            "observer_enrollment_id": observer_id, "source_kind": source_kind,
+            "origin_id": observer_id, "profile_id": service.profile_id,
+            "principal_id": service.principal_id, "namespace_id": service.namespace_identity,
+            "enrollment_id": service.enrollment_id, "generation": issuer.generation,
+            "native_package_generation": package.generation,
+            "producer_uid": service.service_uid,
+            "producer_executable_sha256": service.executable_sha256,
+            "package_id": package.package_id, "package_sha256": package.compiled_closure_sha256,
+            "role_id": process_role.role_id, "role_artifact_id": process_role.role_artifact_id,
+            "role_sha256": process_role.role_sha256, "channel_id": issuer.issuer_channel_id,
+            "capture_schema_id": issuer.capture_schema_id, "source_action_id": action.action_id,
+            "source_action_binding_id": action.action_binding_id,
+            "source_registration_ids": source_registration_ids,
+            "role_source_receipt_handle": process_role.role_source_receipt_handle,
+            "role_module_name": process_role.module_name,
+            "role_closure_member_path": process_role.closure_member_path,
+            "role_source_revision": process_role.role_source_revision,
+            "role_source_tree_sha256": process_role.role_source_tree_sha256,
+            "target_id": action.target_id, "recipient": action.recipient,
+            "private_provider_route_ids": list(issuer.private_provider_route_ids),
+            "public_web_scope_ids": list(getattr(issuer, "public_web_scope_ids", ())),
+            "allowed_parent_source_kinds": sorted(parent_kinds),
+        }
+        if observer_id in result:
+            raise EnrollmentDenied("source observer enrollment expands ambiguously")
+        result[observer_id] = SourceObserverEnrollment.from_protected_record(record)
     return MappingProxyType(result)
