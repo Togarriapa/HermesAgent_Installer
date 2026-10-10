@@ -232,6 +232,18 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("active enrollment is not owned by this setup session")
         return self._session._resolve_current_active_enrollment()
 
+    def resolve_current_pm_runtime(self) -> Any:
+        """Resolve the current official PM environment without accepting a path."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("PM runtime is not owned by this setup session")
+        return self._session._resolve_current_pm_runtime()
+
+    def resolve_current_hermes_source(self) -> Any:
+        """Resolve the current pinned Hermes source handoff root-privately."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("Hermes source is not owned by this setup session")
+        return self._session._resolve_current_hermes_source()
+
     def resolve_native_bootstrap_assembly(
             self, prepared_setup_receipt_handle: str,
             native_materialization_receipt_handle: str) -> "RootNativeBootstrapAssemblySelection":
@@ -3191,6 +3203,34 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending(
                 "current setup session has no committed active enrollment")
         return receipt
+
+    def _resolve_current_pm_runtime(self) -> Any:
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or self._pm_runtime_registry is None or not self._pm_runtime_handle):
+            raise BootstrapEnrollmentPending("current official PM runtime receipt is unavailable")
+        from .pm_runtime import VerifiedPMRuntimeSelection
+        selected = self._pm_runtime_registry.resolve_runtime(
+            self._pm_runtime_handle, self._authorization.transaction_handle,
+            prepared.generation_id)
+        if (not isinstance(selected, VerifiedPMRuntimeSelection)
+                or selected.setup_session_id != self._handle.session_id
+                or selected.transaction_handle != self._authorization.transaction_handle
+                or selected.prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending("official PM runtime receipt differs from current setup custody")
+        return selected
+
+    def _resolve_current_hermes_source(self) -> Any:
+        self._check_live()
+        self._refresh_authorization()
+        if self._source_handoff is None or not self._source_receipt_handle:
+            raise BootstrapEnrollmentPending("current pinned Hermes source receipt is unavailable")
+        current = self._source_receipt(self._authorization)
+        if current != self._source_receipt_handle or self._source_handoff.receipt_handle != current:
+            raise BootstrapEnrollmentPending("Hermes source receipt differs from current setup authorization")
+        return self._source_handoff
 
     def resolve_prepared_receipt(self, provision_receipt_handle: str) -> EnrollmentReceipt:
         """Resolve the current empty prepared commit retained by this live facade."""
