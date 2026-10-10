@@ -661,3 +661,10 @@ The installer SHALL dispatch only fixed source-reviewed local qualification suit
 #### Scenario: Qualification caller supplies arbitrary test code or policy JSON
 - **WHEN** input exceeds the finite installed suite selector
 - **THEN** dispatch denies and no actor/session/grant shortcut is created
+
+### Requirement: Application build admission v161
+The installer SHALL execute application runtime preparation only through a finite root-selected managed build profile, genuine held input/service/output proofs and one-use setup grant.
+
+#### Scenario: Final selection lacks a reviewed source driver or backend closure
+- **WHEN** an application environment build is requested
+- **THEN** custody denies before start without inventing a driver hash, caller script, future output digest or active runtime row
