@@ -35,6 +35,7 @@ _MAX_SCHEMA = 256 * 1024
 _MAX_TOOLS = 512
 _MAX_WITNESSES = 512
 _MAX_LEASE = 30.0
+_SCHEMA_ROLES = {"arguments": "inputSchema", "result": "outputSchema"}
 _PROCESS_IDENTITY_FIELDS = (
     "profile_id", "generation", "kernel_uid", "executable_sha256", "pid",
     "pid_starttime_ticks", "executable_device", "executable_inode",
@@ -91,8 +92,8 @@ class _RetainedDiscovery:
     context: HostContext
     authorization: EffectAuthorization
     selection: Mapping[str, str]
-    schema_id: str
     parent_receipts: tuple[SourceReceipt, ...]
+    derivation_receipt_handle: str | None = None
 
 
 class MCPDiscoveryObservationRegistry:
@@ -134,6 +135,7 @@ class MCPDiscoveryObservationRegistry:
             raise MCPDiscoveryUnavailable("runtime bindings do not match the live authority generation")
         self.service = service
         self._invocations = invocation_registry
+        self._schema_derivations: Any | None = None
         self._bindings = runtime_bindings
         self._registrations = registration_index
         self._services = MappingProxyType(services)
@@ -146,9 +148,25 @@ class MCPDiscoveryObservationRegistry:
 
     @property
     def ready(self) -> bool:
-        """True only after the actual selected root invocation registry is attached."""
+        """True only after the root schema issuer and selected invocation registry attach."""
         with self._lock:
-            return not self._closed and type(self._invocations) is NativeInvocationRegistry
+            from .artifacts import RootSchemaDerivationReceiptRegistry
+            issuer = self._schema_derivations
+            return (not self._closed
+                    and type(self._invocations) is NativeInvocationRegistry
+                    and type(issuer) is RootSchemaDerivationReceiptRegistry
+                    and issuer.mcp_discovery_registry is self)
+
+    def attach_schema_derivation_registry(self, registry: Any) -> None:
+        """Attach the exact root CAS/receipt issuer once before dispatcher publication."""
+        from .artifacts import RootSchemaDerivationReceiptRegistry
+        if (type(registry) is not RootSchemaDerivationReceiptRegistry
+                or registry.mcp_discovery_registry is not self):
+            raise TypeError("the matching root schema derivation registry is required")
+        with self._lock:
+            if self._closed or self._schema_derivations is not None or self._records:
+                raise MCPDiscoveryUnavailable("schema derivation issuer is already attached or discovery has begun")
+            self._schema_derivations = registry
 
     def attach_invocation_registry(self, registry: NativeInvocationRegistry) -> None:
         """Complete root construction once before dispatcher publication."""
@@ -165,9 +183,11 @@ class MCPDiscoveryObservationRegistry:
         mcp_generation: str, selection: Mapping[str, str], request_payload: bytes,
         response_payload: bytes, response_receipt_handle: str,
         context: HostContext, authorization: EffectAuthorization,
-        parent_receipt_handles: tuple[str, ...],
+        parent_receipt_handles: tuple[str, ...], schema_kind: str,
     ) -> MCPDiscoverySchemaObservation:
         """Capture one selected tool schema from a successful brokered tools/list."""
+        if self.ready is not True:
+            raise MCPDiscoveryUnavailable("root schema issuer and invocation registry are not ready")
         if (type(invocation) is not RootNativeMCPInvocation
                 or type(service) is not ProtectedMCPService
                 or type(binding) is not NativeMCPToolBinding
@@ -180,6 +200,7 @@ class MCPDiscoveryObservationRegistry:
                 or not isinstance(response_payload, bytes) or not 1 <= len(response_payload) <= _MAX_RESPONSE
                 or not isinstance(response_receipt_handle, str) or not _OPAQUE.fullmatch(response_receipt_handle)
                 or not isinstance(parent_receipt_handles, tuple)
+                or not isinstance(schema_kind, str) or schema_kind not in _SCHEMA_ROLES
                 or not 1 <= len(parent_receipt_handles) <= 8
                 or any(not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
                        for handle in parent_receipt_handles)
@@ -257,23 +278,19 @@ class MCPDiscoveryObservationRegistry:
                           if isinstance(tool, Mapping) and tool.get("name") == binding.mcp_tool_name]
             if len(candidates) != 1:
                 raise ValueError
-            schema = candidates[0].get("inputSchema")
+            schema = candidates[0].get(_SCHEMA_ROLES[schema_kind])
             if not isinstance(schema, Mapping):
                 raise ValueError
-            schema_bytes = canonical_bytes(schema)
+            from ..mcp.native_schema_catalog import _validate_schema
+            _validate_schema(schema, nodes=[0])
+            schema_bytes = json.dumps(
+                schema, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
             if not 1 <= len(schema_bytes) <= _MAX_SCHEMA:
                 raise ValueError
-            schema_row = self._bindings.resolve_native_schema_record(
-                binding.request_schema_id, binding.native_package_id,
-                binding.native_package_generation, binding.handler_artifact_id,
-                binding.id, "arguments",
-            )
-            schema_id = binding.request_schema_id
-            if (not isinstance(schema_row, Mapping)
-                    or schema_row.get("artifact_id") is None
-                    or schema_row.get("sha256") != hashlib.sha256(schema_bytes).hexdigest()
-                    or schema_row.get("schema_kind") != "arguments"):
-                raise ValueError
+            schema_digest = hashlib.sha256(schema_bytes).hexdigest()
+            schema_artifact_id = f"native-mcp-schema:{schema_digest}"
             receipt = self._resolve_receipt(
                 response_receipt_handle, hashlib.sha256(response_payload).hexdigest(),
                 peer_uid, invocation.profile_id, invocation.generation,
@@ -306,8 +323,8 @@ class MCPDiscoveryObservationRegistry:
             request_sha = hashlib.sha256(request_payload).hexdigest()
             response_sha = hashlib.sha256(response_payload).hexdigest()
             identity = {
-                "artifact_id": schema_row["artifact_id"], "artifact_sha256": schema_row["sha256"],
-                "size_bytes": len(schema_bytes), "schema_kind": "arguments",
+                "artifact_id": schema_artifact_id, "artifact_sha256": schema_digest,
+                "size_bytes": len(schema_bytes), "schema_kind": schema_kind,
                 "package_id": invocation.package_id,
                 "package_generation": binding.native_package_generation,
                 "adapter_id": binding.handler_artifact_id, "action_id": binding.id,
@@ -328,7 +345,7 @@ class MCPDiscoveryObservationRegistry:
             observation_handle = canonical_digest(identity)
             observation = MCPDiscoverySchemaObservation(
                 artifact_id=identity["artifact_id"], artifact_sha256=identity["artifact_sha256"],
-                size_bytes=identity["size_bytes"], schema_kind="arguments",
+                size_bytes=identity["size_bytes"], schema_kind=schema_kind,
                 package_id=identity["package_id"], package_generation=identity["package_generation"],
                 adapter_id=identity["adapter_id"], action_id=identity["action_id"],
                 service_generation_digest=identity["service_generation_digest"],
@@ -352,12 +369,24 @@ class MCPDiscoveryObservationRegistry:
                 if self._closed or len(self._records) >= _MAX_WITNESSES or observation_handle in self._records:
                     os.close(peer_pidfd_copy)
                     raise ValueError
-                self._records[observation_handle] = _RetainedDiscovery(
+                retained = _RetainedDiscovery(
                     observation, invocation, peer_uid, peer_pid, peer_pidfd_copy,
                     request_payload, response_payload, context, authorization,
-                    MappingProxyType(dict(expected_selection)), schema_id,
+                    MappingProxyType(dict(expected_selection)),
                     expected_parent_receipts,
                 )
+                self._records[observation_handle] = retained
+            try:
+                verified = self._schema_derivations.observe_mcp_tools_list(observation)
+                receipt_handle = self._schema_derivations.mint_schema_artifact(verified)
+                if not isinstance(receipt_handle, str) or not _OPAQUE.fullmatch(receipt_handle):
+                    raise ValueError
+                retained.derivation_receipt_handle = receipt_handle
+            except Exception:
+                with self._lock:
+                    self._records.pop(observation_handle, None)
+                os.close(peer_pidfd_copy)
+                raise
             return observation
         except MCPDiscoveryUnavailable:
             raise
@@ -439,13 +468,12 @@ class MCPDiscoveryObservationRegistry:
             parent_ids = tuple(sorted(item.receipt_id for item in parent_receipts))
             if tuple(sorted(source_receipt.parent_receipt_ids)) != parent_ids:
                 raise ValueError
-            row = self._bindings.resolve_native_schema_record(
-                retained.schema_id, proof.package_id, proof.package_generation,
-                proof.adapter_id, proof.action_id, proof.schema_kind,
-            )
-            if (row.get("artifact_id") != proof.artifact_id
-                    or row.get("sha256") != proof.artifact_sha256
-                    or hashlib.sha256(proof.schema_bytes).hexdigest() != proof.artifact_sha256
+            schema_digest = hashlib.sha256(proof.schema_bytes).hexdigest()
+            schema = strict_json_loads(proof.schema_bytes.decode("utf-8"))
+            from ..mcp.native_schema_catalog import _validate_schema
+            _validate_schema(schema, nodes=[0])
+            if (proof.artifact_id != f"native-mcp-schema:{schema_digest}"
+                    or schema_digest != proof.artifact_sha256
                     or len(proof.schema_bytes) != proof.size_bytes):
                 raise ValueError
             identity = {
@@ -482,7 +510,11 @@ class MCPDiscoveryObservationRegistry:
                     or envelope.get("service_id") != proof.service_id
                     or envelope.get("selection") != dict(retained.selection)
                     or len(selected) != 1
-                    or canonical_bytes(selected[0].get("inputSchema")) != proof.schema_bytes):
+                    or json.dumps(
+                        selected[0].get(_SCHEMA_ROLES[proof.schema_kind]),
+                        sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=False, allow_nan=False,
+                    ).encode("utf-8") != proof.schema_bytes):
                 raise ValueError
             self._require_live(
                 retained.invocation, retained.peer_uid, retained.peer_pid,
