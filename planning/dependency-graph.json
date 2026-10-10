@@ -3487,5 +3487,21 @@
       ]
     },
     "acceptance": "All AC01..18 OPEN; implementation and target evidence separate"
+  },
+  "predecessor_bound_candidate_update_v235": {
+    "contract": "planning/predecessor-bound-candidate-update-v235.json",
+    "tasks": {
+      "BD-T235.1": [
+        "BD-T208.1"
+      ],
+      "LC-T235.2": [
+        "BD-T235.1",
+        "LC-F03"
+      ],
+      "VD-T235.3": [
+        "LC-T235.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN"
   }
 }

@@ -204,3 +204,5 @@ Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-boots
 Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
 
 Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.
+
+Existing predecessor candidate update v235: plans/amendments/2026-10-10-predecessor-bound-candidate-update-v235.md; BD-T235.1 → LC-T235.2 → VD-T235.3 OPEN. Exact old release before staging, reviewed candidate inputs, samecontroller sealed transition, present pointer CAS and owned rollback/reexec; distribution/runtime claims separate; all AC OPEN.
