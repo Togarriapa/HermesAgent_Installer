@@ -215,6 +215,27 @@ class ApplicationRuntimePreparationTests(unittest.TestCase):
         self.assertEqual(selected.wheels[0].selected_tag,
                          "cp314-cp314-manylinux_2_28_aarch64")
 
+    def test_accepts_only_exact_sha256_or_sha512_lock_integrity(self):
+        filename = "shared-1.0.0-py3-none-any.whl"
+        sha512 = hashlib.sha512(filename.encode()).hexdigest()
+        lock = (
+            'version = 1\n[[package]]\nname = "demo-app"\nversion = "1.0.0"\n'
+            'source = { editable = "." }\ndependencies = [{ name = "shared" }]\n'
+            '[[package]]\nname = "shared"\nversion = "1.0.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\n'
+            f'wheels = [{{ url = "https://files.pythonhosted.org/packages/{filename}", '
+            f'hash = "sha512:{sha512}", size = 123 }}]\n'
+        )
+        selected = select_locked_python_wheels(lock.encode(), application_id="graphify")
+        self.assertTrue(selected.complete, selected.blockers)
+        self.assertEqual(selected.wheels[0].integrity_algorithm, "sha512")
+        self.assertEqual(selected.wheels[0].integrity_digest, sha512)
+
+        malformed = lock.replace(sha512, sha512[:-1])
+        selected = select_locked_python_wheels(malformed.encode(), application_id="graphify")
+        self.assertFalse(selected.complete)
+        self.assertEqual(selected.wheels, ())
+
     def test_sdist_only_and_untrusted_artifact_origin_are_blockers(self):
         lock = (
             'version = 1\n'

@@ -1353,8 +1353,12 @@ def _wheel_row(package: Mapping[str, Any]) -> LockedPythonWheel | None:
                 or parsed.username or parsed.password or parsed.query or parsed.fragment
                 or parsed.port not in (None, 443)):
             continue
-        match = re.fullmatch(r"sha256:([0-9a-f]{64})", integrity)
+        match = re.fullmatch(r"(sha256|sha512):([0-9a-f]+)", integrity)
         if match is None:
+            continue
+        integrity_algorithm, integrity_digest = match.groups()
+        expected_width = 64 if integrity_algorithm == "sha256" else 128
+        if len(integrity_digest) != expected_width:
             continue
         filename = PurePosixPath(parsed.path).name
         tag = _wheel_tag(filename)
@@ -1363,7 +1367,7 @@ def _wheel_row(package: Mapping[str, Any]) -> LockedPythonWheel | None:
         rank = 0 if tag[0].split("-")[0] == "cp314" else 1
         candidates.append((rank, LockedPythonWheel(
             _norm_name(package.get("name")), package.get("version"), url,
-            "sha256", match.group(1), size, filename, tag[0])))
+            integrity_algorithm, integrity_digest, size, filename, tag[0])))
     if not candidates:
         return None
     candidates.sort(key=lambda row: (row[0], row[1].wheel_filename, row[1].url))
