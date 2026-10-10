@@ -300,7 +300,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
             package_id="package-a", profile_id="profile-a", generation="process-gen-a",
             adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
             operation="mcp.request",
-            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}', 
+            validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
         )
 
         def action_resolver(_bridge, identity, tool_name):
