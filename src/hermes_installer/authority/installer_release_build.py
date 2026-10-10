@@ -2614,10 +2614,10 @@ class RootInstalledReleaseBuilder:
         _ensure_root_directory(BUILD_CAS_ROOT, 0o700)
         with _locked_release_build_cas(BUILD_CAS_ROOT):
             return self._build_selected_under_capacity_lock(
-                distribution_handle, source, interpreter, actor)
+                source, interpreter, actor)
 
     def _build_selected_under_capacity_lock(
-            self, distribution_handle: str, source: VerifiedInstallerDistributionReceipt,
+            self, source: VerifiedInstallerDistributionReceipt,
             interpreter: VerifiedInstallerInterpreterReceipt,
             actor: VerifiedRootSourceBootstrapActor) -> str:
         source.verify_current()
@@ -2653,7 +2653,8 @@ class RootInstalledReleaseBuilder:
             receipt_handle = secrets.token_urlsafe(32)
             receipt = VerifiedInstallerReleaseBuildReceipt(
                 _SEAL, handle=receipt_handle, candidate_git_sha=source.candidate_git_sha,
-                distribution_receipt_handle=distribution_handle, interpreter_receipt_handle=interpreter_handle,
+                distribution_receipt_handle=source.receipt_handle,
+                interpreter_receipt_handle=interpreter.receipt_handle,
                 source_tree_sha256=source.source_tree_sha256,
                 baseline_tree_sha256=source.baseline_tree_sha256,
                 amendment_manifest_sha256=source.amendment_manifest_sha256,
