@@ -280,7 +280,9 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                 "transaction_handle": receipt.transaction_handle,
                 "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
                 "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+                "owner_overlay_adoption_sha256": _sha(_canonical([])),
             },
+            "owner_overlay_adoption_records": [],
         }
         _verify_active_receipt_descriptor(receipt, descriptor)
         descriptor["inputs"]["claim_digest"] = "9" * 64
@@ -362,8 +364,9 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                           "transaction_handle": receipt.transaction_handle,
                           "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
                           "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+                          "owner_overlay_adoption_sha256": _sha(_canonical([])),
                           "choice_projections": [projection],
-                      }}
+                      }, "owner_overlay_adoption_records": []}
         _verify_active_receipt_descriptor(receipt, descriptor)
         descriptor["inputs"]["choice_projections"][0]["signed_record_sha256"] = "8" * 64
         with self.assertRaises(BootstrapEnrollmentError):

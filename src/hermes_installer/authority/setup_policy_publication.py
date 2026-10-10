@@ -187,11 +187,14 @@ class RootSetupPublicationReceipt:
     runtime_receipt_handles: tuple[str, ...] = ()
     materialization_receipt_handles: tuple[str, ...] = ()
     choice_adoptions: tuple[PublishedSetupChoiceAdoption, ...] = ()
+    owner_overlay_adoption_records: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if self._seal is not _SEAL:
             raise TypeError("root setup publication receipts are minted by the publisher")
         object.__setattr__(self, "choice_adoptions", tuple(self.choice_adoptions))
+        object.__setattr__(self, "owner_overlay_adoption_records",
+                           tuple(dict(row) for row in self.owner_overlay_adoption_records))
 
 
 class RootSetupPolicyGenerationPublisher:
@@ -668,6 +671,12 @@ def _verify_active_receipt_descriptor(receipt: RootSetupPublicationReceipt,
     if receipt.state != "active-committed":
         return
     inputs = descriptor.get("inputs")
+    from .owner_overlay_publication import validate_owner_overlay_adoption_row
+    raw_owner_rows = descriptor.get("owner_overlay_adoption_records", [])
+    try:
+        owner_rows = [validate_owner_overlay_adoption_row(row) for row in raw_owner_rows]
+    except (TypeError, ValueError):
+        raise BootstrapEnrollmentError("committed local-owner adoption rows are malformed") from None
     if (not isinstance(inputs, Mapping)
             or inputs.get("publication_handle") != receipt.publication_handle
             or inputs.get("claim_digest") != receipt.claim_digest
@@ -680,6 +689,8 @@ def _verify_active_receipt_descriptor(receipt: RootSetupPublicationReceipt,
                 {key: value for key, value in _choice_adoption_value(row).items()
                  if key not in {"publication_receipt_handle", "publication_sha256", "generation_id"}}
                 for row in receipt.choice_adoptions]
+            or owner_rows != [dict(row) for row in receipt.owner_overlay_adoption_records]
+            or inputs.get("owner_overlay_adoption_sha256") != _sha(_canonical(owner_rows))
             or descriptor.get("policy_sha256") != receipt.policy_sha256
             or descriptor.get("artifact_catalog_sha256") != receipt.artifact_catalog_sha256
             or descriptor.get("selection_sha256") != receipt.selection_sha256
@@ -1080,7 +1091,8 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
             tuple(getattr(compiled, "materialization_receipt_handles", ())),
             _mint_choice_adoptions(compiled, receipt_handle, publication_sha,
                                    POLICY_GENERATION_ID, publication_state,
-                                   adopted_at_unix=adopted_at_unix))
+                                   adopted_at_unix=adopted_at_unix),
+            tuple(descriptor.get("owner_overlay_adoption_records", ())))
         _write_publication_record(journal_root, compiled.transaction_handle, receipt,
                                   descriptor_bytes, expected_uid)
         # Recheck CAS under the stable transaction lock immediately before replace.
@@ -1240,6 +1252,39 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
                     or row["selection_catalog_sha256"] != compiled.selection_catalog_sha256):
                 raise BootstrapEnrollmentError("active compiler choice projection differs from its claim")
         input_doc["choice_projections"] = projection_rows
+        from .owner_overlay_publication import (
+            RootPublishedLocalOwnerAdoption, validate_owner_overlay_adoption_row,
+        )
+        owner_projections = tuple(getattr(compiled, "owner_overlay_adoptions", ()))
+        if (len(owner_projections) > 4
+                or any(type(row) is not RootPublishedLocalOwnerAdoption for row in owner_projections)):
+            raise BootstrapEnrollmentError("active local-owner adoption projection is untyped or exceeds its finite bound")
+        owner_rows: list[dict[str, Any]] = []
+        if owner_projections:
+            if adopted_at_unix is None:
+                raise BootstrapEnrollmentError("local-owner adoption requires an active publisher CAS timestamp")
+            signed_by_handle = {row["selection_handle"]: row for row in projection_rows}
+            for projection in owner_projections:
+                row = projection.to_claim_row(include_digest=False)
+                signed = signed_by_handle.get(row["signed_choice"].get("selection_handle"))
+                if (signed is None or signed != row["signed_choice"]
+                        or row["signed_choice"].get("purpose") != "native-policy-preparation"
+                        or row["setup_deadline_unix"] != row["signed_choice"]["setup_deadline_unix"]
+                        or not (row["signed_choice"]["issued_at_unix"] <= adopted_at_unix
+                                <= row["setup_deadline_unix"])):
+                    raise BootstrapEnrollmentError("local-owner adoption differs from its signed choice or deadline")
+                row["adopted_at_unix"] = adopted_at_unix
+                row["adoption_sha256"] = _sha(_canonical(row))
+                try:
+                    owner_rows.append(validate_owner_overlay_adoption_row(row))
+                except (TypeError, ValueError):
+                    raise BootstrapEnrollmentError("local-owner adoption projection is incomplete or altered") from None
+            handles = [row["adoption_handle"] for row in owner_rows]
+            if handles != sorted(set(handles)):
+                raise BootstrapEnrollmentError("local-owner adoption handles are duplicated or unordered")
+        input_doc["owner_overlay_adoption_sha256"] = _sha(_canonical(owner_rows))
+    else:
+        owner_rows = []
     descriptor = {
         "schema": 1,
         "id": "installer-bootstrap-policy-publication-v1",
@@ -1247,6 +1292,7 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
         "artifact_catalog_sha256": catalog_sha,
         "selection_sha256": _sha(selection_bytes),
         "inputs": input_doc,
+        "owner_overlay_adoption_records": owner_rows,
     }
     files = (
         _FileSpec("plans/bootstrap-policy-v1.json", compiled.policy_bytes),
