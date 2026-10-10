@@ -11,6 +11,7 @@ import tempfile
 import time
 import types
 import unittest
+import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
@@ -19,6 +20,7 @@ from hermes_installer.native_plugin_bindings import RootSelectedPluginEffects
 from hermes_installer.native_plugin_loader import (
     NativePluginLoadUnavailable,
     SelectedNativeAdapter,
+    _load_selected_process_roles,
     _manifest,
     _require_protected_import_environment,
     _require_private_readonly_mount,
@@ -66,6 +68,10 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
     module_path = closure_root / "fixture_plugin.py"
     module_path.write_bytes(module)
     os.chmod(module_path, 0o444)
+    role_module = b"PROCESS_ROLE_LOADED = True\n"
+    role_path = closure_root / "process_role.py"
+    role_path.write_bytes(role_module)
+    os.chmod(role_path, 0o444)
     file_row = {
         "relative_path": "fixture_plugin.py",
         "sha256": hashlib.sha256(module).hexdigest(),
@@ -97,8 +103,8 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
         "toolset": candidate["toolset"],
         "family": candidate["family"],
         "adapter_id": candidate["adapter_id"],
-        "argument_schema": argument_schema,
-        "result_schema": result_schema,
+        "argument_schema_id": "schema.fixture.args",
+        "result_schema_id": "schema.fixture.result",
         "native_schema_sha256": candidate["native_schema_sha256"],
         "registration_source_artifact_id": "artifact-fixture-plugin-source",
         "registration_source_sha256": file_row["sha256"],
@@ -107,10 +113,11 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
         "handler_id": "handler-fixture-read",
         "selector_fields": [],
         "action_bindings": [{
-            "selector_values": {}, "action_id": "fixture.read",
+            "selector_values": {}, "action_binding_id": "fixture-plugin:action:fixture.read",
             "argument_projection": [], "workflow_id": None,
         }],
         "observer_enrollment_ids": candidate["observer_enrollment_ids"],
+        "generation": "generation-fixture",
     }
     registrations = [registration]
     index = {
@@ -134,11 +141,32 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
         "allowed_dependency_artifact_ids": [],
         "action_ids": ["fixture.read"],
     }
+    role_record = {
+        "role_id": "role.fixture",
+        "package_id": "native-package-fixture",
+        "native_package_generation": "generation-fixture",
+        "profile_id": "profile-fixture",
+        "profile_generation": "process-generation-fixture",
+        "role_artifact_id": "artifact-fixture-process-role",
+        "role_sha256": hashlib.sha256(role_module).hexdigest(),
+        "role_source_receipt_handle": "receipt-fixture-process-role-0001",
+        "module_name": "hermes_fixture_process_role",
+        "closure_member_path": "process_role.py",
+        "role_source_revision": "revision-fixture",
+        "role_source_tree_sha256": "c" * 64,
+        "observer_enrollment_ids": ["observer-fixture"],
+        "registration_ids": [candidate["registration_id"]],
+        "action_binding_ids": ["fixture-plugin:action:fixture.read"],
+        "workflow_ids": [],
+    }
+    process_role_records = [role_record]
+    process_role_digest = hashlib.sha256(_canonical(process_role_records)).hexdigest()
     resolver_body = {
         "schema": 1,
         "package_id": "native-package-fixture",
         "profile_id": "profile-fixture",
         "generation": "generation-fixture",
+        "process_role_records_sha256": process_role_digest,
         "adapters": [{
             "adapter_id": "fixture-plugin",
             "manifest_sha256": "a" * 64,
@@ -180,19 +208,21 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
             "native_tool_name": "mcp__fixture__read", "native_server_name": "fixture",
             "toolset": "mcp-fixture", "family": "native-mcp-dispatch",
             "adapter_id": "hermes-installer.native-mcp-dispatch.v1",
-            "argument_schema": mcp_schema, "result_schema": {"type": "object"},
+            "argument_schema_id": "schema.fixture.mcp.args",
+            "result_schema_id": "schema.fixture.mcp.result",
             "native_schema_sha256": hashlib.sha256(_canonical(mcp_schema)).hexdigest(),
             "registration_source_artifact_id": "artifact-fixture-mcp-source",
             "registration_source_sha256": file_row["sha256"],
             "registration_source_receipt_handle": "receipt-fixture-mcp-0001",
-            "handler_kind": "mcp-dispatch", "handler_id": "handler-fixture-mcp-read",
+            "handler_kind": "mcp-dispatch", "handler_id": mcp_action,
             "selector_fields": [],
             "action_bindings": [{
-                "selector_values": {}, "action_id": mcp_action,
+                "selector_values": {}, "action_binding_id": None,
                 "argument_projection": [{"name": "resource", "source_field": "resource"}],
                 "workflow_id": None,
             }],
             "observer_enrollment_ids": ["observer-fixture-mcp"],
+            "generation": "generation-fixture",
         })
     resolver = {**resolver_body, "resolver_sha256": hashlib.sha256(_canonical(resolver_body)).hexdigest()}
     index["resolver_sha256"] = resolver["resolver_sha256"]
@@ -207,7 +237,13 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
         "size_bytes": len(index_bytes),
         "mode": 0o444,
     }
-    file_rows = sorted((file_row, index_file_row), key=lambda row: row["relative_path"])
+    role_file_row = {
+        "relative_path": "process_role.py",
+        "sha256": hashlib.sha256(role_module).hexdigest(),
+        "size_bytes": len(role_module),
+        "mode": 0o444,
+    }
+    file_rows = sorted((file_row, index_file_row, role_file_row), key=lambda row: row["relative_path"])
     closure_digest = hashlib.sha256(_canonical(file_rows)).hexdigest()
     manifest = {
         "schema": 1,
@@ -217,6 +253,8 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
         "closure_files": file_rows,
         "adapters": [adapter],
         "dependencies": [],
+        "process_role_records": process_role_records,
+        "process_role_records_sha256": process_role_digest,
         "candidate_index": {
             "artifact_id": "native-candidate-index:native-package-fixture:generation-fixture",
             "relative_path": "catalog/native-candidates.json",
@@ -232,6 +270,74 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
 
 
 class NativePluginLoaderTests(unittest.TestCase):
+    def test_selected_process_role_import_reports_actual_member_identity(self):
+        from types import MappingProxyType
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(strict=True)
+            closure = root / "closure"
+            closure.mkdir()
+            source = closure / "role_fixture.py"
+            body = b"ROLE_LOADED = True\n"
+            source.write_bytes(body)
+            digest = hashlib.sha256(body).hexdigest()
+            module_name = f"hermes_role_fixture_{uuid.uuid4().hex}"
+            role = types.SimpleNamespace(
+                role_id="role.native.fixture", module_name=module_name,
+                closure_member_path="role_fixture.py", role_sha256=digest,
+                registration_ids=("native-registration-fixture",),
+            )
+            selection = types.SimpleNamespace(process_roles=(role,))
+            imported = []
+            try:
+                origins = _load_selected_process_roles(
+                    root, MappingProxyType({"role_fixture.py": source}), selection, imported,
+                )
+                self.assertEqual(imported, [module_name])
+                module = sys.modules[module_name]
+                self.assertTrue(module.ROLE_LOADED)
+                stat_result = source.stat()
+                self.assertEqual(origins[0].to_wire(), {
+                    "role_id": role.role_id,
+                    "module_name": role.module_name,
+                    "closure_member_path": role.closure_member_path,
+                    "module_file_sha256": digest,
+                    "module_file_device": stat_result.st_dev,
+                    "module_file_inode": stat_result.st_ino,
+                    "module_file_size_bytes": stat_result.st_size,
+                })
+            finally:
+                sys.modules.pop(module_name, None)
+
+    def test_selected_process_role_import_rejects_digest_drift_and_preloaded_module(self):
+        from types import MappingProxyType
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(strict=True)
+            closure = root / "closure"
+            closure.mkdir()
+            source = closure / "role_fixture.py"
+            source.write_text("ROLE_LOADED = True\n", encoding="utf-8")
+            role = types.SimpleNamespace(
+                role_id="role.native.fixture", module_name="hermes_role_fixture_drift",
+                closure_member_path="role_fixture.py", role_sha256="0" * 64,
+                registration_ids=("native-registration-fixture",),
+            )
+            selection = types.SimpleNamespace(process_roles=(role,))
+            with self.assertRaises(NativePluginLoadUnavailable):
+                _load_selected_process_roles(
+                    root, MappingProxyType({"role_fixture.py": source}), selection, [],
+                )
+            sys.modules[role.module_name] = types.ModuleType(role.module_name)
+            try:
+                role.role_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+                with self.assertRaises(NativePluginLoadUnavailable):
+                    _load_selected_process_roles(
+                        root, MappingProxyType({"role_fixture.py": source}), selection, [],
+                    )
+            finally:
+                sys.modules.pop(role.module_name, None)
+
     def test_progress_writer_requires_root_named_activation_fd(self):
         from hermes_installer.native_plugin_loader import _NativeLoaderProgressWriter
 
@@ -250,11 +356,20 @@ class NativePluginLoaderTests(unittest.TestCase):
                 _NativeLoaderProgressWriter.from_systemd_activation(selection)
 
     def test_named_progress_fd_challenge_and_three_ordered_frames(self):
-        from hermes_installer.native_plugin_loader import _NativeLoaderProgressWriter
+        from hermes_installer.native_plugin_loader import (
+            _LoadedProcessRoleOrigin, _NativeLoaderProgressWriter,
+        )
 
+        role = types.SimpleNamespace(
+            role_id="role.fixture", role_sha256="f" * 64,
+            module_name="fixture_role", closure_member_path="fixture_role.py",
+            profile_generation="process-generation-fixture",
+            registration_ids=("adapter:tool:read", "adapter:tool:write"),
+        )
         selection = types.SimpleNamespace(
             package_id="package-fixture", generation="generation-fixture",
             _binding=types.SimpleNamespace(entrypoint_sha256="e" * 64, resolver_digest="d" * 64),
+            process_roles=(role,),
         )
         saved_fd = None
         try:
@@ -274,10 +389,17 @@ class NativePluginLoaderTests(unittest.TestCase):
                 "LISTEN_FDNAMES": "hermes-loader-progress",
             }):
                 writer = _NativeLoaderProgressWriter.from_systemd_activation(selection)
-                writer.emit(sequence=0, phase="entrypoint-imported", registered_action_ids=())
-                actions = ("plugin.lookup", "plugin.write")
-                writer.emit(sequence=1, phase="actions-registered", registered_action_ids=actions)
-                writer.emit(sequence=2, phase="ready", registered_action_ids=actions)
+                origins = (_LoadedProcessRoleOrigin(
+                    "role.fixture", "fixture_role", "fixture_role.py", "f" * 64,
+                    1, 2, 12,
+                ),)
+                writer.emit(sequence=0, phase="entrypoint-imported",
+                            registered_registration_ids=(), loaded_process_roles=origins)
+                registrations = ("adapter:tool:read", "adapter:tool:write")
+                writer.emit(sequence=1, phase="actions-registered",
+                            registered_registration_ids=registrations, loaded_process_roles=origins)
+                writer.emit(sequence=2, phase="ready",
+                            registered_registration_ids=registrations, loaded_process_roles=origins)
             self.assertTrue(writer._closed)
 
             records, payloads = [], []
@@ -298,9 +420,15 @@ class NativePluginLoaderTests(unittest.TestCase):
             self.assertEqual([record["phase"] for record in records], [
                 "entrypoint-imported", "actions-registered", "ready",
             ])
-            self.assertEqual(records[0]["registered_action_ids"], [])
-            self.assertEqual(records[1]["registered_action_ids"], list(actions))
-            self.assertEqual(records[2]["registered_action_ids"], list(actions))
+            self.assertEqual(records[0]["registered_registration_ids"], [])
+            self.assertEqual(records[1]["registered_registration_ids"], list(registrations))
+            self.assertEqual(records[2]["registered_registration_ids"], list(registrations))
+            self.assertEqual(records[0]["loaded_process_roles"], [origins[0].to_wire()])
+            self.assertEqual(records[1]["loaded_process_roles"], records[0]["loaded_process_roles"])
+            self.assertEqual(records[2]["loaded_process_roles"], records[0]["loaded_process_roles"])
+            self.assertTrue(all(record["schema"] == 2 for record in records))
+            self.assertTrue(all(record["generation"] == "process-generation-fixture" for record in records))
+            self.assertTrue(all(record["package_generation"] == "generation-fixture" for record in records))
             self.assertTrue(all(record["launch_nonce"] == "N" * 43 for record in records))
             for record, payload in zip(records, payloads):
                 self.assertEqual(payload, json.dumps(
@@ -473,7 +601,7 @@ class NativePluginLoaderTests(unittest.TestCase):
         with self.assertRaises(NativePluginLoadUnavailable):
             loaded.register(object(), object())
 
-    def test_bound_loader_checks_mount_resolver_and_exposes_only_selected_package(self):
+    def test_bound_loader_checks_mount_resolver_role_origins_and_exposes_selected_package(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = Path(temporary)
             selected, manifest, raw_manifest, closure_source, _adapter, authority = package_fixture(
@@ -485,9 +613,10 @@ class NativePluginLoaderTests(unittest.TestCase):
             (target / "closure").mkdir(parents=True)
             (target / "resolver").mkdir()
             (target / "manifest.json").write_bytes(raw_manifest)
-            (target / "closure" / "fixture_plugin.py").write_bytes(
-                (closure_source / "fixture_plugin.py").read_bytes())
-            os.chmod(target / "closure" / "fixture_plugin.py", 0o444)
+            for member in ("fixture_plugin.py", "process_role.py"):
+                (target / "closure" / member).write_bytes(
+                    (closure_source / member).read_bytes())
+                os.chmod(target / "closure" / member, 0o444)
             (target / "closure" / "catalog").mkdir()
             (target / "closure" / "catalog" / "native-candidates.json").write_bytes(
                 (closure_source / "catalog" / "native-candidates.json").read_bytes())
@@ -525,10 +654,13 @@ class NativePluginLoaderTests(unittest.TestCase):
                 self.assertEqual([row.native_tool_name for row in package.candidate_rows], ["fixture_read"])
                 self.assertEqual(package.candidate_rows[0].native_server_name, "hermes-installer")
                 self.assertEqual([frame["phase"] for frame in progress.frames], ["entrypoint-imported"])
-                self.assertEqual(progress.frames[0]["registered_action_ids"], ())
+                self.assertEqual(progress.frames[0]["registered_registration_ids"], ())
+                self.assertEqual(progress.frames[0]["loaded_process_roles"][0].module_name,
+                                 "hermes_fixture_process_role")
             finally:
                 package._progress_writer.close()
                 sys.modules.pop("hermes_fixture_native_plugin", None)
+                sys.modules.pop("hermes_fixture_process_role", None)
 
     def test_bound_loader_rejects_mounted_resolver_digest_drift(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,0 +1,3 @@
+# Application offline runtime build v132
+
+SK-F03/R0067/R0138/AC12: four exact source profiles require a setup-only managed build subject, offline lock-selected package receipts and actual environment/probe evidence independently active app rows. Reuse v115 source/current controller/build subject mechanism with a separate literal four-target template. Python and Bun/Node stay separate; Browser Use uv provenance mismatch remains explicit. Source constraints and current primary uv/Bun docs support frozen/offline recipes; no package/toolchain hash or observed sufficiency fabricated. Adjacent schema, limits and open tasks. Frozen baseline unchanged; all acceptance open.

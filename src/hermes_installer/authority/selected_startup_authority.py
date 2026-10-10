@@ -444,9 +444,12 @@ class RootSelectedDisplayLaunchAuthority:
                     or type(setup_deadline) not in (int, float)
                     or setup_deadline <= self.monotonic()):
                 raise SelectedStartupDenied("root setup session deadline is unavailable")
+            service_digest = self._service_generation_digest()
             selected_row = self.active_bindings.resolve_remote_startup(remote_enrollment_id)
             network_row = self.active_bindings.resolve_private_loopback_network(
-                selected_row.network_enrollment_id)
+                selected_row.network_enrollment_id,
+                service_generation_digest=service_digest,
+            )
             selection = self._resolve_selection(remote_enrollment_id, selected_row, network_row)
             actor_pidfd = os.pidfd_open(os.getpid(), 0)
             identity = self._controller_identity(os.getpid())
@@ -488,7 +491,6 @@ class RootSelectedDisplayLaunchAuthority:
         finally:
             os.close(actor_pidfd)
         try:
-            service_digest = self._service_generation_digest()
             role_bindings = self._resolve_role_bindings(selected_row, selection, service_digest)
             selected_startup = SelectedStartupSelection(
                 selected_startup_enrollment_id=selected_row.id,
@@ -638,7 +640,10 @@ class RootSelectedDisplayLaunchAuthority:
                 return False
             current_digest = self._service_generation_digest()
             row = self.active_bindings.resolve_remote_startup(admission.remote_enrollment_id)
-            network = self.active_bindings.resolve_private_loopback_network(row.network_enrollment_id)
+            network = self.active_bindings.resolve_private_loopback_network(
+                row.network_enrollment_id,
+                service_generation_digest=current_digest,
+            )
             if (row.id != admission.selected_startup_enrollment_id
                     or row != admission._selected_startup_row
                     or current_digest != admission.service_generation_digest

@@ -17,7 +17,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Protocol
 
 from .channel_provenance import (
     AuthenticatedHttpRequest, AuthenticatedSubjectReceipt,
@@ -25,7 +25,6 @@ from .channel_provenance import (
 )
 from .source_observers import SourceReceiptHandle
 from .types import AuthorityDenied, SourceReceipt
-from .types import canonical_digest
 from hermes_installer.components.plugin_channel_provenance import HttpIngressSelection
 
 _MAX_HTTP_BODY = 256 * 1024
@@ -56,19 +55,20 @@ class _RequestTicket:
     access_jwt: bytes = field(repr=False)
     body: bytes = field(repr=False)
     request_receipt_handle: str
+    request_id: str
     issued_monotonic: float
 
 
 class RootHttpRequestReceiptIssuer:
-    """Root AuthorityService integration for signing exact HTTP request bytes."""
+    """Root-private one-use ledger for exact authenticated HTTP request proofs."""
     def issue_request_source_receipt(self, selection_handle: object, session_handle: str,
                                      subject_receipt_handle: str, body: bytes) -> SourceReceiptHandle:
-        """Issue and retain an AuthorityService SourceReceipt for this request."""
+        """Retain a request proof tied to an active selected JWT session."""
         raise NotImplementedError
 
 
 class RootJWTSubjectReceiptIssuer:
-    """Root AuthorityService bridge for an authenticated selected JWT session."""
+    """Deprecated compatibility protocol; JWT proofs are retained by the verifier."""
     def issue_subject_source_receipt(self, *, selection: HttpIngressSelection,
                                      session_id: str, subject_digest: str,
                                      token_fingerprint: str,
@@ -84,45 +84,45 @@ class _RootJWTSession:
     subject_digest: str
     token_fingerprint: str
     receipt: AuthenticatedSubjectReceipt
-    source_receipt_handle: SourceReceiptHandle
+    source_proof_handle: str
     active: bool = True
 
 
 class RootSelectedJWTSessionAuthority:
     """Cryptographically verify selected RS256 JWTs and retain short root leases.
 
-    JWKS, issuer/audience, allowed subject digests, source receipt issuer and
-    AuthorityService resolver are all root-selected. The token is never stored;
-    each request verifies it again, and currentness checks the root lease and
-    its signed AuthorityService receipt. No Cloudflare Desktop session is used.
+    JWKS, issuer/audience, allowed subject digests and current session policy
+    are root-selected. The token is never stored; each request verifies it
+    again. The opaque handle is a root-retained authentication proof, not a
+    standalone SourceReceipt; the final selected resource event signs the
+    canonical request envelope. No Cloudflare Desktop session is used.
     """
     def __init__(self, selection: HttpIngressSelection, *, verifier_enrollment_id: str,
                  owner_generation: str, issuer: str, audience: str,
                  jwks: Mapping[str, Mapping[str, Any]], allowed_subject_digests: frozenset[str],
-                 receipt_issuer: RootJWTSubjectReceiptIssuer,
-                 source_receipts: AuthoritySourceReceiptResolver,
+                 receipt_issuer: RootJWTSubjectReceiptIssuer | None = None,
+                 source_receipts: AuthoritySourceReceiptResolver | None = None,
                  wall_clock: Callable[[], float] = time.time,
                  monotonic: Callable[[], float] = time.monotonic,
                  max_session_seconds: int = 60):
         if (not isinstance(selection, HttpIngressSelection)
-                or not isinstance(source_receipts, AuthoritySourceReceiptResolver)
+                or (source_receipts is not None and not isinstance(source_receipts, AuthoritySourceReceiptResolver))
                 or verifier_enrollment_id != selection.jwt_verifier_enrollment_id
-                or owner_generation != source_receipts.generation
+                or not isinstance(owner_generation, str) or not owner_generation
                 or not issuer.startswith("https://")
                 or not audience or not isinstance(jwks, Mapping) or not jwks
                 or not isinstance(allowed_subject_digests, frozenset) or not allowed_subject_digests
                 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in allowed_subject_digests)
-                or not callable(getattr(receipt_issuer, "issue_subject_source_receipt", None))
                 or type(max_session_seconds) is not int or not 1 <= max_session_seconds <= 60):
-            raise ValueError("selected HTTP JWT policy, session receipt issuer and root receipt resolver are required")
-        if source_receipts.profile_id != selection.profile_id:
+            raise ValueError("selected HTTP JWT policy and current session resolver are required")
+        if source_receipts is not None and source_receipts.profile_id != selection.profile_id:
             raise ValueError("HTTP JWT session resolver differs from selected profile")
         self.selection, self.issuer, self.audience = selection, issuer, audience
         self.verifier_enrollment_id = verifier_enrollment_id
         self.owner_generation = owner_generation
         self.jwks = dict(jwks)
         self.allowed_subject_digests = allowed_subject_digests
-        self.receipt_issuer, self.source_receipts = receipt_issuer, source_receipts
+        self.receipt_issuer, self.source_receipts = None, None
         self.wall_clock, self.monotonic = wall_clock, monotonic
         self.max_session_seconds = max_session_seconds
         self._sessions: dict[str, _RootJWTSession] = {}
@@ -185,34 +185,16 @@ class RootSelectedJWTSessionAuthority:
             for row in self._sessions.values():
                 if row.selection_id == selection.id and row.session_id == session_id:
                     if row.token_fingerprint == fingerprint and row.subject_digest == subject_digest:
-                        if self._source_receipt_current(row.source_receipt_handle):
-                            return row.receipt
+                        return row.receipt
                     row.active = False
             if len(self._sessions) >= 1024:
                 raise IngressServiceDenied("selected HTTP auth session table is full")
-            source_payload = {"schema": 1, "selection_id": selection.id,
-                              "session_id": session_id, "subject_digest": subject_digest,
-                              "token_fingerprint": fingerprint,
-                              "profile_id": selection.profile_id,
-                              "owner_generation": self.owner_generation}
-            source_handle = self.receipt_issuer.issue_subject_source_receipt(
-                selection=selection, session_id=session_id, subject_digest=subject_digest,
-                token_fingerprint=fingerprint, source_payload=source_payload,
-                expires_monotonic=lease_expiry,
-            )
-            if not isinstance(source_handle, SourceReceiptHandle):
-                raise IngressServiceDenied("AuthorityService did not issue a selected JWT source receipt")
-            source_receipt = self.source_receipts.resolve_direct(str(source_handle))
-            if (source_receipt.source_kind != "native-input"
-                    or source_receipt.payload_digest != canonical_digest(source_payload)
-                    or source_receipt.profile_id != selection.profile_id
-                    or source_receipt.process_generation != self.owner_generation):
-                raise IngressServiceDenied("JWT source receipt does not bind selected authenticated session")
+            source_handle = secrets.token_urlsafe(32)
             session_handle = secrets.token_urlsafe(32)
             while session_handle in self._sessions:
                 session_handle = secrets.token_urlsafe(32)
             receipt = AuthenticatedSubjectReceipt(
-                str(source_handle), session_handle, subject_digest, lease_expiry,
+                source_handle, session_handle, subject_digest, lease_expiry,
                 selection.jwt_verifier_enrollment_id)
             self._sessions[session_handle] = _RootJWTSession(
                 selection.id, session_id, subject_digest, fingerprint, receipt, source_handle)
@@ -227,8 +209,7 @@ class RootSelectedJWTSessionAuthority:
             if (row is None or not row.active or row.receipt is not receipt
                     or receipt.expires_monotonic <= self.monotonic()
                     or row.selection_id != selection.id
-                    or row.subject_digest not in self.allowed_subject_digests
-                    or not self._source_receipt_current(row.source_receipt_handle)):
+                    or row.subject_digest not in self.allowed_subject_digests):
                 raise IngressServiceDenied("authenticated HTTP session was revoked, expired or changed")
             return receipt
 
@@ -238,14 +219,6 @@ class RootSelectedJWTSessionAuthority:
             row = self._sessions.pop(session_handle, None)
             if row is not None:
                 row.active = False
-
-    def _source_receipt_current(self, handle: SourceReceiptHandle) -> bool:
-        try:
-            self.source_receipts.resolve_direct(str(handle))
-            return True
-        except Exception:
-            return False
-
 
 class RootLoopbackHttpIngressListener:
     """Bounded mTLS POST listener for one selected HTTP channel.
@@ -257,8 +230,8 @@ class RootLoopbackHttpIngressListener:
     def __init__(self, selection: HttpIngressSelection, *, host: str, port: int,
                  tls_context: ssl.SSLContext, selection_handle: object,
                  route_id: str,
-                 identity_verifier: Any, request_receipt_issuer: RootHttpRequestReceiptIssuer,
-                 source_receipt_resolver: "AuthoritySourceReceiptResolver",
+                 identity_verifier: Any, request_receipt_issuer: RootHttpRequestReceiptIssuer | None = None,
+                 source_receipt_resolver: "AuthoritySourceReceiptResolver | None" = None,
                  process_request: Callable[[object], RootIngressDisposition],
                  monotonic: Callable[[], float] = time.monotonic,
                  request_timeout_seconds: float = 5.0):
@@ -280,15 +253,17 @@ class RootLoopbackHttpIngressListener:
             raise ValueError("opaque root-selected HTTP enrollment handle is required")
         if (not callable(getattr(identity_verifier, "verify_selected_jwt", None))
                 or not callable(getattr(identity_verifier, "current_selected_subject", None))
-                or not callable(getattr(request_receipt_issuer, "issue_request_source_receipt", None))
-                or not isinstance(source_receipt_resolver, AuthoritySourceReceiptResolver)):
-            raise TypeError("root JWT/session authority and signed request receipt services are required")
+                or (request_receipt_issuer is not None
+                    and not callable(getattr(request_receipt_issuer, "issue_request_source_receipt", None)))):
+            raise TypeError("root JWT/session authority is required")
         if not 0.1 <= request_timeout_seconds <= 10:
             raise ValueError("HTTP request deadline must be bounded")
         self.selection, self.host, self.port = selection, host, port
         self.selection_handle = selection_handle
         self.identity_verifier = identity_verifier
         self.request_receipt_issuer = request_receipt_issuer
+        # Retained source proof handles are root audit evidence. They are not
+        # intermediate AuthorityService SourceReceipts.
         self.source_receipt_resolver = source_receipt_resolver
         self.tls_context, self.route_id = tls_context, route_id
         self.process_request, self.monotonic = process_request, monotonic
@@ -393,19 +368,17 @@ class RootLoopbackHttpIngressListener:
                             or session_receipt.verifier_enrollment_id
                             != listener.selection.jwt_verifier_enrollment_id):
                         raise IngressServiceDenied("selected JWT/session verifier did not authenticate this request")
-                    receipt_handle = listener.request_receipt_issuer.issue_request_source_receipt(
-                        listener.selection_handle, session_receipt.session_handle,
-                        session_receipt.receipt_handle, body)
-                    if not isinstance(receipt_handle, SourceReceiptHandle):
-                        raise IngressServiceDenied("request receipt issuer did not return a root receipt handle")
-                    request_receipt = listener.source_receipt_resolver.resolve_direct(str(receipt_handle))
-                    expected_digest = hashlib.sha256(body).hexdigest()
-                    if request_receipt.payload_digest != expected_digest:
-                        raise IngressServiceDenied("root request receipt does not bind the exact HTTP body")
+                    # A random one-use root ledger handle binds the exact body
+                    # and verified subject/session below. The final event
+                    # issuer signs the canonical event; no synthetic parent
+                    # SourceReceipt is created here.
+                    receipt_handle = secrets.token_urlsafe(32)
+                    request_id = secrets.token_urlsafe(24)
                     ticket = listener._create_ticket(
                         method="POST", path=self.path, host=expected_host,
                         content_type="application/json", session_id=sessions[0],
-                        access_jwt=token, body=body, request_receipt_handle=str(receipt_handle),
+                        access_jwt=token, body=body, request_receipt_handle=receipt_handle,
+                        request_id=request_id,
                     )
                     try:
                         disposition = listener.process_request(ticket)
@@ -476,7 +449,8 @@ class RootLoopbackHttpIngressListener:
 
     def _create_ticket(self, *, request_receipt_handle: str, **values: Any) -> _RequestTicket:
         if not _HANDLE.fullmatch(request_receipt_handle):
-            raise IngressServiceDenied("request receipt handle is malformed")
+            raise IngressServiceDenied("request proof handle is malformed")
+        values.setdefault("request_id", secrets.token_urlsafe(24))
         nonce = secrets.token_urlsafe(32)
         ticket = _RequestTicket(self._owner, nonce, **values, request_receipt_handle=request_receipt_handle,
                                 issued_monotonic=self.monotonic())
@@ -504,7 +478,7 @@ class RootLoopbackHttpIngressListener:
             return AuthenticatedHttpRequest(
                 self.selection.listener_enrollment_id, self.selection.id, ticket.method,
                 self.route_id, ticket.content_type, ticket.session_id, ticket.access_jwt,
-                ticket.body, ticket.request_receipt_handle,
+                ticket.body, ticket.request_receipt_handle, ticket.request_id,
             )
 
     def _finish_ticket(self, ticket: object) -> None:
@@ -617,7 +591,7 @@ class RootAudioInputSession:
     owner_generation: str
     device_enrollment_id: str
     device_identity_digest: str
-    consent_receipt_handle: SourceReceiptHandle
+    consent_receipt_handle: str
     expires_monotonic: float
 
 
@@ -631,8 +605,8 @@ class RootAudioCaptureArtifact:
     profile_id: str
     owner_generation: str
     operation_id: str
-    source_receipt_handle: SourceReceiptHandle
-    capture_receipt_handle: SourceReceiptHandle
+    artifact_receipt_handle: str
+    capture_receipt_handle: str
     device_enrollment_id: str
     capture_backend_artifact_id: str
     capture_backend_sha256: str
@@ -647,32 +621,143 @@ class RootAudioCaptureRequest:
     artifact_id: str
 
 
-class RootAudioSessionAuthority:
+class RootAudioSessionAuthority(Protocol):
     """Root auth-session lookup boundary implemented by the selected runtime."""
     def take_capture_workflow_result(self, selection_handle: object,
                                      workflow_result: object) -> RootAudioCaptureRequest:
         """Resolve/consume a root workflow result; never trust caller IDs."""
-        raise NotImplementedError
+        ...
 
     def current_input_session(self, selection_handle: object,
                               session_handle: str) -> RootAudioInputSession:
-        raise NotImplementedError
+        ...
 
 
-class RootPrivateAudioArtifactCatalog:
+class RootPrivateAudioArtifactCatalog(Protocol):
     """Root memory-only artifact catalog interface; paths never leave root."""
     def resolve_capture(self, selection_handle: object, session: RootAudioInputSession,
+                        artifact_id: str) -> RootAudioCaptureArtifact: ...
+    def current_capture(self, selection_handle: object, session: RootAudioInputSession,
+                           artifact: RootAudioCaptureArtifact) -> RootAudioCaptureArtifact: ...
+    def read_capture_bytes(self, selection_handle: object, session: RootAudioInputSession,
+                           artifact: RootAudioCaptureArtifact, *, maximum_bytes: int) -> bytearray: ...
+    def consume_capture(self, selection_handle: object,
+                        artifact: RootAudioCaptureArtifact) -> None: ...
+
+
+class RootInMemoryAudioArtifactCatalog(RootPrivateAudioArtifactCatalog):
+    """Concrete root-only sealed PCM catalog with bounded memory lifetime.
+
+    The trusted voice-session workflow supplies captured bytes after its own
+    current permission/device checks. This catalog owns the bytes thereafter;
+    no pathname, caller artifact ID, or raw PCM enters the plugin event.
+    """
+    _MEDIA_TYPE = "audio/pcm;format=s16le;rate=16000;channels=1"
+
+    def __init__(self, selection: AudioIngressSelection, selection_handle: object, *,
+                 owner_generation: str, monotonic: Callable[[], float] = time.monotonic,
+                 artifact_ttl_seconds: float = 60.0):
+        if (not isinstance(selection, AudioIngressSelection) or selection_handle is None
+                or not isinstance(owner_generation, str) or not owner_generation
+                or not 0 < artifact_ttl_seconds <= 60):
+            raise ValueError("selected audio artifact policy, generation and opaque selection are required")
+        self.selection, self.selection_handle = selection, selection_handle
+        self.owner_generation, self.monotonic = owner_generation, monotonic
+        self.artifact_ttl_seconds = artifact_ttl_seconds
+        self._lock = threading.RLock()
+        self._items: dict[str, tuple[RootAudioInputSession, RootAudioCaptureArtifact, bytearray]] = {}
+
+    def store_capture(self, selection_handle: object, session: RootAudioInputSession,
+                      pcm: bytearray, *, operation_id: str) -> RootAudioCaptureArtifact:
+        if (selection_handle is not self.selection_handle
+                or not isinstance(session, RootAudioInputSession)
+                or not isinstance(pcm, bytearray)
+                or not isinstance(operation_id, str) or not _HANDLE.fullmatch(operation_id)):
+            raise IngressServiceDenied("audio capture does not come from the selected root workflow")
+        now = self.monotonic()
+        size = len(pcm)
+        if (session.profile_id != self.selection.profile_id
+                or session.owner_generation != self.owner_generation
+                or session.device_enrollment_id != self.selection.device_enrollment_id
+                or not _HANDLE.fullmatch(session.session_handle)
+                or not _HANDLE.fullmatch(session.consent_receipt_handle)
+                or not now < session.expires_monotonic <= now + 60
+                or not 1 <= size <= min(self.selection.max_capture_bytes, 32 * 1024 * 1024)
+                or size % 32
+                or size // 32 > min(60000, self.selection.max_capture_seconds * 1000)):
+            raise IngressServiceDenied("audio bytes differ from selected current session or PCM bounds")
+        raw = bytearray(pcm)
+        artifact_id, receipt_handle, capture_handle = (secrets.token_urlsafe(24),
+                                                       secrets.token_urlsafe(32),
+                                                       secrets.token_urlsafe(32))
+        artifact = RootAudioCaptureArtifact(
+            artifact_id, hashlib.sha256(raw).hexdigest(), size, self._MEDIA_TYPE,
+            session.profile_id, session.owner_generation, operation_id, receipt_handle,
+            capture_handle, session.device_enrollment_id,
+            self.selection.capture_backend_artifact_id, self.selection.capture_backend_sha256,
+            self.selection.sample_format_schema_id,
+            min(now + self.artifact_ttl_seconds, session.expires_monotonic),
+        )
+        with self._lock:
+            self._prune_locked(now)
+            if len(self._items) >= 16:
+                raw[:] = b"\0" * len(raw)
+                raise IngressServiceDenied("selected in-memory audio artifact catalog is full")
+            self._items[artifact_id] = (session, artifact, raw)
+        pcm[:] = b"\0" * len(pcm)
+        return artifact
+
+    def resolve_capture(self, selection_handle: object, session: RootAudioInputSession,
                         artifact_id: str) -> RootAudioCaptureArtifact:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        with self._lock:
+            self._prune_locked(self.monotonic())
+            row = self._items.get(artifact_id)
+            if row is None or row[0] is not session:
+                raise IngressServiceDenied("audio artifact is absent or belongs to another selected session")
+            return row[1]
+
     def current_capture(self, selection_handle: object, session: RootAudioInputSession,
                         artifact: RootAudioCaptureArtifact) -> RootAudioCaptureArtifact:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        with self._lock:
+            self._prune_locked(self.monotonic())
+            row = self._items.get(artifact.artifact_id) if isinstance(artifact, RootAudioCaptureArtifact) else None
+            if row is None or row[0] is not session or row[1] is not artifact:
+                raise IngressServiceDenied("audio artifact is stale, consumed or reconstructed")
+            return row[1]
+
     def read_capture_bytes(self, selection_handle: object, session: RootAudioInputSession,
                            artifact: RootAudioCaptureArtifact, *, maximum_bytes: int) -> bytearray:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        if type(maximum_bytes) is not int or not 1 <= maximum_bytes <= self.selection.max_capture_bytes:
+            raise IngressServiceDenied("audio artifact read bound is invalid")
+        with self._lock:
+            current = self.current_capture(selection_handle, session, artifact)
+            data = self._items[current.artifact_id][2]
+            if len(data) > maximum_bytes or hashlib.sha256(data).hexdigest() != current.sha256:
+                raise IngressServiceDenied("audio artifact no longer matches its sealed digest or size")
+            return bytearray(data)
+
     def consume_capture(self, selection_handle: object,
                         artifact: RootAudioCaptureArtifact) -> None:
-        raise NotImplementedError
+        self._require_selection(selection_handle)
+        with self._lock:
+            row = self._items.pop(artifact.artifact_id, None)
+            if row is None or row[1] is not artifact:
+                raise IngressServiceDenied("audio artifact is already consumed or reconstructed")
+            row[2][:] = b"\0" * len(row[2])
+
+    def _require_selection(self, selection_handle: object) -> None:
+        if selection_handle is not self.selection_handle:
+            raise IngressServiceDenied("audio artifact selection handle is not current")
+
+    def _prune_locked(self, now: float) -> None:
+        expired = [key for key, (_session, artifact, _data) in self._items.items()
+                   if artifact.expires_monotonic <= now]
+        for key in expired:
+            _session, _artifact, data = self._items.pop(key)
+            data[:] = b"\0" * len(data)
 
 
 class RootAudioCaptureReceiptResolver:
@@ -686,9 +771,11 @@ class RootAudioCaptureReceiptResolver:
     def __init__(self, selection: AudioIngressSelection, selection_handle: object, *,
                  sessions: RootAudioSessionAuthority,
                  artifacts: RootPrivateAudioArtifactCatalog,
-                 source_receipts: AuthoritySourceReceiptResolver,
+                 owner_generation: str,
+                 source_receipts: AuthoritySourceReceiptResolver | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
-        if not isinstance(selection, AudioIngressSelection) or selection_handle is None:
+        if (not isinstance(selection, AudioIngressSelection) or selection_handle is None
+                or not isinstance(owner_generation, str) or not owner_generation):
             raise TypeError("root-selected audio device enrollment and opaque handle are required")
         if (not callable(getattr(sessions, "current_input_session", None))
                 or not callable(getattr(sessions, "take_capture_workflow_result", None))):
@@ -696,11 +783,9 @@ class RootAudioCaptureReceiptResolver:
         if not all(callable(getattr(artifacts, name, None)) for name in
                    ("resolve_capture", "current_capture", "read_capture_bytes", "consume_capture")):
             raise TypeError("root private audio artifact catalog is required")
-        if not isinstance(source_receipts, AuthoritySourceReceiptResolver):
-            raise TypeError("root signed source receipt resolver is required")
         self.selection, self.selection_handle = selection, selection_handle
         self.sessions, self.artifacts = sessions, artifacts
-        self.source_receipts, self.monotonic = source_receipts, monotonic
+        self.owner_generation, self.source_receipts, self.monotonic = owner_generation, source_receipts, monotonic
         self._receipts: dict[str, tuple[RootAudioInputSession, RootAudioCaptureArtifact,
                                         SelectedAudioCaptureReceipt]] = {}
 
@@ -771,12 +856,13 @@ class RootAudioCaptureReceiptResolver:
         session = self.sessions.current_input_session(self.selection_handle, session_handle)
         if (not isinstance(session, RootAudioInputSession)
                 or session.session_handle != session_handle
-                or session.profile_id != self.source_receipts.profile_id
-                or session.owner_generation != self.source_receipts.generation
+                or session.profile_id != self.selection.profile_id
+                or session.owner_generation != self.owner_generation
                 or session.device_enrollment_id != self.selection.device_enrollment_id
                 or not re.fullmatch(r"[0-9a-f]{64}", session.device_identity_digest)
                 or not 0 < session.expires_monotonic - self.monotonic() <= 60
-                or not isinstance(session.consent_receipt_handle, SourceReceiptHandle)):
+                or not isinstance(session.consent_receipt_handle, str)
+                or not _HANDLE.fullmatch(session.consent_receipt_handle)):
             raise IngressServiceDenied("current audio session lacks selected device or explicit consent")
         return session
 
@@ -791,8 +877,10 @@ class RootAudioCaptureReceiptResolver:
                 or artifact.media_type != "audio/pcm;format=s16le;rate=16000;channels=1"
                 or artifact.profile_id != session.profile_id
                 or artifact.owner_generation != session.owner_generation
-                or not artifact.operation_id or not isinstance(artifact.source_receipt_handle, SourceReceiptHandle)
-                or not isinstance(artifact.capture_receipt_handle, SourceReceiptHandle)
+                or not artifact.operation_id or not isinstance(artifact.artifact_receipt_handle, str)
+                or not _HANDLE.fullmatch(artifact.artifact_receipt_handle)
+                or not isinstance(artifact.capture_receipt_handle, str)
+                or not _HANDLE.fullmatch(artifact.capture_receipt_handle)
                 or artifact.device_enrollment_id != self.selection.device_enrollment_id
                 or artifact.capture_backend_artifact_id != self.selection.capture_backend_artifact_id
                 or artifact.capture_backend_sha256 != self.selection.capture_backend_sha256
@@ -802,12 +890,14 @@ class RootAudioCaptureReceiptResolver:
 
     def _resolve_receipt_closure(self, session: RootAudioInputSession,
                                  artifact: RootAudioCaptureArtifact) -> tuple[SourceReceipt, ...]:
-        closure = self.source_receipts((str(session.consent_receipt_handle),
-                                        str(artifact.source_receipt_handle),
-                                        str(artifact.capture_receipt_handle)))
-        if not closure:
-            raise IngressServiceDenied("audio source receipt closure is unavailable")
-        return closure
+        # These are root-retained device/consent/capture proof handles, not
+        # package SourceReceipts. The event issuer binds them into the final
+        # signed native-input receipt; initial ingress has no parent chain.
+        if (not _HANDLE.fullmatch(session.consent_receipt_handle)
+                or not _HANDLE.fullmatch(artifact.capture_receipt_handle)
+                or not _HANDLE.fullmatch(artifact.artifact_receipt_handle)):
+            raise IngressServiceDenied("audio root proof handles are unavailable")
+        return ()
 
     def _proof_receipt(self, session: RootAudioInputSession,
                        artifact: RootAudioCaptureArtifact) -> SelectedAudioCaptureReceipt:
@@ -815,6 +905,7 @@ class RootAudioCaptureReceiptResolver:
             self.selection.id, self.selection.device_enrollment_id,
             self.selection.capture_backend_artifact_id, self.selection.capture_backend_sha256,
             session.session_handle, str(session.consent_receipt_handle),
-            str(artifact.capture_receipt_handle), artifact.artifact_id, artifact.sha256,
+            str(artifact.capture_receipt_handle), str(artifact.artifact_receipt_handle),
+            artifact.operation_id, artifact.artifact_id, artifact.sha256,
             artifact.size_bytes, artifact.format_schema_id, artifact.expires_monotonic,
         )

@@ -1100,9 +1100,12 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
+    # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
     try:
         from hermes_installer.protected_enrollment import (
-            RootSelectedPrivateMemoryEndpointBinding, RootSelectedPrivateMemoryModelBinding,
+            RootSelectedPrivateMemoryEndpointBinding,
+            RootSelectedPrivateMemoryModelBinding,
         )
         endpoints = {}
         for row in item["private_memory_endpoint_selections"]:
@@ -1118,10 +1121,10 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                 row, service_generation_digest=digest,
             )
             if selected.binding_id in models or selected.endpoint_binding_id not in endpoints:
-                raise ValueError("duplicate model binding or missing endpoint")
+                raise ValueError("duplicate model binding or unknown endpoint foreign key")
             models.add(selected.binding_id)
     except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError) as exc:
-        raise AuthorityDenied("enrollment.generation", "private memory selection catalog is invalid") from exc
+        raise AuthorityDenied("enrollment.generation", "private memory model selection catalog is invalid") from exc
     native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
     composio_channel_records = _parse_composio_channel_enrollment_records(
         item["composio_channel_enrollments"],
@@ -2428,6 +2431,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             memory_enrollments=memory_enrollments,
             parameter_schemas=service_generations["operation_parameter_schemas"],
             selected_application_runtimes=service_generations["selected_application_runtimes"],
+            native_schema_artifacts=service_generations["native_schema_artifacts"],
+            native_mcp_tool_bindings=service_generations["native_mcp_tool_bindings"],
             private_memory_endpoint_selections=service_generations["private_memory_endpoint_selections"],
             private_memory_model_selections=service_generations["private_memory_model_selections"],
         )
