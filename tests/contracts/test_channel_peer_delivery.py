@@ -130,6 +130,9 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
             "d" * 64, "e" * 64, 21, "mount-1", "f" * 64, ("ro",), 1, 2,
             identity, "loader-role", "a" * 64, "ready-event", ("receive-message",),
             8.0, 45.0, "f" * 64,
+            "hermes-main", "role-source-receipt", "hermes.plugins.runtime",
+            "hermes/plugins/runtime.py", "role-revision-1", "9" * 64,
+            1, 3, "8" * 64, 128, ("registration.receive-message",),
         )
         loader.resolve_loaded_package_closure = lambda *_args: loaded
         with patch("hermes_installer.authority.channel_peer_delivery._pidfd_matches",

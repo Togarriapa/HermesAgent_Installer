@@ -156,6 +156,7 @@ class XauthorityMountKernelTests(unittest.TestCase):
             "parameters": {},
         }, sort_keys=True, separators=(",", ":")).encode("ascii")
         daemon_fd = os.pidfd_open(os.getpid(), 0)
+        fixture.manager_diagnostics.clear()
         try:
             response = handler.start_selected_operation(
                 profile,
@@ -169,6 +170,14 @@ class XauthorityMountKernelTests(unittest.TestCase):
                 _xauthority_mount_source=stage,
                 _daemon_liveness_pidfd=daemon_fd,
             )
+        except Exception as exc:
+            # The manager sink contains only bounded launcher stdout/stderr,
+            # fixed unit properties, and a short unit journal excerpt. Surface
+            # it in this isolated root-only fixture so systemd launch failures
+            # are diagnosable without exposing this evidence to worker RPCs.
+            diagnostic = b"\n".join(fixture.manager_diagnostics)[-8192:]
+            self.fail(f"selected display launch failed ({type(exc).__name__}); "
+                      f"bounded manager diagnostics: {diagnostic.decode('utf-8', 'backslashreplace')}")
         finally:
             os.close(daemon_fd)
         body = json.loads(response["body"].decode("ascii"))

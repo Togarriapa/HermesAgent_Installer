@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import unittest
 from types import SimpleNamespace
@@ -164,6 +165,44 @@ class FixtureTransport:
         self.closed = True
 
 
+class LoopbackAsyncRPCTransport:
+    """Newline JSON-RPC transport backed by a real asyncio TCP connection."""
+
+    def __init__(self, port):
+        self.port = port
+        self.reader = None
+        self.writer = None
+
+    async def connect(self):
+        self.reader, self.writer = await asyncio.open_connection("127.0.0.1", self.port)
+
+    async def request(self, payload):
+        if self.writer is None:
+            await self.connect()
+        self.writer.write(json.dumps(payload, separators=(",", ":")).encode() + b"\n")
+        await self.writer.drain()
+        if "id" not in payload:
+            return {}
+        line = await self.reader.readline()
+        if not line:
+            raise ConnectionError("loopback MCP peer closed before its response")
+        return json.loads(line)
+
+    async def cancel_request(self, request_id):
+        if self.writer is None:
+            raise ConnectionError("loopback MCP connection is not open")
+        message = {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                   "params": {"requestId": request_id}}
+        self.writer.write(json.dumps(message, separators=(",", ":")).encode() + b"\n")
+        await self.writer.drain()
+
+    async def close(self):
+        if self.writer is not None:
+            self.writer.close()
+            await self.writer.wait_closed()
+            self.writer = None
+
+
 class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
     def test_home_assistant_selector_requires_exact_consistent_arguments(self):
         selected = {"entity_id": "sensor.office",
@@ -285,6 +324,68 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MCPError):
             await client.call_read("get_state", {"entity_id": "sensor.office"})
         await client.close()
+
+    async def test_timeout_cancels_real_loopback_request_and_server_work(self):
+        server_cancelled = asyncio.Event()
+        server_work_started = asyncio.Event()
+        active = {}
+        schema = {"type": "object", "properties": {"entity_id": {"type": "string"}},
+                  "required": ["entity_id"], "additionalProperties": False}
+
+        async def serve(reader, writer):
+            try:
+                while line := await reader.readline():
+                    message = json.loads(line)
+                    method, request_id = message.get("method"), message.get("id")
+                    if method == "notifications/cancelled":
+                        target = message.get("params", {}).get("requestId")
+                        task = active.get(target)
+                        if task is not None:
+                            task.cancel()
+                    elif method == "tools/call":
+                        async def wait_for_cancel():
+                            server_work_started.set()
+                            try:
+                                await asyncio.Event().wait()
+                            except asyncio.CancelledError:
+                                server_cancelled.set()
+                                raise
+                        active[request_id] = asyncio.create_task(wait_for_cancel())
+                        await server_work_started.wait()
+                    elif request_id is not None:
+                        if method == "initialize":
+                            result = {"protocolVersion": "2025-03-26", "capabilities": {},
+                                      "serverInfo": {"name": "loopback", "version": "1"}}
+                        elif method == "tools/list":
+                            result = {"tools": [{"name": "get_state", "inputSchema": schema,
+                                                 "annotations": {"readOnlyHint": True}}]}
+                        else:
+                            result = {}
+                        writer.write(json.dumps({"jsonrpc": "2.0", "id": request_id,
+                                                 "result": result}, separators=(",", ":")).encode() + b"\n")
+                        await writer.drain()
+            finally:
+                for task in active.values():
+                    if not task.done():
+                        task.cancel()
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(serve, "127.0.0.1", 0)
+        transport = LoopbackAsyncRPCTransport(server.sockets[0].getsockname()[1])
+        client = self.make_client(transport, timeout=0.2, scrubber=lambda result: result)
+        try:
+            await client.initialize()
+            await client.discover()
+            started = time.monotonic()
+            with self.assertRaises(MCPError):
+                await client.call_read("get_state", {"entity_id": "sensor.office"})
+            self.assertLess(time.monotonic() - started, 0.5)
+            await asyncio.wait_for(server_cancelled.wait(), 0.25)
+        finally:
+            await client.close()
+            server.close()
+            await server.wait_closed()
 
     async def test_service_scrubber_removes_private_canaries_recursively(self):
         scrub = scrub_mcp_result("google-gmail")
