@@ -563,3 +563,10 @@ The system SHALL deliver exact v123 role records through the v134 verified manif
 #### Scenario: Manifest role has not been imported
 - **WHEN** a catalog role exists but the current loader has no matching actual module origin observation
 - **THEN** the role is unavailable for source issuance and no loaded proof is inferred from an adapter.
+
+### Requirement: Genuine preactive native policy configuration source v137
+The installer SHALL prepare native action, registration, workflow, process-role and observer policy from actual root-selected source and target evidence before initial assembly; prepared empty capability state and static schema inventory SHALL NOT substitute for permission or force an active-before-assembly cycle.
+
+#### Scenario: A selected family lacks target or source proof
+- **WHEN** a required target/account/permission/schema/observer/runtime source is not observed
+- **THEN** all-family coverage retains the registration as configurable pending with exact next step, emits no unproved executable candidate and preserves the original functional obligation
