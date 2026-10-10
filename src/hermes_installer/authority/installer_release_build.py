@@ -92,7 +92,7 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.authority.native_source_definitions",
      "src/hermes_installer/authority/native_source_definitions.py",
      "lib/python/hermes_installer/authority/native_source_definitions.py",
-     "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c", 10_311, "module"),
+     "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
 )
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
