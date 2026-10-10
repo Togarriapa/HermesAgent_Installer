@@ -1732,6 +1732,7 @@ def build_root_runtime_bindings(
         native_worker_network_records=getattr(enrollment, "native_worker_network_records", None),
         active_network_generation_records=getattr(enrollment, "active_network_generation_records", None),
         native_worker_runtime_records=getattr(enrollment, "native_worker_runtime_records", None),
+        owner_overlay_observer_records=getattr(enrollment, "owner_overlay_observer_records", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(
         builds, service_generation_digest=digest,

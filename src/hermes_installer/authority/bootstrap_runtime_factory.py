@@ -924,6 +924,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native source definition receipt is not owned by this setup session")
         return self._session._resolve_prepared_native_source_definition_module_receipt()
 
+    def resolve_prepared_owner_overlay_capture_schema_module_receipt(self) -> RootReleaseModuleReceipt:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("owner-overlay capture schema receipt is not owned by this setup session")
+        return self._session._resolve_prepared_owner_overlay_capture_schema_module_receipt()
+
     def resolve_prepared_native_capture_profile_receipts(
             self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -7729,6 +7734,96 @@ class RootBootstrapSession:
         self._runtime_receipts[role] = receipt
         return receipt
 
+    def _attach_current_owner_overlay_observer_records(
+            self, policy: EnrollmentPolicy) -> EnrollmentPolicy:
+        """Attach only the exact observer projection in the current publication.
+
+        Owner-overlay observer rows are publication evidence, never enrollment
+        request input.  Keep the join here, after the factory has produced the
+        closed policy and before it becomes the transaction's resolver.
+        """
+        self._check_live()
+        if type(policy) is not EnrollmentPolicy:
+            raise BootstrapEnrollmentPending("owner-overlay observer join requires the typed enrollment policy")
+        package_rows = policy.native_packages
+        if not isinstance(package_rows, tuple):
+            raise BootstrapEnrollmentPending("owner-overlay observer join lacks a closed package catalog")
+        has_owner_operations = any(
+            isinstance(package, Mapping)
+            and isinstance(package.get("owner_overlay_operation_records"), tuple)
+            and bool(package["owner_overlay_operation_records"])
+            for package in package_rows
+        )
+        if not has_owner_operations:
+            return policy
+
+        publication = self._resolve_current_active_policy_publication()
+        from .setup_policy_publication import RootSetupPublicationReceipt
+        if type(publication) is not RootSetupPublicationReceipt:
+            raise BootstrapEnrollmentPending("owner-overlay observers lack a typed current publication")
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared"
+                or publication.transaction_handle != self._authorization.transaction_handle
+                or publication.prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending(
+                "owner-overlay publication is outside the current prepared transaction and generation")
+
+        observers = publication.owner_overlay_observer_records
+        if not isinstance(observers, tuple) or len(observers) > 4:
+            raise BootstrapEnrollmentPending("current owner-overlay observer projection is malformed")
+        if not observers:
+            return policy
+
+        service_records = policy.records
+        if not isinstance(service_records, tuple):
+            raise BootstrapEnrollmentPending("owner-overlay observer join lacks exact service rows")
+        seen: set[str] = set()
+        for observer in observers:
+            if not isinstance(observer, Mapping):
+                raise BootstrapEnrollmentPending("published owner-overlay observer row is malformed")
+            observer_id = observer.get("observer_enrollment_id")
+            if not isinstance(observer_id, str) or observer_id in seen:
+                raise BootstrapEnrollmentPending("published owner-overlay observer IDs are malformed")
+            seen.add(observer_id)
+            if (observer.get("profile_id") != policy.service_profile_id
+                    or observer.get("principal_id") != policy.principal_id):
+                raise BootstrapEnrollmentPending(
+                    "published owner-overlay observer does not match the selected policy identity")
+            adoption_rows = publication.owner_overlay_adoption_records
+            nested_matches = [nested for adoption in adoption_rows
+                              if isinstance(adoption, Mapping)
+                              for nested in adoption.get("owner_overlay_observer_records", ())
+                              if isinstance(nested, Mapping) and dict(nested) == dict(observer)]
+            if len(nested_matches) != 1:
+                raise BootstrapEnrollmentPending(
+                    "published owner-overlay observer is not carried by one exact signed adoption")
+            matching_services = [record for record in service_records
+                                 if isinstance(record, Mapping)
+                                 and record.get("enrollment_id") == observer.get("service_enrollment_id")
+                                 and record.get("profile_id") == observer.get("profile_id")
+                                 and record.get("generation") == observer.get("profile_generation")
+                                 and record.get("principal_id") == observer.get("principal_id")
+                                 and record.get("namespace_identity") == observer.get("namespace_id")]
+            if len(matching_services) != 1:
+                raise BootstrapEnrollmentPending(
+                    "published owner-overlay observer has no unique selected service-row join")
+            matching_packages = [package for package in package_rows
+                                 if isinstance(package, Mapping)
+                                 and package.get("package_id") == observer.get("package_id")
+                                 and package.get("generation") == observer.get("package_generation")]
+            if len(matching_packages) != 1:
+                raise BootstrapEnrollmentPending(
+                    "published owner-overlay observer has no unique selected package-generation join")
+            package_operations = matching_packages[0].get("owner_overlay_operation_records")
+            registration_rows = [row for row in package_operations or ()
+                                 if isinstance(row, Mapping)
+                                 and row.get("registration_id") == observer.get("registration_id")]
+            if len(registration_rows) != 1:
+                raise BootstrapEnrollmentPending(
+                    "published owner-overlay observer has no unique selected operation join")
+
+        return replace(policy, owner_overlay_observer_records=tuple(dict(row) for row in observers))
+
     def activate_runnable(self, receipts: Mapping[str, RootRuntimeArtifactReceipt]) -> EnrollmentReceipt:
         self._check_live()
         self._refresh_authorization()
@@ -8319,6 +8414,52 @@ class RootBootstrapSession:
             handle = secrets.token_urlsafe(36)
             prior = RootReleaseModuleReceipt(
                 row.artifact_id, relative_path, digest, row.size_bytes,
+                release.release_commit, release.deployment_receipt_sha256,
+                handle, self._handle.session_id, self._seal, self,
+                prepared.generation_id)
+            self._prepared_release_member_receipts[handle] = prior
+        prior.read_current()
+        actor.verify_current(release)
+        return prior
+
+    def _resolve_prepared_owner_overlay_capture_schema_module_receipt(self) -> RootReleaseModuleReceipt:
+        """Resolve the one reviewed root-imported v185 capture schema module."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "owner-overlay capture schemas require current empty prepared custody")
+        artifact_id = "installer-module:hermes_installer.authority.owner_overlay_capture_schemas"
+        relative_path = "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py"
+        source_artifact_id = "installer-owner-overlay-capture-schemas-v185"
+        digest = "37b28db4c9709147dee50f14ea99ba5bd6e74a796ace897c3e9a51ba660d063d"
+        size_bytes = 5_409
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        rows = [row for row in release.files if row.artifact_id == artifact_id
+                and row.relative_path == relative_path and row.sha256 == digest
+                and row.size_bytes == size_bytes and row.roles == ("module",) and row.mode == 0o444
+                and artifact_id in plan.allowed_artifact_ids
+                and source_artifact_id in plan.allowed_artifact_ids]
+        if len(rows) != 1:
+            raise BootstrapEnrollmentPending(
+                "v185 owner-overlay capture schema module is not exactly authorized by the selected plan")
+        origins = [origin for origin in actor.module_origins
+                   if origin[1] == str(release.release_root / relative_path)
+                   and origin[4] == digest]
+        if len(origins) != 1:
+            raise BootstrapEnrollmentPending(
+                "owner-overlay capture schema module is outside the current root actor import closure")
+        prior = next((item for item in self._prepared_release_member_receipts.values()
+                      if item.artifact_id == artifact_id
+                      and item._prepared_generation_id == prepared.generation_id), None)
+        if prior is None:
+            handle = secrets.token_urlsafe(36)
+            prior = RootReleaseModuleReceipt(
+                artifact_id, relative_path, digest, size_bytes,
                 release.release_commit, release.deployment_receipt_sha256,
                 handle, self._handle.session_id, self._seal, self,
                 prepared.generation_id)

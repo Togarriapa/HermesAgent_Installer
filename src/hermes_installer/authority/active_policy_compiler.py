@@ -71,7 +71,8 @@ def _owner_overlay_adoption_rows(values: tuple[Any, ...]) -> list[dict[str, Any]
     from .owner_overlay_publication import RootPublishedLocalOwnerAdoption
     expected = {"schema", "identity_kind", "adoption_handle", "signed_choice",
                 "adopted_at_unix", "setup_deadline_unix", "owner", "resources",
-                "native_package", "operation_records", "view_custody", "source_members"}
+                "native_package", "operation_records", "view_custody", "source_members",
+                "owner_overlay_observer_records"}
     rows: list[dict[str, Any]] = []
     for value in values:
         if type(value) is not RootPublishedLocalOwnerAdoption:

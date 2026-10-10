@@ -117,3 +117,8 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 ## v187 actual activation transport
 
 - [ ] `VD-T187.3` Exercise real supervised two-process handoff and peer/nonce/CAS/FD/restart failures. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+
+
+- [ ] VD-T188.2 Verify exact result selection, root handler provenance, consumed grant and failure/reconciliation boundaries. See `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; all AC remain OPEN.
+
+- [ ] VD-T188.4 Verify exact native module launch proof and unchanged generic Python child failures. See v188; acceptance OPEN.

@@ -101,6 +101,7 @@ class EnrollmentPolicy:
     native_worker_network_records: tuple[Mapping[str, Any], ...] = ()
     active_network_generation_records: tuple[Mapping[str, Any], ...] = ()
     native_worker_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    owner_overlay_observer_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_executions: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtimes: tuple[Mapping[str, Any], ...] = ()
     # Public network scopes become active only after their source-specific
@@ -1708,6 +1709,7 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "native_worker_network_records": [dict(row) for row in policy.native_worker_network_records],
              "active_network_generation_records": [dict(row) for row in policy.active_network_generation_records],
              "native_worker_runtime_records": [dict(row) for row in policy.native_worker_runtime_records],
+             "owner_overlay_observer_records": [dict(row) for row in policy.owner_overlay_observer_records],
              "selected_resource_executions": [dict(row) for row in policy.selected_resource_executions],
              "selected_application_runtimes": [dict(row) for row in policy.selected_application_runtimes],
              "public_web_scopes": [dict(row) for row in policy.public_web_scopes],

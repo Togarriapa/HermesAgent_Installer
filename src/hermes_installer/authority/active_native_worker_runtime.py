@@ -1,10 +1,9 @@
 """Independent active-generation observation for the selected Hermes worker.
 
 Setup PM receipts are deliberately not resolved through their expiring setup
-registry here.  The active service-generation row is rejoined to the current
-root journal and the receipt/file closure is reopened from that protected
-location.  This first implementation covers the PM runtime closure; native
-output member custody remains a required companion before a worker can launch.
+registry here. The active service-generation row is rejoined to the current
+root journal and the PM plus native-output file closures are reopened from
+their protected locations before a worker can launch.
 """
 from __future__ import annotations
 
@@ -41,6 +40,8 @@ class RootActiveNativeWorkerRuntimeProjection:
     pm_runtime_receipt_handle: str
     pm_runtime_root_device: int
     pm_runtime_root_inode: int
+    native_output_root_device: int
+    native_output_root_inode: int
     expires_monotonic: float
     member_fds: tuple[int, ...] = field(repr=False)
     _issuer: object = field(repr=False, compare=False)
@@ -100,6 +101,9 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 raise ValueError("runtime row does not join selected active profile")
             fds, root_identity = self._open_pm_members(row, network_projection.active_record)
             try:
+                fds.extend(self._open_source_definition_members(row))
+                output_fds, output_root_identity = self._open_native_output_members(row)
+                fds.extend(output_fds)
                 self.generation_owner.verify_current(network_projection)
                 projection = RootActiveNativeWorkerRuntimeProjection(
                     projection_handle=secrets.token_urlsafe(32),
@@ -109,6 +113,8 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     runtime_record_sha256=network_projection.active_record["worker_runtime_record_sha256"],
                     pm_runtime_receipt_handle=row["pm_runtime_receipt_handle"],
                     pm_runtime_root_device=root_identity[0], pm_runtime_root_inode=root_identity[1],
+                    native_output_root_device=output_root_identity[0],
+                    native_output_root_inode=output_root_identity[1],
                     expires_monotonic=min(time.monotonic() + 30.0,
                                           network_projection.expires_monotonic),
                     member_fds=tuple(fds), _issuer=self._issuer,
@@ -147,7 +153,9 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     or current.runtime_record_sha256 != projection.runtime_record_sha256
                     or current.pm_runtime_receipt_handle != projection.pm_runtime_receipt_handle
                     or (current.pm_runtime_root_device, current.pm_runtime_root_inode)
-                    != (projection.pm_runtime_root_device, projection.pm_runtime_root_inode)):
+                    != (projection.pm_runtime_root_device, projection.pm_runtime_root_inode)
+                    or (current.native_output_root_device, current.native_output_root_inode)
+                    != (projection.native_output_root_device, projection.native_output_root_inode)):
                 self._issued.pop(projection.projection_handle, None)
                 raise ActiveNativeWorkerRuntimeUnavailable("active PM runtime projection changed")
         finally:
@@ -286,6 +294,178 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 except OSError:
                     pass
 
+    def _open_native_output_members(self, row: Any) -> tuple[list[int], tuple[int, int]]:
+        """Reopen generated members from the root-private active materialization."""
+        root_fd = parent_fd = generation_fd = receipt_fd = -1
+        member_fds: list[int] = []
+        try:
+            staging_root = self.runtime.enrollment.artifact_staging_directory
+            root_fd = os.open(staging_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            staging = os.fstat(root_fd)
+            path_staging = staging_root.lstat()
+            if ((staging.st_dev, staging.st_ino) != (path_staging.st_dev, path_staging.st_ino)
+                    or staging.st_uid != 0 or staging.st_gid != 0
+                    or stat.S_IMODE(staging.st_mode) != 0o700):
+                raise ValueError("artifact staging root is not current root custody")
+            parent_fd = os.open("native-worker-runtime", os.O_RDONLY | os.O_DIRECTORY
+                                | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root_fd)
+            parent = os.fstat(parent_fd)
+            if (parent.st_uid != 0 or parent.st_gid != 0 or stat.S_IMODE(parent.st_mode) != 0o700):
+                raise ValueError("native worker materialization root is not private")
+            receipt_handle = row["owned_runtime_root_receipt_handle"]
+            if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", receipt_handle):
+                raise ValueError("native runtime root receipt handle is malformed")
+            generation_fd = os.open(receipt_handle, os.O_RDONLY | os.O_DIRECTORY
+                                    | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+            root_info = os.fstat(generation_fd)
+            if (root_info.st_uid != 0 or root_info.st_gid != 0
+                    or stat.S_IMODE(root_info.st_mode) != 0o700):
+                raise ValueError("materialized native runtime root custody changed")
+            receipt_fd = os.open("receipt.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=generation_fd)
+            receipt_path_info = os.stat("receipt.json", dir_fd=generation_fd,
+                                        follow_symlinks=False)
+            receipt_info = os.fstat(receipt_fd)
+            if (not stat.S_ISREG(receipt_info.st_mode) or receipt_info.st_uid != 0
+                    or receipt_info.st_gid != 0 or stat.S_IMODE(receipt_info.st_mode) != 0o600
+                    or receipt_info.st_nlink != 1
+                    or (receipt_info.st_dev, receipt_info.st_ino)
+                       != (receipt_path_info.st_dev, receipt_path_info.st_ino)):
+                raise ValueError("native runtime root receipt file custody changed")
+            raw = _read_fd(receipt_fd, 4 * 1024 * 1024)
+            parsed = json.loads(raw.decode("utf-8"))
+            if (not isinstance(parsed, dict) or set(parsed) != {"body", "body_sha256"}
+                    or parsed["body_sha256"] != row["owned_runtime_root_receipt_sha256"]
+                    or _digest(parsed["body"]) != parsed["body_sha256"]):
+                raise ValueError("native runtime materialization receipt digest changed")
+            body = parsed["body"]
+            if (body.get("receipt_handle") != receipt_handle
+                    or body.get("profile_id") != row["profile_id"]
+                    or body.get("profile_generation") != row["profile_generation"]
+                    or body.get("source_choice_selection_handle")
+                       != row["source_choice_selection_handle"]
+                    or body.get("worker_recipe_sha256") != row["recipe_sha256"]
+                    or body.get("pm_runtime_receipt_handle") != row["pm_runtime_receipt_handle"]
+                    or body.get("runtime_root_device") != root_info.st_dev
+                    or body.get("runtime_root_inode") != root_info.st_ino
+                    or body.get("native_output_member_records")
+                       != _plain(row["native_output_member_records"])
+                    or body.get("pm_runtime_member_records")
+                       != _plain(row["pm_runtime_member_records"])
+                    or body.get("pm_runtime_receipt_handle") != row["pm_runtime_receipt_handle"]
+                    or body.get("pm_base_closure_sha256") != row["pm_base_closure_sha256"]
+                    or body.get("pm_executable_relative_path") != row["pm_executable_relative_path"]
+                    or body.get("pm_executable_member_sha256") != row["pm_executable_member_sha256"]):
+                raise ValueError("native runtime materialization body differs from active row")
+            rows = row["native_output_member_records"]
+            if (not isinstance(rows, (list, tuple)) or not rows or len(rows) > 8192
+                    or len({item["relative_path"] for item in rows}) != len(rows)):
+                raise ValueError("native runtime output member catalog is malformed")
+            for item in rows:
+                path_parts = _native_output_relative_parts(item["relative_path"])
+                directory_fd = os.dup(generation_fd)
+                try:
+                    for segment in path_parts[:-1]:
+                        next_fd = os.open(segment, os.O_RDONLY | os.O_DIRECTORY
+                                          | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+                        os.close(directory_fd)
+                        directory_fd = next_fd
+                        directory_info = os.fstat(directory_fd)
+                        if (directory_info.st_uid != 0 or directory_info.st_gid != 0
+                                or stat.S_IMODE(directory_info.st_mode) != 0o755):
+                            raise ValueError("native output member directory custody changed")
+                    fd = os.open(path_parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=directory_fd)
+                finally:
+                    os.close(directory_fd)
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                            stat.S_IMODE(info.st_mode), info.st_size)
+                        != (item["device"], item["inode"], item["owner_uid"], item["owner_gid"],
+                            item["mode"], item["size_bytes"])
+                        or item["kind"] != "regular-file"
+                        or item["output_role"] != path_parts[0]
+                        or _hash_fd(fd) != item["sha256"]):
+                    os.close(fd)
+                    raise ValueError("native output file differs from held active member row")
+                member_fds.append(fd)
+            os.close(receipt_fd)
+            receipt_fd = -1
+            os.close(generation_fd)
+            generation_fd = -1
+            os.close(parent_fd)
+            parent_fd = -1
+            os.close(root_fd)
+            root_fd = -1
+            return member_fds, (root_info.st_dev, root_info.st_ino)
+        except BaseException:
+            for fd in member_fds:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
+        finally:
+            for fd in (receipt_fd, generation_fd, parent_fd, root_fd):
+                    if fd >= 0:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+
+    def _open_source_definition_members(self, row: Any) -> list[int]:
+        """Reopen recipe and installer source members from this daemon's held release."""
+        from .installer_release import VerifiedInstallerReleaseReceipt
+
+        release = getattr(self.runtime, "controller_release_receipt", None)
+        records = row.get("source_definition_member_records")
+        handles = row.get("source_member_receipt_handles")
+        if type(release) is not VerifiedInstallerReleaseReceipt:
+            raise ValueError("active worker source closure has no exact held release projection")
+        _validate_source_member_catalog(records, handles)
+        release.verify_current()
+        indexed = {item.artifact_id: item for item in release.files}
+        if len(indexed) != len(release.files):
+            raise ValueError("held installer release has ambiguous artifact IDs")
+        fds: list[int] = []
+        try:
+            seen: set[tuple[str, str]] = set()
+            observed_handles: list[str] = []
+            for item in records:
+                key = (item["artifact_id"], item["relative_path"])
+                if key in seen:
+                    raise ValueError("active worker source member row is duplicated")
+                seen.add(key)
+                observed_handles.append(item["receipt_handle"])
+                member = indexed.get(item["artifact_id"])
+                if (member is None or member.relative_path != item["relative_path"]
+                        or member.sha256 != item["sha256"] or member.size_bytes != item["size_bytes"]
+                        or member.roles not in {("module",), ("source-module",)}):
+                    raise ValueError("active worker source row differs from this installed release")
+                fd = release.open_file(member.artifact_id)
+                fds.append(fd)
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode)
+                        or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), info.st_size,
+                            info.st_dev, info.st_ino)
+                        != (item["owner_uid"], item["owner_gid"], item["mode"], item["size_bytes"],
+                            item["device"], item["inode"])
+                        or _hash_fd(fd) != item["sha256"]):
+                    raise ValueError("active worker source file changed after release observation")
+            _validate_source_member_catalog(records, handles)
+            if tuple(sorted(observed_handles)) != tuple(handles):
+                raise ValueError("active worker source receipt handles do not join the signed catalog")
+            release.verify_current()
+            return fds
+        except BaseException:
+            for fd in fds:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
+
 
 def _open_root_directory(path: Path) -> int:
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -320,6 +500,50 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def _native_output_relative_parts(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, str) or len(value) > 4096 or "\\" in value:
+        raise ValueError("native runtime member path is malformed")
+    parts = tuple(value.split("/"))
+    if (len(parts) < 2 or any(part in {"", ".", ".."} for part in parts)
+            or parts[0] not in {
+                "native-compiled-closure", "native-entrypoint-manifest",
+                "native-action-resolver", "native-boundary-overlay", "native-candidate-index"}):
+        raise ValueError("native runtime member escaped its fixed role root")
+    return parts
+
+
+def _validate_source_member_catalog(records: Any, handles: Any) -> None:
+    required = {"artifact_id", "receipt_handle", "relative_path", "kind", "sha256",
+                "size_bytes", "mode", "owner_uid", "owner_gid", "device", "inode",
+                "link_target", "output_role"}
+    if (not isinstance(records, (tuple, list)) or not records or len(records) > 128
+            or not isinstance(handles, (tuple, list)) or not handles
+            or len(handles) != len(records)
+            or any(not isinstance(handle, str) or not handle for handle in handles)
+            or tuple(handles) != tuple(sorted(handles)) or len(set(handles)) != len(handles)):
+        raise ValueError("active worker source receipt handles are incomplete or unsorted")
+    observed_handles: set[str] = set()
+    seen_members: set[tuple[str, str]] = set()
+    for item in records:
+        if (not isinstance(item, dict) or set(item) != required
+                or item["kind"] != "regular-file" or item["link_target"] is not None
+                or item["output_role"] is not None
+                or not isinstance(item["artifact_id"], str) or not item["artifact_id"]
+                or not isinstance(item["relative_path"], str) or not item["relative_path"]
+                or not isinstance(item["receipt_handle"], str) or not item["receipt_handle"]
+                or not re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+                or any(type(item[name]) is not int or item[name] < 0 for name in
+                       ("size_bytes", "mode", "owner_uid", "owner_gid", "device", "inode"))):
+            raise ValueError("active worker source member row is malformed")
+        key = (item["artifact_id"], item["relative_path"])
+        if key in seen_members or item["receipt_handle"] in observed_handles:
+            raise ValueError("active worker source member row or handle is duplicated")
+        seen_members.add(key)
+        observed_handles.add(item["receipt_handle"])
+    if tuple(sorted(observed_handles)) != tuple(handles):
+        raise ValueError("active worker source receipt handles do not join the signed catalog")
+
+
 def _digest(value: Any) -> str:
     raw = json.dumps(_plain(value), sort_keys=True, separators=(",", ":"),
                      ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -329,4 +553,4 @@ def _digest(value: Any) -> str:
 _RUNTIME_SEAL = object()
 
 __all__ = ["ActiveNativeWorkerRuntimeUnavailable", "RootActiveNativeWorkerRuntimeProjection",
-           "RootActiveNativeWorkerRuntimeRegistry"]
+           "RootActiveNativeWorkerRuntimeRegistry", "_validate_source_member_catalog"]
