@@ -214,11 +214,14 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             runtime=authority_runtime,
         )
         service.root_authority_runtime = authority_runtime
-    # Memory stays unavailable until the active service-generation records
-    # join typed MemoryServiceEnrollment values to a protected root-journal
-    # resolver and the per-step HI12 effect issuer. The older memory_providers
-    # sidecar and a guessed /var/lib path are not authority to create state or
-    # register effects.
+        authority_runtime = _finalize_active_memory_lifecycle(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            runtime=authority_runtime,
+        )
+        service.root_authority_runtime = authority_runtime
+    # The listener cannot accept effects until both post-compose finalization
+    # phases above have returned. Memory lifecycle evidence is deliberately
+    # composed only after the durable setup-choice registry is attached.
     return service, enrollment
 
 
@@ -298,6 +301,60 @@ def _finalize_active_setup_choice_registry(*, service: AuthorityService,
             runtime,
             consent_unavailable_reason=(
                 f"durable active setup-choice registry is unavailable ({type(exc).__name__})"
+            ),
+        )
+
+
+def _finalize_active_memory_lifecycle(*, service: AuthorityService,
+                                      enrollment: Any, bindings: Any,
+                                      runtime: Any) -> Any:
+    """Compose memory lifecycle once, after durable choices are attached.
+
+    This phase deliberately reuses the exact memory runtime and network lease
+    resolver created by core composition. It does not rebuild services,
+    listeners, or providers, and does not substitute capture consent for the
+    explicit adopted service-enable choice.
+    """
+    from dataclasses import replace
+    from .runtime_composition import RootAuthorityRuntime
+
+    if type(runtime) is not RootAuthorityRuntime or runtime.service is not service or runtime.bindings is not bindings:
+        raise AuthorityDenied("memory.lifecycle", "post-choice lifecycle composition lacks the exact active runtime")
+    if not enrollment.memory_enrollments:
+        return runtime
+    choices = runtime.root_setup_choice_registry
+    if (choices is None or bindings.root_setup_choice_registry is not choices
+            or getattr(service, "_root_setup_choice_registry", None) is not choices):
+        return replace(
+            runtime,
+            memory_lifecycle_unavailable_reason="durable adopted memory service-enable choice is unavailable",
+        )
+
+    memory_runtime = runtime.memory_runtime
+    network_resolver = None
+    if isinstance(memory_runtime, Mapping):
+        connector = memory_runtime.get("namespace_connector")
+        network_resolver = getattr(connector, "private_network_lease_resolver", None)
+    try:
+        from .memory_runtime_composition import compose_root_memory_runtime
+        composed = compose_root_memory_runtime(
+            bindings=bindings, enrollment=enrollment,
+            memory_runtime=memory_runtime, service=service,
+            root_setup_choice_registry=choices,
+            vault=runtime.vault,
+            network_lease_resolver=network_resolver,
+            monotonic=service.monotonic,
+        )
+        return replace(
+            runtime,
+            memory_runtime_composition=composed,
+            memory_lifecycle_unavailable_reason=composed.unavailable_reason,
+        )
+    except Exception as exc:
+        return replace(
+            runtime,
+            memory_lifecycle_unavailable_reason=(
+                f"post-choice root memory lifecycle composition rejected ({type(exc).__name__})"
             ),
         )
 

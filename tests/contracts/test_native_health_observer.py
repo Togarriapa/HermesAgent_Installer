@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from hermes_installer.authority.native_health_observer import (
     RootNativeHealthEvent,
     RootNativeHealthObserver,
+    RootNativeHealthStartAuthority,
+    RootNativeHealthStartMaterial,
     RootSelectedNativeHealthRun,
     RootValidatedNativeHealthResult,
 )
@@ -113,19 +115,6 @@ class NativeHealthObserverContracts(unittest.TestCase):
         finally:
             os.close(fd)
 
-    def test_plain_boolean_result_and_unrelated_event_are_rejected(self):
-        observer, _run, events, refs, _now, fd = self._observer(
-            result_validator=lambda _schema, _body: True)
-        try:
-            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
-            for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result", "terminal"):
-                observer.observe_health_event(handle, refs[kind])
-            with self.assertRaises(AuthorityDenied):
-                observer.finish_selected_health(handle)
-        finally:
-            os.close(fd)
-
         observer, _run, events, refs, _now, fd = self._observer()
         try:
             handle = observer.begin_selected_health(secrets.token_urlsafe(32))
@@ -139,6 +128,66 @@ class NativeHealthObserverContracts(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_plain_boolean_result_and_unrelated_event_are_rejected(self):
+        observer, _run, events, refs, _now, fd = self._observer(
+            result_validator=lambda _schema, _body: True)
+        try:
+            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
+            for kind in ("loader-ready", "native-request", "provider-result",
+                         "tool-invocation", "tool-result", "terminal"):
+                observer.observe_health_event(handle, refs[kind])
+            with self.assertRaises(AuthorityDenied):
+                observer.finish_selected_health(handle)
+        finally:
+            os.close(fd)
+
+    def test_start_authority_rejects_untyped_committed_source_material(self):
+        class Resolver:
+            def resolve_current_health_material(self, *_args):
+                return SimpleNamespace(health_fixture_artifact_id="caller-controlled")
+
+            def is_current(self, _value):
+                return True
+
+        class Store:
+            def verify_committed_receipt(self, *_args):
+                raise AssertionError("must reject untyped source before setup-store lookup")
+
+        class AuthorityService:
+            issue_root_selected_service_effect = lambda *_args: None
+            consume_root_selected_service_effect = lambda *_args: None
+
+        authority = RootNativeHealthStartAuthority(
+            active_bindings=object(), committed_enrollment_registry=Resolver(),
+            verified_installer_release=SimpleNamespace(verify_current=lambda: None),
+            current_installed_actor_verifier=SimpleNamespace(verify_current=lambda _plan: {}),
+            authority_service=AuthorityService(),
+            managed_process_custody=SimpleNamespace(start_selected_health_operation=lambda *_: None),
+            health_observer=SimpleNamespace(begin_selected_health=lambda *_: None),
+            root_journal=object(),
+        )
+        with self.assertRaises(AuthorityDenied):
+            authority.admit_selected_health(secrets.token_urlsafe(32))
+
+    def test_health_start_material_rejects_fixture_bytes_not_matching_catalog_digest(self):
+        with self.assertRaises(ValueError):
+            RootNativeHealthStartMaterial(
+                verified_commit=object(), enrollment_id="enrollment:1",
+                profile_id="profile:health", principal_id="principal:root-selected",
+                process_generation="generation:1", service_generation_digest="a" * 64,
+                parameter_schema_sha256="b" * 64, recipe_sha256="c" * 64,
+                health_fixture_artifact_id="fixture:health",
+                health_fixture_sha256="d" * 64,
+                health_fixture_receipt_handle=secrets.token_urlsafe(32),
+                health_result_schema_id="schema:health-result",
+                health_result_schema_sha256="e" * 64,
+                native_package_id="package:hermes", native_package_generation="generation:pkg1",
+                native_closure_sha256="f" * 64,
+                controller_binding_handle=secrets.token_urlsafe(32),
+                service_profile=object(), process_operation=object(),
+                controller_lease=object(), fixture_bytes=b"reviewed bytes",
+                source_binding=object(), setup_plan=object(), namespace_identity="namespace:root",
+            )
 
 if __name__ == "__main__":
     unittest.main()

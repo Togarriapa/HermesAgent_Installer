@@ -13,6 +13,7 @@ from hermes_installer.authority.private_loopback_network import (
     validate_private_loopback_networks, _topology_valid, verify_unit_network_readback,
     RootPrivateLoopbackNetworkLease, RootNetworkMemberProof, RootResolvedHostTool,
     create_root_namespace, renew_root_network_lease, verify_root_network_lease,
+    _canonical_link_attributes, _state_digest,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -153,6 +154,22 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
             with self.subTest(mutation=mutation["links"][1]):
                 self.assertFalse(_topology_valid(mutation))
 
+    def test_link_fingerprint_ignores_only_live_counters(self):
+        before = _canonical_link_attributes([
+            (1, b"\x02\x00"), (7, b"rx-bytes=100"),
+            (23, b"rx-packets=4"), (4, b"stable-link-fact"),
+        ])
+        after_traffic = _canonical_link_attributes([
+            (23, b"rx-packets=44"), (7, b"rx-bytes=900"),
+            (4, b"stable-link-fact"), (1, b"\x02\x00"),
+        ])
+        changed_link = _canonical_link_attributes([
+            (1, b"\x02\x00"), (7, b"rx-bytes=900"),
+            (23, b"rx-packets=44"), (4, b"changed-link-fact"),
+        ])
+        self.assertEqual(_state_digest(before), _state_digest(after_traffic))
+        self.assertNotEqual(_state_digest(before), _state_digest(changed_link))
+
     def test_stale_lease_stops_only_retained_owned_units(self):
         network, = validate_private_loopback_networks([self.row], self.services, self.digest)
         lease = RootPrivateLoopbackNetworkLease(
@@ -182,6 +199,26 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
         object.__setattr__(fake, "observation_registry", registry)
         with self.assertRaises(AuthorityDenied):
             registry.verify_resolved_tool(fake)
+
+    def test_host_tool_accepts_exact_registry_handle_format(self):
+        from hermes_installer.authority.host_tool_observation import HostToolObservationRegistry
+        import time
+
+        registry = object.__new__(HostToolObservationRegistry)
+        common = {
+            "variant_id": "nftables-1", "package_name": "nftables", "version": "1.0",
+            "distribution": "ubuntu", "release": "noble", "architecture": "amd64",
+            "package_sha256": "a" * 64, "executable_artifact_id": "nft-executable:test",
+            "executable_sha256": "b" * 64, "dependency_closure_sha256": "c" * 64,
+            "package_set_receipt_handle": "d" * 32, "expires_monotonic": time.monotonic() + 30,
+            "path": Path("/usr/sbin/nft"), "executable_fd": 0, "device": 1, "inode": 2,
+            "observation_registry": registry, "observation_handle": "host-nft-observation:" + "e" * 48,
+            "selected_network_key": ("network", "generation", "f" * 64),
+        }
+        tool = RootResolvedHostTool(**common)
+        self.assertEqual(tool.observation_handle, "host-nft-observation:" + "e" * 48)
+        with self.assertRaises(ValueError):
+            RootResolvedHostTool(**{**common, "observation_handle": "e" * 64})
 
     def test_namespace_and_renewal_reject_unregistered_nft_before_effect(self):
         network, = validate_private_loopback_networks([self.row], self.services, self.digest)

@@ -640,3 +640,38 @@ The installer SHALL consume genuine current installed actor and one-use foregrou
 #### Scenario: Revocation request carries caller epoch or expired setup proof
 - **WHEN** no genuine current runtime revocation observation exists
 - **THEN** the registry denies without changing the signed choice or restoring an expired lease
+
+### Requirement: Native capture profiles v158
+The installer SHALL validate raw root-observed result bytes against the exact selected protected result schema before source capture and deliver only genuine current peer-bound handles.
+
+#### Scenario: Worker supplies a ToolMessage without a completed root result
+- **WHEN** no matching current root invocation/result/schema observation exists
+- **THEN** source capture denies and no worker message or generic object schema supplies authority
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created
+
+### Requirement: Application build admission v161
+The installer SHALL execute application runtime preparation only through a finite root-selected managed build profile, genuine held input/service/output proofs and one-use setup grant.
+
+#### Scenario: Final selection lacks a reviewed source driver or backend closure
+- **WHEN** an application environment build is requested
+- **THEN** custody denies before start without inventing a driver hash, caller script, future output digest or active runtime row
+
+### Requirement: Qualification root adapter v162
+The installer SHALL isolate fixture publication/session/key authority under the exact observed recipe-owned run root while preserving production constants and source/kernel effect validation.
+
+#### Scenario: Fixture handle is presented to production consumer
+- **WHEN** a qualification session or signed fixture receipt targets production authority
+- **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted

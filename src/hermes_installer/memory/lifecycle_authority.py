@@ -424,6 +424,21 @@ class RootMemoryServiceLifecycle:
             self._admissions[admission.admission_handle] = admission
             self._restart_uses[admission.admission_handle] = 0
 
+    def release_admission(self, handle: str) -> None:
+        """Release one finite root-only admission after its effect completes."""
+        if not isinstance(handle, str) or not _OPAQUE.fullmatch(handle):
+            raise MemoryLifecycleDenied("memory lifecycle admission handle is malformed")
+        with self._lock:
+            admission = self._admissions.pop(handle, None)
+            self._process_ids.pop(handle, None)
+            self._restart_uses.pop(handle, None)
+            self._start_used.discard(handle)
+            self._stopped.discard(handle)
+        if type(admission) is RootVerifiedMemoryLifecycleAdmission:
+            close = getattr(admission._controller_lease, "close", None)
+            if callable(close):
+                close()
+
     def resolve_admission(self, handle: str) -> RootVerifiedMemoryLifecycleAdmission:
         if not isinstance(handle, str) or not _OPAQUE.fullmatch(handle):
             raise MemoryLifecycleDenied("root memory lifecycle admission handle is malformed")

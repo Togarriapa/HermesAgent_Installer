@@ -274,10 +274,15 @@ class RootApplicationSourcePreparationRegistry:
                         root_component_source_verifier: GitHubComponentSourceFetcher,
                         root_generation_store: GenerationStore,
                         root_journal: RootJournalSelection, **kwargs: Any) -> "RootApplicationSourcePreparationRegistry":
-        return cls(selected_installation_binding=selected_installation_binding,
-                   root_component_source_verifier=root_component_source_verifier,
-                   root_generation_store=root_generation_store,
-                   root_journal=root_journal, **kwargs)
+        registry = cls(selected_installation_binding=selected_installation_binding,
+                       root_component_source_verifier=root_component_source_verifier,
+                       root_generation_store=root_generation_store,
+                       root_journal=root_journal, **kwargs)
+        attach = getattr(selected_installation_binding,
+                         "attach_application_source_preparation_registry", None)
+        if callable(attach):
+            attach(registry)
+        return registry
 
     def _sign(self, claims: Mapping[str, Any]) -> str:
         return hmac.new(self._key, _canonical(claims), hashlib.sha256).hexdigest()

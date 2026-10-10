@@ -13,7 +13,7 @@ else
     interpreter=/usr/bin/python3
 fi
 
-exec "$interpreter" -I -S -c '
+exec "$interpreter" -B -I -S -c '
 import pathlib
 import sys
 launcher = pathlib.Path(sys.argv.pop(1)).resolve(strict=True)

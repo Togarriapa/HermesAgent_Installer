@@ -119,6 +119,76 @@ class RootAdoptedSetupChoiceSelection:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootAdoptedMemoryServiceEnablementChoice:
+    """Current source proof for the separately adopted memory start choice.
+
+    This is a fresh configuration snapshot, not a process-start grant. It is
+    purpose-specific so lifecycle consumers cannot reinterpret a generic
+    setup-choice payload as consent for capture, egress, or spending.
+    """
+
+    selection_handle: str
+    choice_handle: str
+    choice_observation_id: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    provider: str
+    backend_variant: str
+    enabled: bool
+    principal_selection_handle: str
+    namespace_selection_handle: str
+    private_profile_selection_handle: str
+    controller_binding_handle: str
+    policy_revision: str
+    source_selection_digest: str
+    source_choice_row_sha256: str
+    choice_payload_sha256: str
+    choice_epoch: int
+    revocation_epoch: int
+    key_id: str
+    release_deployment_receipt_sha256: str
+    active_publication_receipt_handle: str
+    service_generation_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _registry_seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._registry_seal is not _SEAL:
+            raise TypeError("adopted memory enablement choices are issued by the root choice registry")
+        required_text = (
+            self.selection_handle, self.choice_handle, self.choice_observation_id,
+            self.principal_id, self.profile_id, self.namespace_id, self.provider,
+            self.backend_variant, self.principal_selection_handle,
+            self.namespace_selection_handle, self.private_profile_selection_handle,
+            self.controller_binding_handle, self.policy_revision,
+            self.source_selection_digest, self.source_choice_row_sha256,
+            self.choice_payload_sha256, self.key_id,
+            self.release_deployment_receipt_sha256,
+            self.active_publication_receipt_handle, self.service_generation_digest,
+        )
+        digests = (self.source_selection_digest, self.source_choice_row_sha256,
+                   self.choice_payload_sha256, self.release_deployment_receipt_sha256,
+                   self.service_generation_digest)
+        if (any(type(value) is not str or not value for value in required_text)
+                or any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests)
+                or self.enabled is not True
+                or type(self.choice_epoch) is not int or self.choice_epoch < 1
+                or type(self.revocation_epoch) is not int or self.revocation_epoch < 1
+                or type(self.issued_monotonic) not in (int, float)
+                or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or not self.issued_monotonic < self.expires_monotonic
+                or self.expires_monotonic - self.issued_monotonic > 30.0):
+            raise ValueError("adopted memory enablement choice is invalid or expired")
+
+    def __repr__(self) -> str:
+        return "RootAdoptedMemoryServiceEnablementChoice(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootSetupChoiceRevocationReceipt:
     """Durable signed transition that revokes one adopted setup preference."""
 
@@ -500,6 +570,89 @@ class RootSetupChoiceRegistry:
             selection_handle, expected_purpose, self.current_active_publication,
         )
 
+    def resolve_current_memory_service_enablement_choice(
+            self, selection_handle: str
+            ) -> RootAdoptedMemoryServiceEnablementChoice:
+        """Resolve one adopted memory-start choice as a fresh typed source snapshot.
+
+        The source is the exact signed ``memory-service-enablement`` row and
+        its active publisher adoption. This resolver does not consult or
+        revive the expired setup TTY session; every call rechecks the root
+        journal, signer, active publication, revocation epoch, and current
+        principal/profile binding through ``resolve_current_adopted_choice``.
+        """
+        if not self._runtime_only:
+            raise AuthorityDenied(
+                "setup-choice.memory-enablement",
+                "runtime adopted memory enablement requires a post-compose registry",
+            )
+        current = self.resolve_current_adopted_choice_snapshot(
+            selection_handle, "memory-service-enablement")
+        payload = dict(current.choice_payload)
+        expected_fields = {
+            "choice_handle", "choice_observation_id", "provider", "backend_variant",
+            "enabled", "principal_id", "profile_id", "namespace_id",
+            "principal_binding_sha256", "namespace_binding_sha256",
+            "private_profile_selection_handle", "controller_binding_handle",
+            "policy_revision", "selection_digest",
+        }
+        if set(payload) != expected_fields:
+            raise AuthorityDenied(
+                "setup-choice.memory-enablement",
+                "signed memory enablement payload differs from its closed purpose schema",
+            )
+        text_fields = expected_fields - {"enabled"}
+        if (any(not isinstance(payload.get(name), str) or not payload[name]
+                for name in text_fields)
+                or payload["enabled"] is not True
+                or payload["private_profile_selection_handle"]
+                != current.private_profile_selection_handle
+                or not current.private_profile_selection_handle
+                or not re.fullmatch(r"[0-9a-f]{64}", payload["selection_digest"])
+                or not re.fullmatch(r"[0-9a-f]{64}", payload["principal_binding_sha256"])
+                or not re.fullmatch(r"[0-9a-f]{64}", payload["namespace_binding_sha256"])
+                or payload["choice_handle"] == current.selection_handle
+                or (current.consent_id is not None)):
+            raise AuthorityDenied(
+                "setup-choice.memory-enablement",
+                "signed memory enablement source claims are malformed or aliased",
+            )
+        now = time.monotonic()
+        expires = min(now + 30.0, current.expires_monotonic)
+        if expires <= now:
+            raise AuthorityDenied(
+                "setup-choice.memory-enablement",
+                "current memory enablement source snapshot has expired",
+            )
+        return RootAdoptedMemoryServiceEnablementChoice(
+            selection_handle=current.selection_handle,
+            choice_handle=payload["choice_handle"],
+            choice_observation_id=payload["choice_observation_id"],
+            principal_id=payload["principal_id"],
+            profile_id=payload["profile_id"],
+            namespace_id=payload["namespace_id"],
+            provider=payload["provider"],
+            backend_variant=payload["backend_variant"],
+            enabled=True,
+            principal_selection_handle=current.principal_selection_handle,
+            namespace_selection_handle=current.namespace_selection_handle,
+            private_profile_selection_handle=current.private_profile_selection_handle or "",
+            controller_binding_handle=payload["controller_binding_handle"],
+            policy_revision=payload["policy_revision"],
+            source_selection_digest=payload["selection_digest"],
+            source_choice_row_sha256=current.source_choice_row_sha256,
+            choice_payload_sha256=current.choice_payload_sha256,
+            choice_epoch=current.choice_epoch,
+            revocation_epoch=current.revocation_epoch,
+            key_id=current.key_id,
+            release_deployment_receipt_sha256=current.release_deployment_receipt_sha256,
+            active_publication_receipt_handle=current.active_publication_receipt_handle,
+            service_generation_digest=current.service_generation_digest,
+            issued_monotonic=now,
+            expires_monotonic=expires,
+            _registry_seal=_SEAL,
+        )
+
     def verify_published_adoption_current(self, adoption: Any) -> None:
         """Verify a publisher adoption through its exact signed source row.
 
@@ -629,6 +782,7 @@ class RootSetupChoiceRegistry:
         except Exception:
             raise AuthorityDenied("setup-choice.subject", "active protected principal/profile binding is unavailable") from None
         profile_generation = self.service.profile_generations.get(profile_id)
+        policy_revision = self.service.current_authority_policy_revision()
         if (principal_id != adoption.principal_id
                 or profile_id != adoption.profile_id
                 or namespace_id != adoption.namespace_id
@@ -636,6 +790,11 @@ class RootSetupChoiceRegistry:
                 or current_binding.profile_id != adoption.profile_id
                 or current_binding.namespace_id != adoption.namespace_id
                 or not isinstance(profile_generation, str) or not profile_generation
+                or (expected_purpose == "memory-service-enablement"
+                    and payload.get("policy_revision") != policy_revision)
+                or (expected_purpose != "memory-service-enablement"
+                    and payload.get("policy_revision") is not None
+                    and payload.get("policy_revision") != policy_revision)
                 or ("profile_generation" in payload
                     and payload.get("profile_generation") != profile_generation)
                 or payload.get("principal_binding_sha256", adoption.principal_binding_sha256)

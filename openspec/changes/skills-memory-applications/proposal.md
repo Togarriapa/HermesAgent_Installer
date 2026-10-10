@@ -119,3 +119,5 @@ Separate PEP517 backend source closure v152: `plans/amendments/2026-10-10-pep517
 Toolchain policy member binding v155: `plans/amendments/2026-10-10-toolchain-policy-member-binding-v155.md`; exact selected held amendment policy identity, separate acquired archive proof. All AC open.
 
 Backend source observer v157: `plans/amendments/2026-10-10-backend-source-observer-v157.md`; separate finite wheel/embedded-license observer and actual selected held source policy, no Node/Bun scope widening.
+
+Application build admission v161: `plans/amendments/2026-10-10-application-build-admission-v161.md`; finite actual setup managed app profile/input/output/grant and fixed source driver recipe, post-terminal output/probe evidence.
