@@ -4,10 +4,12 @@ import hashlib
 import pytest
 
 from hermes_installer.authority.active_policy_compiler import (
+    ActiveSetupChoiceProjection,
     RootActivePolicyCompilationClaim,
     RootActivePolicyCompilationRegistry,
     _canonical,
     _manifest,
+    _ordered_unique_receipt_handles,
     _validate_claim_output_hashes,
 )
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
@@ -70,6 +72,111 @@ def test_active_claim_hashes_keep_predecessor_and_compiled_selection_domains_sep
     assert "claim_digest" not in manifest
     assert manifest["expected_selection_catalog_sha256"] == claim.expected_selection_catalog_sha256
     assert manifest["selection_catalog_sha256"] == claim.selection_catalog_sha256
+    assert manifest["choice_adoptions"] == []
+
+
+def test_active_source_receipt_closure_is_ordered_unique_and_covers_explicit_receipts():
+    claim = _claim()
+    raw = ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64)
+    canonical = _ordered_unique_receipt_handles(raw, "test")
+    assert canonical == ("A" * 43, "B" * 43, "9" * 64)
+    from dataclasses import replace
+    _validate_claim_output_hashes(replace(claim, source_receipt_handles=canonical))
+    with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
+        _validate_claim_output_hashes(replace(claim, source_receipt_handles=raw))
+
+
+def test_complete_active_publication_accepts_publishers_deduplicated_input_closure(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from hermes_installer.authority import active_policy_compiler as compiler
+    from hermes_installer.authority.setup_policy_publication import (
+        PolicyPublicationReceiptResolver,
+        RootSetupPublicationReceipt,
+        _receipt_input_handles,
+        _SEAL,
+    )
+
+    claim = _claim()
+    # These are the real source components: PM, native output and principal.
+    # The PM/output handles also occur in the prepared-bundle source list.
+    claim = replace(claim, source_receipt_handles=_ordered_unique_receipt_handles(
+        ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64), "test"))
+    input_handles = _receipt_input_handles(claim)
+    receipt = RootSetupPublicationReceipt(
+        1, "R" * 43, claim.transaction_handle, "installer-bootstrap-policy-generation-v1",
+        "c" * 64, tmp_path / "generation", 1, 2, claim.compiled_policy_sha256,
+        claim.compiled_artifact_catalog_sha256, "d" * 64, "e" * 64,
+        claim.expected_selection_catalog_sha256, claim.selection_catalog_sha256,
+        input_handles, "active-committed", _SEAL, claim.publication_handle,
+        claim.claim_digest, claim.prepared_generation_id,
+        claim.expected_service_generation_digest, claim.runtime_receipt_handles,
+        claim.materialization_receipt_handles)
+    monkeypatch.setattr(PolicyPublicationReceiptResolver, "verify_current_active_claim",
+                        lambda **_kwargs: receipt)
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._claims = {claim.publication_handle: claim}
+    registry._states = {claim.publication_handle: "claimed"}
+    registry._locks = {}
+    registry._verify_postpublication_claim = lambda _claim: None
+    registry._write_state = lambda *_args: None
+    registry._close_lock = lambda *_args: None
+    registry._claim_root = tmp_path
+    written = []
+    monkeypatch.setattr(compiler, "_write_json", lambda path, value, **_kwargs:
+                        written.append((path, value)))
+    monkeypatch.setattr(compiler, "_read_json", lambda _path: {
+        "state": "claimed", "transaction_handle": claim.transaction_handle,
+    })
+    completed = []
+    registry.materialization_receipts = type("Outputs", (), {
+        "complete_active_compilation": lambda self, *args, **kwargs: completed.append((args, kwargs)),
+    })()
+
+    registry.complete_active_publication(receipt)
+    assert registry._states[claim.publication_handle] == "active-committed"
+    assert receipt.input_receipt_handles == (
+        claim.observed_root_receipt_handle, *claim.source_receipt_handles)
+    assert len(completed) == 1
+    assert written and written[0][1]["publication_sha256"] == receipt.publication_sha256
+
+
+def test_caller_constructed_choice_projection_fails_compiler_seal_check():
+    from dataclasses import replace
+
+    claim = _claim()
+    projection = ActiveSetupChoiceProjection(
+        selection_handle="H" * 43, purpose="memory-service-enablement", key_id="root-key-v1",
+        signed_record_sha256="a" * 64, choice_payload_sha256="b" * 64,
+        choice_epoch=1, revocation_epoch=1, issued_at_unix=1.0, setup_deadline_unix=2.0,
+        release_deployment_receipt_sha256="c" * 64, setup_session_handle="d" * 64,
+        transaction_handle="T" * 64, plan_id="installer-root-setup-plan-v1",
+        prepared_generation="prepared-1", principal_selection_handle="e" * 43,
+        namespace_selection_handle="f" * 43, private_profile_selection_handle="g" * 43,
+        source_member_receipt_handles=("i" * 43,), principal_id="principal",
+        profile_id="hermes-agent-native-v1", namespace_id="namespace",
+        principal_binding_sha256="j" * 64, namespace_binding_sha256="k" * 64,
+        service_generation_id="prepared-1", service_generation_digest="8" * 64,
+        selection_catalog_sha256=claim.selection_catalog_sha256,
+        _compiler_seal=object(),
+    )
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._seal = claim._seal
+    with pytest.raises(BootstrapEnrollmentPending, match="unsealed"):
+        registry._verify_choice_projection_seals(
+            replace(claim, choice_adoptions=(projection,)))
+
+
+def test_predecessor_resolver_returns_only_the_verified_retained_claim_value():
+    claim = _claim()
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._claims = {claim.publication_handle: claim}
+    verified = []
+    registry.verify_current_active_policy_claim = lambda actual: verified.append(actual) or actual
+    assert registry.resolve_current_active_policy_predecessor(claim.publication_handle) == "7" * 64
+    assert verified == [claim]
+
+    with pytest.raises(BootstrapEnrollmentPending, match="claim is absent"):
+        registry.resolve_current_active_policy_predecessor("Z" * 43)
 
 
 def test_mutated_selection_output_is_rejected_before_claim_can_be_published():
