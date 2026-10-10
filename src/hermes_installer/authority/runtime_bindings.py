@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -30,6 +31,8 @@ from hermes_installer.protected_enrollment import (
     RootSelectedPrivateMemoryEndpointBinding,
     RootSelectedPrivateMemoryModelBinding,
 )
+
+_ROOT_SETUP_CHOICE_ATTACH_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +134,39 @@ class RootRuntimeBindings:
                                   service_generation_digest: str) -> Any:
         return self.enrollment_catalog.resolve_memory_enrollment(
             memory_enrollment_id, service_generation_digest=service_generation_digest)
+
+    def attach_root_setup_choice_registry(self, registry: Any, service: Any) -> None:
+        """Attach the exact durable choice registry after active runtime composition.
+
+        This is the only post-construction mutation of this otherwise frozen
+        binding snapshot. It is one-shot and requires the registry, service,
+        publication, journal and already-published runtime to share this exact
+        selected active generation.
+        """
+        from .root_setup_choices import RootSetupChoiceRegistry
+        from .service import AuthorityService
+        from .runtime_composition import RootAuthorityRuntime
+
+        with _ROOT_SETUP_CHOICE_ATTACH_LOCK:
+            runtime = getattr(service, "root_authority_runtime", None)
+            journal = getattr(registry, "journal", None)
+            publication = getattr(registry, "current_active_publication", None)
+            if (os.geteuid() != 0
+                    or type(registry) is not RootSetupChoiceRegistry
+                    or type(service) is not AuthorityService
+                    or type(runtime) is not RootAuthorityRuntime
+                    or runtime.service is not service or runtime.bindings is not self
+                    or service.root_runtime_bindings is not self
+                    or self.root_setup_choice_registry is not None
+                    or getattr(registry, "service", None) is not service
+                    or getattr(registry, "release", None) is not runtime.controller_release_receipt
+                    or getattr(publication, "service_generation_digest", None)
+                    != self.service_generation_digest
+                    or getattr(journal, "service_generation_digest", None)
+                    != self.service_generation_digest
+                    or not callable(getattr(registry, "resolve_current_adopted_choice_snapshot", None))):
+                raise EnrollmentDenied("durable setup choice registry is not bound to this active root runtime")
+            object.__setattr__(self, "root_setup_choice_registry", registry)
 
     def resolve_current_public_web_scopes(
         self, web_scope_ids: tuple[str, ...] | list[str], *, principal_id: str,

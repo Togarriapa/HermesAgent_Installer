@@ -491,6 +491,7 @@ class RootAuthorityRuntime:
     controller_release_receipt: Any | None = None
     controller_actor_observation: Any | None = None
     provider_runtime_selection: Any | None = None
+    root_setup_choice_registry: Any | None = None
     root_tty_consent_choices: Any | None = None
     private_input_consent_registry: Any | None = None
     memory_capture_consent_registry: Any | None = None
@@ -612,6 +613,7 @@ class RootAuthorityRuntime:
             getattr(self.native_bridge_broker, "native_turn_observer", None),
             self.native_mcp_dispatcher,
             self.native_mcp_discovery_registry,
+            self.root_setup_choice_registry,
             self.root_tty_consent_choices,
             self.private_input_consent_registry,
             self.memory_capture_consent_registry,
