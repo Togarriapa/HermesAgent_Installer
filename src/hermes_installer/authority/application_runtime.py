@@ -50,6 +50,24 @@ def _id(value: Any, name: str) -> str:
     return value
 
 
+def _service_digest(catalog: Any) -> str:
+    value = getattr(catalog, "generation_digest", None)
+    if value is None:
+        value = getattr(catalog, "digest", None)
+    return _digest(value, "service generation")
+
+
+def _is_application_probe(value: Any) -> bool:
+    cls = type(value)
+    if cls.__name__ != "RootApplicationRuntimeProbeReceipt":
+        return False
+    try:
+        from hermes_installer.authority.application_workload_execution import RootApplicationRuntimeProbeReceipt
+    except ImportError:
+        return False
+    return cls is RootApplicationRuntimeProbeReceipt
+
+
 def _secure_generation(store: GenerationStore, identity: str, *, expected_uid: int) -> tuple[Path, Mapping[str, Any], str]:
     """Reopen and independently verify a sealed root generation, including modes."""
     identity = store._id(identity)
@@ -215,7 +233,7 @@ class RootComponentSourceReceiptRegistry:
                 or source.redistribution_license_review_required != contract.redistribution_license_review_required):
             raise SelectedApplicationUnavailable("verified source bundle differs from its pinned provenance")
         root, manifest, digest = _secure_generation(store, source.generation_id, expected_uid=self.expected_uid)
-        service_digest = getattr(self.enrollment_catalog, "generation_digest", None)
+        service_digest = _service_digest(self.enrollment_catalog)
         if (not isinstance(service_digest, str) or not _SHA.fullmatch(service_digest)
                 or manifest.get("generation") != source.generation_id
                 or manifest.get("files") != expected_files
@@ -256,26 +274,9 @@ class RootComponentSourceReceiptRegistry:
         root, manifest, digest = _secure_generation(store, receipt.generation_id, expected_uid=self.expected_uid)
         if root != receipt.generation_root or digest != receipt.generation_manifest_sha256 or manifest != receipt._manifest:
             raise SelectedApplicationUnavailable("source receipt no longer matches its held generation")
-        if getattr(self.enrollment_catalog, "generation_digest", None) != service_generation_digest:
+        if _service_digest(self.enrollment_catalog) != service_generation_digest:
             raise SelectedApplicationUnavailable("source receipt belongs to a stale service generation")
         return receipt
-
-
-@dataclass(frozen=True, slots=True)
-class ManagedApplicationRuntimeProbe:
-    """Root-only terminal probe facts returned by process-custody lookup."""
-    receipt_handle: str
-    runtime_id: str
-    runtime_manifest_sha256: str
-    lock_sha256: str
-    python_version: str
-    SOABI: str
-    machine: str
-    platform: str
-    dependency_artifact_ids: tuple[str, ...]
-    terminal_success: bool
-    service_generation_digest: str
-    expires_monotonic: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +294,10 @@ class RootApplicationRuntimeReceipt:
     platform: str
     dependency_artifact_ids: tuple[str, ...]
     probe_receipt_handle: str
+    import_origins_sha256: str
+    toolchain_artifact_receipt_handles: tuple[str, ...]
+    service_selection_digest: str
+    preparation_selection_handle: str
     service_generation_digest: str
     issued_monotonic: float
     expires_monotonic: float
@@ -333,7 +338,7 @@ class RootApplicationRuntimeReceiptRegistry:
         if not isinstance(selected_locked_runtime, Mapping):
             raise SelectedApplicationUnavailable("runtime receipt requires a selected locked runtime")
         application_id = _id(selected_locked_runtime.get("application_id"), "application ID")
-        service_digest = getattr(self.enrollment_catalog, "generation_digest", None)
+        service_digest = _service_digest(self.enrollment_catalog)
         source = self.source_receipts.resolve(
             source_receipt_handle, application_id=application_id,
             service_generation_digest=service_digest,
@@ -345,19 +350,27 @@ class RootApplicationRuntimeReceiptRegistry:
         actual_managed_probe = self.managed_probe_registry.resolve(
             managed_probe_receipt_handle, application_id=application_id,
             runtime_id=runtime_id, service_generation_digest=service_digest,
+            preparation_selection_handle=selected_locked_runtime.get("preparation_selection_handle"),
         )
-        if type(actual_managed_probe) is not ManagedApplicationRuntimeProbe:
+        if not _is_application_probe(actual_managed_probe):
             raise SelectedApplicationUnavailable("root custody returned no typed runtime probe receipt")
         store = self.runtime_stores.get(runtime_id)
         if store is None:
             raise SelectedApplicationUnavailable("selected isolated runtime generation is unavailable")
         lock_sha = _digest(selected_locked_runtime.get("lock_sha256"), "lock")
-        if (actual_managed_probe.runtime_id != runtime_id
-                or actual_managed_probe.lock_sha256 != lock_sha
-                or actual_managed_probe.service_generation_digest != service_digest
-                or actual_managed_probe.expires_monotonic <= self.monotonic()
-                or not isinstance(actual_managed_probe.receipt_handle, str)
-                or not _OPAQUE.fullmatch(actual_managed_probe.receipt_handle)):
+        probe_handle = getattr(actual_managed_probe, "handle", None)
+        selected_probe_rows = (
+            getattr(actual_managed_probe, "application_id", None) == application_id,
+            getattr(actual_managed_probe, "source_receipt_handle", None) == source_receipt_handle,
+            getattr(actual_managed_probe, "lock_sha256", None) == lock_sha,
+            getattr(actual_managed_probe, "runtime_manifest_sha256", None)
+                == selected_locked_runtime.get("runtime_manifest_sha256"),
+            getattr(actual_managed_probe, "service_selection_digest", None)
+                == selected_locked_runtime.get("service_selection_digest"),
+            getattr(actual_managed_probe, "expires_monotonic", 0) > self.monotonic(),
+            isinstance(probe_handle, str) and _OPAQUE.fullmatch(probe_handle),
+        )
+        if not all(selected_probe_rows):
             raise SelectedApplicationUnavailable("managed runtime probe does not match the current locked selection")
         root, manifest, digest = _secure_generation(
             store, runtime_id, expected_uid=self.expected_uid,
@@ -367,10 +380,19 @@ class RootApplicationRuntimeReceiptRegistry:
                 or not actual_managed_probe.python_version or not actual_managed_probe.SOABI
                 or actual_managed_probe.machine not in {"aarch64", "arm64"}
                 or not actual_managed_probe.platform.startswith("linux")
-                or not actual_managed_probe.dependency_artifact_ids
-                or len(actual_managed_probe.dependency_artifact_ids) > 256
-                or len(set(actual_managed_probe.dependency_artifact_ids)) != len(actual_managed_probe.dependency_artifact_ids)):
+                or not isinstance(actual_managed_probe.import_origins_sha256, str)
+                or not _SHA.fullmatch(actual_managed_probe.import_origins_sha256)):
             raise SelectedApplicationUnavailable("isolated environment manifest or observed ARM64 ABI is not qualified")
+        dependency_ids = selected_locked_runtime.get("dependency_artifact_ids")
+        toolchain_handles = actual_managed_probe.toolchain_artifact_receipt_handles
+        if (not isinstance(dependency_ids, (list, tuple)) or not dependency_ids
+                or len(dependency_ids) > 256
+                or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in dependency_ids)
+                or len(set(dependency_ids)) != len(dependency_ids)
+                or not isinstance(toolchain_handles, (list, tuple))
+                or len(toolchain_handles) > 64
+                or any(not isinstance(item, str) or not _OPAQUE.fullmatch(item) for item in toolchain_handles)):
+            raise SelectedApplicationUnavailable("selected lock or runtime toolchain receipt set is malformed")
         row = self.enrollment_catalog.selected_application_runtime_record(application_id)
         receipt_handle = row.get("runtime_receipt_handle")
         if not isinstance(receipt_handle, str) or not _OPAQUE.fullmatch(receipt_handle):
@@ -386,8 +408,11 @@ class RootApplicationRuntimeReceiptRegistry:
             1, handle, application_id, source_receipt_handle, runtime_id, digest,
             lock_sha, actual_managed_probe.python_version, actual_managed_probe.SOABI,
             actual_managed_probe.machine, actual_managed_probe.platform,
-            tuple(actual_managed_probe.dependency_artifact_ids),
-            actual_managed_probe.receipt_handle, service_digest,
+            tuple(dependency_ids),
+            probe_handle, actual_managed_probe.import_origins_sha256,
+            tuple(toolchain_handles), actual_managed_probe.service_selection_digest,
+            actual_managed_probe.preparation_selection_handle,
+            service_digest,
             now, min(now + self.ttl_seconds, actual_managed_probe.expires_monotonic),
             root, manifest,
         )
@@ -416,44 +441,54 @@ class RootApplicationRuntimeReceiptRegistry:
         if store is None:
             raise SelectedApplicationUnavailable("selected runtime store is unavailable")
         root, manifest, digest = _secure_generation(store, receipt.runtime_id, expected_uid=self.expected_uid)
+        probe = self.managed_probe_registry.resolve(
+            receipt.probe_receipt_handle, application_id=application_id,
+            runtime_id=receipt.runtime_id, service_generation_digest=service_generation_digest,
+            preparation_selection_handle=receipt.preparation_selection_handle,
+        )
         if (root != receipt.runtime_root or digest != receipt.runtime_manifest_sha256
                 or manifest != receipt._manifest or source.handle != receipt.source_receipt_handle
-                or getattr(self.enrollment_catalog, "generation_digest", None) != service_generation_digest):
+                or probe.import_origins_sha256 != receipt.import_origins_sha256
+                or tuple(probe.toolchain_artifact_receipt_handles) != receipt.toolchain_artifact_receipt_handles
+                or probe.source_receipt_handle != receipt.source_receipt_handle
+                or probe.lock_sha256 != receipt.lock_sha256
+                or probe.service_selection_digest != receipt.service_selection_digest
+                or probe.preparation_selection_handle != receipt.preparation_selection_handle
+                or _service_digest(self.enrollment_catalog) != service_generation_digest):
             raise SelectedApplicationUnavailable("runtime receipt no longer matches its root-held environment")
         return receipt
 
 
 class RootManagedApplicationRuntimeProbeRegistry:
-    """Resolve terminal runtime probes held by the actual root process manager.
+    """Resolve probes held by the root application-probe authority.
 
-    The process manager must implement the narrow resolver that joins its own
-    retained start and terminal receipt objects. No callable is supplied by an
+    The authority joins sealed preparation selection to actual manager start,
+    terminal, ABI, and import-origin evidence. No receipt is accepted from an
     installer worker or selected application.
     """
 
-    def __init__(self, process_manager: Any, *, monotonic: Callable[[], float] = time.monotonic) -> None:
-        from hermes_installer.managed_process_custodian import ManagedProcessEffectHandler
-        if type(process_manager) is not ManagedProcessEffectHandler:
-            raise ValueError("application runtime probe registry requires the concrete root process manager")
-        self.process_manager = process_manager
+    def __init__(self, probe_authority: Any, *, monotonic: Callable[[], float] = time.monotonic) -> None:
+        if not callable(getattr(probe_authority, "resolve_application_runtime_probe", None)):
+            raise ValueError("application runtime probe registry requires the root probe authority")
+        self.probe_authority = probe_authority
         self.monotonic = monotonic
 
     def resolve(self, receipt_handle: str, *, application_id: str, runtime_id: str,
-                service_generation_digest: str) -> ManagedApplicationRuntimeProbe:
+                service_generation_digest: str,
+                preparation_selection_handle: Any = None) -> Any:
         if not isinstance(receipt_handle, str) or not _OPAQUE.fullmatch(receipt_handle):
             raise SelectedApplicationUnavailable("managed runtime probe handle is malformed")
-        resolver = getattr(self.process_manager, "resolve_application_runtime_probe", None)
-        if not callable(resolver):
-            raise SelectedApplicationUnavailable(
-                "managed process custody has no selected isolated-runtime probe receipt producer"
-            )
         try:
-            probe = resolver(receipt_handle)
+            probe = self.probe_authority.resolve_application_runtime_probe(receipt_handle)
         except Exception:
             raise SelectedApplicationUnavailable("root managed runtime probe is unavailable or stale") from None
-        if (type(probe) is not ManagedApplicationRuntimeProbe
-                or probe.receipt_handle != receipt_handle or probe.runtime_id != runtime_id
-                or probe.service_generation_digest != service_generation_digest
+        if (not _is_application_probe(probe)
+                or getattr(probe, "handle", None) != receipt_handle
+                or getattr(probe, "application_id", None) != application_id
+                or getattr(probe, "preparation_selection_handle", None) != preparation_selection_handle
+                or getattr(probe, "runtime_manifest_sha256", None) is None
+                or not isinstance(getattr(probe, "service_selection_digest", None), str)
+                or not _SHA.fullmatch(probe.service_selection_digest)
                 or probe.expires_monotonic <= self.monotonic()):
             raise SelectedApplicationUnavailable("managed runtime probe does not match the selected application")
         return probe

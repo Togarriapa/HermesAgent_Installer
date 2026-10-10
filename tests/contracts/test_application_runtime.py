@@ -125,9 +125,11 @@ def test_runtime_receipt_refuses_without_actual_custody_probe_producer(tmp_path:
         enrollment_catalog=catalog, generation_stores={"ecc": source_store}, expected_uid=os.getuid(),
     )
     source_registry.record_verified_generation(source, generation, application_id="ecc")
-    from hermes_installer.managed_process_custodian import ManagedProcessEffectHandler
-    manager = object.__new__(ManagedProcessEffectHandler)
-    probe_registry = RootManagedApplicationRuntimeProbeRegistry(manager)
+    class ProbeAuthority:
+        def resolve_application_runtime_probe(self, _handle):
+            raise SelectedApplicationUnavailable("probe not produced")
+
+    probe_registry = RootManagedApplicationRuntimeProbeRegistry(ProbeAuthority())
     runtime_registry = RootApplicationRuntimeReceiptRegistry(
         source_receipts=source_registry, enrollment_catalog=catalog,
         runtime_stores={"runtime-ecc": runtime_store}, managed_probe_registry=probe_registry,
@@ -135,7 +137,7 @@ def test_runtime_receipt_refuses_without_actual_custody_probe_producer(tmp_path:
     )
     selected_lock = {"application_id": "ecc", "runtime_id": "runtime-ecc",
                      "runtime_manifest_sha256": runtime_digest, "lock_sha256": "a" * 64}
-    with pytest.raises(SelectedApplicationUnavailable, match="no selected isolated-runtime probe receipt producer"):
+    with pytest.raises(SelectedApplicationUnavailable, match="unavailable or stale"):
         runtime_registry.record_observed_environment(source_handle, selected_lock, probe_handle)
 
 
