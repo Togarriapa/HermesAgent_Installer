@@ -451,7 +451,6 @@ The installer SHALL implement `planning/official-desktop-ws-types-repair-v229.js
 - **WHEN** current auxiliary receipt and original dependency/compiler/source joins materialize the exact fixed declarations in an owned disposable workspace
 - **THEN** the owner SHALL verify the original actual ARM64 typecheck and record the distinct auxiliary projection before proceeding to required native/AppDir qualification
 
-
 ## ADDED Requirements
 
 ### Requirement: Gateway acyclic digest and owned expired-lease cleanup
