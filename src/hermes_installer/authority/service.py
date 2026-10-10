@@ -250,6 +250,7 @@ class AuthorityService:
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
         self.native_input_delivery_registry = None
+        self.channel_peer_delivery_registry = None
         self.native_turn_observation_registry = None
         self.native_mcp_dispatcher = None
         self.selected_application_router = None
@@ -450,6 +451,18 @@ class AuthorityService:
                 or not callable(getattr(registry, "take_selected_native_input", None))):
             raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
         self.native_input_delivery_registry = registry
+
+    def attach_channel_peer_delivery_registry(self, registry: Any) -> None:
+        """Attach the fixed selected channel bind/take registry once."""
+        from .channel_peer_delivery import RootChannelPeerDeliveryRegistry
+
+        if (self.channel_peer_delivery_registry is not None
+                or type(registry) is not RootChannelPeerDeliveryRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "bind", None))
+                or not callable(getattr(registry, "take", None))):
+            raise AuthorityDenied("channel.delivery", "root selected channel delivery registry is invalid")
+        self.channel_peer_delivery_registry = registry
 
     def attach_native_turn_observation_registry(self, registry: Any) -> None:
         """Attach the exact root-native turn observer once during assembly."""
@@ -1889,6 +1902,28 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation == "channel.runtime.bind":
+            registry = self.channel_peer_delivery_registry
+            if (registry is None or peer_pidfd is None
+                    or not isinstance(payload, dict) or set(payload) != {"schema"}
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1):
+                raise AuthorityDenied("channel.binding", "selected channel peer binding is unavailable")
+            return registry.bind(peer_uid=uid, peer_pid=peer_pid,
+                                 peer_pidfd=peer_pidfd).to_wire()
+        if operation == "channel.event.take":
+            registry = self.channel_peer_delivery_registry
+            expected = {"schema", "binding_handle", "max_events"}
+            if (registry is None or peer_pidfd is None
+                    or not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or type(payload.get("max_events")) is not int or payload["max_events"] != 1
+                    or not isinstance(payload.get("binding_handle"), str)):
+                raise AuthorityDenied("channel.delivery", "selected channel event lookup is unavailable")
+            delivery = registry.take(
+                peer_uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                binding_handle=payload["binding_handle"],
+            )
+            return delivery.to_wire() if delivery is not None else None
         if operation in {"native.invocation.begin", "native.invocation.contexts"}:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
