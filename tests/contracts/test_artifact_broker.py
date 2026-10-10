@@ -409,7 +409,13 @@ class ArtifactBrokerContracts(unittest.TestCase):
             "installer-native-boundary-module-v137": (
                 "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
             "installer-native-source-definitions-module-v137": (
-                "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7", 10_063),
+                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819),
+            "installer-native-input-capture-profile-v1": (
+                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837),
+            "installer-native-tool-result-capture-profile-v1": (
+                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984),
+            "installer-native-provider-result-capture-profile-v1": (
+                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
         }
         for artifact_id, (digest, size) in expected_modules.items():
             spec = catalog.artifacts[artifact_id]

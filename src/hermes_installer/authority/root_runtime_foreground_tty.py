@@ -173,6 +173,38 @@ class RootRuntimeForegroundTTYObserver:
         self._consumed.add(observation_handle)
         return record
 
+    def resolve_observation_selection(self, observation_handle: str) -> Any:
+        """Return the exact retained adopted selection for signer-side lookup.
+
+        Callers provide only the opaque observation handle. The observer
+        rechecks current installed-root identity, current source row/epoch,
+        original TTY controller, TTL, and one-use state before returning the
+        same sealed selection object retained when the operator acted.
+        """
+        pair = self._records.get(observation_handle)
+        if pair is None:
+            raise RootRuntimeForegroundTTYDenied("revocation observation is absent")
+        record, selection = pair
+        self._lookup(observation_handle, selection, require_unconsumed=True)
+        self._check_runtime_identity()
+        from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+        proof = _capture_root_tty_proof()
+        try:
+            _verify_root_tty_proof(proof)
+            if (_tty_digest(proof) != record.tty_controller_observation_handle
+                    or _actor_digest(self._actor) != record.root_actor_observation_handle):
+                raise RootRuntimeForegroundTTYDenied("root actor or foreground TTY changed")
+        finally:
+            proof.close()
+        # Return the exact identity held at capture, never a newly projected
+        # object supplied by the caller.
+        return selection
+
+    def is_bound_to(self, registry: Any, bindings: Any) -> bool:
+        """Check exact composition identity without exposing private members."""
+        return (type(self) is RootRuntimeForegroundTTYObserver
+                and self._registry is registry and self._bindings is bindings)
+
     def verify_consumed_revocation(self, observation_handle: str,
                                    expected_selection: Any) -> bool:
         if observation_handle not in self._consumed:

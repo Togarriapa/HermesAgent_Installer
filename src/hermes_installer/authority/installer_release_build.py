@@ -78,21 +78,21 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.components.native_plugins",
      "src/hermes_installer/components/native_plugins.py",
      "lib/python/hermes_installer/components/native_plugins.py",
-     "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+     "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
     ("hermes_installer.components.public_registries",
      "src/hermes_installer/components/public_registries.py",
      "lib/python/hermes_installer/components/public_registries.py",
-     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
     ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py",
      "src/hermes_installer/native_invocations.py",
-     "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+     "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
     ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py",
      "src/hermes_installer/native_boundary.py",
-     "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
+     "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
     ("hermes_installer.authority.native_source_definitions",
      "src/hermes_installer/authority/native_source_definitions.py",
-     "src/hermes_installer/authority/native_source_definitions.py",
-     "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7", 10_063),
+     "lib/python/hermes_installer/authority/native_source_definitions.py",
+     "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
 )
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
@@ -124,7 +124,7 @@ BOOTSTRAP_PYYAML_BYTES = 766_454
 BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-arm64"
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
-RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "template", "plan",
+RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
                            "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
                            "runtime-member"})
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
@@ -2643,13 +2643,13 @@ class RootInstalledReleaseBuilder:
             self._copy_source(source, output_fd, source_rel, target, ("module",))
             staged.append(self._last_output_row)
         staged_paths = {row[0] for row in staged}
-        for _name, source_rel, target, expected_digest, expected_size in REVIEWED_SOURCE_MODULES:
+        for _name, source_rel, target, expected_digest, expected_size, role in REVIEWED_SOURCE_MODULES:
             source_row = source_files.get(source_rel)
             if (source_row is None or source_row.sha256 != expected_digest
                     or source_row.size_bytes != expected_size):
                 raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
             if target not in staged_paths:
-                self._copy_source(source, output_fd, source_rel, target, ("module",))
+                self._copy_source(source, output_fd, source_rel, target, (role,))
                 staged.append(self._last_output_row)
                 staged_paths.add(target)
         return staged

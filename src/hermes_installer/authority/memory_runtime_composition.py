@@ -192,7 +192,7 @@ class RootMemoryRuntimeComposition:
 
 def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
                                 enrollment: Any, memory_runtime: Any,
-                                service: Any,
+                                service: Any, root_setup_choice_registry: Any = None,
                                 vault: Any = None,
                                 network_lease_resolver: RootMemoryNetworkLeaseResolver | None = None,
                                 monotonic: Callable[[], float] = time.monotonic
@@ -208,6 +208,7 @@ def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
     )
     from .memory_lifecycle_registry import RootMemoryLifecycleRegistry
     from .root_memory_service_enablement import RootMemoryServiceEnablementRegistry
+    from .root_setup_choices import RootSetupChoiceRegistry
     from hermes_installer.memory.lifecycle_authority import RootMemoryServiceLifecycle
     from hermes_installer.memory.namespace_connector import MemoryNamespaceConnector
 
@@ -240,11 +241,19 @@ def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
     except Exception:
         reasons.append("root journal or active prestart receipt authority is unavailable")
 
-    setup_choice_registry = getattr(service, "root_setup_choice_registry", None)
-    if not callable(getattr(setup_choice_registry,
-                            "resolve_current_memory_service_enablement_choice", None)):
+    setup_choice_registry = root_setup_choice_registry
+    setup_choices_current = (
+        type(setup_choice_registry) is RootSetupChoiceRegistry
+        and bindings.root_setup_choice_registry is setup_choice_registry
+        and getattr(getattr(service, "root_authority_runtime", None),
+                    "root_setup_choice_registry", None) is setup_choice_registry
+        and callable(getattr(
+            setup_choice_registry, "resolve_current_memory_service_enablement_choice", None,
+        ))
+    )
+    if not setup_choices_current:
         reasons.append("durable root service-enable choice registry is unavailable")
-    if setup_choice_registry is not None and journal is not None:
+    if setup_choices_current and journal is not None:
         try:
             enablement = RootMemoryServiceEnablementRegistry.from_root_runtime(
                 bindings, setup_choice_registry, journal,

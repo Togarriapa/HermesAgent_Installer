@@ -43,13 +43,17 @@ _SEAL = object()
 _CHOICE_ADOPTION_FIELDS = (
     "selection_handle", "purpose", "key_id", "signed_record_sha256",
     "choice_payload_sha256", "choice_epoch", "revocation_epoch", "issued_at_unix",
-    "setup_deadline_unix", "release_deployment_receipt_sha256", "setup_session_handle",
+    "setup_deadline_unix", "adopted_at_unix", "release_deployment_receipt_sha256", "setup_session_handle",
     "transaction_handle", "plan_id", "prepared_generation", "principal_selection_handle",
     "namespace_selection_handle", "private_profile_selection_handle",
     "source_member_receipt_handles", "principal_id", "profile_id", "namespace_id",
     "principal_binding_sha256", "namespace_binding_sha256", "service_generation_id",
     "service_generation_digest", "selection_catalog_sha256", "publication_receipt_handle",
     "publication_sha256", "generation_id",
+)
+_CHOICE_PROJECTION_FIELDS = tuple(
+    name for name in _CHOICE_ADOPTION_FIELDS
+    if name not in {"adopted_at_unix", "publication_receipt_handle", "publication_sha256", "generation_id"}
 )
 
 
@@ -101,6 +105,7 @@ class PublishedSetupChoiceAdoption:
     revocation_epoch: int
     issued_at_unix: float
     setup_deadline_unix: float
+    adopted_at_unix: float
     release_deployment_receipt_sha256: str
     setup_session_handle: str
     transaction_handle: str
@@ -129,11 +134,24 @@ class PublishedSetupChoiceAdoption:
         object.__setattr__(self, "source_member_receipt_handles",
                            tuple(self.source_member_receipt_handles))
 
-    def verify_current(self) -> "PublishedSetupChoiceAdoption":
+    def verify_current(self, root_setup_choice_registry: Any) -> "PublishedSetupChoiceAdoption":
+        """Revalidate both the active publisher projection and its signed source row.
+
+        The source registry must be the exact root runtime/setup choice registry
+        already attached to the composing authority. A caller-provided verifier
+        callback or a policy-generation-only match is insufficient.
+        """
+        from .root_setup_choices import RootSetupChoiceRegistry
+        if type(root_setup_choice_registry) is not RootSetupChoiceRegistry:
+            raise BootstrapEnrollmentPending("current root setup choice registry is required")
         current = PolicyPublicationReceiptResolver.resolve_current_choice_adoption(
             self.selection_handle)
         if _choice_adoption_value(current) != _choice_adoption_value(self):
             raise BootstrapEnrollmentPending("published setup choice is no longer in the active generation")
+        verifier = getattr(root_setup_choice_registry, "verify_published_adoption_current", None)
+        if not callable(verifier):
+            raise BootstrapEnrollmentPending("root setup choice source-currentness verifier is unavailable")
+        verifier(self)
         return self
 
     def __repr__(self) -> str:
@@ -213,6 +231,8 @@ class RootSetupPolicyGenerationPublisher:
         else:
             compiled = self.registry.claim_compilation(publication_handle,
                                                        expected_selection_catalog_sha256)
+        publication_started = False
+        receipt: RootSetupPublicationReceipt | None = None
         try:
             self.release.verify_current()
             if self._active:
@@ -242,6 +262,11 @@ class RootSetupPolicyGenerationPublisher:
                 policy_id, policy_sha256,
                 getattr(compiled, "release_commit", self.release.release_commit), self.release,
             )
+            # Validate the exact ordered closure before creating immutable
+            # generations or a journal row. The active compiler owns this
+            # canonical ordering; the publisher must never silently dedupe it.
+            _receipt_input_handles(compiled, active=self._active)
+            publication_started = True
             receipt = self._publish_compiled(compiled, expected_selection_catalog_sha256,
                                              state="active-committed" if self._active else "prepared")
             if self._active:
@@ -249,12 +274,63 @@ class RootSetupPolicyGenerationPublisher:
             else:
                 self.registry.complete_publication(receipt)
             return receipt
-        except Exception:
+        except Exception as exc:
+            if self._active and publication_started:
+                # The selection replacement is the externally visible commit.
+                # A failure after that point must not release the native output
+                # reservation or mark the compiler claim releasable. Recover a
+                # receipt from the fixed root journal when _publish_compiled
+                # raised after its atomic replacement but before returning.
+                if receipt is None:
+                    try:
+                        receipt = PolicyPublicationReceiptResolver.resolve_current()
+                    except Exception:
+                        receipt = None
+                if receipt is not None and _receipt_matches_active_claim(receipt, compiled):
+                    try:
+                        self.registry.complete_active_publication(receipt)
+                        return receipt
+                    except Exception as completion_error:
+                        raise BootstrapEnrollmentPending(
+                            "active policy selection is committed; compiler claim and output reservation "
+                            "are retained for publication finalization recovery"
+                        ) from completion_error
+                raise BootstrapEnrollmentPending(
+                    "active policy publication may have crossed its durable selection commit; "
+                    "compiler claim and output reservation are retained for recovery"
+                ) from exc
             if self._active:
                 self.registry.release_active_policy(publication_handle)
             else:
                 self.registry.release_compilation(publication_handle)
             raise
+
+    def recover_active_publication(self, publication_handle: str) -> RootSetupPublicationReceipt:
+        """Finish a previously committed active publication from durable current state.
+
+        This deliberately accepts no receipt or claim fields from the caller. It
+        resolves the fixed root selection and journal, checks the opaque handle,
+        then asks the typed compiler registry to reconcile its retained claim and
+        output reservation. It cannot recover a superseded or merely prepared
+        generation.
+        """
+        _require_root_linux()
+        if not self._active:
+            raise BootstrapEnrollmentError("active publication recovery requires the active compiler registry")
+        if not isinstance(publication_handle, str) or not _HANDLE.fullmatch(publication_handle):
+            raise BootstrapEnrollmentError("active publication recovery handle is malformed")
+        receipt = PolicyPublicationReceiptResolver.resolve_current()
+        if receipt.publication_handle != publication_handle or receipt.state != "active-committed":
+            raise BootstrapEnrollmentPending("the requested active publication is not the durable current selection")
+        recovery = getattr(self.registry, "recover_active_publication_receipt", None)
+        if callable(recovery):
+            recovery(receipt)
+        else:
+            # Compatibility for a registry retaining the original in-memory
+            # claim. A fresh registry must implement the durable typed recovery
+            # API rather than reconstructing claims from caller input.
+            self.registry.complete_active_publication(receipt)
+        return receipt
 
     def _publish_compiled(self, compiled: CompiledRootSetupPublication,
                           expected_selection_catalog_sha256: str | None,
@@ -496,6 +572,8 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
                     or row.prepared_generation != record.get("prepared_generation_id")
                     or row.service_generation_digest != record.get("service_generation_digest")):
                 raise BootstrapEnrollmentError("setup choice adoption differs from its active publication")
+            if not set(row.source_member_receipt_handles).issubset(handles):
+                raise BootstrapEnrollmentError("setup choice source receipts are outside the publication input closure")
     return RootSetupPublicationReceipt(
         1, record["publication_receipt_handle"], record["transaction_handle"],
         record["generation_id"], record["publication_sha256"], Path(record["generation_root"]),
@@ -539,10 +617,14 @@ def _choice_adoption_from_record(record: Mapping[str, Any]) -> PublishedSetupCho
             or type(record["revocation_epoch"]) is not int or record["revocation_epoch"] < 1
             or type(record["issued_at_unix"]) not in {int, float}
             or type(record["setup_deadline_unix"]) not in {int, float}
+            or type(record["adopted_at_unix"]) not in {int, float}
             or not math.isfinite(record["issued_at_unix"])
             or not math.isfinite(record["setup_deadline_unix"])
+            or not math.isfinite(record["adopted_at_unix"])
             or record["issued_at_unix"] <= 0
-            or record["setup_deadline_unix"] <= record["issued_at_unix"]):
+            or record["setup_deadline_unix"] <= record["issued_at_unix"]
+            or record["adopted_at_unix"] < record["issued_at_unix"]
+            or record["adopted_at_unix"] > record["setup_deadline_unix"]):
         raise BootstrapEnrollmentError("published setup choice adoption fields are malformed")
     handles = record["source_member_receipt_handles"]
     if (not isinstance(handles, list) or not handles
@@ -562,7 +644,7 @@ def _choice_adoption_value(adoption: PublishedSetupChoiceAdoption) -> dict[str, 
 def _choice_projection_value(projection: Any) -> dict[str, Any]:
     """Copy the compiler's sealed digest-only choice projection into the descriptor."""
     values: dict[str, Any] = {}
-    for name in _CHOICE_ADOPTION_FIELDS:
+    for name in _CHOICE_PROJECTION_FIELDS:
         if name in {"publication_receipt_handle", "publication_sha256", "generation_id"}:
             continue
         if not hasattr(projection, name):
@@ -931,7 +1013,13 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
         elif (not _SHA.fullmatch(expected_selection_catalog_sha256) or current is None
               or current["catalog_sha256"] != expected_selection_catalog_sha256):
             raise BootstrapEnrollmentPending("root selection changed before publication; prior generation preserved")
-        descriptor, files = _build_descriptor(compiled, expected_selection_catalog_sha256, release)
+        choice_projections = tuple(getattr(compiled, "choice_adoptions", ()))
+        adopted_at_unix = time.time() if publication_state == "active-committed" and choice_projections else None
+        if adopted_at_unix is not None:
+            _validate_choice_adoption_time(choice_projections, adopted_at_unix)
+        descriptor, files = _build_descriptor(
+            compiled, expected_selection_catalog_sha256, release,
+            adopted_at_unix=adopted_at_unix)
         descriptor_bytes = _canonical(descriptor)
         publication_sha = _sha(descriptor_bytes)
         generation_path = policy_root / publication_sha
@@ -972,7 +1060,8 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
         final_unsigned = {key: value for key, value in final_selection.items() if key != "catalog_sha256"}
         final_selection["catalog_sha256"] = _sha(_canonical(final_unsigned))
         final_selection_bytes = _canonical(final_selection)
-        receipt_inputs = _receipt_input_handles(compiled)
+        receipt_inputs = _receipt_input_handles(
+            compiled, active=publication_state == "active-committed")
         receipt = RootSetupPublicationReceipt(
             1, receipt_handle, compiled.transaction_handle, POLICY_GENERATION_ID,
             publication_sha, generation_path, generation_info.st_dev, generation_info.st_ino,
@@ -987,7 +1076,8 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
             tuple(getattr(compiled, "runtime_receipt_handles", ())),
             tuple(getattr(compiled, "materialization_receipt_handles", ())),
             _mint_choice_adoptions(compiled, receipt_handle, publication_sha,
-                                   POLICY_GENERATION_ID, publication_state))
+                                   POLICY_GENERATION_ID, publication_state,
+                                   adopted_at_unix=adopted_at_unix))
         _write_publication_record(journal_root, compiled.transaction_handle, receipt,
                                   descriptor_bytes, expected_uid)
         # Recheck CAS under the stable transaction lock immediately before replace.
@@ -1000,6 +1090,11 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
         if ((current_again is None) != (current is None)
                 or current_again is not None and current_again["catalog_sha256"] != current["catalog_sha256"]):
             raise BootstrapEnrollmentPending("root selection changed during publication; prior selection preserved")
+        if adopted_at_unix is not None and any(
+                time.time() > row["setup_deadline_unix"]
+                for row in (_choice_projection_value(item) for item in choice_projections)):
+            raise BootstrapEnrollmentPending(
+                "signed setup choice expired before active publication; prior selection preserved")
         _atomic_replace(selection_path, final_selection_bytes, expected_uid, 0o600,
                         compare_inode=current_selection)
         _fsync_dir(selection_path.parent)
@@ -1009,7 +1104,8 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
 
 
 def _mint_choice_adoptions(compiled: Any, receipt_handle: str, publication_sha: str,
-                           generation_id: str, publication_state: str
+                           generation_id: str, publication_state: str, *,
+                           adopted_at_unix: float | None
                            ) -> tuple[PublishedSetupChoiceAdoption, ...]:
     projections = tuple(getattr(compiled, "choice_adoptions", ()))
     if publication_state != "active-committed":
@@ -1017,17 +1113,33 @@ def _mint_choice_adoptions(compiled: Any, receipt_handle: str, publication_sha: 
             raise BootstrapEnrollmentError("prepared publication cannot adopt setup choices")
         return ()
     rows = [_choice_projection_value(projection) for projection in projections]
+    if projections and adopted_at_unix is None:
+        raise BootstrapEnrollmentError("active setup choices require a publisher adoption timestamp")
+    if adopted_at_unix is not None:
+        _validate_choice_adoption_time(projections, adopted_at_unix)
     minted: list[PublishedSetupChoiceAdoption] = []
     for row in rows:
-        row.update({"publication_receipt_handle": receipt_handle,
+        row.update({"adopted_at_unix": adopted_at_unix,
+                    "publication_receipt_handle": receipt_handle,
                     "publication_sha256": publication_sha,
                     "generation_id": generation_id})
         minted.append(_choice_adoption_from_record(row))
     return tuple(minted)
 
 
+def _validate_choice_adoption_time(projections: tuple[Any, ...], adopted_at_unix: float) -> None:
+    if type(adopted_at_unix) not in {int, float} or not math.isfinite(adopted_at_unix):
+        raise BootstrapEnrollmentError("publisher setup choice adoption timestamp is malformed")
+    for projection in projections:
+        row = _choice_projection_value(projection)
+        if not (row["issued_at_unix"] <= adopted_at_unix <= row["setup_deadline_unix"]):
+            raise BootstrapEnrollmentPending(
+                "signed setup choice cannot be adopted outside its original setup deadline")
+
+
 def _build_descriptor(compiled: CompiledRootSetupPublication,
-                      predecessor_sha256: str | None, release: Any
+                      predecessor_sha256: str | None, release: Any, *,
+                      adopted_at_unix: float | None = None
                       ) -> tuple[dict[str, Any], tuple[_FileSpec, ...]]:
     policy_doc = _json_bytes(compiled.policy_bytes, "bootstrap policy")
     catalog_doc = _json_bytes(compiled.artifact_catalog_bytes, "artifact catalog")
@@ -1108,6 +1220,12 @@ def _build_descriptor(compiled: CompiledRootSetupPublication,
                for row in projections):
             raise BootstrapEnrollmentError("active compiler choice projection is not sealed to its claim")
         projection_rows = [_choice_projection_value(row) for row in projections]
+        if projection_rows:
+            if adopted_at_unix is None:
+                raise BootstrapEnrollmentError("active choice descriptor has no publisher adoption timestamp")
+            _validate_choice_adoption_time(projections, adopted_at_unix)
+            for row in projection_rows:
+                row["adopted_at_unix"] = adopted_at_unix
         identities = [(row["purpose"], row["selection_handle"]) for row in projection_rows]
         if identities != sorted(set(identities)):
             raise BootstrapEnrollmentError("active compiler choice projections are duplicated or unordered")
@@ -1207,12 +1325,59 @@ def _write_publication_record(journal_root: Path, transaction: str,
     _fsync_dir(path.parent)
 
 
-def _receipt_input_handles(compiled: Any) -> tuple[str, ...]:
+def _receipt_input_handles(compiled: Any, *, active: bool = False) -> tuple[str, ...]:
     observed = getattr(compiled, "observed_root_receipt_handle", None)
+    if active:
+        source = tuple(getattr(compiled, "source_receipt_handles", ()))
+        handles = (observed, *source)
+        if (not observed or len(set(source)) != len(source)
+                or observed in source):
+            raise BootstrapEnrollmentError(
+                "active compiler receipt closure is not in canonical unique order"
+            )
+        if any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in handles):
+            raise BootstrapEnrollmentError("publication input receipt closure contains a malformed handle")
+        # Every explicitly named runtime/materialization/principal/adopted-choice
+        # input must be represented in the canonical compiler-owned closure.
+        required = set(getattr(compiled, "runtime_receipt_handles", ()))
+        required.update(getattr(compiled, "materialization_receipt_handles", ()))
+        principal = getattr(compiled, "principal_selection_receipt_handle", None)
+        if principal:
+            required.add(principal)
+        for adoption in getattr(compiled, "choice_adoptions", ()):
+            required.update(getattr(adoption, "source_member_receipt_handles", ()))
+        if not required.issubset(set(source)):
+            raise BootstrapEnrollmentError(
+                "active compiler receipt closure omits an explicit runtime, materialization, "
+                "principal, or choice-source input"
+            )
+        return handles
     handles = ([observed] if observed is not None else []) + list(_receipt_source_handles(compiled))
     if any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in handles):
         raise BootstrapEnrollmentError("publication input receipt closure contains a malformed handle")
     return tuple(dict.fromkeys(handles))
+
+
+def _receipt_matches_active_claim(receipt: RootSetupPublicationReceipt,
+                                  compiled: Any) -> bool:
+    """Return true only for the exact committed receipt represented by a claim."""
+    try:
+        expected_inputs = _receipt_input_handles(compiled, active=True)
+        return (
+            receipt.state == "active-committed"
+            and receipt.publication_handle == compiled.publication_handle
+            and receipt.claim_digest == compiled.claim_digest
+            and receipt.prepared_generation_id == compiled.prepared_generation_id
+            and receipt.transaction_handle == compiled.transaction_handle
+            and receipt.service_generation_digest == compiled.expected_service_generation_digest
+            and receipt.input_receipt_handles == expected_inputs
+            and receipt.runtime_receipt_handles == tuple(compiled.runtime_receipt_handles)
+            and receipt.materialization_receipt_handles == tuple(compiled.materialization_receipt_handles)
+            and receipt.policy_sha256 == compiled.compiled_policy_sha256
+            and receipt.artifact_catalog_sha256 == compiled.compiled_artifact_catalog_sha256
+        )
+    except (AttributeError, TypeError, ValueError, BootstrapEnrollmentError):
+        return False
 
 
 def _receipt_source_handles(compiled: Any) -> tuple[str, ...]:

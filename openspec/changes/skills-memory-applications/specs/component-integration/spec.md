@@ -844,3 +844,17 @@ The installer SHALL acquire and observe selected PEP517 backend wheel and embedd
 #### Scenario: Backend wheel is absent from project runtime lock
 - **WHEN** the exact separately reviewed backend policy selects that source
 - **THEN** the observer verifies actual wheel and license bytes against that policy without fabricating project lock membership or widening Node/Bun acquisition
+
+### Requirement: Application build admission v161
+The installer SHALL execute application runtime preparation only through a finite root-selected managed build profile, genuine held input/service/output proofs and one-use setup grant.
+
+#### Scenario: Final selection lacks a reviewed source driver or backend closure
+- **WHEN** an application environment build is requested
+- **THEN** custody denies before start without inventing a driver hash, caller script, future output digest or active runtime row
+
+### Requirement: Application Python entrypoint relocation v168
+The installer SHALL bind the regular environment interpreter to actual held PM executable bytes and normalize only source-reviewed console script shebangs to its selected final generation.
+
+#### Scenario: Script requests ambient interpreter
+- **WHEN** installed script depends on /usr/bin/env or an unrelated interpreter path
+- **THEN** materialization denies until exact selected interpreter normalization is verified

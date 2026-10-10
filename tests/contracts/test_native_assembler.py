@@ -122,7 +122,13 @@ def test_assembler_compiles_five_consistent_finite_output_documents():
     assert output.boundary_overlay == Definitions.boundary_overlay_bytes
     assert output.candidate_index
     assert output.compiled_closure
-    assert json.loads(output.entrypoint_manifest)["process_role_records"] == list(Definitions.process_role_records)
+    manifest = json.loads(output.entrypoint_manifest)
+    resolver = json.loads(output.action_resolver)
+    role_digest = hashlib.sha256(_canonical(list(Definitions.process_role_records))).hexdigest()
+    assert manifest["process_role_records"] == list(Definitions.process_role_records)
+    assert manifest["process_role_records_sha256"] == role_digest
+    assert resolver["process_role_records_sha256"] == role_digest
+    assert manifest["resolver_sha256"] == hashlib.sha256(output.action_resolver).hexdigest()
     _verify_payload("native-compiled-closure", "compiled-closure",
                     output.compiled_closure, output.closure_members)
     _verify_payload("native-entrypoint-manifest", "entrypoint-json",

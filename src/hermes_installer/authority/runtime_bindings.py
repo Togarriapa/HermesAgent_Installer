@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import re
 import stat
+import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -29,6 +32,8 @@ from hermes_installer.protected_enrollment import (
     RootSelectedPrivateMemoryEndpointBinding,
     RootSelectedPrivateMemoryModelBinding,
 )
+
+_ROOT_SETUP_CHOICE_ATTACH_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +136,39 @@ class RootRuntimeBindings:
         return self.enrollment_catalog.resolve_memory_enrollment(
             memory_enrollment_id, service_generation_digest=service_generation_digest)
 
+    def attach_root_setup_choice_registry(self, registry: Any, service: Any) -> None:
+        """Attach the exact durable choice registry after active runtime composition.
+
+        This is the only post-construction mutation of this otherwise frozen
+        binding snapshot. It is one-shot and requires the registry, service,
+        publication, journal and already-published runtime to share this exact
+        selected active generation.
+        """
+        from .root_setup_choices import RootSetupChoiceRegistry
+        from .service import AuthorityService
+        from .runtime_composition import RootAuthorityRuntime
+
+        with _ROOT_SETUP_CHOICE_ATTACH_LOCK:
+            runtime = getattr(service, "root_authority_runtime", None)
+            journal = getattr(registry, "journal", None)
+            publication = getattr(registry, "current_active_publication", None)
+            if (os.geteuid() != 0
+                    or type(registry) is not RootSetupChoiceRegistry
+                    or type(service) is not AuthorityService
+                    or type(runtime) is not RootAuthorityRuntime
+                    or runtime.service is not service or runtime.bindings is not self
+                    or service.root_runtime_bindings is not self
+                    or self.root_setup_choice_registry is not None
+                    or getattr(registry, "service", None) is not service
+                    or getattr(registry, "release", None) is not runtime.controller_release_receipt
+                    or getattr(publication, "service_generation_digest", None)
+                    != self.service_generation_digest
+                    or getattr(journal, "service_generation_digest", None)
+                    != self.service_generation_digest
+                    or not callable(getattr(registry, "resolve_current_adopted_choice_snapshot", None))):
+                raise EnrollmentDenied("durable setup choice registry is not bound to this active root runtime")
+            object.__setattr__(self, "root_setup_choice_registry", registry)
+
     def resolve_current_public_web_scopes(
         self, web_scope_ids: tuple[str, ...] | list[str], *, principal_id: str,
         profile_id: str, profile_generation: str, service_generation_digest: str,
@@ -226,6 +264,7 @@ class RootRuntimeBindings:
     application_source_receipts: Any | None = None
     application_runtime_receipts: Any | None = None
     native_component_target_registry: Any | None = None
+    root_setup_choice_registry: Any | None = None
     # Preserve the digest-verified v128 rows alongside the catalog so callers
     # can inspect selections without reparsing authority.json. Resolution must
     # still go through the catalog methods above, which revalidate currentness.
@@ -341,6 +380,186 @@ class RootRuntimeBindings:
         if not callable(resolver):
             raise EnrollmentDenied("memory lifecycle enablement selection is unavailable")
         return resolver(enrollment, service_generation_digest=service_generation_digest)
+
+    def resolve_current_public_input_permission_selection(
+        self, binding: Any, *, service_generation_digest: str,
+    ) -> Any:
+        """Project only an adopted signed public TTY choice onto current scopes."""
+        from .service import PrincipalBinding
+        from .setup_policy_publication import PolicyPublicationReceiptResolver
+        from .root_setup_choices import RootAdoptedSetupChoiceSelection, RootSetupChoiceRegistry
+        from .root_public_input_permission import RootPublicInputPermissionSelection, _SEAL
+
+        if (type(binding) is not PrincipalBinding
+                or service_generation_digest != self.service_generation_digest
+                or binding not in self.protected_principal_bindings):
+            raise EnrollmentDenied("public permission selection has no current principal or generation")
+        registry = self.root_setup_choice_registry
+        if (type(registry) is not RootSetupChoiceRegistry
+                or not callable(getattr(registry, "resolve_current_adopted_choice_snapshot", None))):
+            raise EnrollmentDenied("durable signed setup choices are unavailable")
+        try:
+            active_publication = PolicyPublicationReceiptResolver.resolve_current()
+            adoptions = tuple(row for row in active_publication.choice_adoptions
+                              if row.purpose == "public-free-web-read"
+                              and row.service_generation_digest == service_generation_digest
+                              and row.principal_id == binding.principal_id
+                              and row.profile_id == binding.profile_id
+                              and row.namespace_id == binding.namespace_id)
+        except Exception:
+            raise EnrollmentDenied("active signed public setup choices are unavailable") from None
+        if len(adoptions) != 1:
+            raise EnrollmentDenied("current principal has no unique adopted public-web choice")
+        adoption = adoptions[0]
+        try:
+            snapshot = registry.resolve_current_adopted_choice_snapshot(
+                adoption.selection_handle, "public-free-web-read")
+            adoption.verify_current(registry)
+        except Exception:
+            raise EnrollmentDenied("signed public-web choice or publisher adoption is stale") from None
+        if type(snapshot) is not RootAdoptedSetupChoiceSelection:
+            raise EnrollmentDenied("adopted public-web choice projection has the wrong type")
+        choice = snapshot.choice_payload
+        if (snapshot.purpose != "public-free-web-read"
+                or snapshot.selection_handle != adoption.selection_handle
+                or snapshot.service_generation_digest != service_generation_digest
+                or snapshot.active_publication_receipt_handle != adoption.publication_receipt_handle
+                or snapshot.plan_id != adoption.plan_id
+                or snapshot.prepared_generation != adoption.prepared_generation
+                or snapshot.key_id != adoption.key_id
+                or snapshot.release_deployment_receipt_sha256 != adoption.release_deployment_receipt_sha256
+                or snapshot.principal_selection_handle != adoption.principal_selection_handle
+                or snapshot.namespace_selection_handle != adoption.namespace_selection_handle
+                or snapshot.private_profile_selection_handle != adoption.private_profile_selection_handle
+                or not isinstance(choice.get("choice_handle"), str)
+                or not choice.get("choice_handle")
+                or choice.get("choice_handle") == snapshot.selection_handle
+                or not isinstance(choice.get("choice_observation_id"), str)
+                or not choice.get("choice_observation_id")
+                or not isinstance(choice.get("consent_id"), str)
+                or not re.fullmatch(r"[0-9a-f]{48}", choice.get("consent_id", ""))
+                or choice.get("consent_id") in {
+                    choice.get("choice_handle"), choice.get("choice_observation_id")
+                }
+                or choice.get("setup_session_id") != snapshot.setup_session_handle
+                or choice.get("transaction_handle") != snapshot.transaction_handle
+                or choice.get("prepared_generation_id") != snapshot.prepared_generation
+                or choice.get("profile_id") != binding.profile_id
+                or choice.get("principal_id") != binding.principal_id
+                or choice.get("namespace_id") != binding.namespace_id
+                or choice.get("principal_selection_handle") != snapshot.principal_selection_handle
+                or choice.get("namespace_selection_handle") != snapshot.namespace_selection_handle
+                or choice.get("principal_binding_sha256") != adoption.principal_binding_sha256
+                or choice.get("namespace_binding_sha256") != adoption.namespace_binding_sha256
+                or choice.get("revocation_epoch") != snapshot.revocation_epoch
+                or snapshot.revocation_epoch != adoption.revocation_epoch
+                or snapshot.choice_epoch != adoption.choice_epoch
+                or snapshot.signed_record_sha256 != adoption.signed_record_sha256
+                or snapshot.source_choice_row_sha256 != adoption.signed_record_sha256
+                or snapshot.choice_payload_sha256 != adoption.choice_payload_sha256
+                or snapshot.setup_deadline_unix != adoption.setup_deadline_unix):
+            raise EnrollmentDenied("public-web choice differs from its exact signed publisher projection")
+
+        profile = self.process_profiles.get(binding.profile_id)
+        profile_generation = getattr(profile, "generation", None)
+        if not isinstance(profile_generation, str) or not profile_generation:
+            raise EnrollmentDenied("public-web selection has no current process generation")
+        if choice.get("profile_generation") != profile_generation:
+            raise EnrollmentDenied("public-web choice belongs to a stale process generation")
+        scope_ids = choice.get("web_scope_ids")
+        if (not isinstance(scope_ids, list) or not scope_ids
+                or any(not isinstance(item, str) or not item for item in scope_ids)
+                or scope_ids != sorted(set(scope_ids))):
+            raise EnrollmentDenied("signed public-web choice has no canonical scope selection")
+        scopes = self.resolve_current_public_web_scopes(
+            scope_ids, principal_id=binding.principal_id, profile_id=binding.profile_id,
+            profile_generation=profile_generation,
+            service_generation_digest=service_generation_digest,
+        )
+        scope_bytes = choice.get("scope_payloads")
+        scope_hashes = choice.get("scope_payload_sha256s")
+        if (not isinstance(scope_bytes, list) or not isinstance(scope_hashes, list)
+                or len(scope_bytes) != len(scopes) or len(scope_hashes) != len(scopes)):
+            raise EnrollmentDenied("signed public-web choice scope payloads are malformed")
+        by_id = {scope.enrolled_scope.enrollment_id: scope for scope in scopes}
+        if len(by_id) != len(scopes):
+            raise EnrollmentDenied("active public-web scope IDs are ambiguous")
+        if (choice.get("target_selection_handles") != sorted(
+                by_id[item].target_selection_handle for item in scope_ids)
+                or choice.get("configuration_observation_handles") != [
+                    by_id[item].configuration_observation_handle for item in scope_ids]
+                or choice.get("configuration_sha256s") != [
+                    by_id[item].configuration_sha256 for item in scope_ids]
+                or choice.get("target_contract_artifact_ids") != [
+                    by_id[item].target_contract_artifact_id for item in scope_ids]
+                or choice.get("target_contract_sha256s") != [
+                    by_id[item].target_contract_sha256 for item in scope_ids]
+                or choice.get("target_contract_source_receipt_handles") != [
+                    by_id[item].target_contract_source_receipt_handle for item in scope_ids]):
+            raise EnrollmentDenied("signed public-web choice provenance differs from current target rows")
+        for scope_id, raw, digest in zip(scope_ids, scope_bytes, scope_hashes):
+            selected = by_id.get(scope_id)
+            try:
+                canonical_scope = json.dumps(
+                    raw, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=False, allow_nan=False,
+                ).encode("utf-8") if isinstance(raw, dict) else None
+            except (TypeError, ValueError):
+                canonical_scope = None
+            if (selected is None or canonical_scope is None
+                    or selected.scope_payload != canonical_scope
+                    or selected.scope_payload_sha256 != digest):
+                raise EnrollmentDenied("signed public-web scope bytes differ from the current target selection")
+
+        consent_id = choice.get("consent_id")
+        if (not isinstance(consent_id, str) or not re.fullmatch(r"[0-9a-f]{48}", consent_id)
+                or snapshot.consent_id != consent_id):
+            raise EnrollmentDenied("signed public-web choice has no separately protected consent ID")
+        now_mono = time.monotonic()
+        if (not math.isfinite(snapshot.issued_monotonic)
+                or not math.isfinite(snapshot.expires_monotonic)
+                or snapshot.issued_monotonic > now_mono
+                or snapshot.expires_monotonic <= now_mono):
+            raise EnrollmentDenied("adopted public-web choice projection is expired")
+        expires = min(now_mono + 30.0, snapshot.expires_monotonic)
+        if expires <= now_mono:
+            raise EnrollmentDenied("public-web choice is expired")
+        from .installer_release import VerifiedInstallerReleaseReceipt
+        release = getattr(registry, "release", None)
+        if type(release) is not VerifiedInstallerReleaseReceipt:
+            raise EnrollmentDenied("pinned installer plan release is unavailable")
+        try:
+            release.verify_current()
+        except Exception:
+            raise EnrollmentDenied("pinned installer plan release is no longer current") from None
+        if (getattr(release, "selected_plan_artifact_id", None) != snapshot.plan_id
+                or not re.fullmatch(r"[0-9a-f]{64}", getattr(release, "selected_plan_sha256", ""))
+                or choice.get("plan_sha256") != release.selected_plan_sha256):
+            raise EnrollmentDenied("adopted public-web choice plan is not the exact held release plan")
+        from .root_public_input_permission import _scope_digest
+        enrolled_scopes = tuple(by_id[item].enrolled_scope for item in scope_ids)
+        controller_binding_handle = choice.get("controller_binding_handle")
+        choice_observation_id = choice.get("choice_observation_id")
+        if (not isinstance(controller_binding_handle, str) or not controller_binding_handle
+                or not isinstance(choice_observation_id, str) or not choice_observation_id):
+            raise EnrollmentDenied("signed public-web choice is missing its observation bindings")
+        return RootPublicInputPermissionSelection(
+            selection_handle=snapshot.selection_handle, consent_id=consent_id,
+            purpose="public-free-web-read",
+            choice_observation_id=choice_observation_id,
+            setup_session_id=snapshot.setup_session_handle,
+            transaction_handle=snapshot.transaction_handle, plan_sha256=release.selected_plan_sha256,
+            principal_selection_handle=snapshot.principal_selection_handle,
+            namespace_selection_handle=snapshot.namespace_selection_handle,
+            principal_id=binding.principal_id, profile_id=binding.profile_id,
+            namespace_id=binding.namespace_id, web_scope_ids=tuple(scope_ids),
+            web_scope_sha256=_scope_digest(enrolled_scopes),
+            public_recipient_ids=tuple(sorted({row.recipient for row in enrolled_scopes})),
+            allowed_operations=("plugin.web.read",), additional_metered_budget_usd=0.0,
+            controller_binding_handle=controller_binding_handle,
+            issued_monotonic=now_mono, expires_monotonic=expires,
+            revocation_epoch=snapshot.revocation_epoch, _registry_seal=_SEAL,
+        )
 
     def resolve_private_memory_engine_selection(self, selection_id: str, *,
                                                 service_generation_digest: str) -> Mapping[str, Any]:
@@ -1456,6 +1675,7 @@ def build_root_runtime_bindings(
     application_source_receipts: Any | None = None,
     application_runtime_receipts: Any | None = None,
     native_component_target_registry: Any | None = None,
+    root_setup_choice_registry: Any | None = None,
 ) -> RootRuntimeBindings:
     """Build root handlers only from service-generation records already verified.
 
@@ -1723,6 +1943,7 @@ def build_root_runtime_bindings(
         application_source_receipts=application_source_receipts,
         application_runtime_receipts=application_runtime_receipts,
         native_component_target_registry=native_component_target_registry,
+        root_setup_choice_registry=root_setup_choice_registry,
     )
 
 

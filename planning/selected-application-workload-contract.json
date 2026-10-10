@@ -1415,5 +1415,210 @@
       }
     ],
     "acceptance": "Source-only contract; no actual acquisition/install/build/probe/ARM qualification inferred, all AC open and baseline unchanged."
+  },
+  "application_build_admission_v161": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "SK-T132",
+      "SK-T147",
+      "SK-T152"
+    ],
+    "why": "Current managed build path accepts sealed Xpra selection/grant with build_profile, while actual application selection carries only preparation/service handles. App environment phases need a fixed reviewed source driver and finite root setup build admission, not shell commands or caller executable paths.",
+    "finite_profiles": [
+      "application-graphify-runtime-prepare-v1",
+      "application-browser-use-runtime-prepare-v1",
+      "application-hyperframes-runtime-prepare-v1",
+      "application-scrapegraph-ai-runtime-prepare-v1"
+    ],
+    "producer": {
+      "owner_module": "hermes_installer.authority.application_build_admission",
+      "class": "RootApplicationBuildAdmissionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,runtime_preparation_selection_registry,source_preparation_registry,backend_closure_registry,toolchain_registry,package_closure_registry,root_journal)",
+      "select": "select_current_application_build(runtime_preparation_selection_handle)->RootSelectedApplicationBuildSelection",
+      "verify": "verify_current(selection)->current actual held selected input closure",
+      "fields": [
+        "schema",
+        "selection_handle",
+        "runtime_preparation_selection_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "application_id",
+        "workflow_id",
+        "build_profile_id",
+        "operation_id",
+        "target_id",
+        "build_service_selection_handle",
+        "build_service_enrollment_id",
+        "build_service_generation",
+        "source_receipt_handle",
+        "source_manifest_sha256",
+        "lock_receipt_handle",
+        "lock_sha256",
+        "package_closure_receipt_handle",
+        "build_backend_closure_receipt_handle",
+        "runtime_toolchain_receipt_handles",
+        "builder_module_receipt_handle",
+        "builder_module_sha256",
+        "recipe_sha256",
+        "output_root_receipt_handle",
+        "controller_binding_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "root_private_members": [
+        "build_profile:FixedBuildProfile",
+        "setup_build_subject:RootPreparedBuildServiceSelection",
+        "output_root:RootPreparedBuildOutputRoot with held directory FD",
+        "source/lock/package/backend/toolchain/driver current held observations",
+        "original factory/preparation producer membership seal"
+      ],
+      "checks": "Actual v132 final selection and current prepared session/transaction/principal/namespace/choice/phase/controller; not early acquisition input selection. Resolve real RootPreparedBuildServiceSelection/profile/UID/GID and fresh RootPreparedBuildOutputRoot FD before process start. Resolve held source/lock/offline runtime package closure and Python v152 backend closure, actual selected toolchain executable/member and driver receipt. All finite application/profile/operation/target/source constraints exact existing v132 rows. No active application row or future installed tree/probe result required. Dynamic runtime output digests remain post-terminal. Source probe artifact may be prebuild held reviewed bytes, never future completed probe receipt."
+    },
+    "grant": {
+      "owner_module": "hermes_installer.authority.application_build_admission",
+      "class": "RootApplicationSetupBuildGrantIssuer",
+      "constructor": "from_root_setup(selected_installation_binding,application_build_admission_registry)",
+      "issue": "issue(selection:RootSelectedApplicationBuildSelection)->RootApplicationSetupBuildGrant",
+      "consume": "consume(grant,selection)->same verified one-use RootApplicationSetupBuildGrant",
+      "fields": [
+        "grant_id",
+        "selection_handle",
+        "runtime_preparation_selection_handle",
+        "setup_session_id",
+        "transaction_handle",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "build_service_id",
+        "build_service_generation",
+        "target",
+        "operation_id",
+        "parameters_digest",
+        "recipe_sha256",
+        "controller_binding_handle",
+        "expires_monotonic"
+      ],
+      "semantics": "Same genuine sealed root setup grant pattern as RootXpraSetupBuildGrant, finite application profile targets only. Not EffectAuthorization or worker RPC. Registry membership/producer seal and current original selected controller/source/choice/recipe before issue and consume, one-use <=30s/current selection lease. Canonical parameters {} only; cannot grant arbitrary build/service target, paths/code or extend expired setup receipt. Actual original process deadline comes reviewed build profile after start, never renew grant."
+    },
+    "custody": "ManagedBuildJobRunner accepts exact RootSelectedApplicationBuildSelection + RootApplicationSetupBuildGrant only through fixed root setup application adapter, in addition to existing Xpra path. RootManagedApplicationSetupBuildAdapter.execute(selection,grant,cancelled)->ManagedBuildResult consumes issuer once and revalidates held inputs, starts actual selected setup-build UID/profile transient unit with current root controller PIDFD, selected mounts/sanitized env/network-denied/limits. No worker identity impersonation or generic duck-type/grant fallback. Actual result is normal managed terminal/cleanup/BuildAttestation/output CAS; root archive inspector/materializer and fixed probe remain separate genuine post-build receipts.",
+    "driver": {
+      "owner": "application environment builder",
+      "module": "hermes_installer.authority.application_environment_builder",
+      "artifact_id": "installer-application-environment-builder-v1",
+      "source_path": "src/hermes_installer/authority/application_environment_builder.py",
+      "installed_member": "lib/python/hermes_installer/authority/application_environment_builder.py",
+      "source_requirement": "Owner implements standalone stdlib source driver and sends actual committed source bytes/SHA/size/closure for Sol review and finite release source descriptor before execution. This declaration is not an artifact receipt or invented digest. Missing reviewed driver pins denies ready build; do not substitute shell/-c or scripts from caller/source project.",
+      "builder": "Actual held official PM CPython3.14 executable from runtime receipt at builder mount root (empty relative path), isolated -I; toolchain module path fixed. Node/Bun remain distinct observed executable/toolchain/runtime proofs for Hyperframes, not Python compatibility claims.",
+      "argv_recipe": [
+        {
+          "kind": "build_path",
+          "mount_id": "builder",
+          "relative_path": ""
+        },
+        {
+          "kind": "literal",
+          "value": "-I"
+        },
+        {
+          "kind": "build_path",
+          "mount_id": "toolchain",
+          "relative_path": "hermes_installer/authority/application_environment_builder.py"
+        }
+      ],
+      "mounts": "Fixed source/work/output plus exact root-selected runtime wheelhouse packages, Python backend wheelhouse backend, actual uv executable uv, and Hyperframes node/bun executable mounts when selected. Root compiler emits closed recipe/configuration derived solely from selection/profile/receipt digests; child reads only those source-verified mount contracts. No argv caller parameters, network/cache/ambient PATH/config/site dependency."
+    },
+    "phase_recipe": {
+      "python": [
+        "Verify source/lock/backend/package/toolchain/probe source currentness; fixed offline lock check/export v147 flags, unchanged original lock and exact active marker name/version/hash comparison.",
+        "Create isolated backend environment from exact v152 wheel/license closure using held uv and PM Python; require hashes/no-index/offline, no ambient packages.",
+        "Run exact reviewed selected source backend via held uv build --wheel --offline --no-build-isolation with backend environment and fixed source/output mounts; reject undeclared dynamic build requirements/hooks, network or multiple/unproven project wheels.",
+        "Create isolated runtime environment; hashed offline uv pip sync from exact lock-derived export/root-held wheelhouse. Install actual source-built single noneditable project wheel with exact observed hash/no-deps through offline hash-constrained install; no dot/unhashed/editable source or mutated lock.",
+        "Serialize one deterministic runtime-environment.tar plus complete member manifest under reviewed v132 member policy; dynamic output tree/archive/entrypoint hashes after real terminal. Root extraction through held FDs and independent Python ABI/import-origin probe after build."
+      ],
+      "hyperframes": "Fixed separate v144 Bun/Node source receipts and exact bun.lock/workspace package closure. Run frozen-lockfile/offline/ignore-scripts installer only under reviewed exact lifecycle/native build policy; no implicit network/native/browser/FFmpeg hook. Node/Bun module-origin/native architecture/browser/FFmpeg probe is separate, Python probe never qualifies this profile. Missing reviewed Bun closure/hooks stays incomplete, not guessed ready.",
+      "limits": "Existing v132 reviewed safe ceilings/member policy; actual measured environment size/ARM performance remains evidence requirement. Archive identity alone not executed extracted tree proof; no widening generic 512-file scanner by unchecked tree export."
+    },
+    "tasks": [
+      {
+        "id": "SK-T161.1",
+        "owner": "application builder/factory/custody",
+        "work": "Implement sealed finite app admission/private FixedBuildProfile/output/service held inputs and one-use setup grant adapter; actual managed runner union/currentness/cleanup/denial tests."
+      },
+      {
+        "id": "SK-T161.2",
+        "owner": "application builder/source broker",
+        "work": "Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts."
+      }
+    ],
+    "acceptance": "No driver digest or successful environment invented; all four original applications remain in scope, all AC open, baseline unchanged."
+  },
+  "python_entrypoint_relocation_v168": {
+    "schema": 1,
+    "requirements": [
+      "SK-T132",
+      "SK-T147",
+      "SK-T161"
+    ],
+    "why": "Archive manifest demands regular executable but venv interpreter aliases are excluded; generated console scripts reference temporary build paths. ScrapeGraphAI has no console script. No invented application command or ambient PATH can solve this.",
+    "entrypoint": {
+      "path": "environment/bin/python3.14",
+      "kind": "regular executable",
+      "source": "Copy exact executable bytes only from current held official PM Python3.14 receipt, preserving reviewed executable mode and recording actual SHA/size/source receipt. No system Python, arbitrary binary or downloaded substitute. Base PM stdlib/runtime/dependency closure remains separately retained current prerequisite.",
+      "manifest": "Entry point is environment interpreter, not invented app CLI or success proof. Archive member SHA/mode/size must equal observed PM executable. Root materializer verifies extracted bytes and held final inode/mode/owner/tree; fixed probe recipe executes exact final interpreter with -I and reviewed probe source. pyvenv.cfg base runtime references must match held PM runtime selection, never ambient/system path. No symlink flattening or external alias treated as regular archive file."
+    },
+    "console_scripts": {
+      "source_review": {
+        "graphify": [
+          "graphify",
+          "graphify-mcp"
+        ],
+        "browser-use": [
+          "browser-use",
+          "browseruse",
+          "bu",
+          "browser",
+          "browser-use-tui"
+        ],
+        "scrapegraph-ai": []
+      },
+      "rule": "Exact wheel entry_points.txt and pinned source metadata jointly define script name/module/function; no names or callable inferred. Only these source-reviewed names may use the finite relocation path. Absent scripts are not an error for interpreter-based qualification. Additional scripts require source review before execution.",
+      "materializer": "RootApplicationRuntimeEnvironmentMaterializer.normalize_selected_python_entrypoints(runtime_preparation_selection_handle,archive_receipt_handle)->RootApplicationRuntimeRelocationReceipt. It obtains final root-owned immutable generation directory from retained setup/runtime root selection, never caller path. Before final tree publication, verify actual generated console script format/callable against exact wheel/source entrypoint, original shebang interpreter is exact selected temporary build interpreter, and rewrite ONLY that shebang to exact held final environment/bin/python3.14 path. Preserve remaining bytes and mode; reject unexpected shell wrappers/format/callable, path chars incompatible shebang or >platform shebang limit. No /usr/bin/env, shell or PATH dependency. Do not run script during rewrite.",
+      "receipt_fields": [
+        "schema",
+        "relocation_receipt_handle",
+        "runtime_preparation_selection_handle",
+        "archive_receipt_handle",
+        "profile_id",
+        "prepared_generation_id",
+        "environment_root_id",
+        "pm_runtime_receipt_handle",
+        "interpreter_member_path",
+        "interpreter_sha256",
+        "member_rows",
+        "final_environment_manifest_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "member_row_fields": [
+        "path",
+        "source_entrypoint_sha256",
+        "original_sha256",
+        "normalized_sha256",
+        "size_bytes",
+        "mode"
+      ],
+      "digest": "Final installed manifest/digest computed AFTER actual copy/extraction/normalization, never required before build. Receipt joins original archive and complete original member manifest plus exact final installed tree; runtime/probe receipts consume final tree, not archive hash alone. Root-owned final generation path is fixed from current retained root selection before publication; digest not used to fabricate preknown path/tree. Failed normalization preserves pending/unusable environment and owned cleanup."
+    },
+    "tasks": [
+      {
+        "id": "SK-T168.1",
+        "owner": "application builder/materializer/selection/execution",
+        "work": "Use held PM executable as regular environment entrypoint and exact source-console-script shebang normalization to held final generation; record original/final members and run fixed ABI/import probe with final interpreter. No CLI assumed for ScrapeGraphAI."
+      }
+    ],
+    "acceptance": "Source-selected recipe correction only; no installed environment, full closure/native ARM64 or app qualification acceptance. All AC open; baseline unchanged."
   }
 }

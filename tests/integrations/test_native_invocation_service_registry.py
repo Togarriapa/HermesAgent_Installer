@@ -209,6 +209,7 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
         source_enrollment = _enrollment(
             observer_enrollment_id="observer.provider.result",
             source_kind="provider-result",
+            capture_schema_id="native-root-provider-response-v1",
             origin_id="hermes.provider.result",
             enrollment_id=producer_enrollment_id,
             source_action_id="chat.complete",
@@ -266,6 +267,9 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 registration_id="registration.native.tool",
                 operation="plugin.selected-tool.execute",
                 validate_arguments=lambda args: args == b'{"x":1}',
+                result_schema_id="schema.selected-tool.result",
+                result_schema_sha256="a" * 64,
+                validate_result=lambda _raw: True,
             )
 
         registry = NativeInvocationRegistry(
