@@ -143,7 +143,13 @@ class BuildCustodyLinuxTests(unittest.TestCase):
         sibling = self.stage / "sibling-home"
         sibling.mkdir(mode=0o700)
         self._root_file(sibling / "secret", b"sibling data\n", 0o600)
-        (self.home / "task-home-check").write_text("selected home\n", encoding="utf-8")
+        selected_home_file = self.home / "task-home-check"
+        selected_home_file.write_text("selected home\n", encoding="utf-8")
+        # Path.write_text creates this fixture file as root. The held-FD bind
+        # preserves inode ownership, so the unprivileged unit must own the
+        # selected file as well as its containing home directory.
+        os.chown(selected_home_file, self.uid, self.gid)
+        os.chmod(selected_home_file, 0o600)
         home_fd = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             bind_source = f"/proc/{os.getpid()}/fd/{home_fd}:/hermes"
