@@ -119,6 +119,7 @@ candidate = loader.SelectedNativeCandidate(
     __import__("hashlib").sha256(__import__("json").dumps(
         argument_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")).hexdigest(), ("observer-native-fixture",), "hermes-installer", "Protected installer action",
+    "native-fixture:tool:installer_native_fixture", "hermes-installer", "native-fixture", "effect-action",
 )
 import hashlib, json
 mcp_parameters = {"type": "object", "properties": {"resource": {"type": "string"}},
@@ -129,6 +130,8 @@ mcp_candidate = loader.SelectedNativeCandidate(
     hashlib.sha256(json.dumps(mcp_parameters, ensure_ascii=False, sort_keys=True,
                               separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest(),
     ("observer-mcp-fixture",), "selected-service", "Read a selected fixture resource",
+    "hermes-installer.native-mcp-dispatch.v1:tool:mcp__selected__read",
+    "mcp-selected-service", "native-mcp-dispatch", "mcp-dispatch",
 )
 package_authority = type("PackageAuthority", (), {"dispatch_native_mcp": lambda *_args: None})()
 package = loader.SelectedNativePackage(
@@ -195,8 +198,12 @@ assert loader.ensure_selected_native_plugins_ready() is package
 assert [frame["phase"] for frame in progress.frames] == [
     "entrypoint-imported", "actions-registered", "ready",
 ], progress.frames
-assert progress.frames[1]["registered_action_ids"] == ("lookup", "mcp.read.selected")
-assert progress.frames[2]["registered_action_ids"] == ("lookup", "mcp.read.selected")
+expected_registrations = (
+    "hermes-installer.native-mcp-dispatch.v1:tool:mcp__selected__read",
+    "native-fixture:tool:installer_native_fixture",
+)
+assert progress.frames[1]["registered_action_ids"] == expected_registrations
+assert progress.frames[2]["registered_action_ids"] == expected_registrations
 assert progress.closed
 from tools.registry import registry
 from hermes_installer.native_invocations import (

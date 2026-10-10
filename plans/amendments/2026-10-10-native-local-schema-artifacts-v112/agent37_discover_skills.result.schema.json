@@ -1,0 +1,1 @@
+{"additionalProperties":false,"properties":{"result":{"oneOf":[{"type":"object"},{"type":"array"}]},"service_id":{"const":"registry:agent37"},"trust":{"const":"untrusted-public-source"}},"required":["service_id","trust","result"],"type":"object"}

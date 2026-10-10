@@ -92,6 +92,12 @@ class SelectedNativeCandidate:
     observer_enrollment_ids: tuple[str, ...]
     native_server_name: str
     description: str
+    registration_id: str
+    toolset: str
+    family: str
+    handler_kind: str
+    selector_fields: tuple[str, ...] = ()
+    action_bindings: tuple[MappingProxyType, ...] = ()
 
     @property
     def is_native_mcp(self) -> bool:
@@ -398,7 +404,7 @@ class _NativePluginContextResultAdapter:
         }
         if (candidate is None or candidate.is_native_mcp or candidate.adapter_id != adapter_id
                 or candidate.native_server_name != "hermes-installer"
-                or toolset != "hermes-installer" or description != candidate.description
+                or toolset != candidate.toolset or description != candidate.description
                 or not isinstance(schema, dict) or expected_schema is None
                 or _canonical(schema) != _canonical(expected_schema)):
             raise NativePluginLoadUnavailable("native PluginContext tool differs from the selected candidate index")
@@ -425,7 +431,7 @@ class _NativePluginContextResultAdapter:
         )
         if registration is not None:
             object.__getattribute__(self, "_NativePluginContextResultAdapter__registered_tool_names").append(name)
-            package._mark_candidate_registered(candidate.adapter_id, candidate.action_id)
+            package._mark_candidate_registered(candidate.adapter_id, candidate.registration_id)
         return registration
 
 
@@ -488,14 +494,20 @@ def _validate_compiled_schema(value: Any, *, depth: int = 0) -> None:
         raise NativePluginLoadUnavailable("native candidate schema is malformed or too deeply nested")
     allowed = {
         "type", "properties", "required", "additionalProperties", "items", "enum",
-        "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems",
+        "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "pattern",
     }
     if set(value) - allowed or "type" not in value:
         raise NativePluginLoadUnavailable("native candidate schema uses an unsupported field")
     kind = value["type"]
-    if kind not in {"object", "array", "string", "integer", "number", "boolean", "null"}:
+    if not (isinstance(kind, str) or isinstance(kind, list)
+            and all(isinstance(item, str) for item in kind)):
+        raise NativePluginLoadUnavailable("native candidate schema type is malformed")
+    kinds = kind if isinstance(kind, list) else [kind]
+    if (not kinds or len(kinds) > 7 or len(set(kinds)) != len(kinds)
+            or any(item not in {"object", "array", "string", "integer", "number", "boolean", "null"}
+                   for item in kinds)):
         raise NativePluginLoadUnavailable("native candidate schema uses an unsupported type")
-    if kind == "object":
+    if "object" in kinds:
         properties, required = value.get("properties", {}), value.get("required", [])
         if (not isinstance(properties, dict) or len(properties) > 128
                 or not isinstance(required, list) or len(required) > 128
@@ -508,23 +520,31 @@ def _validate_compiled_schema(value: Any, *, depth: int = 0) -> None:
             if not isinstance(name, str) or not 1 <= len(name) <= 128:
                 raise NativePluginLoadUnavailable("native candidate property name is malformed")
             _validate_compiled_schema(child, depth=depth + 1)
-    if kind == "array" and "items" in value:
+    if "array" in kinds and "items" in value:
         _validate_compiled_schema(value["items"], depth=depth + 1)
-    if kind == "array" and "items" not in value:
+    if "array" in kinds and "items" not in value:
         raise NativePluginLoadUnavailable("native candidate array schema has no item schema")
+    if "pattern" in value:
+        pattern = value["pattern"]
+        if "string" not in kinds or not isinstance(pattern, str) or len(pattern) > 512:
+            raise NativePluginLoadUnavailable("native candidate string pattern is malformed")
+        try:
+            re.compile(pattern)
+        except re.error:
+            raise NativePluginLoadUnavailable("native candidate string pattern is invalid") from None
     if "enum" in value:
         enum = value["enum"]
         if (not isinstance(enum, list) or not enum or len(enum) > 256
                 or len({_canonical(item) for item in enum}) != len(enum)):
             raise NativePluginLoadUnavailable("native candidate enum exceeds its bound")
     for key in ("minimum", "maximum"):
-        if key in value and (kind not in {"integer", "number"}
+        if key in value and (not set(kinds) & {"integer", "number"}
                 or isinstance(value[key], bool) or type(value[key]) not in {int, float}
                 or not math.isfinite(value[key])):
             raise NativePluginLoadUnavailable("native candidate numeric bound is malformed")
     for key in ("minLength", "maxLength", "minItems", "maxItems"):
         expected_type = "string" if "Length" in key else "array"
-        if key in value and (kind != expected_type or type(value[key]) is not int
+        if key in value and (expected_type not in kinds or type(value[key]) is not int
                              or not 0 <= value[key] <= 1_000_000):
             raise NativePluginLoadUnavailable("native candidate size bound is malformed")
     for low, high in (("minimum", "maximum"), ("minLength", "maxLength"), ("minItems", "maxItems")):
@@ -536,7 +556,10 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
                                   manifest: MappingProxyType) -> tuple[SelectedNativeCandidate, ...]:
     doc = _json_document(raw, maximum=_MAX_NATIVE_CANDIDATE_INDEX_BYTES,
                          label="root-selected native candidate index")
-    expected_doc_fields = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
+    expected_doc_fields = {
+        "schema", "package_id", "profile_id", "generation", "resolver_sha256",
+        "candidates", "registration_projection_sha256", "registrations",
+    }
     if set(doc) != expected_doc_fields or _canonical(doc) != raw:
         raise NativePluginLoadUnavailable("root-selected native candidate index is not canonical or strict")
     if (type(doc["schema"]) is not int or doc["schema"] != 1
@@ -545,74 +568,219 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
             or doc["generation"] != selected.generation
             or doc["resolver_sha256"] != selected.resolver_digest):
         raise NativePluginLoadUnavailable("native candidate index differs from the selected package")
-    rows = doc["candidates"]
-    expected_row_fields = {
+    rows, registrations = doc["candidates"], doc["registrations"]
+    if (not isinstance(rows, list) or not 1 <= len(rows) <= _MAX_NATIVE_CANDIDATES
+            or not isinstance(registrations, list) or len(registrations) != len(rows)
+            or not 1 <= len(registrations) <= _MAX_NATIVE_CANDIDATES):
+        raise NativePluginLoadUnavailable("native registration projection exceeds its row bound")
+    projection_digest = doc["registration_projection_sha256"]
+    if (not isinstance(projection_digest, str) or not _SHA256.fullmatch(projection_digest)
+            or hashlib.sha256(_canonical(registrations)).hexdigest() != projection_digest):
+        raise NativePluginLoadUnavailable("native registration projection digest differs")
+
+    registration_fields = {
+        "registration_id", "native_tool_name", "native_server_name", "toolset", "family",
+        "adapter_id", "argument_schema", "result_schema", "native_schema_sha256",
+        "registration_source_artifact_id", "registration_source_sha256",
+        "registration_source_receipt_handle", "handler_kind", "handler_id",
+        "selector_fields", "action_bindings", "observer_enrollment_ids",
+    }
+    candidate_fields = {
         "native_tool_name", "adapter_id", "action_id", "argument_schema", "result_schema",
         "native_schema_sha256", "observer_enrollment_ids", "native_server_name", "description",
+        "registration_id", "toolset", "family", "handler_kind",
     }
-    if not isinstance(rows, list) or not 1 <= len(rows) <= _MAX_NATIVE_CANDIDATES:
-        raise NativePluginLoadUnavailable("native candidate index exceeds its row bound")
-    result: list[SelectedNativeCandidate] = []
+    handler_kinds = {
+        "effect-action", "finite-selector", "finite-workflow", "public-registry-read",
+        "owner-overlay", "mcp-dispatch",
+    }
+    registrations_by_id: dict[str, dict[str, Any]] = {}
     names: set[str] = set()
-    actions: set[tuple[str, str]] = set()
+    selected_effect_pairs: set[tuple[str, str]] = set()
     manifest_adapters = {row["adapter_id"]: set(row["action_ids"]) for row in manifest["adapters"]}
-    for row in rows:
-        if not isinstance(row, dict) or set(row) != expected_row_fields:
-            raise NativePluginLoadUnavailable("native candidate row has unknown or missing fields")
-        name, adapter_id, action_id = row["native_tool_name"], row["adapter_id"], row["action_id"]
-        if (not isinstance(name, str) or not _ID.fullmatch(name) or name in names
-                or not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id)
-                or not isinstance(action_id, str) or not _ID.fullmatch(action_id)
-                or (adapter_id, action_id) in actions):
-            raise NativePluginLoadUnavailable("native candidate identity is malformed or duplicated")
-        effect = selected.resolve(adapter_id, action_id)
-        if adapter_id == _NATIVE_MCP_ADAPTER_ID:
-            # MCP rows are selected by the root-compiled candidate index and
-            # current protected MCP enrollment. They are deliberately not
-            # NativePluginBinding resolver rows or package entrypoint modules;
-            # the root dispatch RPC re-resolves the action before effect.
-            if effect is not None:
-                raise NativePluginLoadUnavailable("fixed native MCP dispatch cannot be a plugin effect row")
-        elif effect is None:
-            raise NativePluginLoadUnavailable("native candidate is not selected by the root resolver")
-        elif action_id not in manifest_adapters.get(adapter_id, set()):
-            raise NativePluginLoadUnavailable("native candidate action is absent from its pinned adapter")
-        argument_schema, result_schema = row["argument_schema"], row["result_schema"]
-        if not isinstance(argument_schema, dict) or not isinstance(result_schema, dict):
-            raise NativePluginLoadUnavailable("native candidate schemas must be JSON objects")
-        if argument_schema.get("type") != "object":
-            raise NativePluginLoadUnavailable("native candidate arguments must use an object schema")
+    for registration in registrations:
+        if not isinstance(registration, dict) or set(registration) != registration_fields:
+            raise NativePluginLoadUnavailable("native registration row has unknown or missing fields")
+        reg_id, name = registration["registration_id"], registration["native_tool_name"]
+        adapter_id = registration["adapter_id"]
+        if (not isinstance(reg_id, str) or not _ID.fullmatch(reg_id)
+                or not isinstance(name, str) or not _ID.fullmatch(name) or name in names
+                or reg_id != f"{adapter_id}:tool:{name}"
+                or reg_id in registrations_by_id
+                or not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id)):
+            raise NativePluginLoadUnavailable("native registration identity is malformed or duplicated")
+        if not isinstance(registration["handler_kind"], str) or registration["handler_kind"] not in handler_kinds:
+            raise NativePluginLoadUnavailable("native registration handler kind is unsupported")
+        for key in ("native_server_name", "toolset", "family", "handler_id"):
+            if not isinstance(registration[key], str) or not _ID.fullmatch(registration[key]):
+                raise NativePluginLoadUnavailable("native registration metadata is malformed")
+        server = registration["native_server_name"]
+        if ((registration["handler_kind"] == "mcp-dispatch") != (adapter_id == _NATIVE_MCP_ADAPTER_ID)
+                or (adapter_id == _NATIVE_MCP_ADAPTER_ID and server == "hermes-installer")
+                or (adapter_id != _NATIVE_MCP_ADAPTER_ID and server != "hermes-installer")):
+            raise NativePluginLoadUnavailable("native registration owner differs from its handler family")
+        if not _MCP_SERVER.fullmatch(server):
+            raise NativePluginLoadUnavailable("native registration server identity is malformed")
+        argument_schema, result_schema = registration["argument_schema"], registration["result_schema"]
+        if (not isinstance(argument_schema, dict) or not isinstance(result_schema, dict)
+                or argument_schema.get("type") != "object"):
+            raise NativePluginLoadUnavailable("native registration schemas must be object-shaped JSON schemas")
         _validate_compiled_schema(argument_schema)
         _validate_compiled_schema(result_schema)
-        schema_digest = row["native_schema_sha256"]
+        schema_digest = registration["native_schema_sha256"]
         if (not isinstance(schema_digest, str) or not _SHA256.fullmatch(schema_digest)
                 or hashlib.sha256(_canonical(argument_schema)).hexdigest() != schema_digest):
-            raise NativePluginLoadUnavailable("native candidate argument schema digest differs")
-        observers = row["observer_enrollment_ids"]
+            raise NativePluginLoadUnavailable("native registration argument schema digest differs")
+        source_id, source_digest = registration["registration_source_artifact_id"], registration["registration_source_sha256"]
+        if (not isinstance(source_id, str) or not _ID.fullmatch(source_id)
+                or not isinstance(source_digest, str) or not _SHA256.fullmatch(source_digest)
+                or source_digest not in {row["sha256"] for row in manifest["closure_files"]}):
+            raise NativePluginLoadUnavailable("native registration source is not pinned by the selected closure")
+        receipt = registration["registration_source_receipt_handle"]
+        if not isinstance(receipt, str) or not _ID.fullmatch(receipt):
+            raise NativePluginLoadUnavailable("native registration source receipt is unavailable")
+        observers = registration["observer_enrollment_ids"]
         if (not isinstance(observers, list) or not 1 <= len(observers) <= 64
                 or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in observers)
                 or len(set(observers)) != len(observers)):
-            raise NativePluginLoadUnavailable("native candidate observer enrollment list is malformed")
-        server = row["native_server_name"]
+            raise NativePluginLoadUnavailable("native registration observer enrollments are malformed")
+        selector_fields = registration["selector_fields"]
+        properties = argument_schema.get("properties", {})
+        if (not isinstance(selector_fields, list) or len(selector_fields) > 128
+                or any(not isinstance(item, str) or item not in properties for item in selector_fields)
+                or len(set(selector_fields)) != len(selector_fields)):
+            raise NativePluginLoadUnavailable("native registration selector fields are malformed")
+        bindings = registration["action_bindings"]
+        if not isinstance(bindings, list) or len(bindings) > 256:
+            raise NativePluginLoadUnavailable("native registration action binding list is malformed")
+        selector_preimages: set[bytes] = set()
+        for binding in bindings:
+            if (not isinstance(binding, dict)
+                    or set(binding) != {"selector_values", "action_id", "argument_projection", "workflow_id"}):
+                raise NativePluginLoadUnavailable("native registration action binding is malformed")
+            selector_values = binding["selector_values"]
+            action_id = binding["action_id"]
+            projection = binding["argument_projection"]
+            workflow_id = binding["workflow_id"]
+            if (not isinstance(selector_values, dict) or set(selector_values) != set(selector_fields)
+                    or any(not isinstance(key, str) or not isinstance(value, str)
+                           or len(value) > 256 for key, value in selector_values.items())
+                    or not isinstance(action_id, str) or not _ID.fullmatch(action_id)
+                    or not isinstance(projection, list) or len(projection) > 128
+                    or (workflow_id is not None and
+                        (not isinstance(workflow_id, str) or not _ID.fullmatch(workflow_id)))):
+                raise NativePluginLoadUnavailable("native registration action binding fields are malformed")
+            preimage = _canonical(selector_values)
+            if preimage in selector_preimages:
+                raise NativePluginLoadUnavailable("native registration selector branches are ambiguous")
+            selector_preimages.add(preimage)
+            for selector_name, selector_value in selector_values.items():
+                selector_schema = properties.get(selector_name)
+                allowed_values = selector_schema.get("enum") if isinstance(selector_schema, dict) else None
+                if (not isinstance(allowed_values, list)
+                        or _canonical(selector_value) not in {_canonical(value) for value in allowed_values}):
+                    raise NativePluginLoadUnavailable("native selector value is not a source-declared enum literal")
+            projected_sources: set[str] = set()
+            projected_names: set[str] = set()
+            for projection_row in projection:
+                if (not isinstance(projection_row, dict)
+                        or set(projection_row) != {"name", "source_field"}):
+                    raise NativePluginLoadUnavailable("native registration argument projection is malformed")
+                target_name, source_field = projection_row["name"], projection_row["source_field"]
+                if (not isinstance(target_name, str) or not _ID.fullmatch(target_name)
+                        or not isinstance(source_field, str) or source_field not in properties
+                        or target_name in projected_names or source_field in projected_sources
+                        or source_field in selector_fields):
+                    raise NativePluginLoadUnavailable("native registration argument projection is ambiguous")
+                projected_names.add(target_name)
+                projected_sources.add(source_field)
+            if set(selector_fields) | projected_sources != set(properties):
+                raise NativePluginLoadUnavailable("native registration does not bind every declared input field")
+            kind = registration["handler_kind"]
+            if kind in {"effect-action", "finite-selector"}:
+                if action_id not in manifest_adapters.get(adapter_id, set()):
+                    raise NativePluginLoadUnavailable("native registration action is absent from its pinned adapter")
+                effect = selected.resolve(adapter_id, action_id)
+                if effect is None:
+                    raise NativePluginLoadUnavailable("native registration action is not root selected")
+                selected_effect_pairs.add((adapter_id, action_id))
+                if kind == "effect-action" and (
+                        selector_fields or selector_values or workflow_id is not None):
+                    raise NativePluginLoadUnavailable("direct effect registration has selector/workflow state")
+                if workflow_id is not None:
+                    raise NativePluginLoadUnavailable("non-workflow registration selected a workflow")
+            elif kind == "finite-workflow":
+                if action_id != reg_id or workflow_id is None:
+                    raise NativePluginLoadUnavailable("finite workflow registration lacks its fixed workflow binding")
+            elif kind in {"public-registry-read", "owner-overlay"}:
+                if action_id != reg_id or workflow_id is not None:
+                    raise NativePluginLoadUnavailable("local native registration is not bound to its own identity")
+            elif kind == "mcp-dispatch":
+                if workflow_id is not None or action_id == reg_id:
+                    raise NativePluginLoadUnavailable("native MCP registration lacks its selected action identity")
+        if registration["handler_kind"] in {"effect-action", "finite-selector", "finite-workflow"} and not bindings:
+            raise NativePluginLoadUnavailable("effect registration has no source-pinned action binding")
+        if (selector_fields and not bindings
+                or not selector_fields and registration["handler_kind"] == "finite-selector"):
+            raise NativePluginLoadUnavailable("finite selector registration has no exact selector table")
+        for selector_name in selector_fields:
+            declared = properties[selector_name].get("enum")
+            selected_values = {
+                _canonical(binding["selector_values"][selector_name]) for binding in bindings
+            }
+            if (not isinstance(declared, list) or not declared
+                    or selected_values != {_canonical(value) for value in declared}):
+                raise NativePluginLoadUnavailable("native selector projection does not cover its exact enum values")
+        if (registration["handler_kind"] == "effect-action"
+                and len(bindings) != 1):
+            raise NativePluginLoadUnavailable("direct effect registration is not one-to-one")
+        names.add(name)
+        registrations_by_id[reg_id] = registration
+
+    selected_pairs = {(effect.adapter_id, effect.action_id) for effect in selected.adapter_rows}
+    if not selected_effect_pairs <= selected_pairs:
+        raise NativePluginLoadUnavailable("native registration projection references an unselected action")
+
+    result: list[SelectedNativeCandidate] = []
+    candidate_registration_ids: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != candidate_fields:
+            raise NativePluginLoadUnavailable("native candidate row has unknown or missing fields")
+        reg_id = row["registration_id"]
+        registration = registrations_by_id.get(reg_id) if isinstance(reg_id, str) else None
+        if registration is None or reg_id in candidate_registration_ids:
+            raise NativePluginLoadUnavailable("native candidate has no unique registration projection")
+        for field in ("native_tool_name", "adapter_id", "native_server_name", "toolset", "family",
+                      "argument_schema", "result_schema", "native_schema_sha256", "observer_enrollment_ids",
+                      "handler_kind"):
+            if _canonical(row[field]) != _canonical(registration[field]):
+                raise NativePluginLoadUnavailable("native candidate differs from its registration projection")
+        action_bindings = registration["action_bindings"]
+        handler_kind = registration["handler_kind"]
+        expected_action_id = (
+            action_bindings[0]["action_id"]
+            if handler_kind in {"effect-action", "mcp-dispatch"} and len(action_bindings) == 1
+            else reg_id
+        )
+        if row["action_id"] != expected_action_id:
+            raise NativePluginLoadUnavailable("native candidate action identity differs from its source projection")
         description = row["description"]
-        if (not isinstance(server, str) or not _MCP_SERVER.fullmatch(server)
-                or not isinstance(description, str) or not description or len(description) > 4096
+        if (not isinstance(description, str) or not description or len(description) > 4096
                 or any(ord(char) < 0x20 for char in description)):
             raise NativePluginLoadUnavailable("native candidate display metadata is malformed")
-        if adapter_id == _NATIVE_MCP_ADAPTER_ID and server == "hermes-installer":
-            raise NativePluginLoadUnavailable("native MCP candidate has the installer action owner")
-        if adapter_id != _NATIVE_MCP_ADAPTER_ID and server != "hermes-installer":
-            raise NativePluginLoadUnavailable("compiled installer action has an unapproved toolset owner")
-        names.add(name)
-        actions.add((adapter_id, action_id))
+        if handler_kind == "mcp-dispatch" and row["toolset"] != f"mcp-{row['native_server_name']}":
+            raise NativePluginLoadUnavailable("native MCP toolset differs from its selected server")
+        candidate_registration_ids.add(reg_id)
         result.append(SelectedNativeCandidate(
-            name, adapter_id, action_id, _freeze_json(argument_schema), _freeze_json(result_schema),
-            schema_digest, tuple(observers), server, description,
+            row["native_tool_name"], row["adapter_id"], row["action_id"],
+            _freeze_json(row["argument_schema"]), _freeze_json(row["result_schema"]),
+            row["native_schema_sha256"], tuple(row["observer_enrollment_ids"]),
+            row["native_server_name"], description, reg_id, row["toolset"], row["family"],
+            handler_kind, tuple(registration["selector_fields"]),
+            tuple(_freeze_json(binding) for binding in action_bindings),
         ))
-    selected_pairs = {(effect.adapter_id, effect.action_id) for effect in selected.adapter_rows}
-    candidate_pairs = {pair for pair in actions if pair[0] != _NATIVE_MCP_ADAPTER_ID}
-    if candidate_pairs != selected_pairs:
-        raise NativePluginLoadUnavailable("native candidate index does not cover the exact root-selected actions")
+    if candidate_registration_ids != set(registrations_by_id):
+        raise NativePluginLoadUnavailable("native candidate set does not cover the exact registration projection")
     return tuple(result)
 
 
@@ -1190,7 +1358,7 @@ def install_native_candidate_index(package: SelectedNativePackage, authority: ob
                     handler = selected_handlers[(row.native_server_name, row.native_tool_name)]
                     if (entry is None or entry.toolset != expected_toolset or entry.handler is not handler):
                         raise NativePluginLoadUnavailable("Hermes changed a selected native MCP registration")
-                    package._mark_candidate_registered(row.adapter_id, row.action_id)
+                    package._mark_candidate_registered(row.adapter_id, row.registration_id)
             except Exception:
                 for (server_name, name), handler in selected_handlers.items():
                     entry = registry.get_entry(name, scope=scope)
@@ -1255,7 +1423,7 @@ def finish_selected_native_plugin_discovery(plugin_manager: object) -> bool:
         if package._authority is None or not package.candidate_rows:
             raise NativePluginLoadUnavailable("root-selected native candidate index is unavailable")
         install_native_candidate_index(package, package._authority)
-        expected_actions = {(row.adapter_id, row.action_id) for row in package.candidate_rows}
+        expected_actions = {(row.adapter_id, row.registration_id) for row in package.candidate_rows}
         if package._registered_candidate_actions != expected_actions:
             raise NativePluginLoadUnavailable("selected candidate registration sweep was incomplete")
         plugins = getattr(plugin_manager, "_plugins", None)

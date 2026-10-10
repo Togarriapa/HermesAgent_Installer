@@ -254,6 +254,84 @@ class AuthorityClient:
             raise AuthorityDenied("native.input.take", "authority returned an expired input delivery")
         return delivery
 
+    def bind_selected_channel_runtime(self, *,
+                                     cancelled: Callable[[], bool] | None = None) -> Any:
+        """Bind this current native Hermes process to its root-selected channel row.
+
+        The request contains no profile, package, account, channel, or PID. The
+        AuthorityService resolves them from this connection's SO_PEERCRED and
+        PIDFD and returns only an opaque lease-bound lookup handle.
+        """
+        from .channel_peer_delivery import ChannelRuntimeBinding
+
+        result = self._rpc("channel.runtime.bind", {"schema": 1},
+                           timeout=min(10.0, self.timeout), cancelled=cancelled)
+        binding = ChannelRuntimeBinding.from_wire(result)
+        if not self.monotonic() < binding.expires_monotonic <= self.monotonic() + 30.0:
+            raise AuthorityDenied("channel.binding", "root returned an expired channel binding")
+        return binding
+
+    def take_selected_channel_event(self, binding: Any, *,
+                                    cancelled: Callable[[], bool] | None = None
+                                    ) -> Any | None:
+        """Take at most one event addressed to this exact bound native peer."""
+        from .channel_peer_delivery import ChannelEventDelivery, ChannelRuntimeBinding
+
+        if type(binding) is not ChannelRuntimeBinding:
+            raise AuthorityDenied("channel.delivery", "a root-issued channel runtime binding is required")
+        if (binding.expires_monotonic <= self.monotonic()
+                or binding.service_generation_digest == ""):
+            raise AuthorityDenied("channel.delivery", "selected channel runtime binding is stale")
+        result = self._rpc("channel.event.take", {
+            "schema": 1, "binding_handle": binding.binding_handle, "max_events": 1,
+        }, timeout=min(30.0, self.timeout), cancelled=cancelled)
+        if result is None:
+            return None
+        delivery = ChannelEventDelivery.from_wire(result)
+        if (delivery.binding_handle != binding.binding_handle
+                or delivery.expires_monotonic <= self.monotonic()
+                or delivery.expires_monotonic > binding.expires_monotonic):
+            raise AuthorityDenied("channel.delivery", "root returned a stale or mismatched channel event")
+        return delivery
+
+    def take_selected_channel_context(
+        self, event: Any, *, cancelled: Callable[[], bool] | None = None,
+    ) -> Any | None:
+        """Resolve the context handle from one root-delivered channel event.
+
+        The authority binds the request to this socket's current peer PIDFD.
+        The event's opaque context handle is the sole lookup selector; the
+        response contains handles and bounded payload metadata, never a signed
+        HostContext or event body.
+        """
+        from .channel_peer_delivery import ChannelEventDelivery
+        from .native_channel_context import NativeChannelContextDelivery
+
+        if type(event) is not ChannelEventDelivery:
+            raise AuthorityDenied("channel.context", "a root-delivered channel event is required")
+        result = self._rpc("native.channel.context.take", {
+            "schema": 1,
+            "producer_context_delivery_handle": event.producer_context_delivery_handle,
+        }, timeout=min(10.0, self.timeout), cancelled=cancelled)
+        if result is None:
+            return None
+        fields = {"schema", "source_receipt_handle", "producer_context_delivery_handle",
+                  "payload_sha256", "payload_size_bytes", "expires_monotonic"}
+        if not isinstance(result, dict) or set(result) != fields:
+            raise AuthorityDenied("channel.context", "authority returned a malformed channel context delivery")
+        try:
+            delivery = NativeChannelContextDelivery(**result)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("channel.context", "authority returned an invalid channel context delivery") from None
+        if (delivery.producer_context_delivery_handle != event.producer_context_delivery_handle
+                or delivery.source_receipt_handle != event.source_receipt_handle
+                or delivery.payload_sha256 != event.payload_sha256
+                or delivery.payload_size_bytes != len(event.normalized_payload)
+                or delivery.expires_monotonic <= self.monotonic()
+                or delivery.expires_monotonic > event.expires_monotonic):
+            raise AuthorityDenied("channel.context", "channel context does not match its selected event")
+        return delivery
+
     def finish_selected_native_turn(
         self, turn_handle: str, final_response_delivery_handle: str,
     ) -> RootCompletedNativeTurnPresentation:

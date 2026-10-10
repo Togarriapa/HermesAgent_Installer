@@ -138,6 +138,61 @@ class RootNativeToolEffectInvocation:
 
 
 @dataclass(frozen=True, slots=True)
+class RootSelectedApplicationInvocation:
+    """Root-validated native action evidence presented before app admission.
+
+    This proves only the current selected native action and its request
+    ancestry. Application/workload/runtime selection and the fresh
+    ``process.start`` grant remain separate root-owned joins.
+    """
+
+    schema: int
+    invocation_handle: str
+    response_observation_handle: str
+    turn_handle: str
+    package_id: str
+    profile_id: str
+    profile_generation: str
+    principal_id: str
+    adapter_id: str
+    action_id: str
+    tool_name: str
+    operation: str
+    request_sha256: str
+    source_receipt_handles: tuple[str, ...]
+    source_closure_sha256: str
+    service_generation_digest: str
+    native_process_identity: Any
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        opaque = (self.invocation_handle, self.response_observation_handle, self.turn_handle)
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", value)
+                       for value in opaque)
+                or any(not isinstance(value, str) or not value for value in (
+                    self.package_id, self.profile_id, self.profile_generation,
+                    self.principal_id, self.adapter_id, self.action_id,
+                    self.tool_name, self.operation))
+                or not _SHA256.fullmatch(self.request_sha256)
+                or not _SHA256.fullmatch(self.source_closure_sha256)
+                or not _SHA256.fullmatch(self.service_generation_digest)
+                or not isinstance(self.source_receipt_handles, tuple)
+                or not self.source_receipt_handles
+                or len(self.source_receipt_handles) > 128
+                or len(set(self.source_receipt_handles)) != len(self.source_receipt_handles)
+                or any(not isinstance(item, str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", item)
+                       for item in self.source_receipt_handles)
+                or self.native_process_identity is None
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise ValueError("selected application invocation evidence is malformed")
+
+
+@dataclass(frozen=True, slots=True)
 class RootNativeMCPInvocation:
     """Opaque root-resolved native MCP action admitted for one dispatch.
 
@@ -356,6 +411,7 @@ class NativeInvocationRegistry:
         self._deliveries: dict[str, _ObservedProviderResponse] = {}
         self._calls: dict[str, tuple[str, str, str, str, str, bytes]] = {}
         self._invocations: dict[str, _NativeInvocation] = {}
+        self._selected_application_invocations: dict[str, RootSelectedApplicationInvocation] = {}
         self._mcp_dispatches: dict[str, tuple[_NativeInvocation, RootNativeMCPInvocation]] = {}
         self._issued_handles: set[str] = set()
         self._retained_response_bytes = 0
@@ -1353,6 +1409,200 @@ class NativeInvocationRegistry:
                 expires_monotonic=invocation.expires_monotonic,
             )
 
+    def resolve_selected_application_invocation(
+        self, invocation_handle: str, canonical_arguments: bytes, *,
+        peer_uid: int, peer_pid: int, peer_pidfd: int,
+    ) -> RootSelectedApplicationInvocation:
+        """Return current root-selected native action evidence before app admission.
+
+        The root application-workload authority performs the independent
+        action-to-workload/catalog/runtime join and issues its own fresh
+        ``process.start`` grant. This method accepts no workload or app label.
+        """
+        if (not self._valid_handle(invocation_handle)
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= _MAX_TOOL_ARGUMENT_BYTES
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0):
+            raise AuthorityDenied("native.application.invocation", "selected action lookup is malformed")
+        try:
+            parsed = json.loads(canonical_arguments.decode("utf-8"))
+            canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"),
+                                   ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if not isinstance(parsed, dict) or canonical != canonical_arguments:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.application.invocation", "selected arguments are not canonical JSON") from None
+        request_digest = hashlib.sha256(canonical_arguments).hexdigest()
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            invocation = self._invocations.get(invocation_handle)
+            if (invocation is None or invocation.mcp_dispatch_consumed
+                    or invocation.canonical_arguments != canonical_arguments
+                    or invocation.arguments_sha256 != request_digest
+                    or peer_uid != invocation.producer_identity.kernel_uid
+                    or peer_pid != invocation.producer_pid
+                    or not self._native_mcp_peer_current(
+                        invocation, peer_uid, peer_pid, peer_pidfd, canonical_arguments)):
+                raise AuthorityDenied("native.application.invocation", "selected action is stale, foreign, or consumed")
+            response = self._responses.get(invocation.response_handle)
+            if (response is None or not response.metadata_taken
+                    or response.turn_handle is None
+                    or response.response_receipt_handle != invocation.receipt_handles[-1]
+                    or response.expires_monotonic <= self.monotonic()
+                    or response.profile_id != invocation.profile_id
+                    or response.generation != invocation.generation
+                    or response.package_id != invocation.package_id
+                    or response.receipt_handles != invocation.receipt_handles
+                    or response.authorization.operation != "provider.dispatch"
+                    or response.authorization.target != response.target
+                    or response.authorization.recipient != response.recipient
+                    or response.authorization.request_digest != response.request_digest
+                    or response.authorization.final_payload_digest != response.request_digest
+                    or response.request_context.final_payload_digest != response.request_digest
+                    or response.authorization.source_receipts != response.request_context.source_receipts):
+                raise AuthorityDenied("native.application.turn", "current root provider turn is unavailable")
+            with self.service._lock:
+                receipts = [self.service._source_receipt_handles.get(handle)
+                            for handle in invocation.receipt_handles]
+                binding = self.service._binding(peer_uid)
+                self.service._verify_context_signature(response.request_context)
+                self.service._verify_grant_signature(response.authorization)
+                self.service._assert_current_context(
+                    response.request_context, binding, peer_uid, peer_pid=peer_pid)
+            current_process_identity = self.service._native_process_identity(peer_pid, peer_uid)
+            if (not receipts or any(
+                    receipt is None or receipt.uid != peer_uid
+                    or receipt.profile_id != invocation.profile_id
+                    or receipt.process_generation != invocation.generation
+                    or receipt.native_process_identity != current_process_identity
+                    or receipt.monotonic_expires_at <= self.monotonic()
+                    for receipt in receipts)):
+                raise AuthorityDenied("native.application.lineage", "selected action source closure is stale")
+            closure_digest = canonical_digest(sorted(receipt.receipt_id for receipt in receipts))
+            request_parent_ids = {receipt.receipt_id
+                                  for receipt in response.request_context.source_receipts}
+            retained_parent_ids = {receipt.receipt_id for receipt in receipts[:-1]}
+            if (closure_digest != invocation.parent_closure_digest
+                    or self.service.service_generation_digest != invocation.service_generation_digest
+                    or binding.principal_id != response.request_context.principal_id
+                    or binding.profile_id != invocation.profile_id
+                    or tuple(receipt.receipt_id for receipt in response.request_context.source_receipts)
+                       != tuple(receipt.receipt_id for receipt in receipts[:-1])
+                    or request_parent_ids != retained_parent_ids):
+                raise AuthorityDenied("native.application.generation", "selected action generation or lineage changed")
+            selection = self.action_resolver(
+                invocation.bridge, invocation.producer_identity, invocation.tool_name)
+            if (not isinstance(selection, NativeActionSelection)
+                    or (selection.package_id, selection.profile_id, selection.generation,
+                        selection.adapter_id, selection.action_id, selection.operation)
+                    != (invocation.package_id, invocation.profile_id, invocation.generation,
+                        invocation.adapter_id, invocation.action_id, invocation.operation)
+                    or not self._validate_selection(selection, canonical_arguments)):
+                raise AuthorityDenied("native.application.action", "root-selected action schema changed")
+            now = self.monotonic()
+            expires = min(invocation.expires_monotonic, response.expires_monotonic,
+                          *(receipt.monotonic_expires_at for receipt in receipts))
+            if expires <= now:
+                raise AuthorityDenied("native.application.expired", "selected action evidence expired")
+            turn_registry = self._native_turn_registry
+            if turn_registry is None:
+                raise AuthorityDenied("native.application.turn", "root selected-turn registry is unavailable")
+            turn_handles = set()
+            for source_handle in invocation.receipt_handles:
+                try:
+                    turn_handles.add(turn_registry.resolve_turn_for_source(
+                        source_handle, invocation.producer_identity))
+                except Exception:
+                    raise AuthorityDenied("native.application.turn", "selected action turn is no longer current") from None
+            if turn_handles != {response.turn_handle}:
+                raise AuthorityDenied("native.application.turn", "selected action turn binding changed")
+            result = RootSelectedApplicationInvocation(
+                schema=1,
+                invocation_handle=invocation.invocation_handle,
+                response_observation_handle=response.handle,
+                turn_handle=response.turn_handle,
+                package_id=invocation.package_id,
+                profile_id=invocation.profile_id,
+                profile_generation=invocation.generation,
+                principal_id=binding.principal_id,
+                adapter_id=invocation.adapter_id,
+                action_id=invocation.action_id,
+                tool_name=invocation.tool_name,
+                operation=invocation.operation,
+                request_sha256=request_digest,
+                source_receipt_handles=invocation.receipt_handles,
+                source_closure_sha256=closure_digest,
+                service_generation_digest=invocation.service_generation_digest,
+                native_process_identity=invocation.producer_identity,
+                issued_monotonic=now,
+                expires_monotonic=expires,
+            )
+            if invocation_handle in self._selected_application_invocations:
+                raise AuthorityDenied("native.application.invocation", "selected action admission was already issued")
+            self._selected_application_invocations[invocation_handle] = result
+            return result
+
+    def is_selected_application_invocation_current(
+        self, selected: RootSelectedApplicationInvocation,
+    ) -> bool:
+        """Revalidate the exact root-issued DTO against retained live evidence."""
+        if type(selected) is not RootSelectedApplicationInvocation:
+            return False
+        with self._lock:
+            if self._closed or self._selected_application_invocations.get(
+                    selected.invocation_handle) is not selected:
+                return False
+            invocation = self._invocations.get(selected.invocation_handle)
+            response = self._responses.get(invocation.response_handle) if invocation else None
+            if (invocation is None or response is None
+                    or self.monotonic() >= selected.expires_monotonic
+                    or response.handle != selected.response_observation_handle
+                    or response.turn_handle != selected.turn_handle
+                    or selected.service_generation_digest != self.service.service_generation_digest):
+                return False
+            if not self._native_mcp_peer_current(
+                    invocation, invocation.producer_identity.kernel_uid,
+                    invocation.producer_pid, invocation.producer_pidfd,
+                    invocation.canonical_arguments):
+                return False
+            binding = self.service._binding(invocation.producer_identity.kernel_uid)
+            try:
+                self.service._verify_context_signature(response.request_context)
+                self.service._verify_grant_signature(response.authorization)
+                self.service._assert_current_context(
+                    response.request_context, binding, invocation.producer_identity.kernel_uid,
+                    peer_pid=invocation.producer_pid)
+                turn_registry = self._native_turn_registry
+                if turn_registry is None:
+                    return False
+                turn_handles = {
+                    turn_registry.resolve_turn_for_source(handle, invocation.producer_identity)
+                    for handle in invocation.receipt_handles
+                }
+                if turn_handles != {selected.turn_handle}:
+                    return False
+            except Exception:
+                return False
+            with self.service._lock:
+                receipts = [self.service._source_receipt_handles.get(handle)
+                            for handle in selected.source_receipt_handles]
+            if (not receipts or any(
+                    receipt is None or receipt.monotonic_expires_at <= self.monotonic()
+                    or receipt.profile_id != selected.profile_id
+                    or receipt.process_generation != selected.profile_generation
+                    for receipt in receipts)):
+                return False
+            try:
+                return (canonical_digest(sorted(receipt.receipt_id for receipt in receipts))
+                        == selected.source_closure_sha256
+                        and hashlib.sha256(invocation.canonical_arguments).hexdigest()
+                        == selected.request_sha256)
+            except Exception:
+                return False
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
@@ -1368,6 +1618,7 @@ class NativeInvocationRegistry:
             self._deliveries.clear()
             self._calls.clear()
             self._invocations.clear()
+            self._selected_application_invocations.clear()
             self._mcp_dispatches.clear()
             self._issued_handles.clear()
 
@@ -1405,6 +1656,7 @@ class NativeInvocationRegistry:
         for handle, invocation in tuple(self._invocations.items()):
             if invocation.expires_monotonic <= now:
                 self._invocations.pop(handle, None)
+                self._selected_application_invocations.pop(handle, None)
                 self._mcp_dispatches.pop(handle, None)
                 try:
                     os.close(invocation.producer_pidfd)

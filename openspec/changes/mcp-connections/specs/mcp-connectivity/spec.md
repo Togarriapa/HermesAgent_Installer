@@ -251,3 +251,9 @@ The installer SHALL require actual custody write/EOF receipts for task completio
 #### Scenario: Forged or mismatched receipt
 - **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
 - **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.

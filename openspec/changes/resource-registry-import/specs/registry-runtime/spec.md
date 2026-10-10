@@ -254,3 +254,37 @@ The implementation SHALL use v48 actual selected root transport capture and fixe
 Composio selected trigger derivation v77: `plans/amendments/2026-10-10-composio-trigger-artifact-exchange-derivation-v77.md`; existing RG-F03/R0060/RB-T08 gates remain open and account setup proof stays distinct.
 
 Existing resource child-attempt context v82: `plans/amendments/2026-10-10-resource-existing-child-attempt-context-v82.md`; existing RB-T08 task open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-task-proof-dto-custody-v93.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
+
+Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+### Requirement: Current selected local audio endpoint and explicit capture consent
+
+The installer SHALL bind original local-audio-assist capture to the exact protected current endpoint/runtime/controller and actual foreground TTY permission described by v118, preserving separate private-egress/memory consent and pending physical-device evidence.
+
+#### Scenario: Device changes or permission expires
+
+- **WHEN** the selected endpoint tuple changes, consent is revoked or expires, capture overruns or the stream cannot open under the actual selected controller
+- **THEN** capture fails, retained PCM is zeroed, and no source event or permission claim is promoted from worker input or synthetic streams
+
+### Requirement: Genuine retained event peer-bound channel delivery
+
+The installer SHALL queue v129 genuine issued source/context handles bound to the exact retained event and current selected native peer, preserving distinct original source identity.
+
+#### Scenario: Random syntactically valid source handle
+
+- **WHEN** publish lacks actual source and native context store membership
+- **THEN** no channel event delivery is queued and no provenance is inferred from generated strings

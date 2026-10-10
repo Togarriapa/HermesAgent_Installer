@@ -1,0 +1,3 @@
+# Private memory endpoint adapter v108
+
+SK-T01/SK-F02/SK-F03 private extract/embed implementation lacks a producer; public OpenRouter chat cannot substitute embedding or private eligibility. Pin smallest source-referenced distinct compatible API serializers, source-owned extraction prompt and bounded result parser, root selected existing owned endpoint/deployment/capability/consent rows and engine factory. Exact adjacent protocol/source contract. Required GLM5.2 text preserved; embedding model remains actual separately selected artifact, not fictional default. No model download/install/account/spending/startup claim. Unknown endpoint/model/license/runtime remains unavailable with original obligations open. Baseline unchanged/all18ACpending.

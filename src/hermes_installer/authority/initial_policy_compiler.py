@@ -417,6 +417,17 @@ class RootFirstStagePolicyCompiler:
         if not isinstance(choices, RootSetupChoices):
             raise InitialPolicyCompilationError("initial setup requires validated RootSetupChoices")
         session = self._registry.begin_initial_compilation(choices)
+        return self.compile_initial_policy_for_session(session)
+
+    def compile_initial_policy_for_session(self, session: Any) -> "CompiledRootSetupPublication":
+        """Compile the already-issued stage-zero session after identity selection."""
+        from .bootstrap_runtime_factory import RootInitialCompilationSession
+        if not isinstance(session, RootInitialCompilationSession):
+            raise InitialPolicyCompilationError("initial policy requires the typed stage-zero session")
+        current = self._registry.resolve_initial_session(session.compilation_session_handle)
+        if current is not session:
+            raise InitialPolicyCompilationError("initial policy session is stale or replaced")
+        choices = session._choices
         self._actor.verify_current(self._release)
         self._registry.verify_initial_session(session)
         plan = self._registry.resolve_actor_plan(session.compilation_session_handle)
@@ -611,8 +622,20 @@ class RootFirstStagePolicyCompiler:
         if not callable(package):
             raise InitialPolicyCompilationError(
                 "installed stage-zero registry has no sealed publication packaging API")
+        # Preserve the actual root-minted inputs in the prepared publication
+        # chain. The principal handle alone binds identity labels/capability
+        # namespace, while its Authentik observation handle binds those facts
+        # to a fresh current identity read. Neither is a source artifact proof.
+        identity_receipt_handle = selected.identity_receipt_handle
+        principal_receipt_handle = selected.receipt_id
+        if (not isinstance(identity_receipt_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", identity_receipt_handle)
+                or not isinstance(principal_receipt_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", principal_receipt_handle)):
+            raise InitialPolicyCompilationError("selected principal lacks its actual identity receipt closure")
         return package(
-            session, policy_raw, catalog_raw, selection_doc, source_receipt_handles=())
+            session, policy_raw, catalog_raw, selection_doc,
+            source_receipt_handles=(identity_receipt_handle, principal_receipt_handle))
 
 
 __all__ = ["RootFirstStagePolicyCompiler", "InitialPolicyCompilationError"]

@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-from .types import EffectAuthorization, HostContext, canonical_digest
+from .types import (
+    RootSelectedServiceContext, RootSelectedServiceEffectGrant, canonical_digest,
+)
 
 
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
@@ -57,11 +59,12 @@ def selected_start_payload(enrollment_id: str, generation: str,
 
 @dataclass(frozen=True, slots=True, repr=False)
 class RootSelectedStartupGrant:
-    """Authority-issued one-use launch grant for one v65 selected role.
+    """Typed signed v80 intent for one root-selected startup operation.
 
-    Construction does not confer authority: custody must verify/consume the
-    signed context and effect grant with the live root AuthorityService before
-    any process or mount effect.
+    This wrapper is not an authority capability by itself. The exact typed
+    context and grant must still be consumed by AuthorityService, which
+    verifies signatures, retained admission, current policy, and one-use nonce
+    state immediately before custody performs the effect.
     """
     schema: int
     startup_authorization_handle: str
@@ -71,8 +74,9 @@ class RootSelectedStartupGrant:
     operation_id: str
     selection_payload_sha256: str
     controller_proof_handle: str
-    context: HostContext = field(repr=False)
-    effect_authorization: EffectAuthorization = field(repr=False)
+    controller_proof_sha256: str
+    context: RootSelectedServiceContext = field(repr=False)
+    effect_grant: RootSelectedServiceEffectGrant = field(repr=False)
     issued_monotonic: float
     expires_monotonic: float
 
@@ -85,8 +89,9 @@ class RootSelectedStartupGrant:
                 or not _OPAQUE.fullmatch(self.startup_authorization_handle)
                 or not _OPAQUE.fullmatch(self.controller_proof_handle)
                 or not _SHA256.fullmatch(self.selection_payload_sha256)
-                or not isinstance(self.context, HostContext)
-                or not isinstance(self.effect_authorization, EffectAuthorization)
+                or not _SHA256.fullmatch(self.controller_proof_sha256)
+                or type(self.context) is not RootSelectedServiceContext
+                or type(self.effect_grant) is not RootSelectedServiceEffectGrant
                 or isinstance(self.issued_monotonic, bool)
                 or not isinstance(self.issued_monotonic, (int, float))
                 or isinstance(self.expires_monotonic, bool)
@@ -100,24 +105,27 @@ class RootSelectedStartupGrant:
         )
         if canonical_digest(payload) != self.selection_payload_sha256:
             raise NativeDisplayStartupDenied("startup grant selection digest is inconsistent")
-        if (self.context.operation != "process.start"
+        context_wire = self.context.to_wire()
+        context_digest = hashlib.sha256(json.dumps(
+            context_wire, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        if (self.context.action != "start"
+                or self.context.role != self.role
+                or self.context.operation != "process.start"
                 or self.context.enrollment_id != self.service_enrollment_id
-                or self.context.generation != self.generation
-                or self.context.final_payload_digest != self.selection_payload_sha256
-                or self.effect_authorization.operation != "process.start"
-                or self.effect_authorization.enrollment_id != self.service_enrollment_id
-                or self.effect_authorization.generation != self.generation
-                or self.effect_authorization.final_payload_digest != self.selection_payload_sha256
-                or self.effect_authorization.request_digest != self.selection_payload_sha256
-                or self.effect_authorization.context_digest != canonical_digest({
-                    **self.context.claims(), "signature": self.context.signature,
-                })
-                or self.effect_authorization.profile_id != self.context.profile_id
-                or self.effect_authorization.principal_id != self.context.principal_id
-                or self.effect_authorization.namespace_id != self.context.namespace_id
-                or self.effect_authorization.uid != self.context.uid
-                or self.effect_authorization.capability != "hermes-profile-invoke"
-                or "hermes-profile-invoke" not in self.context.capabilities):
+                or self.context.selected_generation != self.generation
+                or self.context.operation_id != self.operation_id
+                or self.context.capability != "hermes-profile-invoke"
+                or self.context.admission_handle != self.startup_authorization_handle
+                or self.context.controller_proof_sha256 != self.controller_proof_sha256
+                or self.effect_grant.admission_handle != self.startup_authorization_handle
+                or self.effect_grant.operation != "process.start"
+                or self.effect_grant.capability != self.context.capability
+                or self.effect_grant.target != self.context.target
+                or self.effect_grant.context_sha256 != context_digest
+                or self.effect_grant.request_sha256 != self.selection_payload_sha256
+                or self.effect_grant.issued_monotonic != self.context.issued_monotonic
+                or self.effect_grant.expires_monotonic != self.context.expires_monotonic):
             raise NativeDisplayStartupDenied("startup grant is not bound to its exact operation and selection")
 
     def __repr__(self) -> str:
@@ -196,6 +204,7 @@ class XauthorityMountBinding:
     source_path: Path = field(repr=False)
     source_device: int
     source_inode: int
+    source_size: int
     source_uid: int
     source_gid: int
     source_mode: int
@@ -221,12 +230,44 @@ class XauthorityMountBinding:
             "display_profile_id": self.display_profile_id,
             "display_generation": self.display_generation,
             "source_path": str(self.source_path), "source_device": self.source_device,
-            "source_inode": self.source_inode, "source_uid": self.source_uid,
+            "source_inode": self.source_inode, "source_size": self.source_size,
+            "source_uid": self.source_uid,
             "source_gid": self.source_gid, "source_mode": self.source_mode,
             "source_sha256": self.source_sha256, "target_path": str(self.target_path),
             "display_name": self.display_name, "read_only": self.read_only,
             "nofollow": self.nofollow, "nosuid": self.nosuid, "nodev": self.nodev,
         })
+
+
+@dataclass(slots=True, repr=False)
+class XauthoritySourceLease:
+    """Held readonly Xauthority inode for custody's race-safe staging copy."""
+    receipt_handle: str
+    display_profile_id: str
+    display_generation: str
+    source_path: Path = field(repr=False)
+    file_fd: int = field(repr=False)
+    device: int
+    inode: int
+    owner_uid: int
+    owner_gid: int
+    mode: int
+    size_bytes: int
+    content_sha256: str = field(repr=False)
+    _registry: Any = field(repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def __repr__(self) -> str:
+        return "XauthoritySourceLease(<held-private-fd>)"
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            try:
+                os.close(self.file_fd)
+            except OSError:
+                pass
+            self._registry._release_mount_source(self)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -484,6 +525,7 @@ class XauthorityStartupRegistry:
         self._receipts: dict[str, XauthorityStartupReceipt] = {}
         self._pidfds: dict[str, int] = {}
         self._prepared: dict[str, PreparedXauthority] = {}
+        self._source_leases: dict[int, XauthoritySourceLease] = {}
 
     def prepare(self, selected: SelectedDisplayStartup) -> PreparedXauthority:
         """Create a root-owned, group-readable Xauthority file before launch.
@@ -648,12 +690,14 @@ class XauthorityStartupRegistry:
             if self._prepared.get(prepared.receipt_handle) is not prepared:
                 raise NativeDisplayStartupDenied("Xauthority preparation is not owned by this root registry")
         fd = self._open_and_check(prepared)
+        source_size = os.fstat(fd).st_size
         os.close(fd)
         unsigned = XauthorityMountBinding(
             receipt_handle=prepared.receipt_handle,
             display_profile_id=prepared.display_profile_id,
             display_generation=prepared.display_generation,
             source_path=prepared.path, source_device=prepared.device, source_inode=prepared.inode,
+            source_size=source_size,
             source_uid=prepared.owner_uid, source_gid=prepared.owner_gid, source_mode=prepared.mode,
             source_sha256=prepared.content_sha256, display_name=prepared.display_name,
         )
@@ -662,7 +706,8 @@ class XauthorityStartupRegistry:
             display_profile_id=unsigned.display_profile_id,
             display_generation=unsigned.display_generation,
             source_path=unsigned.source_path, source_device=unsigned.source_device,
-            source_inode=unsigned.source_inode, source_uid=unsigned.source_uid,
+            source_inode=unsigned.source_inode, source_size=unsigned.source_size,
+            source_uid=unsigned.source_uid,
             source_gid=unsigned.source_gid, source_mode=unsigned.source_mode,
             source_sha256=unsigned.source_sha256, target_path=unsigned.target_path,
             display_name=unsigned.display_name, read_only=True, nofollow=True,
@@ -682,6 +727,7 @@ class XauthorityStartupRegistry:
                 or binding.display_generation != prepared.display_generation
                 or binding.source_path != prepared.path
                 or binding.source_device != prepared.device or binding.source_inode != prepared.inode
+                or type(binding.source_size) is not int or binding.source_size <= 0
                 or binding.source_uid != prepared.owner_uid or binding.source_gid != prepared.owner_gid
                 or binding.source_mode != prepared.mode or binding.source_sha256 != prepared.content_sha256
                 or binding.display_name != prepared.display_name):
@@ -692,6 +738,84 @@ class XauthorityStartupRegistry:
             return True
         except NativeDisplayStartupDenied:
             return False
+
+    def open_mount_source(self, binding: XauthorityMountBinding) -> XauthoritySourceLease:
+        """Duplicate a registry-held readonly file FD for custody, never pass a path.
+
+        The custody adapter must copy from this descriptor into its root-owned
+        staged mount source and verify the resulting mount flags.  The path is
+        metadata for audit only; the lease FD is the content authority.
+        """
+        if not self.verify_mount_binding(binding):
+            raise NativeDisplayStartupDenied("selected Xauthority mount binding is stale")
+        with self._lock:
+            prepared = self._prepared.get(binding.receipt_handle)
+        if prepared is None:
+            raise NativeDisplayStartupDenied("prepared Xauthority file is no longer held")
+        fd = self._open_and_check(prepared)
+        try:
+            info = os.fstat(fd)
+            if (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                    stat.S_IMODE(info.st_mode), info.st_size) != (
+                    binding.source_device, binding.source_inode, binding.source_uid,
+                    binding.source_gid, binding.source_mode, binding.source_size):
+                raise NativeDisplayStartupDenied("selected Xauthority FD differs from its mount binding")
+            lease = XauthoritySourceLease(
+                receipt_handle=binding.receipt_handle,
+                display_profile_id=binding.display_profile_id,
+                display_generation=binding.display_generation,
+                source_path=binding.source_path, file_fd=fd,
+                device=info.st_dev, inode=info.st_ino, owner_uid=info.st_uid,
+                owner_gid=info.st_gid, mode=stat.S_IMODE(info.st_mode),
+                size_bytes=info.st_size, content_sha256=binding.source_sha256,
+                _registry=self,
+            )
+            with self._lock:
+                if self._prepared.get(binding.receipt_handle) is not prepared:
+                    raise NativeDisplayStartupDenied("Xauthority selection changed while retaining its source FD")
+                self._source_leases[id(lease)] = lease
+            return lease
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def verify_mount_source(self, lease: XauthoritySourceLease,
+                            binding: XauthorityMountBinding) -> bool:
+        """Check that custody is copying the current registry-held FD/inode."""
+        if (not isinstance(lease, XauthoritySourceLease) or lease._registry is not self
+                or lease._closed or not self.verify_mount_binding(binding)
+                or lease.receipt_handle != binding.receipt_handle
+                or lease.display_profile_id != binding.display_profile_id
+                or lease.display_generation != binding.display_generation):
+            return False
+        with self._lock:
+            if self._source_leases.get(id(lease)) is not lease:
+                return False
+            prepared = self._prepared.get(lease.receipt_handle)
+        if prepared is None:
+            return False
+        try:
+            info = os.fstat(lease.file_fd)
+            if (not stat.S_ISREG(info.st_mode)
+                    or (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                        stat.S_IMODE(info.st_mode), info.st_size)
+                    != (lease.device, lease.inode, lease.owner_uid, lease.owner_gid,
+                        lease.mode, lease.size_bytes)
+                    or self._hash_fd(lease.file_fd) != lease.content_sha256):
+                return False
+            current_fd = self._open_and_check(prepared)
+            try:
+                current = os.fstat(current_fd)
+                return (current.st_dev, current.st_ino) == (lease.device, lease.inode)
+            finally:
+                os.close(current_fd)
+        except (OSError, NativeDisplayStartupDenied):
+            return False
+
+    def _release_mount_source(self, lease: XauthoritySourceLease) -> None:
+        with self._lock:
+            if self._source_leases.get(id(lease)) is lease:
+                del self._source_leases[id(lease)]
 
     def resolve_selected(self, receipt_handle: str, *, remote_enrollment_id: str,
                          native_profile_id: str, native_generation: str,

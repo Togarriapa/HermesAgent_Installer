@@ -135,7 +135,8 @@ class BuildProbeLinuxTests(unittest.TestCase):
                                  build_result.terminal_success_record_id)
                 self.assertTrue(retained["cleanup"])
                 self.assertEqual(retained["exit_code"], 0)
-            self.assertEqual(fixture.manager._pids(probe.cgroup_id), [])
+            remaining_pids = fixture.manager._pids(probe.cgroup_id)
+            self.assertEqual(tuple(remaining_pids), ())
         finally:
             if peer_pidfd is not None:
                 os.close(peer_pidfd)

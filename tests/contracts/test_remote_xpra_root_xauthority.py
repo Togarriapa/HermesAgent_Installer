@@ -3,8 +3,13 @@ from __future__ import annotations
 
 import os
 import ast
+import hashlib
+import io
+import shutil
+import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +19,7 @@ from hermes_installer.remote.xpra_root_xauthority import (
     XPRA_SOURCE_COMMIT,
     XpraOverlayDenied,
     build_pinned_xpra_root_xauthority_overlay,
+    _copy_and_expand_source_links,
     verify_pinned_xpra_overlay,
 )
 
@@ -26,6 +32,18 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             output = Path(temp) / "xpra-overlay"
             receipt = build_pinned_xpra_root_xauthority_overlay(source, output)
             self.assertEqual(receipt.source_commit, XPRA_SOURCE_COMMIT)
+            for digest in (receipt.source_tree_sha256, receipt.transformed_tree_sha256,
+                           receipt.overlay_sha256, receipt.manifest_sha256,
+                           receipt.output_artifact_sha256):
+                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+            self.assertNotEqual(receipt.overlay_sha256, receipt.manifest_sha256)
+            self.assertNotEqual(receipt.transformed_tree_sha256, receipt.output_artifact_sha256)
+            # The source-tree pin includes executable bits; overlay copying must
+            # preserve the official runtime tree's file modes exactly.
+            self.assertEqual(
+                stat.S_IMODE((output / "xpra/audio/common.py").stat().st_mode),
+                stat.S_IMODE((source / "xpra/audio/common.py").stat().st_mode),
+            )
             self.assertTrue(verify_pinned_xpra_overlay(
                 receipt, artifact_id=OVERLAY_ARTIFACT_ID,
                 expected_overlay_sha256=receipt.overlay_sha256,
@@ -89,6 +107,50 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             with self.assertRaises(XpraOverlayDenied):
                 build_pinned_xpra_root_xauthority_overlay(source, output)
             self.assertEqual((source / "xpra/server/subsystem/xvfb.py").read_bytes(), before)
+
+    def test_regular_only_runner_stage_expands_exact_aliases_and_required_parent(self):
+        source = Path(os.environ["XPRA_SOURCE_ROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(prefix="hermes-xpra-regular-stage-") as temp:
+            root = Path(temp)
+            archive_bytes = subprocess.run(
+                ["git", "-C", str(source), "archive", "--format=tar", XPRA_SOURCE_COMMIT],
+                check=True, capture_output=True, timeout=30,
+                env={"PATH": os.defpath, "HOME": "/nonexistent", "GIT_CONFIG_NOSYSTEM": "1"},
+            ).stdout
+            archive_root = root / "archive"
+            archive_root.mkdir()
+            with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as package:
+                package.extractall(archive_root, filter="data")
+            pinned_tree = next(archive_root.iterdir())
+            regular_stage = root / "regular-source"
+            regular_stage.mkdir()
+            for current, names, files in os.walk(pinned_tree, followlinks=False):
+                relative = Path(current).relative_to(pinned_tree)
+                destination = regular_stage / relative
+                destination.mkdir(parents=True, exist_ok=True)
+                for name in names:
+                    entry = Path(current) / name
+                    if not entry.is_symlink():
+                        (destination / name).mkdir(exist_ok=True)
+                for name in files:
+                    entry = Path(current) / name
+                    if not entry.is_symlink():
+                        shutil.copy2(entry, destination / name)
+
+            expanded = root / "private-work" / "source"
+            expanded.parent.mkdir()
+            from hermes_installer.remote.xpra_root_xauthority import _SOURCE_LINKS
+            self.assertEqual(_copy_and_expand_source_links(regular_stage, expanded),
+                             "f52b4ce760b86c24a4d6d930f47e58357442a984d9ff2478d7abf338ff48e467")
+            self.assertTrue((expanded / "fs/share/doc").is_dir())
+            for relative, (target, target_sha256, target_size) in _SOURCE_LINKS.items():
+                link = expanded / relative
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), target)
+                self.assertEqual(len(target.encode()), target_size)
+                self.assertEqual(hashlib.sha256(target.encode()).hexdigest(), target_sha256)
+            self.assertEqual((expanded / "xpra/audio/common.py").stat().st_mode & 0o777,
+                             (regular_stage / "xpra/audio/common.py").stat().st_mode & 0o777)
 
 
 if __name__ == "__main__":

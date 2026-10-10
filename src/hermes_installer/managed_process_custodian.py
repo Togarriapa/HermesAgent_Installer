@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import ctypes
+import fcntl
 import hashlib
 import hmac
 import json
@@ -65,6 +66,9 @@ class ManagedProfileCustody:
     parameter_schemas: Mapping[str, Mapping[str, Any]] | None = None
     # Root-materialized protected package binding; never supplied in an RPC.
     native_package: Any | None = None
+    # Digest of the active protected service_generations snapshot. It is
+    # supplied by the enrollment catalog and is never derived from this row.
+    service_generation_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +102,20 @@ class NativePackageMountReceipt:
     mount_source_device: int
     mount_source_inode: int
     manifest_sha256: str
+    verified_mount_options: tuple[str, ...] = ("ro", "nosuid", "nodev", "noexec")
+    private_propagation: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class XauthorityMountReceipt:
+    """Root-observed fixed display credential mount; no cookie bytes escape."""
+
+    mount_path: str
+    mount_source_device: int
+    mount_source_inode: int
+    source_sha256: str
+    source_size_bytes: int
+    owner_gid: int
     verified_mount_options: tuple[str, ...] = ("ro", "nosuid", "nodev", "noexec")
     private_propagation: bool = True
 
@@ -227,6 +245,48 @@ class ManagedProcessIdentityLease:
             pass
 
 
+@dataclass(frozen=True, slots=True)
+class RootSelectedServiceProcessReceipt:
+    """Root-only reference to a process admitted by one sealed service effect.
+
+    The receipt deliberately carries no PID, path, or descriptor.  Those facts
+    are re-resolved from the manager's exact retained handle on demand.
+    """
+
+    schema: int
+    receipt_handle: str
+    process_id: str
+    role: str
+    action: str
+    enrollment_id: str
+    profile_id: str
+    generation: str
+    selected_principal_id: str
+    selected_namespace_identity: str
+    selected_subject_uid: int
+    selected_subject_gid: int
+    operation_id: str
+    target: str
+    service_generation_digest: str
+    process_identity_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedServiceStatusReceipt:
+    """Typed manager observation joined to the exact retained start receipt."""
+
+    schema: int
+    receipt_handle: str
+    process_receipt: RootSelectedServiceProcessReceipt = field(repr=False)
+    state: str
+    exit_code: int | None
+    observed_monotonic: float
+    process_identity_digest: str
+    service_generation_digest: str
+
+
 @dataclass(slots=True)
 class _Handle:
     process_id: str
@@ -247,6 +307,8 @@ class _Handle:
     artifact_mount_dir: Path
     native_mount_source: Path | None = None
     native_mount_receipt: NativePackageMountReceipt | None = None
+    xauthority_mount_source: Path | None = None
+    xauthority_mount_receipt: XauthorityMountReceipt | None = None
     network_namespace_fd: int | None = None
     child_artifact_identities: tuple[tuple[str, int, int], ...] = ()
     stdin_cursor: int = 0
@@ -277,6 +339,74 @@ class ManagedTaskHandle:
     def stdin_write_receipt_handle(self) -> str | None:
         """Manager-backed receipt handle, absent until the actual write/EOF."""
         return self._stdin_write_receipt[0]
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedApplicationHandle:
+    """Opaque manager-owned reference to a selected application process."""
+    handle_id: str
+    process_id: str
+    profile_generation: str
+
+
+@dataclass(slots=True)
+class _ManagedApplicationState:
+    handle: _Handle
+    verified_start: Any
+    step: Any
+    selection_payload: bytes
+    deadline: float
+    cancelled: Callable[[], bool]
+    stdout: bytearray = field(default_factory=bytearray)
+    stderr: bytearray = field(default_factory=bytearray)
+    stdout_eof: bool = False
+    stderr_eof: bool = False
+    output_overflow: bool = False
+    consumed: bool = False
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass(frozen=True, slots=True)
+class RootApplicationTerminalReceipt:
+    """Immutable bounded terminal facts from the selected-app process manager."""
+    schema: int
+    receipt_handle: str
+    application_handle: str
+    admission_handle: str
+    application_id: str
+    workload_id: str
+    step_id: str
+    sequence: int
+    profile_id: str
+    profile_generation: str
+    service_generation_digest: str
+    operation_id: str
+    request_sha256: str
+    source_receipt_handle: str
+    runtime_receipt_handle: str
+    process_id: str
+    process_generation: str
+    process_start_ticks: int
+    executable_sha256: str
+    cgroup_id: str
+    namespace_digest: str
+    exit_code: int | None
+    stdin_eof: bool
+    stdout_sha256: str
+    stdout_size_bytes: int
+    stderr_sha256: str
+    stderr_size_bytes: int
+    output_observation_handle: str
+    reaped: bool
+    cancelled: bool
+    timed_out: bool
+    state: str
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: str
+
+    def claims(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "signature"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,7 +501,7 @@ _LAUNCH_FIELDS = {
 }
 _ALLOWED_ENV = {
     "HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
-    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR", "XAUTHORITY",
 }
 
 
@@ -764,7 +894,16 @@ class ManagedProcessEffectHandler:
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
         self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
+        self._application_handles: dict[str, _ManagedApplicationState] = {}
+        self._application_terminal_receipts: dict[str, tuple[str, RootApplicationTerminalReceipt, float]] = {}
+        self._application_outputs: dict[str, tuple[bytes, bytes, float]] = {}
         self._task_stdin_write_receipts: dict[str, tuple[ManagedTaskHandle, Any, float, str]] = {}
+        self._root_selected_process_receipts: dict[
+            str, tuple[RootSelectedServiceProcessReceipt, _Handle]
+        ] = {}
+        self._root_selected_status_receipts: dict[
+            str, tuple[RootSelectedServiceStatusReceipt, RootSelectedServiceProcessReceipt, float]
+        ] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -1031,6 +1170,95 @@ class ManagedProcessEffectHandler:
             source_info.st_dev, source_info.st_ino, hashlib.sha256(manifest_bytes).hexdigest())
         return source, receipt
 
+    def _prepare_xauthority_mount(
+            self, profile: ManagedProfileCustody, binding: Any, registry: Any,
+    ) -> tuple[Path, XauthorityMountReceipt, Any]:
+        """Stage a registry-held Xauthority FD at the one protected display path."""
+        from hermes_installer.authority.native_display_startup import (
+            XauthorityMountBinding, XauthoritySourceLease,
+        )
+        if (type(binding) is not XauthorityMountBinding
+                or not callable(getattr(registry, "open_mount_source", None))
+                or not callable(getattr(registry, "verify_mount_source", None))
+                or not registry.verify_mount_binding(binding)
+                or str(binding.target_path) != "/run/hermes-installer/display/Xauthority"):
+            raise AuthorityDenied("process.xauthority", "Xauthority binding is not current in its root registry")
+        lease = registry.open_mount_source(binding)
+        try:
+            if (type(lease) is not XauthoritySourceLease
+                    or not registry.verify_mount_source(lease, binding)
+                    or lease.display_profile_id != profile.profile_id
+                    or lease.display_generation != profile.generation
+                    or lease.owner_gid != profile.owner_gid
+                    or lease.size_bytes <= 0 or lease.size_bytes > 65536
+                    or lease.file_fd < 0):
+                raise AuthorityDenied("process.xauthority", "Xauthority source lease is not bound to the selected display")
+            fd = lease.file_fd
+            info = os.fstat(fd)
+            access = fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE
+            if (not stat.S_ISREG(info.st_mode) or access != os.O_RDONLY
+                    or (info.st_dev, info.st_ino) != (lease.device, lease.inode)
+                    or info.st_uid != lease.owner_uid or info.st_gid != lease.owner_gid
+                    or stat.S_IMODE(info.st_mode) != lease.mode
+                    or info.st_size != lease.size_bytes or info.st_nlink != 1):
+                raise AuthorityDenied("process.xauthority", "held Xauthority source identity changed")
+            content = bytearray()
+            offset = 0
+            while offset < info.st_size:
+                chunk = os.pread(fd, min(8192, info.st_size - offset), offset)
+                if not chunk:
+                    raise AuthorityDenied("process.xauthority", "held Xauthority source was truncated")
+                content.extend(chunk)
+                offset += len(chunk)
+            source_digest = hashlib.sha256(content).hexdigest()
+            if source_digest != lease.content_sha256 or source_digest != binding.source_sha256:
+                raise AuthorityDenied("process.xauthority", "held Xauthority source digest changed")
+            if not registry.verify_mount_source(lease, binding):
+                raise AuthorityDenied("process.xauthority", "Xauthority source lease expired during staging")
+            base = Path("/run/hermes-installer/native-staging")
+            self._ensure_root_runtime_directory(base, 0o711)
+            stage = base / ("xauthority-" + uuid.uuid4().hex)
+            stage.mkdir(mode=0o700)
+            os.chown(stage, 0, 0)
+            source = stage / "Xauthority"
+            out_fd = os.open(source, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+            try:
+                view = memoryview(content)
+                while view:
+                    written = os.write(out_fd, view)
+                    if written <= 0:
+                        raise OSError("short Xauthority staging write")
+                    view = view[written:]
+                os.fchown(out_fd, 0, profile.owner_gid)
+                os.fchmod(out_fd, 0o440)
+                os.fsync(out_fd)
+            finally:
+                os.close(out_fd)
+                for index in range(len(content)):
+                    content[index] = 0
+            self._make_native_tree_readonly(stage)
+            self._protect_native_staging_mount(stage)
+            staged = source.stat(follow_symlinks=False)
+            receipt = XauthorityMountReceipt(
+                "/run/hermes-installer/display/Xauthority", staged.st_dev, staged.st_ino,
+                source_digest, info.st_size, profile.owner_gid,
+            )
+            return stage, receipt, lease
+        except BaseException:
+            # Staging is root-owned and contains credential material.  Even a
+            # failed copy or mount preparation must remove it before returning.
+            try:
+                if "stage" in locals() and stage.exists():
+                    self._remove_native_staging(stage)
+            except Exception:
+                pass
+            try:
+                lease.close()
+            except Exception:
+                pass
+            raise
+
     def _stage_native_package(self, process_id: str, target: Path, manifest: bytes,
                               closure: Path, resolver_path: Path,
                               adapters: Mapping[str, Any], dependencies: Mapping[str, Any],
@@ -1294,11 +1522,61 @@ class ManagedProcessEffectHandler:
                 self._diagnostic_sink(("native-mount-verification-failed:" + failure_code).encode("ascii"))
             raise AuthorityDenied("native.mount_effect", "kernel did not establish the exact private read-only package mount") from None
 
+    def _verify_xauthority_mount(self, pid: int, receipt: XauthorityMountReceipt) -> None:
+        failure_code = "procfs"
+        try:
+            raw = Path(f"/proc/{pid}/mountinfo").read_text()
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError("mount table oversized")
+            candidates = []
+            for line in raw.splitlines():
+                fields = line.split()
+                if "-" not in fields:
+                    continue
+                separator = fields.index("-")
+                mountpoint = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+                if mountpoint == receipt.mount_path:
+                    candidates.append((fields, separator))
+            if len(candidates) != 1:
+                failure_code = "target"
+                raise ValueError("credential target absent or ambiguous")
+            fields, separator = candidates[0]
+            options = set(fields[5].split(","))
+            propagation = fields[6:separator]
+            if {"ro", "nosuid", "nodev", "noexec"} - options:
+                failure_code = "mount_flags"
+                raise ValueError("credential mount flags are not constrained")
+            if any(item.startswith(("shared:", "master:", "propagate_from:")) for item in propagation):
+                failure_code = "propagation"
+                raise ValueError("credential mount propagation is not private")
+            observed = os.stat(f"/proc/{pid}/root{receipt.mount_path}", follow_symlinks=False)
+            if (observed.st_dev, observed.st_ino) != (
+                    receipt.mount_source_device, receipt.mount_source_inode):
+                failure_code = "source_identity"
+                raise ValueError("credential mount does not bind the staged inode")
+            if (not stat.S_ISREG(observed.st_mode) or observed.st_size != receipt.size_bytes
+                    or observed.st_gid != receipt.owner_gid or stat.S_IMODE(observed.st_mode) != 0o440):
+                failure_code = "file_metadata"
+                raise ValueError("credential mount metadata changed")
+            mounted_digest = hashlib.sha256(
+                Path(f"/proc/{pid}/root{receipt.mount_path}").read_bytes()).hexdigest()
+            if mounted_digest != receipt.source_sha256:
+                failure_code = "file_digest"
+                raise ValueError("credential mount bytes changed")
+        except (OSError, ValueError, IndexError):
+            if self._diagnostic_sink is not None:
+                self._diagnostic_sink(("xauthority-mount-verification-failed:" + failure_code).encode("ascii"))
+            raise AuthorityDenied("process.xauthority_mount", "kernel did not establish the exact protected credential mount") from None
+
     @staticmethod
     def _validate_profile(profile: ManagedProfileCustody) -> None:
         if (not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", profile.profile_id)
                 or profile.owner_uid <= 0 or profile.owner_gid <= 0):
             raise ValueError("protected process profile identity is invalid")
+        if (profile.service_generation_digest is not None
+                and (not isinstance(profile.service_generation_digest, str)
+                     or not re.fullmatch(r"[0-9a-f]{64}", profile.service_generation_digest))):
+            raise ValueError("managed process service generation digest is invalid")
         expected_user = "hermes-" + hashlib.sha256(profile.profile_id.encode()).hexdigest()[:16]
         account = pwd.getpwnam(profile.service_user)
         if (profile.service_user != expected_user or account.pw_uid != profile.owner_uid
@@ -1471,10 +1749,13 @@ class ManagedProcessEffectHandler:
 
     def _start(self, profile: ManagedProfileCustody, context: HostContext,
                authorization: EffectAuthorization, payload: bytes, timeout: float,
-               peer_pid: int, peer_pidfd: int | None,
+               peer_pid: int | None, peer_pidfd: int | None,
                cancelled: Callable[[], bool], *,
                start_guard: Callable[[], bool] | None = None,
-               task_admission: RootAdmittedTask | None = None) -> Mapping[str, Any]:
+               task_admission: RootAdmittedTask | None = None,
+               daemon_liveness_pidfd: int | None = None,
+               root_resource_start: Any | None = None,
+               root_application_start: Any | None = None) -> Mapping[str, Any]:
         with self._lock:
             if (profile.profile_id in self._starting
                     or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
@@ -1486,19 +1767,28 @@ class ManagedProcessEffectHandler:
                     profile, context, authorization, payload, timeout=timeout,
                     peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
                     _start_guard=start_guard, _task_admission=task_admission,
+                    _daemon_liveness_pidfd=daemon_liveness_pidfd,
+                    _root_resource_start=root_resource_start,
+                    _root_application_start=root_application_start,
                 )
             return self._start_reserved(profile, context, authorization, payload, timeout,
-                                        peer_pid, peer_pidfd, cancelled, start_guard=start_guard)
+                                        peer_pid, peer_pidfd, cancelled, start_guard=start_guard,
+                                        daemon_liveness_pidfd=daemon_liveness_pidfd)
         finally:
             with self._lock:
                 self._starting.discard(profile.profile_id)
 
     def start_selected_operation(self, profile: ManagedProfileCustody, context: HostContext,
                                  authorization: EffectAuthorization, payload: bytes, *,
-                                 timeout: float, peer_pid: int, peer_pidfd: int | None,
+                                 timeout: float, peer_pid: int | None, peer_pidfd: int | None,
                                  cancelled: Callable[[], bool],
                                  _start_guard: Callable[[], bool] | None = None,
-                                 _task_admission: RootAdmittedTask | None = None) -> Mapping[str, Any]:
+                                 _task_admission: RootAdmittedTask | None = None,
+                                 _root_selected_effect: Any | None = None,
+                                 _xauthority_mount_source: Path | None = None,
+                                 _daemon_liveness_pidfd: int | None = None,
+                                 _root_resource_start: Any | None = None,
+                                 _root_application_start: Any | None = None) -> Mapping[str, Any]:
         """Resolve a selection-only worker request to one immutable root recipe.
 
         This method is called only after dispatch has checked the consumed
@@ -1510,6 +1800,8 @@ class ManagedProcessEffectHandler:
         if _task_admission is not None:
             expected_fields |= {"admission_handle", "node_id", "task_payload_sha256",
                                 "stdin_sha256", "stdin_size_bytes"}
+        if _root_application_start is not None:
+            expected_fields |= {"application_admission_handle", "application_step_id"}
         if (set(request) != expected_fields
                 or type(request.get("schema")) is not int or request["schema"] != 1
                 or request.get("enrollment_id") != profile.enrollment_id
@@ -1525,6 +1817,19 @@ class ManagedProcessEffectHandler:
         parameters = request.get("parameters")
         if not isinstance(parameters, dict):
             raise AuthorityDenied("process.parameters", "operation parameters must be a bounded object")
+        if _root_application_start is not None:
+            from hermes_installer.authority.application_workload_execution import VerifiedRootApplicationStart
+            proof = _root_application_start
+            service = getattr(getattr(proof, "_issuer", None), "service", None)
+            verify = getattr(service, "verify_consumed_application_start", None)
+            if (type(proof) is not VerifiedRootApplicationStart or proof.selected_profile is not profile
+                    or not callable(verify)
+                    or verify(proof, payload, selected_step_handle=proof.selected_step.handle) is not True
+                    or request.get("application_admission_handle") != proof.context.admission_handle
+                    or request.get("application_step_id") != proof.context.step_id
+                    or profile.profile_id != proof.context.profile_id
+                    or profile.generation != proof.context.profile_generation):
+                raise AuthorityDenied("application.start_proof", "consumed root application proof is stale")
         if _task_admission is not None and (
                 request.get("node_id") != _task_admission.node_id
                 or request.get("task_payload_sha256") != _task_admission.task_payload_sha256
@@ -1539,7 +1844,16 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.parameters", "operation parameter schema is unavailable")
         normalized = self._validate_operation_parameters(parameters, schema)
 
-        if cancelled() or self.monotonic() >= authorization.monotonic_expires_at:
+        grant_expiry = (float(_root_application_start.authorization.expires_monotonic)
+                        if _root_application_start is not None else
+                        float(_root_selected_effect.expires_monotonic)
+                        if _root_selected_effect is not None else
+                        float(_root_resource_start.authorization.expires_monotonic)
+                        if _root_resource_start is not None else
+                        float(authorization.monotonic_expires_at))
+        if (cancelled() or isinstance(grant_expiry, bool)
+                or not isinstance(grant_expiry, (int, float))
+                or self.monotonic() >= grant_expiry):
             raise AuthorityDenied("process.start_expired", "operation grant expired before recipe resolution")
         executable_id = recipe["executable_artifact_id"]
         executable_digest = recipe["executable_sha256"]
@@ -1577,6 +1891,11 @@ class ManagedProcessEffectHandler:
                        or len(value) > 1024 for value in environment.values())
                 or environment.get("HOME") != "/hermes" or environment.get("HERMES_HOME") != "/hermes"):
             raise AuthorityDenied("process.environment", "enrolled operation environment is invalid")
+        if _root_selected_effect is not None:
+            if (_root_selected_effect.role != "display"
+                    or _xauthority_mount_source is None):
+                raise AuthorityDenied("root-selected.mount", "selected operation lacks its fixed role mount")
+            environment["XAUTHORITY"] = "/run/hermes-installer/display/Xauthority"
         cwd_root_id = recipe["cwd_root_id"]
         root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
                       profile.data_id: profile.data_root}
@@ -1615,16 +1934,277 @@ class ManagedProcessEffectHandler:
         launch_bytes = json.dumps(launch, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         return self._start_reserved(derived, context, authorization, launch_bytes, timeout,
                                    peer_pid, peer_pidfd, cancelled, registered_profile=profile,
-                                   start_guard=_start_guard)
+                                   start_guard=_start_guard,
+                                   lease_expires_monotonic=float(grant_expiry),
+                                   xauthority_mount_source=_xauthority_mount_source,
+                                   daemon_liveness_pidfd=_daemon_liveness_pidfd)
+
+    def perform_root_selected_service_effect(
+            self, profile: ManagedProfileCustody, verified_effect: Any,
+            canonical_payload_bytes: bytes, *, controller_proof: Any,
+            timeout: float, cancelled: Callable[[], bool],
+            xauthority_binding: Any | None = None,
+            xauthority_registry: Any | None = None) -> RootSelectedServiceProcessReceipt:
+        """Launch one sealed root-selected service operation from its fixed recipe.
+
+        The controller PIDFD is verified as provenance, while the manager owns
+        the launched process lifetime. No worker context, caller path, argv, or
+        synthetic ordinary grant is created for this root-only path.
+        """
+        from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+        from hermes_installer.authority.selected_startup_authority import (
+            RootControllerProcessIdentityLease,
+        )
+        if type(verified_effect) is not VerifiedRootSelectedServiceEffect:
+            raise AuthorityDenied("root-selected.effect", "sealed selected-service effect is required")
+        if type(controller_proof) is not RootControllerProcessIdentityLease:
+            raise AuthorityDenied("root-selected.controller", "root controller PIDFD lease is required")
+        if (type(profile) is not ManagedProfileCustody
+                or self.profiles.get(profile.profile_id) is not profile
+                or not isinstance(canonical_payload_bytes, bytes)
+                or not callable(cancelled)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600):
+            raise AuthorityDenied("root-selected.binding", "selected service launch binding is malformed")
+        request = self._json(canonical_payload_bytes)
+        operation_id = request.get("operation_id")
+        effect = verified_effect
+        profile_digest = profile.service_generation_digest
+        if (set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+                or request.get("schema") != 1
+                or request.get("enrollment_id") != profile.enrollment_id
+                or request.get("generation") != profile.generation
+                or not isinstance(operation_id, str)
+                or request.get("parameters") != {}
+                or effect.action != "start"
+                or effect.operation != "process.start"
+                or effect.capability != "hermes-profile-invoke"
+                or effect.profile_id != profile.profile_id
+                or effect.enrollment_id != profile.enrollment_id
+                or effect.generation != profile.generation
+                or effect.selected_subject_uid != profile.owner_uid
+                or effect.selected_subject_gid != profile.owner_gid
+                or effect.service_generation_digest != profile_digest
+                or effect.operation_id != operation_id
+                or effect.target != process_start_target(profile)
+                or not isinstance(profile.operation_recipes, Mapping)
+                or operation_id not in profile.operation_recipes
+                or hashlib.sha256(canonical_payload_bytes).hexdigest() != effect.request_sha256
+                or hashlib.sha256(json.dumps(dict(profile.operation_recipes[operation_id]),
+                    sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                    allow_nan=False).encode("ascii")).hexdigest() != effect.recipe_sha256
+                or not isinstance(effect.controller_proof_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", effect.controller_proof_sha256)
+                or getattr(controller_proof, "proof_handle", None) != effect.controller_proof_handle
+                or getattr(controller_proof, "proof_sha256", None) != effect.controller_proof_sha256
+                or not callable(getattr(controller_proof, "is_current", None))
+                or not controller_proof.is_current()
+                or not effect.is_current()
+                or self.monotonic() >= min(float(effect.expires_monotonic),
+                                           float(controller_proof.expires_monotonic))):
+            raise AuthorityDenied("root-selected.binding", "selected service effect is stale or mismatched")
+        if effect.role not in {"display", "gateway", "desktop"}:
+            raise AuthorityDenied("root-selected.role", "selected service role is unavailable")
+        if effect.role == "display":
+            if (xauthority_binding is None or xauthority_registry is None
+                    or not callable(getattr(xauthority_registry, "verify_mount_binding", None))
+                    or not xauthority_registry.verify_mount_binding(xauthority_binding)):
+                raise AuthorityDenied("root-selected.xauthority", "verified Xauthority mount binding is required")
+            if effect.action != "start":
+                raise AuthorityDenied("root-selected.action", "selected display action is not start")
+            with self._lock:
+                if (profile.profile_id in self._starting
+                        or any(item.profile.profile_id == profile.profile_id
+                               for item in self._handles.values())):
+                    raise AuthorityDenied("process.generation", "a managed process is already active for this profile")
+                self._starting.add(profile.profile_id)
+            stage = None
+            source_lease = None
+            parent_pidfd = None
+            launched_process_id = None
+            try:
+                stage, mount_receipt, source_lease = self._prepare_xauthority_mount(
+                    profile, xauthority_binding, xauthority_registry)
+                parent_pidfd = os.pidfd_open(os.getpid(), 0)
+                if (_pidfd_exited(parent_pidfd)
+                        or not controller_proof.is_current()
+                        or not effect.is_current()):
+                    raise AuthorityDenied("root-selected.currentness", "selected startup proof expired")
+                self._verify_root_controller_identity(controller_proof, effect)
+                # This metadata object is created inside the root custodian;
+                # it is not a worker identity or authority grant.  The
+                # verified effect supplies its expiry and all selection facts.
+                root_context = SimpleNamespace(
+                    principal_id=effect.selected_principal_id,
+                    namespace_id=effect.selected_namespace_identity,
+                )
+                root_auth = SimpleNamespace(monotonic_expires_at=effect.expires_monotonic)
+                launch_guard = lambda: (effect.is_current() and controller_proof.is_current()
+                                        and self.monotonic() < min(effect.expires_monotonic,
+                                                                   controller_proof.expires_monotonic))
+                remaining = min(float(timeout), float(effect.expires_monotonic) - self.monotonic())
+                if remaining <= 0:
+                    raise AuthorityDenied("root-selected.deadline", "selected service effect expired")
+                response = self.start_selected_operation(
+                    profile, root_context, root_auth, canonical_payload_bytes,
+                    timeout=remaining,
+                    peer_pid=os.getpid(), peer_pidfd=parent_pidfd, cancelled=cancelled,
+                    _start_guard=launch_guard, _root_selected_effect=effect,
+                    _xauthority_mount_source=stage)
+                body = response.get("body") if isinstance(response, Mapping) else None
+                decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
+                process_id = decoded.get("process_id") if isinstance(decoded, dict) else None
+                if not isinstance(process_id, str):
+                    raise AuthorityDenied("root-selected.launch", "manager did not return an admitted process")
+                launched_process_id = process_id
+                lease = self.resolve_active_process_handle(profile.profile_id, profile.generation)
+                if lease is None:
+                    raise AuthorityDenied("root-selected.identity", "selected process is no longer live")
+                try:
+                    digest = self._selected_service_identity_digest(lease)
+                    issued = self.monotonic()
+                    receipt = RootSelectedServiceProcessReceipt(
+                        1, uuid.uuid4().hex, lease.process_id, effect.role, effect.action,
+                        effect.enrollment_id, effect.profile_id, effect.generation,
+                        effect.selected_principal_id, effect.selected_namespace_identity,
+                        effect.selected_subject_uid, effect.selected_subject_gid,
+                        effect.operation_id, effect.target, effect.service_generation_digest,
+                        digest, issued, lease.expires_monotonic,
+                    )
+                    with self._lock:
+                        current_handle = self._handles.get(lease.process_id)
+                        if (current_handle is None or current_handle.stopped
+                                or current_handle.profile.generation != effect.generation
+                                or current_handle.xauthority_mount_receipt is None
+                                or current_handle.xauthority_mount_receipt != mount_receipt):
+                            raise AuthorityDenied("root-selected.identity", "selected process custody changed")
+                        self._root_selected_process_receipts[receipt.receipt_handle] = (receipt, current_handle)
+                    return receipt
+                finally:
+                    lease.close()
+            except BaseException:
+                if launched_process_id is not None:
+                    with self._lock:
+                        failed_handle = self._handles.get(launched_process_id)
+                    if failed_handle is not None and not failed_handle.stopped:
+                        try:
+                            proof = self._stop(failed_handle, timeout=5.0)
+                            if not proof.cleanup_verified:
+                                raise AuthorityDenied("process.cleanup_ambiguous",
+                                    "failed selected launch cleanup is unproven")
+                        except Exception as cleanup_error:
+                            raise AuthorityDenied("process.cleanup_ambiguous",
+                                "failed selected launch cleanup is unproven") from cleanup_error
+                if stage is not None:
+                    try:
+                        self._remove_native_staging(stage)
+                    except Exception:
+                        pass
+                raise
+            finally:
+                if source_lease is not None:
+                    source_lease.close()
+                if parent_pidfd is not None:
+                    os.close(parent_pidfd)
+                effect.close()
+                with self._lock:
+                    self._starting.discard(profile.profile_id)
+        if effect.role == "desktop":
+            raise AuthorityDenied("root-selected.xauthority", "desktop startup requires a sealed display-start receipt")
+        if effect.role == "gateway":
+            # The generic process unit is deny-all. Gateway must use the
+            # separately reviewed role-scoped loopback enforcement adapter.
+            raise AuthorityDenied("root-selected.network", "selected loopback network custody is unavailable")
+        raise AuthorityDenied("root-selected.role", "selected service launch is unavailable")
+
+    def _verify_root_controller_identity(self, proof: Any, effect: Any) -> None:
+        """Compare the authority-retained setup actor with live kernel identity."""
+        try:
+            pid = int(proof.pid)
+            pidfd = int(proof.pidfd)
+            if (pid <= 0 or pidfd < 0 or self._pidfd_target(pidfd) != pid
+                    or _pidfd_exited(pidfd) or not proof.is_current()
+                    or proof.proof_handle != effect.controller_proof_handle
+                    or proof.startup_authorization_handle != effect.admission_handle
+                    or proof.proof_sha256 != effect.controller_proof_sha256):
+                raise ValueError("controller lease stale")
+            ticks, cgroup, _device, _inode = _pid_identity(pid)
+            namespaces = tuple(os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            if (ticks != proof.start_ticks or cgroup != proof.cgroup_identity
+                    or namespaces != (proof.mount_namespace_inode, proof.network_namespace_inode)
+                    or proof.uid != 0 or len(uids) != 4 or any(int(uid) != 0 for uid in uids)
+                    or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)
+                    or not proof.is_current()):
+                raise ValueError("controller identity changed")
+        except (OSError, ValueError, StopIteration, TypeError, AttributeError):
+            raise AuthorityDenied("root-selected.controller", "root controller process identity is stale") from None
+
+    @staticmethod
+    def _selected_service_identity_digest(lease: ManagedProcessIdentityLease) -> str:
+        body = {
+            "process_id": lease.process_id, "profile_id": lease.profile_id,
+            "generation": lease.generation, "uid": lease.uid, "gid": lease.gid,
+            "pid": lease.pid, "start_ticks": lease.start_ticks,
+            "executable_device": lease.executable_device,
+            "executable_inode": lease.executable_inode,
+            "executable_sha256": lease.executable_sha256,
+            "cgroup_identity": lease.cgroup_identity,
+            "mount_namespace_inode": lease.mount_namespace_inode,
+            "network_namespace_inode": lease.network_namespace_inode,
+        }
+        return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=True).encode("ascii")).hexdigest()
+
+    def resolve_selected_service_process(
+            self, receipt: RootSelectedServiceProcessReceipt,
+    ) -> ManagedProcessIdentityLease | None:
+        """Re-resolve the exact root-retained selected start receipt to a PIDFD lease."""
+        if type(receipt) is not RootSelectedServiceProcessReceipt:
+            return None
+        with self._lock:
+            entry = self._root_selected_process_receipts.get(receipt.receipt_handle)
+            if (entry is None or entry[0] is not receipt
+                    or self.profiles.get(receipt.profile_id) is not entry[1].registered_profile
+                    or entry[1].process_id != receipt.process_id
+                    or entry[1].profile.generation != receipt.generation
+                    or entry[1].stopped or entry[1].expires <= self.monotonic()):
+                return None
+        lease = self.resolve_active_process_handle(receipt.profile_id, receipt.generation)
+        if lease is None:
+            return None
+        if (lease.process_id != receipt.process_id
+                or lease.uid != receipt.selected_subject_uid
+                or lease.gid != receipt.selected_subject_gid
+                or self._selected_service_identity_digest(lease) != receipt.process_identity_digest
+                or receipt.expires_monotonic <= self.monotonic()):
+            lease.close()
+            return None
+        return lease
 
     def start_selected_task(self, profile: ManagedProfileCustody, context: HostContext,
+                            authorization: EffectAuthorization, selection_payload: bytes, **kwargs: Any
+                            ) -> ManagedTaskHandle:
+        """Compatibility entry for already-admitted internal task callers.
+
+        Root resource tasks use ``start_selected_resource_task`` and enter the
+        shared custody core directly with the sealed resource proof.
+        """
+        return self._start_selected_task_core(
+            profile, context, authorization, selection_payload, **kwargs)
+
+    def _start_selected_task_core(self, profile: ManagedProfileCustody, context: Any,
                             authorization: EffectAuthorization, selection_payload: bytes, *,
                             task_admission: RootAdmittedTask,
                             admission_handle: Any, node_id: str, admitted_source: Any,
                             exact_stdin: bytes,
-                            expected_stdin_sha256: str, peer_pid: int,
-                            peer_pidfd: int, timeout: float,
-                            cancelled: Callable[[], bool]) -> ManagedTaskHandle:
+                            expected_stdin_sha256: str, peer_pid: int | None,
+                            peer_pidfd: int | None, timeout: float,
+                            cancelled: Callable[[], bool],
+                            _verified_resource_start: Any | None = None,
+                            initial_input_coordinator: Any | None = None,
+                            daemon_liveness_pidfd: int | None = None) -> ManagedTaskHandle:
         """Start one admitted task and write/EOF its prompt before returning.
 
         This is an internal root call, not a worker RPC. The resource ledger
@@ -1644,7 +2224,8 @@ class ManagedProcessEffectHandler:
                 or len(task_handle.task_payload_bytes) > 262144
                 or hashlib.sha256(task_handle.task_payload_bytes).hexdigest()
                    != task_handle.task_payload_sha256
-                or not self._task_admission_is_current(task_handle, selection_payload)):
+                or (_verified_resource_start is None
+                    and not self._task_admission_is_current(task_handle, selection_payload))):
             raise AuthorityDenied("resource.task_admission", "root task admission or prompt digest is invalid")
         if (profile.generation != task_handle.process_generation
                 or profile.enrollment_id != task_handle.process_enrollment_id
@@ -1655,32 +2236,59 @@ class ManagedProcessEffectHandler:
                 or task_handle.operation_id != "hermes-resource-profile-task-v1"
                 or authorization.operation != "process.start"
                 or authorization.target != process_start_target(profile)
-                or authorization.capability != "hermes-profile-invoke"
-                or context.profile_id != profile.profile_id
-                or context.enrollment_id != profile.enrollment_id
-                or context.generation != profile.generation
-                or context.operation != "process.start"
-                or authorization.profile_id != profile.profile_id
-                or authorization.enrollment_id != profile.enrollment_id
-                or authorization.generation != profile.generation
-                or authorization.request_digest != canonical_digest(selection_payload)
-                or context.final_payload_digest != authorization.request_digest
-                or authorization.final_payload_digest != authorization.request_digest
-                or context.principal_id != authorization.principal_id
-                or context.namespace_id != authorization.namespace_id
-                or context.trace_id != authorization.trace_id
-                or context.intent_id != authorization.intent_id
-                or context.purpose != authorization.purpose
-                or context.sensitivity != authorization.sensitivity
-                or context.lineage_hash != authorization.lineage_hash
-                or context.policy_revision != authorization.policy_revision
-                or context.uid != authorization.uid
-                or peer_pid <= 0 or peer_pidfd < 0 or _pidfd_exited(peer_pidfd)
-                or self._pidfd_target(peer_pidfd) != peer_pid
+                or authorization.capability not in {"hermes-profile-invoke", "hermes-resource-task-invoke"}
+                or ( _verified_resource_start is None and (
+                    context.profile_id != profile.profile_id
+                    or context.enrollment_id != profile.enrollment_id
+                    or context.generation != profile.generation
+                    or context.operation != "process.start"
+                    or authorization.profile_id != profile.profile_id
+                    or authorization.enrollment_id != profile.enrollment_id
+                    or authorization.generation != profile.generation
+                    or authorization.request_digest != canonical_digest(selection_payload)
+                    or context.final_payload_digest != authorization.request_digest
+                    or authorization.final_payload_digest != authorization.request_digest
+                    or context.principal_id != authorization.principal_id
+                    or context.namespace_id != authorization.namespace_id
+                    or context.trace_id != authorization.trace_id
+                    or context.intent_id != authorization.intent_id
+                    or context.purpose != authorization.purpose
+                    or context.sensitivity != authorization.sensitivity
+                    or context.lineage_hash != authorization.lineage_hash
+                    or context.policy_revision != authorization.policy_revision
+                    or context.uid != authorization.uid
+                ))
+                or (_verified_resource_start is None and (
+                    peer_pid is None or peer_pid <= 0 or peer_pidfd is None or peer_pidfd < 0
+                    or _pidfd_exited(peer_pidfd) or self._pidfd_target(peer_pidfd) != peer_pid))
+                or (_verified_resource_start is not None and (
+                    peer_pid is not None or peer_pidfd is not None
+                    or daemon_liveness_pidfd is None or daemon_liveness_pidfd < 0
+                    or _pidfd_exited(daemon_liveness_pidfd)
+                    or self._pidfd_target(daemon_liveness_pidfd) != os.getpid()))
                 or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0 < timeout <= 600):
             raise AuthorityDenied("resource.task_binding", "selected task, grant, profile or parent is stale")
-        coordinator = self.task_input_coordinator
+        if _verified_resource_start is not None:
+            from hermes_installer.authority.resource_task_authority import VerifiedRootResourceTaskStart
+            service = getattr(getattr(_verified_resource_start, "_issuer", None), "service", None)
+            verify = getattr(service, "verify_consumed_resource_task_start", None)
+            if (type(_verified_resource_start) is not VerifiedRootResourceTaskStart
+                    or _verified_resource_start.selected_profile is not profile
+                    or not callable(verify)
+                    or verify(_verified_resource_start, selection_payload,
+                              task_admission=task_handle, selected_profile=profile) is not True
+                    or _verified_resource_start.authorization.expires_monotonic
+                       != authorization.expires_monotonic
+                    or _verified_resource_start.context.selected_principal_id != context.principal_id
+                    or _verified_resource_start.context.selected_namespace_identity != context.namespace_id
+                    or _verified_resource_start.context.selected_subject_uid != profile.owner_uid
+                    or _verified_resource_start.context.selected_subject_gid != profile.owner_gid):
+                raise AuthorityDenied("resource.task_start_proof", "consumed root resource proof is invalid")
+        coordinator = (self.task_input_coordinator if initial_input_coordinator is None
+                       else initial_input_coordinator)
+        if coordinator is not self.task_input_coordinator:
+            raise AuthorityDenied("resource.task_input", "initial-input coordinator is not the root runtime instance")
         if coordinator is None:
             raise AuthorityDenied("resource.task_input", "root pre-stdin input coordinator is unavailable")
         try:
@@ -1727,16 +2335,23 @@ class ManagedProcessEffectHandler:
         recipe = profile.operation_recipes[task_handle.operation_id]
         if not isinstance(recipe, Mapping) or recipe.get("stdin_mode") != "bounded-typed-bytes":
             raise AuthorityDenied("resource.task_stdin", "selected recipe does not admit one bounded stdin frame")
+        grant_expiry = (float(_verified_resource_start.authorization.expires_monotonic)
+                        if _verified_resource_start is not None
+                        else float(authorization.monotonic_expires_at))
         launch_deadline = min(float(task_handle.deadline_monotonic),
-                              float(authorization.monotonic_expires_at), self.monotonic() + timeout)
+                              grant_expiry, self.monotonic() + timeout)
         if launch_deadline <= self.monotonic() or cancelled():
             raise AuthorityDenied("resource.task_expired", "task expired before process admission")
         response = self._start(profile, context, authorization, selection_payload,
                                launch_deadline - self.monotonic(),
                                peer_pid, peer_pidfd, cancelled,
                                task_admission=task_handle,
+                               daemon_liveness_pidfd=daemon_liveness_pidfd,
+                               root_resource_start=_verified_resource_start,
                                start_guard=lambda: bool(self._task_admission_is_current(task_handle, selection_payload)
                                    and self.monotonic() < task_handle.deadline_monotonic
+                                   and (_verified_resource_start is None or self._root_resource_start_current(
+                                       _verified_resource_start, task_handle, selection_payload, profile))
                                    and not cancelled()))
         try:
             body = json.loads(response["body"].decode("ascii"))
@@ -1750,7 +2365,7 @@ class ManagedProcessEffectHandler:
             task_deadline = min(float(task_handle.deadline_monotonic),
                                 self.monotonic() + timeout, handle.expires)
             state = _ManagedTaskState(handle, task_handle, task_deadline,
-                                      min(task_deadline, float(authorization.monotonic_expires_at)),
+                                      min(task_deadline, grant_expiry),
                                       cancelled, selection_payload,
                                       selection["admission_handle"])
             opaque_id = uuid.uuid4().hex
@@ -1835,6 +2450,275 @@ class ManagedProcessEffectHandler:
                         "failed task start could not prove owned-process cleanup",
                     ) from start_error
             raise
+
+    def start_selected_resource_task(
+            self, selected_profile: ManagedProfileCustody, verified_start: Any,
+            selection_payload: bytes, *, task_admission: RootAdmittedTask,
+            admission_handle: Any, node_id: str, admitted_source: Any,
+            exact_stdin: bytes, expected_stdin_sha256: str, timeout: float,
+            cancelled: Callable[[], bool], initial_input_coordinator: Any,
+    ) -> ManagedTaskHandle:
+        """Start a task under the distinct consumed root-resource effect proof.
+
+        The controller is never passed as the selected child peer. The root
+        daemon PIDFD retains the unit; the sealed proof and jobs registry keep
+        the external controller/source/admission current through EOF.
+        """
+        from hermes_installer.authority.resource_task_authority import VerifiedRootResourceTaskStart
+        from hermes_installer.registry.resource_jobs import RootResourceJobAdmissionHandle, RootAdmittedTaskSource
+        if (type(verified_start) is not VerifiedRootResourceTaskStart
+                or type(selected_profile) is not ManagedProfileCustody
+                or self.profiles.get(selected_profile.profile_id) is not selected_profile
+                or type(admission_handle) is not RootResourceJobAdmissionHandle
+                or type(admitted_source) is not RootAdmittedTaskSource
+                or initial_input_coordinator is not self.task_input_coordinator
+                or verified_start.selected_profile is not selected_profile
+                or not isinstance(selection_payload, bytes)
+                or verified_start.authorization.request_sha256 != hashlib.sha256(selection_payload).hexdigest()
+                or verified_start.context.selected_profile_id != selected_profile.profile_id
+                or verified_start.context.selected_generation != selected_profile.generation
+                or verified_start.context.selected_subject_uid != selected_profile.owner_uid
+                or verified_start.context.selected_subject_gid != selected_profile.owner_gid
+                or verified_start.context.admission_handle != admission_handle.handle_id
+                or verified_start.context.node_id != node_id
+                or verified_start.context.stdin_sha256 != expected_stdin_sha256
+                or verified_start.context.stdin_size_bytes != len(exact_stdin)):
+            raise AuthorityDenied("resource.task_start_proof", "selected resource task binding is malformed")
+        service = getattr(verified_start._issuer, "service", None)
+        verify = getattr(service, "verify_consumed_resource_task_start", None)
+        if (not callable(verify)
+                or verify(verified_start, selection_payload, task_admission=task_admission,
+                          selected_profile=selected_profile) is not True):
+            raise AuthorityDenied("resource.task_start_proof", "consumed resource task proof is stale")
+        if (cancelled() or self.monotonic() >= verified_start.authorization.expires_monotonic
+                or self.monotonic() >= task_admission.deadline_monotonic):
+            raise AuthorityDenied("resource.task_expired", "resource task proof expired before launch")
+        daemon_pid = os.getpid()
+        try:
+            daemon_liveness_pidfd = os.pidfd_open(daemon_pid, 0)
+        except (AttributeError, OSError):
+            raise AuthorityDenied("resource.task_parent", "custody daemon lifetime PIDFD is unavailable") from None
+        try:
+            return self._start_selected_task_core(
+                selected_profile, verified_start.context, verified_start.authorization,
+                selection_payload,
+                task_admission=task_admission, admission_handle=admission_handle,
+                node_id=node_id, admitted_source=admitted_source, exact_stdin=exact_stdin,
+                expected_stdin_sha256=expected_stdin_sha256, peer_pid=None,
+                peer_pidfd=None, timeout=timeout, cancelled=cancelled,
+                _verified_resource_start=verified_start,
+                initial_input_coordinator=initial_input_coordinator,
+                daemon_liveness_pidfd=daemon_liveness_pidfd,
+            )
+        finally:
+            os.close(daemon_liveness_pidfd)
+
+    def start_selected_application(self, profile_id: str, verified_start: Any,
+                                   canonical_selection_payload: bytes, *,
+                                   selected_step_handle: str, timeout: float,
+                                   cancelled: Callable[[], bool]) -> ManagedApplicationHandle:
+        """Start one selected app recipe through the existing PIDFD/systemd core.
+
+        This root-only path accepts a consumed app-specific one-use grant and
+        an opaque journal step. It never accepts argv, paths, environment or a
+        caller-created process context.
+        """
+        from hermes_installer.authority.application_workload_execution import (
+            RootApplicationSelectedStep, VerifiedRootApplicationStart,
+        )
+        if (type(verified_start) is not VerifiedRootApplicationStart
+                or not isinstance(cancelled, Callable)
+                or not isinstance(canonical_selection_payload, bytes)
+                or not isinstance(selected_step_handle, str)
+                or verified_start.selected_step.handle != selected_step_handle
+                or verified_start.selected_profile.profile_id != profile_id
+                or self.profiles.get(profile_id) is not verified_start.selected_profile
+                or type(verified_start.selected_step) is not RootApplicationSelectedStep
+                or hashlib.sha256(canonical_selection_payload).hexdigest()
+                   != verified_start.authorization.request_sha256):
+            raise AuthorityDenied("application.start_proof", "selected application start proof is malformed")
+        service = getattr(getattr(verified_start, "_issuer", None), "service", None)
+        verify = getattr(service, "verify_consumed_application_start", None)
+        if (not callable(verify)
+                or verify(verified_start, canonical_selection_payload,
+                          selected_step_handle=selected_step_handle) is not True):
+            raise AuthorityDenied("application.start_proof", "selected application start proof is stale")
+        step = verified_start.selected_step
+        profile = verified_start.selected_profile
+        try:
+            selection = self._json(canonical_selection_payload)
+        except AuthorityDenied:
+            raise
+        expected = {"schema", "enrollment_id", "generation", "operation_id", "parameters",
+                    "application_admission_handle", "application_step_id"}
+        if (set(selection) != expected or selection.get("schema") != 1
+                or selection.get("enrollment_id") != profile.enrollment_id
+                or selection.get("generation") != profile.generation
+                or selection.get("operation_id") != step.operation_id
+                or not isinstance(selection.get("parameters"), dict)
+                or selection.get("application_admission_handle") != step.admission_handle
+                or selection.get("application_step_id") != step.step_id):
+            raise AuthorityDenied("application.selection", "selection does not match the root-owned app recipe")
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600
+                or verified_start.authorization.expires_monotonic <= self.monotonic()
+                or step.deadline_monotonic <= self.monotonic() or cancelled()):
+            raise AuthorityDenied("application.expired", "selected application start is expired or cancelled")
+        daemon_pid = os.getpid()
+        try:
+            daemon_fd = os.pidfd_open(daemon_pid, 0)
+        except (AttributeError, OSError):
+            raise AuthorityDenied("application.parent", "custody daemon PIDFD is unavailable") from None
+        try:
+            response = self._start(
+                profile, verified_start.context, verified_start.authorization,
+                canonical_selection_payload, min(float(timeout),
+                    verified_start.authorization.expires_monotonic - self.monotonic()),
+                None, None, cancelled, daemon_liveness_pidfd=daemon_fd,
+                root_application_start=verified_start,
+                start_guard=lambda: bool(verify(
+                    verified_start, canonical_selection_payload,
+                    selected_step_handle=selected_step_handle) is True and not cancelled()),
+            )
+            body = json.loads(response["body"].decode("ascii"))
+            process_id = body.get("process_id")
+            with self._lock:
+                handle = self._handles.get(process_id)
+                if handle is None or handle.profile is not profile:
+                    raise AuthorityDenied("application.handle", "custody returned no retained application process")
+                opaque = secrets.token_urlsafe(32)
+                app_handle = ManagedApplicationHandle(opaque, process_id, profile.generation)
+                deadline = min(handle.expires, step.deadline_monotonic,
+                               self.monotonic() + float(timeout))
+                self._application_handles[opaque] = _ManagedApplicationState(
+                    handle, verified_start, step, canonical_selection_payload,
+                    deadline, cancelled,
+                )
+                return app_handle
+        finally:
+            os.close(daemon_fd)
+
+    def wait_owned_application_terminal(self, application_handle: ManagedApplicationHandle, *,
+                                        timeout: float, cancelled: Callable[[], bool]
+                                        ) -> RootApplicationTerminalReceipt:
+        """Wait, drain bounded output, reap and retain the actual process terminal."""
+        if type(application_handle) is not ManagedApplicationHandle:
+            raise AuthorityDenied("application.handle", "application handle is malformed")
+        with self._lock:
+            state = self._application_handles.get(application_handle.handle_id)
+        if (state is None or state.handle.process_id != application_handle.process_id
+                or state.handle.profile.generation != application_handle.profile_generation):
+            raise AuthorityDenied("application.handle", "application handle is stale")
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0 or not callable(cancelled)):
+            raise AuthorityDenied("application.deadline", "application wait bounds are invalid")
+        state.deadline = min(state.deadline, self.monotonic() + float(timeout))
+        handle, proof, step = state.handle, state.verified_start, state.step
+        issuer = proof._issuer
+        was_cancelled = False
+        timed_out = False
+        with state.lock:
+            if state.consumed:
+                raise AuthorityDenied("application.handle", "application terminal was already consumed")
+            while True:
+                current = issuer._current(step)
+                if (cancelled() or state.cancelled() or not current
+                        or _pidfd_exited(handle.parent_pidfd)):
+                    was_cancelled = True
+                    break
+                if self.monotonic() >= state.deadline:
+                    timed_out = True
+                    break
+                self._drain_task_streams(state, [stream.fileno() for stream, eof in (
+                    (handle.launcher.stdout, state.stdout_eof),
+                    (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof], timeout=.05)
+                if state.output_overflow:
+                    break
+                if handle.launcher.poll() is not None and state.stdout_eof and state.stderr_eof:
+                    break
+            for _ in range(16):
+                fds = [stream.fileno() for stream, eof in (
+                    (handle.launcher.stdout, state.stdout_eof),
+                    (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+                if not fds:
+                    break
+                self._drain_task_streams(state, fds, timeout=.01)
+                if handle.launcher.poll() is None:
+                    break
+            cleanup = self._stop(handle, timeout=5.0)
+            exit_code = handle.launcher.returncode
+            reaped = bool(cleanup.cleanup_verified and cleanup.cgroup_empty
+                          and cleanup.main_pidfd_gone and cleanup.launcher_reaped
+                          and not self._pids(handle.cgroup))
+            if not reaped:
+                raise AuthorityDenied("application.cleanup_ambiguous", "application descendants were not reaped")
+            output_id = secrets.token_urlsafe(32)
+            now = self.monotonic()
+            state_name = ("cancelled" if was_cancelled else "failed" if timed_out or state.output_overflow
+                          or exit_code != 0 or not (state.stdout_eof and state.stderr_eof) else "completed")
+            fields = dict(
+                schema=1, receipt_handle=secrets.token_urlsafe(32),
+                application_handle=application_handle.handle_id,
+                admission_handle=step.admission_handle, application_id=step.application_id,
+                workload_id=step.workload_id, step_id=step.step_id, sequence=step.sequence,
+                profile_id=handle.profile.profile_id, profile_generation=handle.profile.generation,
+                service_generation_digest=step.service_generation_digest,
+                operation_id=step.operation_id, request_sha256=step.request_sha256,
+                source_receipt_handle=step.source_receipt_handle,
+                runtime_receipt_handle=step.runtime_receipt_handle,
+                process_id=handle.process_id, process_generation=handle.profile.generation,
+                process_start_ticks=handle.start_ticks, executable_sha256=handle.profile.artifact_sha256,
+                cgroup_id=handle.cgroup,
+                namespace_digest=hashlib.sha256(handle.kernel_namespace_id.encode("ascii")).hexdigest(),
+                exit_code=exit_code, stdin_eof=True,
+                stdout_sha256=hashlib.sha256(state.stdout).hexdigest(), stdout_size_bytes=len(state.stdout),
+                stderr_sha256=hashlib.sha256(state.stderr).hexdigest(), stderr_size_bytes=len(state.stderr),
+                output_observation_handle=output_id, reaped=True, cancelled=was_cancelled,
+                timed_out=timed_out, state=state_name, issued_monotonic=now,
+                expires_monotonic=min(step.deadline_monotonic, now + 30.0), signature="pending")
+            terminal = RootApplicationTerminalReceipt(**fields)
+            terminal = RootApplicationTerminalReceipt(**{**terminal.claims(), "signature":
+                issuer.service._sign_root_selected("root-application-terminal-v1", terminal.claims())})
+            with self._lock:
+                if len(self._application_terminal_receipts) >= 4096:
+                    raise AuthorityDenied("application.receipts", "application terminal store is full")
+                self._application_terminal_receipts[terminal.receipt_handle] = (
+                    application_handle.handle_id, terminal, now + 30.0)
+                self._application_outputs[output_id] = (bytes(state.stdout), bytes(state.stderr), now + 30.0)
+                self._application_handles.pop(application_handle.handle_id, None)
+                state.consumed = True
+            return terminal
+
+    def resolve_application_terminal(self, receipt_handle: str) -> RootApplicationTerminalReceipt:
+        if not isinstance(receipt_handle, str):
+            raise AuthorityDenied("application.terminal", "terminal handle is malformed")
+        with self._lock:
+            entry = self._application_terminal_receipts.get(receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("application.terminal", "terminal receipt is unavailable")
+            _handle_id, receipt, expiry = entry
+            if expiry <= self.monotonic() or receipt.receipt_handle != receipt_handle:
+                self._application_terminal_receipts.pop(receipt_handle, None)
+                raise AuthorityDenied("application.terminal", "terminal receipt is stale")
+            return receipt
+
+    def resolve_application_output(self, output_handle: str) -> tuple[bytes, bytes]:
+        with self._lock:
+            entry = self._application_outputs.get(output_handle)
+            if entry is None or entry[2] <= self.monotonic():
+                self._application_outputs.pop(output_handle, None)
+                raise AuthorityDenied("application.output", "bounded application output is unavailable")
+            return entry[0], entry[1]
+
+    def _root_resource_start_current(self, proof: Any, task: RootAdmittedTask,
+                                     payload: bytes, profile: ManagedProfileCustody) -> bool:
+        service = getattr(getattr(proof, "_issuer", None), "service", None)
+        verify = getattr(service, "verify_consumed_resource_task_start", None)
+        try:
+            return bool(callable(verify) and verify(
+                proof, payload, task_admission=task, selected_profile=profile) is True)
+        except Exception:
+            return False
 
     def _task_admission_is_current(self, admission: RootAdmittedTask,
                                    selection_payload: bytes) -> bool:
@@ -2177,12 +3061,16 @@ class ManagedProcessEffectHandler:
 
     def _start_reserved(self, profile: ManagedProfileCustody, context: HostContext,
                         authorization: EffectAuthorization, payload: bytes, timeout: float,
-                        peer_pid: int, peer_pidfd: int | None,
+                        peer_pid: int | None, peer_pidfd: int | None,
                         cancelled: Callable[[], bool], *,
                         registered_profile: ManagedProfileCustody | None = None,
-                        start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
-        launch_deadline = min(self.monotonic() + max(0.0, timeout),
-                              authorization.monotonic_expires_at)
+                        start_guard: Callable[[], bool] | None = None,
+                        lease_expires_monotonic: float | None = None,
+                        xauthority_mount_source: Path | None = None,
+                        daemon_liveness_pidfd: int | None = None) -> Mapping[str, Any]:
+        effect_expiry = (authorization.monotonic_expires_at if lease_expires_monotonic is None
+                         else lease_expires_monotonic)
+        launch_deadline = min(self.monotonic() + max(0.0, timeout), effect_expiry)
 
         def require_live_start(parent_fd: int | None = None) -> None:
             reason = None
@@ -2212,7 +3100,8 @@ class ManagedProcessEffectHandler:
                     sink(("prelaunch-deny:" + reason + details).encode("ascii", "backslashreplace")[:512])
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
-        if peer_pidfd is None:
+        parent_liveness_fd = daemon_liveness_pidfd if daemon_liveness_pidfd is not None else peer_pidfd
+        if parent_liveness_fd is None:
             raise AuthorityDenied("process.parent", "authority did not retain the peer pidfd")
         require_live_start()
         request = self._json(payload)
@@ -2277,6 +3166,10 @@ class ManagedProcessEffectHandler:
                 or any(any(marker in k.casefold() for marker in ("token", "secret", "password", "credential", "api_key")) for k in env)
                 or env.get("HOME") != "/hermes" or env.get("HERMES_HOME") != "/hermes"):
             raise AuthorityDenied("process.environment", "environment is not the sanitized profile allowlist")
+        if (("XAUTHORITY" in env) != (xauthority_mount_source is not None)
+                or ("XAUTHORITY" in env
+                    and env["XAUTHORITY"] != "/run/hermes-installer/display/Xauthority")):
+            raise AuthorityDenied("process.xauthority", "credential environment is not bound to the fixed root mount")
         if "PATH" in env:
             for raw_path in env["PATH"].split(":"):
                 try:
@@ -2305,7 +3198,7 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.bounds", "process lifetime or stream mode is invalid")
         require_live_start()
         try:
-            parent_fd = os.dup(peer_pidfd)
+            parent_fd = os.dup(parent_liveness_fd)
         except OSError:
             raise AuthorityDenied("process.parent", "pidfd is required for parent-death custody") from None
         process_id = uuid.uuid4().hex
@@ -2313,6 +3206,7 @@ class ManagedProcessEffectHandler:
         artifact_target: Path | None = None
         native_mount_source: Path | None = None
         native_mount_receipt: NativePackageMountReceipt | None = None
+        xauthority_mount_receipt: XauthorityMountReceipt | None = None
         native_loader_channel: Any | None = None
         artifact_path: Path | None = resolved_children.get(selected_child_ref) if selected_child_ref else None
         if selected_child_ref is not None and artifact_path is None:
@@ -2358,6 +3252,29 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             raise AuthorityDenied("process.authority_socket", "per-UID authority socket ACL is not protected")
         properties.append(f"--property=BindPaths={authority_socket}:{authority_socket}")
+        if xauthority_mount_source is not None:
+            xauthority_source_file = xauthority_mount_source / "Xauthority"
+            source_info = xauthority_source_file.stat(follow_symlinks=False)
+            if (not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
+                    or source_info.st_gid != profile.owner_gid
+                    or stat.S_IMODE(source_info.st_mode) != 0o440 or source_info.st_nlink != 1
+                    or not 0 < source_info.st_size <= 65536):
+                os.close(parent_fd)
+                raise AuthorityDenied("process.xauthority", "staged credential source is not immutable and private")
+            xauthority_mount_receipt = XauthorityMountReceipt(
+                "/run/hermes-installer/display/Xauthority", source_info.st_dev,
+                source_info.st_ino, hashlib.sha256(xauthority_source_file.read_bytes()).hexdigest(),
+                source_info.st_size, profile.owner_gid,
+            )
+            properties.extend((
+                "--property=BindReadOnlyPaths=" + str(xauthority_source_file) + ":/run/hermes-installer/display/Xauthority",
+                "--property=RuntimeDirectory=hermes-installer/display",
+                "--property=RuntimeDirectoryMode=0755",
+                "--property=PrivateMounts=yes", "--property=MountFlags=private",
+                "--property=NoExecPaths=/run/hermes-installer/display/Xauthority",
+                "--property=NoSuidPaths=/run/hermes-installer/display/Xauthority",
+                "--property=NoDevicePaths=/run/hermes-installer/display/Xauthority",
+            ))
         if profile.memory_max_bytes is not None:
             properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
         if profile.cpu_quota_percent is not None:
@@ -2627,6 +3544,8 @@ class ManagedProcessEffectHandler:
             pid, ticks, dev, ino = identity
             if native_mount_receipt is not None:
                 self._verify_native_package_mount(pid, native_mount_receipt)
+            if xauthority_mount_receipt is not None:
+                self._verify_xauthority_mount(pid, xauthority_mount_receipt)
             if Path(cgroup).name != unit or ".." in Path(cgroup).parts:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
             expected_props = {
@@ -2638,6 +3557,9 @@ class ManagedProcessEffectHandler:
                 "PrivateNetwork": "yes", "RestrictAddressFamilies": "AF_UNIX", "ProtectHome": "tmpfs",
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
+            if xauthority_mount_receipt is not None:
+                expected_props["RuntimeDirectory"] = "hermes-installer/display"
+                expected_props["RuntimeDirectoryMode"] = "0755"
             for key, value in expected_props.items():
                 actual_value = self._show(unit, key)
                 matches = (set(actual_value.split()) == {"0.0.0.0/0", "::/0"}
@@ -2707,6 +3629,8 @@ class ManagedProcessEffectHandler:
                 started, started + float(lifetime), output_cap, artifact_mount_dir,
                 native_mount_source=native_mount_source,
                 native_mount_receipt=native_mount_receipt,
+                xauthority_mount_source=xauthority_mount_source,
+                xauthority_mount_receipt=xauthority_mount_receipt,
                 network_namespace_fd=network_namespace_fd,
                 child_artifact_identities=child_artifact_identities,
                 lock=threading.RLock(),
@@ -3793,8 +4717,12 @@ class ManagedProcessEffectHandler:
             try:
                 _remove_artifact_mount(handle.artifact_mount_dir)
             finally:
-                if handle.native_mount_source is not None:
-                    self._remove_native_staging(handle.native_mount_source)
+                try:
+                    if handle.native_mount_source is not None:
+                        self._remove_native_staging(handle.native_mount_source)
+                finally:
+                    if handle.xauthority_mount_source is not None:
+                        self._remove_native_staging(handle.xauthority_mount_source)
             parent_gone = _pidfd_exited(handle.parent_pidfd)
             evidence = {
                 "process_id": handle.process_id, "generation": handle.profile.generation,

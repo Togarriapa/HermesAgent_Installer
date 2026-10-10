@@ -620,7 +620,7 @@ class SelectedResourceExecution:
     target: str
     operation: str
     recipient: str | None
-    delegation_id: str
+    delegation_id: str | None
     profile_id: str | None
     enabled: bool
 
@@ -643,7 +643,8 @@ class SelectedResourceExecution:
         }.get(self.identity.kind)
         if expected_operation != self.operation:
             raise ValueError("selected resource kind does not match its fixed operation")
-        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.delegation_id):
+        if (self.delegation_id is not None
+                and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.delegation_id)):
             raise ValueError("selected root delegation identity is invalid")
         if self.profile_id is not None and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.profile_id):
             raise ValueError("selected Hermes profile identity is invalid")
@@ -846,6 +847,179 @@ def selected_resource_registry_from_verified_materialization(
             profile_id=selected.profile_id, enabled=selected.enabled,
         ))
     return SelectedResourceRegistry(joined, expected_generation_digest=expected_generation_digest)
+
+
+def resolve_selected_resource_execution_from_materialization(
+    *,
+    native_materialization: Any,
+    protected_selection: Mapping[str, Any],
+    native_registry: Any,
+    discovery: Any,
+    enrollment_id: str,
+    service_generation: str,
+    service_generation_digest: str,
+) -> SelectedResourceExecution:
+    """Resolve one protected execution row against a live materialization receipt.
+
+    The protected row supplies only selected authority fields and hashes. The
+    resource identity/version/source come from the verified registry, while the
+    effective spec comes only from the transformed YAML bytes returned by the
+    root materialization receipt resolver. No runtime JSON or caller path is
+    used as proof.
+    """
+    from .native import NativeDiscovery, NativeRegistry, _yaml
+    from hermes_installer.authority.native_materialization import (
+        NativeMaterializedResourceDefinition, RootNativeMaterialization,
+    )
+
+    fields = {
+        "resource_id", "resource_kind", "source_revision", "source_manifest_sha256",
+        "resource_generation", "profile_id", "profile_generation",
+        "materialization_receipt_handle", "materialized_member_path",
+        "materialized_member_sha256", "materialized_member_size_bytes",
+        "effective_spec_sha256", "backend_enrollment_id", "operation", "capability",
+        "target_id", "recipient", "delegation_id", "enabled",
+        "consent_selection_receipt_handle",
+    }
+    if (type(native_materialization) is not RootNativeMaterialization
+            or not isinstance(protected_selection, Mapping) or set(protected_selection) != fields
+            or not isinstance(native_registry, NativeRegistry)
+            or not isinstance(discovery, NativeDiscovery)
+            or not isinstance(enrollment_id, str) or not enrollment_id
+            or not isinstance(service_generation, str) or not service_generation
+            or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
+        raise ResourceRuntimeError("root selected resource materialization inputs are incomplete")
+    row = protected_selection
+    resource_id, kind, profile_id = row["resource_id"], row["resource_kind"], row["profile_id"]
+    is_sha256 = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+    if (not isinstance(resource_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,95}", resource_id)
+            or not isinstance(kind, str)
+            or kind not in {"bundles", "channels", "crons", "mcps", "plugins", "webhooks"}
+            or not isinstance(profile_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_id)
+            or not is_sha256(row["resource_generation"])
+            or not is_sha256(row["profile_generation"])
+            or not is_sha256(row["source_manifest_sha256"])
+            or not is_sha256(row["materialized_member_sha256"])
+            or not is_sha256(row["effective_spec_sha256"])
+            or type(row["materialized_member_size_bytes"]) is not int
+            or row["materialized_member_size_bytes"] <= 0
+            or row["materialized_member_size_bytes"] > 1_048_576
+            or not isinstance(row["materialization_receipt_handle"], str)
+            or not row["materialization_receipt_handle"]
+            or not isinstance(row["materialized_member_path"], str)
+            or not row["materialized_member_path"]
+            or not isinstance(row["source_revision"], str) or not row["source_revision"]
+            or not isinstance(row["backend_enrollment_id"], str) or not row["backend_enrollment_id"]
+            or not isinstance(row["capability"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", row["capability"])
+            or not isinstance(row["target_id"], str)
+            or not isinstance(row["operation"], str)
+            or (row["recipient"] is not None and
+                (not isinstance(row["recipient"], str) or not row["recipient"]
+                 or len(row["recipient"]) > 256 or any(ord(char) < 0x20 for char in row["recipient"])))
+            or (row["delegation_id"] is not None and
+                (not isinstance(row["delegation_id"], str)
+                 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", row["delegation_id"])))
+            or not isinstance(row["consent_selection_receipt_handle"], str)
+            or not row["consent_selection_receipt_handle"]
+            or type(row["enabled"]) is not bool):
+        raise ResourceRuntimeError("root selected resource row is malformed")
+    if (native_registry.source.revision != row["source_revision"]
+            or native_registry.source.revision != discovery.source_revision
+            or native_registry.source.catalog_version != discovery.catalog_version):
+        raise ResourceRuntimeError("selected resource source revision is stale")
+
+    source_matches = [
+        item for item in discovery.resources
+        if item.resource.kind.value == kind and item.resource.id == resource_id
+        and item.provenance_verified
+    ]
+    if len(source_matches) != 1:
+        raise ResourceRuntimeError("selected resource is not unique in verified native discovery")
+    advertised = source_matches[0].resource
+    selector = f"{kind}/{resource_id}@={advertised.version}"
+    try:
+        resolved_rows = native_registry.resolver.resolve((selector,))
+    except Exception:
+        raise ResourceRuntimeError("selected resource source no longer resolves") from None
+    resolved = next((item for item in resolved_rows
+                     if item.resource.kind.value == kind
+                     and item.resource.id == resource_id
+                     and item.resource.version == advertised.version), None)
+    key = f"{kind}/{resource_id}@{advertised.version}"
+    raw = native_registry.resolver.raw.get(key)
+    source_path = native_registry.paths.get(key)
+    if (resolved is None or raw is None or source_path is None
+            or resolved.resource.digest != row["source_manifest_sha256"]
+            or raw.content_digest != row["source_manifest_sha256"]
+            or raw.selected_revision != native_registry.source.revision
+            or raw.observed_revision != native_registry.source.revision
+            or native_registry.resolver.document_digest(raw.document) != row["source_manifest_sha256"]):
+        raise ResourceRuntimeError("selected source declaration differs from its active protected digest")
+
+    try:
+        definition = native_materialization.resolve_resource_definition(
+            row["materialization_receipt_handle"], enrollment_id=enrollment_id,
+            service_generation=service_generation, resource_profile_id=profile_id,
+            kind=kind, resource_id=resource_id, version=advertised.version,
+        )
+        document_bytes = native_materialization.resolve_resource_definition_document(
+            row["materialization_receipt_handle"], enrollment_id=enrollment_id,
+            service_generation=service_generation, resource_profile_id=profile_id,
+            kind=kind, resource_id=resource_id, version=advertised.version,
+        )
+        document = _yaml().safe_load(document_bytes)
+    except Exception:
+        raise ResourceRuntimeError("selected materialization receipt or transformed YAML is unavailable") from None
+    if not isinstance(definition, NativeMaterializedResourceDefinition):
+        raise ResourceRuntimeError("selected materialization receipt returned an invalid definition")
+    member = next((item for item in definition.members
+                   if item.relative_path == row["materialized_member_path"]), None)
+    if (definition.kind != kind or definition.resource_id != resource_id
+            or definition.version != advertised.version
+            or definition.source_path != source_path
+            or definition.source_revision != row["source_revision"]
+            or definition.source_document_sha256 != row["source_manifest_sha256"]
+            or definition.effective_spec_sha256 != row["effective_spec_sha256"]
+            or member is None or member.relative_path != definition.source_path
+            or member.sha256 != row["materialized_member_sha256"]
+            or member.size_bytes != row["materialized_member_size_bytes"]
+            or not isinstance(document, Mapping)
+            or not isinstance(document.get("spec"), Mapping)):
+        raise ResourceRuntimeError("selected materialized member differs from its protected row")
+    metadata = document.get("metadata")
+    document_kind = {
+        "bundles": "Bundle", "channels": "Channel", "crons": "Cron",
+        "mcps": "MCP", "plugins": "Plugin", "webhooks": "Webhook",
+    }[kind]
+    if (document.get("kind") != document_kind
+            or not isinstance(metadata, Mapping)
+            or metadata.get("name") != resource_id
+            or metadata.get("version") != advertised.version):
+        raise ResourceRuntimeError("selected transformed declaration identity differs from verified source")
+    spec = dict(document["spec"])
+    try:
+        canonical_spec = json.dumps(
+            spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ResourceRuntimeError("selected transformed YAML spec is not canonical JSON data") from None
+    if (hashlib.sha256(document_bytes).hexdigest() != member.sha256
+            or len(document_bytes) != member.size_bytes
+            or hashlib.sha256(canonical_spec).hexdigest() != row["effective_spec_sha256"]):
+        raise ResourceRuntimeError("selected transformed YAML digest does not match protected materialization")
+
+    identity = ResourceIdentity(
+        resource_id, kind, advertised.version, source_path,
+        native_registry.source.revision, row["source_manifest_sha256"],
+    )
+    return SelectedResourceExecution(
+        identity=identity, generation_digest=row["resource_generation"],
+        effective_spec=spec, capability=row["capability"], target=row["target_id"],
+        operation=row["operation"], recipient=row["recipient"],
+        delegation_id=row["delegation_id"], profile_id=profile_id, enabled=row["enabled"],
+    )
 
 
 class SelectedResourceUnavailable(ResourceRuntimeError):
@@ -1809,7 +1983,8 @@ class WebhookVerifier:
         self.replay_window_seconds, self.now = replay_window_seconds, now
 
     def verify(self, resource_id: str, spec: Mapping[str, Any], headers: Mapping[str, str],
-               body: bytes, secret: bytes) -> WebhookReceipt:
+               body: bytes, secret: bytes, *, replay_identity: str | None = None,
+               claim_replay: bool = True) -> WebhookReceipt:
         _validate_webhook_declaration(spec)
         if not isinstance(body, bytes) or len(body) > self.max_body_bytes:
             raise ResourceRuntimeError("webhook body is malformed or exceeds its size limit")
@@ -1819,12 +1994,6 @@ class WebhookVerifier:
         expected_type = (spec.get("validation") or {}).get("contentType", "application/json")
         if not normalized.get("content-type", "").split(";", 1)[0].strip().lower() == expected_type.lower():
             raise ResourceRuntimeError("webhook content type is not allowed")
-        try:
-            decoded = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ResourceRuntimeError("webhook body is not valid JSON") from None
-        if not isinstance(decoded, (dict, list)):
-            raise ResourceRuntimeError("webhook JSON root must be an object or array")
 
         authentication = spec["authentication"]
         auth_type = authentication["type"]
@@ -1840,6 +2009,42 @@ class WebhookVerifier:
             supplied = normalized.get("authorization", "")
             if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:].encode(), secret):
                 raise ResourceRuntimeError("webhook bearer credential verification failed")
+
+        # Authenticate the original bytes before parsing. Python's default JSON
+        # decoder silently keeps the last duplicate object member, which can
+        # make the verifier and downstream event schema disagree about a
+        # signed request. Reject duplicates and non-finite numbers throughout
+        # the body before claiming the delivery ID.
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON object member")
+                result[key] = value
+            return result
+
+        def reject_constant(_value: str) -> None:
+            raise ValueError("non-finite JSON number")
+
+        try:
+            decoded = json.loads(body, object_pairs_hook=unique_object, parse_constant=reject_constant)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+            raise ResourceRuntimeError("webhook body is invalid JSON or contains duplicate fields") from None
+        if not isinstance(decoded, (dict, list)):
+            raise ResourceRuntimeError("webhook JSON root must be an object or array")
+        stack: list[tuple[Any, int]] = [(decoded, 0)]
+        member_count = 0
+        while stack:
+            current, depth = stack.pop()
+            if depth > 32:
+                raise ResourceRuntimeError("webhook JSON exceeds the protocol nesting bound")
+            if isinstance(current, Mapping):
+                member_count += len(current)
+                if member_count > 4096:
+                    raise ResourceRuntimeError("webhook JSON exceeds the protocol member bound")
+                stack.extend((value, depth + 1) for value in current.values())
+            elif isinstance(current, list):
+                stack.extend((value, depth + 1) for value in current)
 
         event = spec.get("event")
         event_type = ""
@@ -1863,7 +2068,12 @@ class WebhookVerifier:
         if not event_id or len(event_id) > 256 or any(ord(c) < 0x20 for c in event_id):
             raise ResourceRuntimeError("webhook delivery identity is missing or invalid")
         received_at = self.now()
-        if not self.replay_store.claim(resource_id, event_id, received_at + self.replay_window_seconds):
+        claimed_id = replay_identity if replay_identity is not None else event_id
+        if (not isinstance(claimed_id, str) or not 1 <= len(claimed_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in claimed_id)):
+            raise ResourceRuntimeError("webhook replay identity is malformed")
+        if claim_replay and not self.replay_store.claim(
+                resource_id, claimed_id, received_at + self.replay_window_seconds):
             raise ResourceRuntimeError("duplicate webhook delivery was rejected")
         return WebhookReceipt(resource_id, event_id, event_type, body,
                               hashlib.sha256(body).hexdigest(), received_at)
