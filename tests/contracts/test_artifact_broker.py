@@ -360,6 +360,38 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertEqual(catalog.artifacts["hermes-pm-node-linux-arm64"].archive_format, "tar.xz")
         self.assertFalse(catalog.packages)
 
+    def test_glm_source_catalog_rows_bind_only_reviewed_metadata_license_and_readme_bytes(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "glm-source-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        expected = {
+            "glm52-artifact-metadata-v1": (
+                "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+                56_232, "planning/glm52-artifact-metadata.json",
+            ),
+            "glm52-upstream-mit-license-cf457fa": (
+                "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+                1_065, "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
+            ),
+            "glm52-quantized-readme-6bbb01e": (
+                "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+                17_468, "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
+            ),
+        }
+        for artifact_id, (digest, size, relative_path) in expected.items():
+            spec = catalog.artifacts[artifact_id]
+            body = (repo / relative_path).read_bytes()
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (size, digest))
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+            self.assertEqual(spec.redirect_hosts, (spec.source_url.split('/')[2],))
+        self.assertFalse(any("glm52" in row.artifact_id and "weight" in row.artifact_id
+                             for row in catalog.artifacts.values()))
+
     def test_signed_coral_package_set_binds_only_enrolled_source_runtime_and_two_wheels(self):
         seed = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"
         catalog_path = self.base / "catalog.json"
