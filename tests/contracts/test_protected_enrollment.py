@@ -238,14 +238,22 @@ def test_private_memory_catalog_getters_rejoin_exact_service_routes_and_endpoint
         private_memory_model_selections=[_private_model_row()],
     )
     endpoint = catalog.resolve_private_memory_endpoint_binding("endpoint-selection-a")
+    selected_endpoint = catalog.resolve_private_memory_endpoint_for_service(
+        "service-a", "memory-gen-a", "profile-a", "principal-a",
+    )
     model = catalog.resolve_private_memory_model_binding("model-selection-a", "endpoint-selection-a")
     assert endpoint.service_generation_digest == catalog.digest
+    assert selected_endpoint is endpoint
     assert model.endpoint_binding_id == endpoint.binding_id
-    assert resolved_routes == ["memory-search-v1", "memory-search-v1", "memory-search-v1"]
+    assert resolved_routes == ["memory-search-v1"] * 4
     with pytest.raises(EnrollmentDenied, match="another endpoint"):
         catalog.resolve_private_memory_model_binding("model-selection-a", "other-endpoint")
     with pytest.raises(EnrollmentDenied, match="absent or stale"):
         catalog.resolve_private_memory_model_binding("unknown-model")
+    with pytest.raises(EnrollmentDenied, match="no unique selected endpoint"):
+        catalog.resolve_private_memory_endpoint_for_service(
+            "service-a", "memory-gen-a", "profile-a", "other-principal",
+        )
 
 
 def test_private_memory_catalog_denies_stale_process_join_and_unknown_model_endpoint(monkeypatch):

@@ -180,6 +180,11 @@ class RootRuntimeBindings:
     artifact_staging_directory: Path | None = None
     application_source_receipts: Any | None = None
     application_runtime_receipts: Any | None = None
+    # Preserve the digest-verified v128 rows alongside the catalog so callers
+    # can inspect selections without reparsing authority.json. Resolution must
+    # still go through the catalog methods above, which revalidate currentness.
+    private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_model_selection_records: tuple[Mapping[str, Any], ...] = ()
 
     def resolve_private_memory_endpoint_binding(
         self, binding_id: str,
@@ -195,6 +200,17 @@ class RootRuntimeBindings:
         if any(artifact_id not in artifacts for artifact_id in selected.runtime_artifact_ids):
             raise EnrollmentDenied("private memory endpoint runtime artifact is not pinned")
         return selected
+
+    def resolve_private_memory_endpoint_for_service(
+        self, service_enrollment_id: str, service_generation: str,
+        profile_id: str, principal_id: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        """Resolve one active endpoint binding from a protected service identity."""
+        selected = self.enrollment_catalog.resolve_private_memory_endpoint_for_service(
+            service_enrollment_id, service_generation, profile_id, principal_id,
+        )
+        # Reuse the binding-ID path so artifact pins are checked identically.
+        return self.resolve_private_memory_endpoint_binding(selected.binding_id)
 
     def resolve_private_memory_model_binding(
         self, binding_id: str, endpoint_binding_id: str | None = None,

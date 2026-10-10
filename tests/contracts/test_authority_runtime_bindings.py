@@ -84,7 +84,11 @@ def test_root_runtime_private_memory_getters_forward_only_protected_binding_ids(
         enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
         process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=artifact_catalog,
         build_store=None, service_connector=None,
+        private_memory_endpoint_selection_records=({"id": "endpoint-a"},),
+        private_memory_model_selection_records=({"id": "model-a"},),
     )
+    assert bindings.private_memory_endpoint_selection_records == ({"id": "endpoint-a"},)
+    assert bindings.private_memory_model_selection_records == ({"id": "model-a"},)
     assert bindings.resolve_private_memory_endpoint_binding("endpoint-a") is endpoint
     assert bindings.resolve_private_memory_model_binding("model-a", "endpoint-a") is model
 
