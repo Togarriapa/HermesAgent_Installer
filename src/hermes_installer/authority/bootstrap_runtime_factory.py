@@ -4000,6 +4000,10 @@ class RootBootstrapSession:
                 or registry._source is not source
                 or self._public_input_disclosure_registry is not None):
             raise BootstrapEnrollmentPending("public input disclosure registry is not the exact root source composition")
+        attach = getattr(source, "attach_public_input_disclosure_registry", None)
+        if not callable(attach):
+            raise BootstrapEnrollmentPending("source observer cannot retain the exact TTY disclosure registry")
+        attach(registry)
         self._public_input_disclosure_registry = registry
 
     def resolve_current_public_input_disclosure_registry(self) -> Any:
