@@ -1708,13 +1708,9 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
             "role_source_tree_sha256": process_role.role_source_tree_sha256,
             "target_id": action.target_id, "recipient": action.recipient,
             "private_provider_route_ids": list(issuer.private_provider_route_ids),
+            "public_web_scope_ids": list(getattr(issuer, "public_web_scope_ids", ())),
             "allowed_parent_source_kinds": sorted(parent_kinds),
         }
-        # The source-observer consumer must understand the v138 field before
-        # any nonempty public scope selection can be assembled. Empty remains
-        # the fail-closed legacy/default state.
-        if issuer.public_web_scope_ids:
-            record["public_web_scope_ids"] = list(issuer.public_web_scope_ids)
         if observer_id in result:
             raise EnrollmentDenied("source observer enrollment expands ambiguously")
         result[observer_id] = SourceObserverEnrollment.from_protected_record(record)
