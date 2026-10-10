@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+import copy
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from hermes_installer.protected_enrollment import (
     EnrollmentDenied,
     FixedBuildProfile,
     OperationParameterSchema,
+    NativePackageBinding,
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
@@ -114,6 +116,27 @@ def test_package_runtime_requires_signed_completed_build_receipt():
         catalog.resolve_package_runtime(
             "service-a", "gen-a", "coral-cp39-runtime-v1", build_catalog,
             build_store=None,
+        )
+
+
+def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_separate():
+    row = {"application_id": "app-a", "profile_id": "profile-a",
+           "profile_generation": "process-g1", "capability_ids": ["application:run"],
+           "provider_route_ids": [], "credential_reference_ids": []}
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
+        selected_application_runtimes=[row],
+    )
+    selected = catalog.selected_application_runtime_record("app-a")
+    assert selected["capability_ids"] == ("application:run",)
+    assert "service_generation_digest" not in selected
+    assert catalog.digest == "a" * 64
+    with pytest.raises(EnrollmentDenied, match="not enrolled"):
+        catalog.selected_application_runtime_record("app-missing")
+    with pytest.raises(EnrollmentDenied, match="ambiguous"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
+            selected_application_runtimes=[row, {**row, "profile_id": "profile-b"}],
         )
 
 
@@ -323,29 +346,35 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
     profile = _parse_profile(item)
     record = {
         "package_id": "desktop-native", "profile_id": profile.profile_id,
-        "generation": profile.generation, "source_revision": "rev-1",
+        "generation": "native-gen-1", "profile_generation": profile.generation,
+        "source_revision": "rev-1",
         "source_tree_sha256": "b" * 64,
         "compiled_closure_artifact_id": "compiled-closure", "compiled_closure_sha256": "c" * 64,
         "entrypoint_artifact_id": "plugin-entrypoint", "entrypoint_sha256": "d" * 64,
         "resolver_artifact_id": "plugin-resolver", "resolver_sha256": "e" * 64,
         "service_package_root_id": "desktop-package-root", "service_mount_id": "desktop-package-mount",
-        "adapter_records": [{
-            "adapter_id": "adapter-one", "manifest_sha256": "f" * 64,
+        "adapter_records": [],
+        "action_records": [{
+            "action_binding_id": "adapter-one:action:read", "adapter_id": "adapter-one",
+            "action_id": "read", "manifest_sha256": "f" * 64,
             "adapter_artifact_id": "adapter-one-artifact", "adapter_sha256": "0" * 64,
-            "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
-            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
-            "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
-            "generation": profile.generation, "observer_enrollment_ids": [], "workflow_bindings": [],
+            "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
+            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.adapter-one.read",
+            "capability": "plugin:adapter-one", "target_id": "example-target",
+            "recipient": "example-recipient", "generation": "native-gen-1",
+            "observer_enrollment_ids": [],
         }],
+        "registration_records": [], "workflow_records": [], "process_role_records": [],
     }
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
                                          native_packages=[record])
     monkeypatch.setattr(catalog, "resolve", lambda enrollment_id, generation: profile
                         if (enrollment_id, generation) == ("install-1", "gen-1")
                         else (_ for _ in ()).throw(EnrollmentDenied("stale")))
-    resolved = catalog.resolve_native_package("desktop-native", profile.generation)
+    resolved = catalog.resolve_native_package("desktop-native", "native-gen-1")
     assert resolved.service_mount_id == "desktop-package-mount"
-    assert resolved.adapter_records["adapter-one"].operation == "plugin.example.read"
+    assert resolved.action_records["adapter-one:action:read"].operation == "plugin.adapter-one.read"
+    assert resolved.profile_generation == profile.generation
     with pytest.raises(EnrollmentDenied):
         catalog.resolve_native_package("desktop-native", "stale-generation")
 
@@ -371,40 +400,236 @@ def test_native_observer_reference_joins_exact_active_issuer_role():
     profile = _parse_profile(item)
     package = {
         "package_id": "desktop-native", "profile_id": profile.profile_id,
-        "generation": profile.generation, "source_revision": "rev-1",
+        "generation": "native-gen-1", "profile_generation": profile.generation,
+        "source_revision": "rev-1",
         "source_tree_sha256": "b" * 64,
         "compiled_closure_artifact_id": "compiled-closure", "compiled_closure_sha256": "c" * 64,
         "entrypoint_artifact_id": "plugin-entrypoint", "entrypoint_sha256": "d" * 64,
         "resolver_artifact_id": "plugin-resolver", "resolver_sha256": "e" * 64,
         "service_package_root_id": "desktop-package-root", "service_mount_id": "desktop-package-mount",
-        "adapter_records": [{
-            "adapter_id": "adapter-one", "manifest_sha256": "f" * 64,
+        "adapter_records": [],
+        "action_records": [{
+            "action_binding_id": "adapter-one:action:read", "adapter_id": "adapter-one",
+            "action_id": "read", "manifest_sha256": "f" * 64,
             "adapter_artifact_id": "adapter-one-artifact", "adapter_sha256": "0" * 64,
-            "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
-            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
-            "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
-            "generation": profile.generation, "observer_enrollment_ids": ["observer-one"],
-            "workflow_bindings": [],
+            "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
+            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.adapter-one.read",
+            "capability": "plugin:adapter-one", "target_id": "example-target",
+            "recipient": "example-recipient", "generation": "native-gen-1",
+            "observer_enrollment_ids": ["observer-one"],
+        }],
+        "registration_records": [], "workflow_records": [], "process_role_records": [{
+            "role_id": "result-role", "package_id": "desktop-native",
+            "native_package_generation": "native-gen-1", "profile_id": profile.profile_id,
+            "profile_generation": profile.generation, "role_artifact_id": "process-result-role",
+            "role_sha256": "1" * 64, "role_source_receipt_handle": "role-source-receipt",
+            "module_name": "hermes_installer.adapters.result_role",
+            "closure_member_path": "hermes_installer/adapters/result_role.py",
+            "role_source_revision": "rev-1", "role_source_tree_sha256": "2" * 64,
+            "observer_enrollment_ids": ["observer-one"], "registration_ids": [],
+            "action_binding_ids": ["adapter-one:action:read"], "workflow_ids": [],
         }],
     }
     issuer = SourceIssuerRecord(
-        "tool-result", profile.profile_id, "adapter-one-artifact", "0" * 64,
-        "read-result-v1", (), profile.generation, "observer-one", ("registered-tool-result",),
+        "tool-result", profile.profile_id, "process-result-role", "1" * 64,
+        "read-result-v1", (), profile.generation, "observer-one", ("read",),
     )
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
                                          native_packages=[package], source_issuers=[issuer])
+    catalog.resolve = lambda *_args: profile
+    role = catalog.resolve_selected_native_process_role("desktop-native", "native-gen-1", "result-role")
+    assert role.role_artifact_id == "process-result-role"
     join = catalog.source_observer_joins["observer-one"]
-    assert join.issuer is issuer
-    assert join.package.package_id == "desktop-native"
-    assert join.adapter.adapter_id == "adapter-one"
+    assert join.process_role == role
+    assert join.actions["adapter-one:action:read"].adapter_artifact_id == "adapter-one-artifact"
 
-    with pytest.raises(EnrollmentDenied, match="does not match"):
-        ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
-                                   native_packages=[package], source_issuers=[
-            SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
-                               "read-result-v1", (), profile.generation, "observer-one",
-                               ("registered-tool-result",))
-        ])
+    for mutate, message in (
+        (lambda row: row.__setitem__("closure_member_path", "../outside.py"), "normalized and relative"),
+        (lambda row: row.__setitem__("profile_generation", "stale-process-generation"), "another package or profile generation"),
+        (lambda row: row.__setitem__("role_sha256", "not-a-digest"), "digest"),
+    ):
+        invalid = copy.deepcopy(package)
+        mutate(invalid["process_role_records"][0])
+        with pytest.raises(EnrollmentDenied, match=message):
+            NativePackageBinding.from_protected_record(invalid)
+
+    with pytest.raises(EnrollmentDenied, match="exact active source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("install-1", "gen-1"): profile}, digest="0" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
+                                   "read-result-v1", (), profile.generation, "observer-one", ("read",))
+            ],
+        )
+    with pytest.raises(EnrollmentDenied, match="exact active source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("install-1", "gen-1"): profile}, digest="0" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
+                                   "read-result-v1", (), "stale-process-gen", "observer-one",
+                                   ("registered-tool-result",))
+            ],
+        )
+
+
+def test_v113_native_package_keeps_effect_actions_separate_from_registered_tools():
+    from hermes_installer.protected_enrollment import NativePackageBinding
+
+    action_base = {
+        "adapter_id": "adapter", "manifest_sha256": "1" * 64,
+        "adapter_artifact_id": "adapter-code", "adapter_sha256": "2" * 64,
+        "argument_schema_id": "action-args-v1", "result_schema_id": "action-result-v1",
+        "effect_enrollment_id": "effect-a", "operation": "plugin.adapter.read",
+        "capability": "plugin:adapter", "target_id": "target-a", "recipient": None,
+        "generation": "package-g2", "observer_enrollment_ids": [],
+    }
+    actions = [
+        {**action_base, "action_id": action_id,
+         "action_binding_id": f"adapter:action:{action_id}"}
+        for action_id in ("read", "write")
+    ]
+    registration = {
+        "registration_id": "adapter:tool:query", "native_tool_name": "query",
+        "native_server_name": "hermes-installer", "toolset": "filesystem", "family": "files",
+        "adapter_id": "adapter", "argument_schema_id": "tool-args-v1",
+        "result_schema_id": "tool-result-v1", "native_schema_sha256": "3" * 64,
+        "registration_source_artifact_id": "registration-source",
+        "registration_source_sha256": "4" * 64,
+        "registration_source_receipt_handle": "receipt-source",
+        "handler_kind": "effect-action", "handler_id": "read-handler",
+        "selector_fields": [],
+        "action_bindings": [{
+            "selector_values": {}, "action_binding_id": "adapter:action:read",
+            "argument_projection": [{"name": "query", "source_field": "query"}],
+            "workflow_id": None,
+        }],
+        "observer_enrollment_ids": [], "generation": "package-g2",
+    }
+    package = NativePackageBinding.from_protected_record({
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "package-g2",
+        "profile_generation": "process-g5", "source_revision": "rev-a",
+        "source_tree_sha256": "5" * 64, "compiled_closure_artifact_id": "closure-a",
+        "compiled_closure_sha256": "6" * 64, "entrypoint_artifact_id": "entry-a",
+        "entrypoint_sha256": "7" * 64, "resolver_artifact_id": "resolver-a",
+        "resolver_sha256": "8" * 64, "service_package_root_id": "root-a",
+        "service_mount_id": "mount-a", "adapter_records": [],
+        "action_records": actions, "registration_records": [registration],
+        "workflow_records": [], "process_role_records": [],
+    })
+    assert set(package.action_records) == {"adapter:action:read", "adapter:action:write"}
+    assert package.registration_records["adapter:tool:query"].action_bindings[0].action_binding_id == "adapter:action:read"
+    assert package.generation != package.profile_generation
+    with pytest.raises(TypeError):
+        package.action_records["extra"] = package.action_records["adapter:action:read"]
+
+    bad = dict(registration)
+    bad["action_bindings"] = [{**registration["action_bindings"][0],
+                               "action_binding_id": "adapter:action:missing"}]
+    malformed = {
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "package-g2",
+        "profile_generation": "process-g5", "source_revision": "rev-a",
+        "source_tree_sha256": "5" * 64, "compiled_closure_artifact_id": "closure-a",
+        "compiled_closure_sha256": "6" * 64, "entrypoint_artifact_id": "entry-a",
+        "entrypoint_sha256": "7" * 64, "resolver_artifact_id": "resolver-a",
+        "resolver_sha256": "8" * 64, "service_package_root_id": "root-a",
+        "service_mount_id": "mount-a", "adapter_records": [],
+        "action_records": actions, "registration_records": [bad], "workflow_records": [],
+        "process_role_records": [],
+    }
+    with pytest.raises(EnrollmentDenied, match="action binding is absent"):
+        NativePackageBinding.from_protected_record(malformed)
+
+
+def test_v113_native_workflow_refs_are_ordered_and_owned_by_the_registration():
+    from hermes_installer.protected_enrollment import NativePackageBinding
+
+    action = {
+        "action_binding_id": "adapter:action:step", "adapter_id": "adapter", "action_id": "step",
+        "manifest_sha256": "1" * 64, "adapter_artifact_id": "adapter-code", "adapter_sha256": "2" * 64,
+        "argument_schema_id": "step-args", "result_schema_id": "step-result",
+        "effect_enrollment_id": "effect-step", "operation": "plugin.adapter.step",
+        "capability": "plugin:adapter", "target_id": "target", "recipient": None,
+        "generation": "pkg-1", "observer_enrollment_ids": [],
+    }
+    registration = {
+        "registration_id": "adapter:tool:voice", "native_tool_name": "voice",
+        "native_server_name": "hermes-installer", "toolset": "voice", "family": "voice",
+        "adapter_id": "adapter", "argument_schema_id": "voice-args", "result_schema_id": "voice-result",
+        "native_schema_sha256": "3" * 64, "registration_source_artifact_id": "reg-src",
+        "registration_source_sha256": "4" * 64, "registration_source_receipt_handle": "reg-receipt",
+        "handler_kind": "finite-workflow", "handler_id": "voice-workflow",
+        "selector_fields": [], "action_bindings": [{
+            "selector_values": {}, "action_binding_id": None, "argument_projection": [],
+            "workflow_id": "workflow-1",
+        }], "observer_enrollment_ids": [], "generation": "pkg-1",
+    }
+    workflow = {
+        "id": "workflow-1", "registration_id": registration["registration_id"],
+        "external_argument_schema_id": "voice-args", "external_result_schema_id": "voice-result",
+        "workflow_artifact_id": "workflow-code", "workflow_sha256": "5" * 64,
+        "workflow_source_receipt_handle": "workflow-receipt",
+        "step_action_binding_ids": ["adapter:action:step"], "generation": "pkg-1",
+    }
+    row = {
+        "package_id": "package", "profile_id": "profile", "generation": "pkg-1",
+        "profile_generation": "process-4", "source_revision": "rev",
+        "source_tree_sha256": "6" * 64, "compiled_closure_artifact_id": "closure",
+        "compiled_closure_sha256": "7" * 64, "entrypoint_artifact_id": "entry",
+        "entrypoint_sha256": "8" * 64, "resolver_artifact_id": "resolver",
+        "resolver_sha256": "9" * 64, "service_package_root_id": "root",
+        "service_mount_id": "mount", "adapter_records": [], "action_records": [action],
+        "registration_records": [registration], "workflow_records": [workflow], "process_role_records": [],
+    }
+    parsed = NativePackageBinding.from_protected_record(row)
+    assert parsed.workflow_records["workflow-1"].step_action_binding_ids == ("adapter:action:step",)
+
+    from types import SimpleNamespace
+    profile = SimpleNamespace(enrollment_id="install", profile_id="profile", generation="process-4")
+    schema_rows = []
+    for adapter_id, action_id, schema_id, kind in (
+        ("adapter", "step", "step-args", "arguments"),
+        ("adapter", "step", "step-result", "result"),
+        ("adapter", "adapter:tool:voice", "voice-args", "arguments"),
+        ("adapter", "adapter:tool:voice", "voice-result", "result"),
+    ):
+        schema_rows.append({
+            "id": schema_id, "artifact_id": f"artifact-{schema_id}", "sha256": "a" * 64,
+            "schema_kind": kind, "native_package_id": "package", "native_package_generation": "pkg-1",
+            "adapter_id": adapter_id, "action_id": action_id, "source_receipt_handle": "receipt",
+            "size_bytes": 10, "derivation_receipt_handle": None,
+        })
+    catalog = ProtectedEnrollmentCatalog(
+        {("install", "process-4"): profile}, digest="d" * 64,
+        native_packages=[row], native_schema_artifacts=schema_rows,
+    )
+    catalog.resolve = lambda *_args: profile
+    assert catalog.resolve_native_registration_schema_artifact(
+        "package", "pkg-1", "adapter:tool:voice", "arguments", profile_id="profile",
+        process_generation="process-4", service_generation_digest="d" * 64,
+    )["id"] == "voice-args"
+    with pytest.raises(EnrollmentDenied, match="stale service snapshot"):
+        catalog.resolve_native_registration_schema_artifact(
+            "package", "pkg-1", "adapter:tool:voice", "arguments", profile_id="profile",
+            process_generation="process-4", service_generation_digest="e" * 64,
+        )
+    malformed_schema_rows = [record for record in schema_rows if record["id"] != "voice-result"]
+    with pytest.raises(EnrollmentDenied, match="registration schema join"):
+        ProtectedEnrollmentCatalog(
+            {("install", "process-4"): profile}, digest="d" * 64,
+            native_packages=[row], native_schema_artifacts=malformed_schema_rows,
+        )
+
+    wrong_owner = {**workflow, "registration_id": "other:tool:voice"}
+    with pytest.raises(EnrollmentDenied, match="workflow belongs to another registration"):
+        NativePackageBinding.from_protected_record({**row, "workflow_records": [wrong_owner]})
+
+    wrong_adapter = {**action, "adapter_id": "other", "action_id": "step",
+                     "action_binding_id": "other:action:step", "operation": "plugin.other.step",
+                     "capability": "plugin:other"}
+    foreign_workflow = {**workflow, "step_action_binding_ids": ["other:action:step"]}
+    with pytest.raises(EnrollmentDenied, match="workflow action belongs to another adapter"):
+        NativePackageBinding.from_protected_record({**row, "action_records": [action, wrong_adapter],
+                                                     "workflow_records": [foreign_workflow]})
 
 
 def test_memory_connector_route_binds_variant_port_and_exact_route():

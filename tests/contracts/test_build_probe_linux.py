@@ -52,6 +52,11 @@ class BuildProbeLinuxTests(unittest.TestCase):
                 "shutil.copyfile('/run/hermes-installer/build/builder',target)\n"
                 "target.chmod(0o755)\n"
                 "print('fixture-output-ready',flush=True)\n"
+                # A successful build receipt includes live MainPID, PIDFD,
+                # cgroup and namespace observations. Keep this tiny fixture
+                # process alive long enough for the real manager to capture
+                # those facts; an instant exit is correctly unattestable.
+                "import time; time.sleep(1.0)\n"
             )
             code_arg = "exec(__import__('base64').b64decode('" + base64.b64encode(code.encode()).decode() + "'))"
             fixture.inputs.argv_recipe = (
@@ -86,15 +91,52 @@ class BuildProbeLinuxTests(unittest.TestCase):
                 fixture.output / "runtime/bin/python3.9", build_result=build_result,
                 build_inputs=fixture.inputs, cancelled=lambda: False,
             )
-            self.assertEqual(probe.terminal_success_record_id,
-                             facts["probe_execution"]["terminal_success_record_id"])
+            first_probe_id = probe.terminal_success_record_id
+            second_probe = facts["probe_execution"]
+            second_probe_id = second_probe["terminal_success_record_id"]
+            # Each inspection starts a distinct isolated probe, so each needs
+            # its own immutable terminal receipt. Both receipts must remain
+            # joined to the same successful build terminal.
+            self.assertNotEqual(first_probe_id, second_probe_id)
             self.assertEqual(probe.build_terminal_success_record_id, build_result.terminal_success_record_id)
+            self.assertEqual(second_probe["build_terminal_success_record_id"],
+                             build_result.terminal_success_record_id)
             self.assertTrue(probe.cleanup_verified)
+            self.assertTrue(second_probe["cleanup_verified"])
+            self.assertTrue(probe.startup_gate_verified)
+            self.assertTrue(second_probe["startup_gate_verified"])
             self.assertEqual(probe.uid, fixture.uid)
             self.assertEqual(probe.gid, fixture.gid)
+            self.assertEqual(second_probe["uid"], fixture.uid)
+            self.assertEqual(second_probe["gid"], fixture.gid)
+            self.assertGreater(probe.pid, 1)
+            self.assertGreater(second_probe["pid"], 1)
+            self.assertGreater(probe.start_ticks, 0)
+            self.assertGreater(second_probe["start_ticks"], 0)
+            self.assertTrue(probe.cgroup_id)
+            self.assertTrue(second_probe["cgroup_id"])
+            self.assertGreater(probe.mount_namespace_inode, 0)
+            self.assertGreater(probe.network_namespace_inode, 0)
+            self.assertGreater(second_probe["mount_namespace_inode"], 0)
+            self.assertGreater(second_probe["network_namespace_inode"], 0)
+            self.assertRegex(probe.process_identity_digest, r"^[0-9a-f]{64}$")
+            self.assertRegex(second_probe["process_identity_digest"], r"^[0-9a-f]{64}$")
             self.assertEqual(probe.output_root_inode, fixture.output.stat().st_ino)
+            self.assertEqual(second_probe["output_root_inode"], fixture.output.stat().st_ino)
+            self.assertEqual(second_probe["executable_sha256"], probe.executable_sha256)
             self.assertIn("python_version", facts)
-            self.assertEqual(fixture.manager._pids(probe.cgroup_id), [])
+            # The manager retains both root-issued terminal proofs for future
+            # fixed-probe joins; a returned receipt alone is not sufficient.
+            for receipt_id in (first_probe_id, second_probe_id):
+                with fixture.runner._lock:
+                    retained = fixture.runner._records.get(receipt_id)
+                self.assertIsNotNone(retained)
+                self.assertEqual(retained["build_terminal_success_record_id"],
+                                 build_result.terminal_success_record_id)
+                self.assertTrue(retained["cleanup"])
+                self.assertEqual(retained["exit_code"], 0)
+            remaining_pids = fixture.manager._pids(probe.cgroup_id)
+            self.assertEqual(tuple(remaining_pids), ())
         finally:
             if peer_pidfd is not None:
                 os.close(peer_pidfd)

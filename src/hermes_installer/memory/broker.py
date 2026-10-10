@@ -718,12 +718,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
                 raise BrokerDenied("memory route is not in the protected enrollment")
-            if compound_executor is not None and action in {"search", "capture"}:
+            if compound_executor is not None and action in {"doctor", "search", "capture"}:
                 enrollment = target.enrollment
                 recipe = enrollment.fixed_route_map.get(route_id) if enrollment is not None else None
                 if recipe is None:
                     raise BrokerUnavailable("selected memory action has no complete protected compound recipe")
-                if action == "search":
+                if action == "doctor":
+                    compound_body = {}
+                elif action == "search":
                     compound_body = {"query": _text(body.get("query"), "query", 16384),
                                      "limit": limit}
                 elif target.provider == "agentmemory":
@@ -740,6 +742,37 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 result = dict(executed)
                 result["profile_id"] = context.profile_id
                 result["namespace_id"] = context.namespace_id
+                if action == "search":
+                    semantic_result = result.get("result")
+                    records = semantic_result.get("records") if isinstance(semantic_result, Mapping) else None
+                    if not isinstance(records, list) or len(records) > limit:
+                        raise BrokerUnavailable("memory search returned no bounded validated record set")
+                    scoped_records = []
+                    for record in records:
+                        if (not isinstance(record, Mapping) or set(record) != {"id", "source", "text"}
+                                or record.get("source") != target.provider
+                                or not isinstance(record.get("id"), str)
+                                or not isinstance(record.get("text"), str)):
+                            raise BrokerUnavailable("memory search record differs from its validated provider schema")
+                        # Scope labels are derived by the root broker after provider
+                        # response validation; upstream/caller JSON cannot choose them.
+                        scoped_records.append({**record, "profile": context.profile_id,
+                                               "namespace": context.namespace_id})
+                    result["records"] = scoped_records
+                if action == "doctor":
+                    probe = result.get("result")
+                    if not isinstance(probe, Mapping):
+                        raise BrokerUnavailable("memory doctor returned no validated probe outcome")
+                    if probe.get("service_ready") is True:
+                        status = "ready"
+                    elif probe.get("service_live") is True:
+                        status = "live_unqualified"
+                    else:
+                        status = "not_ready"
+                    result["service_status"] = status
+                    result["functional_memory_verified"] = False
+                    result["revision"] = target.source_revision
+                    result["service_generation"] = target.service_generation
                 return _reply(result)
             if ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")

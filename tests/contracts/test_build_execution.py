@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import base64
+import pwd
 import sys
 import tempfile
 import time

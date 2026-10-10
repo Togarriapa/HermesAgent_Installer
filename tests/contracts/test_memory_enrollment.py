@@ -29,6 +29,18 @@ def recipe(provider, route_id):
               "body_recipe_id": "agentmemory-remember-owned-v1",
               "response_schema_id": "agentmemory-remember-result-v1", "capture_fields": [], "next_step_id": None}],
         ),
+        "agentmemory-ready": (
+            "agentmemory-ready-request-v1", "agentmemory-livez-result-v1",
+            [{"step_id": "livez", "method": "GET", "path_template": "/agentmemory/livez",
+              "body_recipe_id": "agentmemory-livez-empty-v1",
+              "response_schema_id": "agentmemory-livez-result-v1", "capture_fields": [], "next_step_id": None}],
+        ),
+        "openviking-ready": (
+            "openviking-ready-request-v1", "openviking-ready-result-v1",
+            [{"step_id": "ready", "method": "GET", "path_template": "/ready",
+              "body_recipe_id": "openviking-ready-empty-v1",
+              "response_schema_id": "openviking-ready-result-v1", "capture_fields": [], "next_step_id": None}],
+        ),
         "openviking-session-capture": (
             "openviking-capture-event-v1", "openviking-capture-result-v1",
             [
@@ -55,9 +67,9 @@ def recipe(provider, route_id):
 
 def record(provider="agentmemory", variant="default", port=3111):
     if provider == "agentmemory":
-        route_ids = ("agentmemory-search", "agentmemory-capture")
+        route_ids = ("agentmemory-ready", "agentmemory-search", "agentmemory-capture")
     elif provider == "openviking":
-        route_ids = ("openviking-session-capture",)
+        route_ids = ("openviking-ready", "openviking-session-capture")
     else:
         route_ids = ("claude-sqlite-search",) if variant == "server-v1-sqlite" else (
             "claude-postgres-search",)
@@ -83,10 +95,51 @@ def record(provider="agentmemory", variant="default", port=3111):
         "background_consent_revision": "consent-policy-one",
         "limits": {"request_bytes": 262144, "response_bytes": 2097152, "result_limit": 100,
                    "operation_timeout_seconds": 15, "whole_compound_timeout_seconds": 60},
+        "lifecycle_binding": None,
     }
 
 
 class MemoryEnrollmentTests(unittest.TestCase):
+    def test_lifecycle_binding_is_exact_variant_generation_and_readiness_recipe(self):
+        value = record()
+        value["lifecycle_binding"] = {
+            "service_enrollment_id": value["service_enrollment_id"],
+            "service_generation": value["service_generation"],
+            "start_operation_id": "memory-agentmemory-serve-v1",
+            "start_parameter_schema_id": "no-caller-parameters-v1",
+            "prestart_receipt_handles": ["package-receipt", "engine-receipt"],
+            "readiness_route_id": "agentmemory-ready",
+            "readiness_schema_id": "agentmemory-livez-result-v1",
+            "restart_policy": "manual-owned-restart",
+            "maximum_restart_attempts": 0,
+            "original_deadline_seconds": 60,
+        }
+        enrollment = MemoryServiceEnrollment.from_protected_record(value)
+        self.assertEqual(enrollment.lifecycle_binding.start_operation_id,
+                         "memory-agentmemory-serve-v1")
+        self.assertEqual(enrollment.lifecycle_binding.readiness_route_id,
+                         "agentmemory-ready")
+        self.assertEqual(enrollment.lifecycle_binding.prestart_receipt_handles,
+                         ("package-receipt", "engine-receipt"))
+
+        for mutate in (
+            lambda row: row["lifecycle_binding"].update(start_operation_id="unreviewed"),
+            lambda row: row["lifecycle_binding"].update(service_generation="stale-generation"),
+            lambda row: row["lifecycle_binding"].update(readiness_schema_id="generic-health"),
+            lambda row: row["lifecycle_binding"].update(start_parameter_schema_id="caller-args"),
+            lambda row: row["lifecycle_binding"].update(prestart_receipt_handles=[]),
+            lambda row: row["lifecycle_binding"].update(maximum_restart_attempts=True),
+        ):
+            candidate = record()
+            candidate["lifecycle_binding"] = dict(value["lifecycle_binding"])
+            mutate(candidate)
+            with self.subTest(binding=candidate["lifecycle_binding"]):
+                with self.assertRaises(MemoryEnrollmentError):
+                    MemoryServiceEnrollment.from_protected_record(candidate)
+
+    def test_null_lifecycle_binding_is_explicit_unavailable_startup(self):
+        self.assertIsNone(MemoryServiceEnrollment.from_protected_record(record()).lifecycle_binding)
+
     def test_pins_literal_listener_ports_and_source_pinned_recipes_are_required(self):
         self.assertEqual(MemoryServiceEnrollment.from_protected_record(record()).literal_loopback_port, 3111)
         self.assertEqual(MemoryServiceEnrollment.from_protected_record(
@@ -147,11 +200,12 @@ class MemoryEnrollmentTests(unittest.TestCase):
         self.assertEqual(agent.service_generation, "service-gen-7")
         self.assertEqual(agent.route_for("search"), "agentmemory-search")
         self.assertEqual(agent.route_for("capture"), "agentmemory-capture")
-        self.assertIsNone(agent.route_for("doctor"))
+        self.assertEqual(agent.route_for("doctor"), "agentmemory-ready")
         self.assertIsNone(agent.route_for("restore"))
         openviking = MemoryTarget.from_enrollment(MemoryServiceEnrollment.from_protected_record(
             record("openviking", "default", 1933)))
         self.assertEqual(openviking.route_for("capture"), "openviking-session-capture")
+        self.assertEqual(openviking.route_for("doctor"), "openviking-ready")
         self.assertIsNone(openviking.route_for("delete"))
 
     def test_target_and_source_pin_are_not_caller_selectable(self):

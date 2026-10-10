@@ -133,6 +133,65 @@ class MemoryCompoundTests(unittest.TestCase):
             validate_step_outcome(route_id="agentmemory-capture", step_id="capture",
                                   status=201, value={"anything": "looks successful"})
 
+    def test_doctor_routes_keep_liveness_distinct_from_subsystem_readiness(self):
+        from hermes_installer.memory.compound import validate_step_outcome
+
+        ready = build_memory_request(
+            provider="openviking", route_id="openviking-ready", recipe=self.recipe,
+            step={"method": "GET", "path_template": "/ready",
+                  "body_recipe_id": "openviking-ready-empty-v1"},
+            body={}, scope_bindings=self.scope)
+        self.assertEqual(ready.method, "GET")
+        self.assertEqual(ready.path, "/ready")
+        self.assertEqual(ready.body, b"")
+        self.assertEqual(ready.headers, (("accept", "application/json"),))
+        probe = validate_step_outcome(
+            route_id="openviking-ready", step_id="ready", status=200,
+            value={"status": "ready", "checks": {
+                "agfs": {"status": "ok", "checks": {
+                    "filesystem": "ok", "multiwrite_sync": "not_supported"}},
+                "vectordb": "not_configured", "api_key_manager": "ok",
+                "embedding": "ok", "ollama": "not_configured",
+            }})
+        self.assertIs(probe.result["service_ready"], True)
+        self.assertNotIn("functional_memory_verified", probe.result)
+        for invalid in (
+            {"status": "ok", "healthy": True, "checks": {}},
+            {"status": "ready", "checks": {"agfs": "ok"}},
+            {"status": "ready", "checks": {
+                "agfs": "ok", "vectordb": "ok", "api_key_manager": "ok",
+                "embedding": "not_initialized", "ollama": "ok"}},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(route_id="openviking-ready", step_id="ready",
+                                      status=200, value=invalid)
+
+        live = build_memory_request(
+            provider="agentmemory", route_id="agentmemory-ready", recipe=self.recipe,
+            step={"method": "GET", "path_template": "/agentmemory/livez",
+                  "body_recipe_id": "agentmemory-livez-empty-v1"},
+            body={}, scope_bindings=self.scope)
+        self.assertEqual((live.method, live.path, live.body),
+                         ("GET", "/agentmemory/livez", b""))
+        liveness = validate_step_outcome(
+            route_id="agentmemory-ready", step_id="livez", status=200,
+            value={"status": "ok", "service": "agentmemory", "viewerPort": None,
+                   "viewerSkipped": True, "streamsPort": 3112})
+        self.assertIs(liveness.result["service_live"], True)
+        self.assertIs(liveness.result["memory_ready"], False)
+        self.assertNotIn("service_ready", liveness.result)
+        for invalid in (
+            {"status": "critical", "service": "agentmemory", "viewerPort": None,
+             "viewerSkipped": True, "streamsPort": 3112},
+            {"status": "ok", "service": "agentmemory", "viewerPort": None,
+             "viewerSkipped": True, "streamsPort": 3112, "healthy": True},
+            {"status": "ok", "service": "agentmemory", "viewerPort": None,
+             "viewerSkipped": "true", "streamsPort": 3112},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(MemoryRecipeUnavailable):
+                validate_step_outcome(route_id="agentmemory-ready", step_id="livez",
+                                      status=200, value=invalid)
+
     def test_agentmemory_pinned_results_require_exact_semantic_shapes(self):
         from hermes_installer.memory.compound import validate_step_outcome
 
@@ -322,6 +381,7 @@ class MemoryCompoundTests(unittest.TestCase):
                 "request_bytes": 262144, "response_bytes": 2097152, "result_limit": 100,
                 "operation_timeout_seconds": 15, "whole_compound_timeout_seconds": 60,
             },
+            "lifecycle_binding": None,
         }
         enrollment = MemoryServiceEnrollment.from_protected_record(record)
         self.assertEqual(enrollment.fixed_route_map["agentmemory-search"].steps[0].step_id, "search")

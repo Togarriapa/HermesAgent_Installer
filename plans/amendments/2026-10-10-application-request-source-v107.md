@@ -1,0 +1,3 @@
+# Application request source v107
+
+SK-F03/R0067/R0138/AC12 routing source audit confirms four existing Workload recipes are installer fixtures only, with no native tool registration or production caller. Pin a separate finite root-observed installer qualification request and exact root argument projection; never fabricate a native action mapping or alter original canonical arguments. Exact producer/resolver/mapping is adjacent JSON and live selected-application-workload-contract.request_source_v107. Current production application native mapping remains absent, all original application functionality and acceptance open. Baseline unchanged.
