@@ -75,3 +75,11 @@ Owner observer/capture/RPC v185: `plans/amendments/2026-10-10-owner-overlay-obse
 
 
 Preactive listener v186: `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; real prepared root no-effect socket precedes signed recipe, active FD transfer/re-observation follows publication. HI-T186.1/.2/VD-T186.3 OPEN, no future socket/active proof, all AC01..18 OPEN.
+
+
+Listener activation v187: `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; actual supervised daemon/peer transaction and named private channel, each process locally verifies own actor. HI-T187.1/.2/VD-T187.3 OPEN, source pins pending, allAC01..18 OPEN.
+
+
+Owner result source v188: `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; HI-T188.1 → VD-T188.2 OPEN. Separately signed actual result observer/root handler, no backend observer substitution; all AC01..18 OPEN/source review pending.
+
+HI-T188.3 → VD-T188.4 OPEN: exact native Hermes module launch mode resolves source recipe/generic interpreter contradiction without weakening generic scripts.
