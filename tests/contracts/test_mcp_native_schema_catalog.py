@@ -39,11 +39,16 @@ class NativeMCPProtectedSchemaCatalogTests(unittest.TestCase):
             "adapter_id": "hermes-installer.native-mcp-dispatch.v1",
             "action_id": "mcp-binding-figma-file",
             "source_receipt_handle": "source-receipt-handle-1",
+            "size_bytes": len(canonical_bytes(self.schema)),
+            "derivation_receipt_handle": None,
         }
 
     def catalog(self, rows=None, *, body=None, source_ok=True):
         artifacts = {self.row["artifact_id"]: self.body if body is None else body}
         seen = []
+        selected_rows = [self.row] if rows is None else rows
+        if rows is None and body is not None:
+            selected_rows = [dict(self.row, size_bytes=len(body))]
 
         def read_artifact(artifact_id, expected_digest):
             return artifacts[artifact_id]
@@ -53,7 +58,7 @@ class NativeMCPProtectedSchemaCatalogTests(unittest.TestCase):
             return source_ok
 
         catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
-            [self.row] if rows is None else rows,
+            selected_rows,
             read_artifact=read_artifact,
             verify_source_receipt=verify_source,
         )
@@ -83,6 +88,21 @@ class NativeMCPProtectedSchemaCatalogTests(unittest.TestCase):
             self.catalog(source_ok=False)
         with self.assertRaisesRegex(NativeSchemaCatalogError, "digest"):
             self.catalog(body=b'{"type":"string"}')
+
+    def test_dynamic_schema_requires_root_derived_resolver_before_any_artifact_read(self):
+        row = dict(self.row)
+        row.update({
+            "artifact_id": f"native-mcp-schema:{self.digest}",
+            "derivation_receipt_handle": "derived-receipt-handle-1",
+        })
+        reads = []
+        with self.assertRaisesRegex(NativeSchemaCatalogError, "derived schema resolver"):
+            NativeMCPProtectedSchemaCatalog.from_protected_records(
+                [row],
+                read_artifact=lambda artifact_id, digest: reads.append((artifact_id, digest)) or self.body,
+                verify_source_receipt=lambda _handle, _identity: True,
+            )
+        self.assertEqual(reads, [])
 
     def test_rejects_noncanonical_duplicate_and_external_reference_schema(self):
         for body in (
