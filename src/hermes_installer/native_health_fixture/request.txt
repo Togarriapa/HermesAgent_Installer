@@ -1,0 +1,1 @@
+Perform the local Hermes native health check. Call resource_overlay_read exactly once with record_id "hermes-health-probe-v1". Do not call another tool and do not modify the record.
