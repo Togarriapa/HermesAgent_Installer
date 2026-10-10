@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
 import threading
@@ -23,10 +24,194 @@ from .types import AuthorityDenied, canonical_bytes
 _JOURNAL_ID = "installer-authority-journal-v1"
 _DIGEST = frozenset("0123456789abcdef")
 _COMPLETION_SEAL = object()
+_MAX_COMPLETION_BYTES = 128 * 1024
+_TEMP_RECORD = re.compile(r"\.health-[0-9a-f]{32}\.tmp\Z")
 
 
 def _valid_digest(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(char in _DIGEST for char in value)
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _record_filename(transaction_id: str) -> str:
+    if not isinstance(transaction_id, str) or not 1 <= len(transaction_id) <= 128:
+        raise AuthorityDenied("native.health.journal", "journal transaction ID is malformed")
+    return hashlib.sha256(transaction_id.encode("utf-8")).hexdigest() + ".json"
+
+
+def _read_health_record_at(directory_fd: int, transaction_id: str) -> tuple[str, bytes] | None:
+    filename = _record_filename(transaction_id)
+    try:
+        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise AuthorityDenied("native.health.journal", "health completion record cannot be opened without following links") from None
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_nlink not in (1, 2) or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_size > _MAX_COMPLETION_BYTES):
+            raise AuthorityDenied("native.health.journal", "health completion record custody is invalid")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 16 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_COMPLETION_BYTES:
+                raise AuthorityDenied("native.health.journal", "health completion record exceeds its byte bound")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        if info.st_nlink == 2:
+            _recover_linked_temporary(directory_fd, filename, fd, info, raw)
+        elif info.st_nlink != 1:
+            raise AuthorityDenied("native.health.journal", "health completion record link count changed")
+    finally:
+        os.close(fd)
+    try:
+        row = json.loads(raw, object_pairs_hook=_unique_object)
+        from .native_health_observer import RootNativeHealthReceipt
+        expected_fields = {
+            "schema", "journal_transaction_id", "transaction_handle", "enrollment_id",
+            "profile_id", "process_generation", "service_generation_digest",
+            "health_receipt_handle", "health_receipt", "publication_receipt_handle",
+        }
+        if (not isinstance(row, dict) or row.get("schema") != 1
+                or set(row) != expected_fields or row.get("journal_transaction_id") != transaction_id
+                or not isinstance(row.get("health_receipt"), dict)
+                or set(row["health_receipt"]) != set(RootNativeHealthReceipt.__dataclass_fields__)
+                or row["health_receipt"].get("status") != "passed"
+                or row["health_receipt"].get("health_receipt_handle") != row.get("health_receipt_handle")
+                or row["health_receipt"].get("service_generation_digest") != row.get("service_generation_digest")
+                or not _valid_digest(row.get("service_generation_digest"))
+                or canonical_bytes(row) != raw):
+            raise ValueError
+        return filename, raw
+    except Exception:
+        raise AuthorityDenied("native.health.journal", "health completion record is malformed") from None
+
+
+def _recover_linked_temporary(directory_fd: int, filename: str, record_fd: int,
+                              record_info: os.stat_result, record_bytes: bytes) -> None:
+    """Finish link/unlink after a crash between atomic publish and temp cleanup."""
+    candidates: list[str] = []
+    with os.scandir(directory_fd) as entries:
+        for entry in entries:
+            if _TEMP_RECORD.fullmatch(entry.name):
+                info = entry.stat(follow_symlinks=False)
+                if (info.st_dev, info.st_ino) == (record_info.st_dev, record_info.st_ino):
+                    candidates.append(entry.name)
+                    if len(candidates) > 1:
+                        break
+    if len(candidates) != 1:
+        raise AuthorityDenied("native.health.journal", "published health record has an unexplained hard link")
+    temp_fd = os.open(candidates[0], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                      dir_fd=directory_fd)
+    try:
+        temp_info = os.fstat(temp_fd)
+        if (temp_info.st_ino != record_info.st_ino or not stat.S_ISREG(temp_info.st_mode)
+                or temp_info.st_uid != 0 or temp_info.st_nlink != 2
+                or stat.S_IMODE(temp_info.st_mode) != 0o600):
+            raise AuthorityDenied("native.health.journal", "health temporary changed during recovery")
+        temp_bytes = bytearray()
+        while len(temp_bytes) <= _MAX_COMPLETION_BYTES:
+            chunk = os.read(temp_fd, 16 * 1024)
+            if not chunk:
+                break
+            temp_bytes.extend(chunk)
+        if bytes(temp_bytes) != record_bytes:
+            raise AuthorityDenied("native.health.journal", "health temporary differs from published record")
+    finally:
+        os.close(temp_fd)
+    os.unlink(candidates[0], dir_fd=directory_fd)
+    os.fsync(directory_fd)
+    if os.fstat(record_fd).st_nlink != 1:
+        raise AuthorityDenied("native.health.journal", "health record link recovery was incomplete")
+
+
+def _append_health_record_at(directory_fd: int, transaction_id: str, encoded: bytes) -> None:
+    if not isinstance(encoded, bytes) or not 1 <= len(encoded) <= _MAX_COMPLETION_BYTES:
+        raise AuthorityDenied("native.health.journal", "health completion encoding exceeds its byte bound")
+    info = os.fstat(directory_fd)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+            or stat.S_IMODE(info.st_mode) != 0o700):
+        raise AuthorityDenied("native.health.journal", "health completion directory custody is invalid")
+    # Validate canonical bytes and transaction binding before creating any file.
+    try:
+        parsed = json.loads(encoded, object_pairs_hook=_unique_object)
+        from .native_health_observer import RootNativeHealthReceipt
+        expected_fields = {
+            "schema", "journal_transaction_id", "transaction_handle", "enrollment_id",
+            "profile_id", "process_generation", "service_generation_digest",
+            "health_receipt_handle", "health_receipt", "publication_receipt_handle",
+        }
+        if (not isinstance(parsed, dict) or set(parsed) != expected_fields
+                or parsed.get("schema") != 1
+                or parsed.get("journal_transaction_id") != transaction_id
+                or not isinstance(parsed.get("health_receipt"), dict)
+                or set(parsed["health_receipt"]) != set(RootNativeHealthReceipt.__dataclass_fields__)
+                or parsed["health_receipt"].get("status") != "passed"
+                or parsed["health_receipt"].get("health_receipt_handle") != parsed.get("health_receipt_handle")
+                or parsed["health_receipt"].get("service_generation_digest") != parsed.get("service_generation_digest")
+                or not _valid_digest(parsed.get("service_generation_digest"))
+                or canonical_bytes(parsed) != encoded):
+            raise ValueError
+    except Exception:
+        raise AuthorityDenied("native.health.journal", "health completion encoding is not canonical or bound")
+    filename = _record_filename(transaction_id)
+    temporary = ".health-" + secrets.token_hex(16) + ".tmp"
+    fd = -1
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                     os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory_fd)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(fd, view)
+            if type(written) is not int or written <= 0 or written > len(view):
+                raise OSError("health completion write made no forward progress")
+            view = view[written:]
+        os.fsync(fd)
+        temp_info = os.fstat(fd)
+        if (not stat.S_ISREG(temp_info.st_mode) or temp_info.st_uid != 0
+                or temp_info.st_nlink != 1 or stat.S_IMODE(temp_info.st_mode) != 0o600):
+            raise OSError("health completion temporary file custody is invalid")
+        os.close(fd)
+        fd = -1
+        try:
+            os.link(temporary, filename, src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd, follow_symlinks=False)
+        except FileExistsError:
+            previous = _read_health_record_at(directory_fd, transaction_id)
+            if previous is None or previous[1] != encoded:
+                raise AuthorityDenied("native.health.replay", "health completion transaction is already recorded")
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            # A concurrent replay may have completed recovery of this linked inode.
+            pass
+        os.fsync(directory_fd)
+    except AuthorityDenied:
+        raise
+    except Exception:
+        raise AuthorityDenied("native.health.journal", "atomic health completion journal write failed") from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except OSError:
+            pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,14 +243,16 @@ def _completion(row: Mapping[str, Any]) -> RootFunctionalHealthCompletion:
 class RootFunctionalHealthJournal:
     """Append-only, no-follow completion records beneath the selected root journal."""
 
-    def __init__(self, *, start_authority: Any, publication_resolver: Any,
-                 root_journal: Any):
+    def __init__(self, *, start_authority: Any, health_observer: Any,
+                 publication_resolver: Any, root_journal: Any):
         from hermes_installer.protected_enrollment import RootJournalSelection
-        from .native_health_observer import RootNativeHealthStartAuthority
+        from .native_health_observer import RootNativeHealthObserver, RootNativeHealthStartAuthority
         from .setup_policy_publication import PolicyPublicationReceiptResolver
 
         if (os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or os.geteuid() != 0
                 or type(start_authority) is not RootNativeHealthStartAuthority
+                or type(health_observer) is not RootNativeHealthObserver
+                or start_authority.health_observer is not health_observer
                 or publication_resolver is not PolicyPublicationReceiptResolver
                 or type(root_journal) is not RootJournalSelection
                 or root_journal.root_id != _JOURNAL_ID
@@ -74,6 +261,7 @@ class RootFunctionalHealthJournal:
                 or not _valid_digest(root_journal.service_generation_digest)):
             raise AuthorityDenied("native.health.journal", "root-selected health journal dependencies are unavailable")
         self.start_authority = start_authority
+        self.health_observer = health_observer
         self.publication_resolver = publication_resolver
         self.root_journal = root_journal
         self._lock = threading.RLock()
@@ -101,9 +289,10 @@ class RootFunctionalHealthJournal:
 
     @classmethod
     def from_root_committed_health(cls, *, start_authority: Any,
+                                   health_observer: Any,
                                    publication_resolver: Any,
                                    root_journal: Any) -> "RootFunctionalHealthJournal":
-        return cls(start_authority=start_authority,
+        return cls(start_authority=start_authority, health_observer=health_observer,
                    publication_resolver=publication_resolver,
                    root_journal=root_journal)
 
@@ -199,51 +388,13 @@ class RootFunctionalHealthJournal:
         return {name: getattr(receipt, name) for name in receipt.__dataclass_fields__}
 
     def _record_for(self, transaction_id: str) -> tuple[str, bytes] | None:
-        filename = hashlib.sha256(transaction_id.encode("utf-8")).hexdigest() + ".json"
-        try:
-            fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                         dir_fd=self._records_fd)
-        except FileNotFoundError:
-            return None
-        try:
-            info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
-                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600
-                    or info.st_size > 128 * 1024):
-                raise AuthorityDenied("native.health.journal", "health completion record custody is invalid")
-            chunks = []
-            while True:
-                chunk = os.read(fd, 16 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            raw = b"".join(chunks)
-        finally:
-            os.close(fd)
-        try:
-            row = json.loads(raw)
-            from .native_health_observer import RootNativeHealthReceipt
-            fields = {
-                "schema", "journal_transaction_id", "transaction_handle", "enrollment_id",
-                "profile_id", "process_generation", "service_generation_digest",
-                "health_receipt_handle", "health_receipt", "publication_receipt_handle",
-            }
-            if (not isinstance(row, dict) or row.get("schema") != 1
-                    or set(row) != fields or row.get("journal_transaction_id") != transaction_id
-                    or not isinstance(row.get("health_receipt"), dict)
-                    or set(row["health_receipt"]) != set(RootNativeHealthReceipt.__dataclass_fields__)
-                    or row["health_receipt"].get("status") != "passed"
-                    or row["health_receipt"].get("health_receipt_handle") != row.get("health_receipt_handle")
-                    or not _valid_digest(row.get("service_generation_digest"))):
-                raise ValueError
-            return filename, raw
-        except Exception:
-            raise AuthorityDenied("native.health.journal", "health completion record is malformed") from None
+        return _read_health_record_at(self._records_fd, transaction_id)
 
     def reconcile(self, active_receipt: Any, health_receipt_handle: str) -> RootFunctionalHealthCompletion | None:
         with self._lock:
             commit, material, admission, publication = self._resolve_current(active_receipt)
             prior = self._record_for(commit.journal_transaction_id)
+            self._verify_current_selection()
             if prior is None:
                 return None
             try:
@@ -256,13 +407,20 @@ class RootFunctionalHealthJournal:
                         or row["process_generation"] != material.process_generation
                         or row["publication_receipt_handle"] != publication.receipt_handle):
                     raise ValueError
-                return _completion(row)
+                result = _completion(row)
             except Exception:
                 raise AuthorityDenied("native.health.replay", "existing completion does not match this current health run") from None
+            self._resolve_current(active_receipt)
+            self._verify_current_selection()
+            return result
 
-    def persist_consumed_receipt(self, active_receipt: Any, health_receipt: Any,
-                                 expected_service_generation_digest: str) -> RootFunctionalHealthCompletion:
+    def persist_consumed_receipt(self, ticket: Any) -> RootFunctionalHealthCompletion:
         with self._lock:
+            try:
+                health_receipt, active_receipt, expected_service_generation_digest = (
+                    self.health_observer._resolve_pending_consumption_ticket(ticket))
+            except Exception:
+                raise AuthorityDenied("native.health.receipt", "journal requires this observer's live consumption ticket") from None
             commit, material, admission, publication = self._resolve_current(active_receipt)
             from .native_health_observer import RootNativeHealthReceipt
             if type(health_receipt) is not RootNativeHealthReceipt:
@@ -314,46 +472,18 @@ class RootFunctionalHealthJournal:
                 raise AuthorityDenied("native.health.current", "health authority changed before durable completion")
             self._verify_current_selection()
             self._write_once(commit.journal_transaction_id, encoded)
+            completed_commit, completed_material, completed_admission, completed_publication = (
+                self._resolve_current(active_receipt))
+            if (completed_commit is not commit or completed_admission is not admission
+                    or completed_material.verified_commit is not commit
+                    or completed_material.service_generation_digest != digest
+                    or completed_publication != publication):
+                raise AuthorityDenied("native.health.current", "health authority changed after durable completion")
             return _completion(row)
 
     def _write_once(self, transaction_id: str, encoded: bytes) -> None:
-        filename = hashlib.sha256(transaction_id.encode("utf-8")).hexdigest() + ".json"
-        temporary = ".health-" + secrets.token_hex(16) + ".tmp"
-        fd = -1
-        try:
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
-                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=self._records_fd)
-            view = memoryview(encoded)
-            while view:
-                view = view[os.write(fd, view):]
-            os.fsync(fd)
-            info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
-                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
-                raise OSError("health completion temporary file custody is invalid")
-            os.close(fd)
-            fd = -1
-            self._verify_current_selection()
-            try:
-                os.link(temporary, filename, src_dir_fd=self._records_fd,
-                        dst_dir_fd=self._records_fd, follow_symlinks=False)
-            except FileExistsError:
-                prior = self._record_for(transaction_id)
-                if prior is None or prior[1] != encoded:
-                    raise AuthorityDenied("native.health.replay", "health completion transaction is already recorded")
-            os.unlink(temporary, dir_fd=self._records_fd)
-            os.fsync(self._records_fd)
-        except AuthorityDenied:
-            raise
-        except Exception:
-            raise AuthorityDenied("native.health.journal", "atomic health completion journal write failed") from None
-        finally:
-            if fd >= 0:
-                os.close(fd)
-            try:
-                os.unlink(temporary, dir_fd=self._records_fd)
-            except OSError:
-                pass
+        self._verify_current_selection()
+        _append_health_record_at(self._records_fd, transaction_id, encoded)
 
 
 class RootFunctionalHealthReceiptConsumer:
@@ -375,8 +505,9 @@ class RootFunctionalHealthReceiptConsumer:
         self.start_authority = start_authority
         self.health_observer = health_observer
         self.publication_resolver = publication_resolver
-        self.journal = RootFunctionalHealthJournal.from_root_committed_health(
-            start_authority=start_authority, publication_resolver=publication_resolver,
+        self._journal = RootFunctionalHealthJournal.from_root_committed_health(
+            start_authority=start_authority, health_observer=health_observer,
+            publication_resolver=publication_resolver,
             root_journal=root_journal)
 
     @classmethod
@@ -392,15 +523,15 @@ class RootFunctionalHealthReceiptConsumer:
         if (not isinstance(health_receipt_handle, str)
                 or not 32 <= len(health_receipt_handle) <= 128):
             raise AuthorityDenied("native.health.receipt", "health receipt handle is malformed")
-        prior = self.journal.reconcile(active_receipt, health_receipt_handle)
+        prior = self._journal.reconcile(active_receipt, health_receipt_handle)
         if prior is not None:
             return prior
-        commit, material, admission, _publication = self.journal._resolve_current(active_receipt)
+        commit, material, admission, _publication = self._journal._resolve_current(active_receipt)
         return self.health_observer.consume_selected_health_receipt(
             health_receipt_handle, commit.journal_transaction_id,
             material.service_generation_digest,
-            completion_journal=self.journal, active_receipt=active_receipt,
+            completion_journal=self._journal, active_receipt=active_receipt,
         )
 
     def close(self) -> None:
-        self.journal.close()
+        self._journal.close()

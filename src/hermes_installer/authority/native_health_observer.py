@@ -864,6 +864,17 @@ class RootNativeHealthReceipt:
             raise ValueError("native health receipt status or lease is invalid")
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _RootHealthConsumptionTicket:
+    """Ephemeral observer-issued proof for one retained pending receipt."""
+
+    observer: Any = field(repr=False, compare=False)
+    receipt: RootNativeHealthReceipt = field(repr=False, compare=False)
+    active_receipt: Any = field(repr=False, compare=False)
+    expected_service_generation_digest: str
+    _seal: object = field(repr=False, compare=False)
+
+
 @dataclass(frozen=True, slots=True)
 class RootValidatedNativeHealthResult:
     """Reviewed semantic parser output; plain booleans/status strings are rejected."""
@@ -908,6 +919,8 @@ class RootNativeHealthObserver:
         self._observations: dict[str, _HealthObservation] = {}
         self._receipts: dict[str, RootNativeHealthReceipt] = {}
         self._consumed: set[str] = set()
+        self._consumption_tickets: dict[str, _RootHealthConsumptionTicket] = {}
+        self._consumption_seal = object()
         self._lock = threading.RLock()
 
     def begin_selected_health(self, control_handle: str) -> str:
@@ -1118,11 +1131,49 @@ class RootNativeHealthObserver:
                 if (type(completion_journal) is not RootFunctionalHealthJournal
                         or active_receipt is None):
                     raise AuthorityDenied("native.health.journal", "health consumption requires the typed completion journal and commit")
+                ticket = self._issue_consumption_ticket(
+                    receipt, active_receipt, expected_service_generation_digest,
+                )
                 completion = completion_journal.persist_consumed_receipt(
-                    active_receipt, receipt, expected_service_generation_digest,
+                    ticket,
                 )
             self._consumed.add(health_receipt_handle)
+            self._consumption_tickets.pop(health_receipt_handle, None)
             return completion
+
+    def _issue_consumption_ticket(self, receipt: RootNativeHealthReceipt,
+                                  active_receipt: Any,
+                                  expected_service_generation_digest: str) -> _RootHealthConsumptionTicket:
+        """Mint a ticket only from the exact pending receipt while consume holds this lock."""
+        if (self._receipts.get(receipt.health_receipt_handle) is not receipt
+                or receipt.health_receipt_handle in self._consumed
+                or self.monotonic() >= receipt.expires_monotonic
+                or receipt.service_generation_digest != expected_service_generation_digest):
+            raise AuthorityDenied("native.health.receipt", "health receipt is no longer pending consumption")
+        ticket = _RootHealthConsumptionTicket(
+            self, receipt, active_receipt, expected_service_generation_digest,
+            self._consumption_seal,
+        )
+        self._consumption_tickets[receipt.health_receipt_handle] = ticket
+        return ticket
+
+    def _resolve_pending_consumption_ticket(
+        self, ticket: Any,
+    ) -> tuple[RootNativeHealthReceipt, Any, str]:
+        """Check observer identity, seal, retained membership, lease and one-use state."""
+        with self._lock:
+            if (type(ticket) is not _RootHealthConsumptionTicket
+                    or ticket.observer is not self or ticket._seal is not self._consumption_seal
+                    or type(ticket.receipt) is not RootNativeHealthReceipt
+                    or self._consumption_tickets.get(ticket.receipt.health_receipt_handle) is not ticket
+                    or self._receipts.get(ticket.receipt.health_receipt_handle) is not ticket.receipt
+                    or ticket.receipt.health_receipt_handle in self._consumed
+                    or self.monotonic() >= ticket.receipt.expires_monotonic
+                    or ticket.receipt.status != "passed"
+                    or ticket.receipt.service_generation_digest
+                    != ticket.expected_service_generation_digest):
+                raise AuthorityDenied("native.health.receipt", "observer did not issue a current pending-consumption proof")
+            return ticket.receipt, ticket.active_receipt, ticket.expected_service_generation_digest
 
     def cancel_selected_health(self, health_observation_handle: str) -> None:
         with self._lock:

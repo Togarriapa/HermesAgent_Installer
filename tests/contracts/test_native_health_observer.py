@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import secrets
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_health_observer import (
@@ -123,6 +124,20 @@ class NativeHealthObserverContracts(unittest.TestCase):
                 observer.consume_selected_health_receipt(
                     receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
                     receipt.service_generation_digest)
+        finally:
+            os.close(fd)
+
+        observer, _run, _events, refs, _now, fd = self._observer()
+        try:
+            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
+            for kind in ("loader-ready", "native-request", "provider-result",
+                         "tool-invocation", "tool-result", "terminal"):
+                observer.observe_health_event(handle, refs[kind])
+            receipt = observer.finish_selected_health(handle)
+            ticket = observer._issue_consumption_ticket(receipt, object(), receipt.service_generation_digest)
+            with self.assertRaises(AuthorityDenied):
+                observer._resolve_pending_consumption_ticket(replace(ticket))
+            self.assertIs(observer._resolve_pending_consumption_ticket(ticket)[0], receipt)
         finally:
             os.close(fd)
 
