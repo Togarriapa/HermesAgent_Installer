@@ -1809,7 +1809,8 @@ class WebhookVerifier:
         self.replay_window_seconds, self.now = replay_window_seconds, now
 
     def verify(self, resource_id: str, spec: Mapping[str, Any], headers: Mapping[str, str],
-               body: bytes, secret: bytes) -> WebhookReceipt:
+               body: bytes, secret: bytes, *, replay_identity: str | None = None,
+               claim_replay: bool = True) -> WebhookReceipt:
         _validate_webhook_declaration(spec)
         if not isinstance(body, bytes) or len(body) > self.max_body_bytes:
             raise ResourceRuntimeError("webhook body is malformed or exceeds its size limit")
@@ -1819,12 +1820,6 @@ class WebhookVerifier:
         expected_type = (spec.get("validation") or {}).get("contentType", "application/json")
         if not normalized.get("content-type", "").split(";", 1)[0].strip().lower() == expected_type.lower():
             raise ResourceRuntimeError("webhook content type is not allowed")
-        try:
-            decoded = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ResourceRuntimeError("webhook body is not valid JSON") from None
-        if not isinstance(decoded, (dict, list)):
-            raise ResourceRuntimeError("webhook JSON root must be an object or array")
 
         authentication = spec["authentication"]
         auth_type = authentication["type"]
@@ -1840,6 +1835,42 @@ class WebhookVerifier:
             supplied = normalized.get("authorization", "")
             if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:].encode(), secret):
                 raise ResourceRuntimeError("webhook bearer credential verification failed")
+
+        # Authenticate the original bytes before parsing. Python's default JSON
+        # decoder silently keeps the last duplicate object member, which can
+        # make the verifier and downstream event schema disagree about a
+        # signed request. Reject duplicates and non-finite numbers throughout
+        # the body before claiming the delivery ID.
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON object member")
+                result[key] = value
+            return result
+
+        def reject_constant(_value: str) -> None:
+            raise ValueError("non-finite JSON number")
+
+        try:
+            decoded = json.loads(body, object_pairs_hook=unique_object, parse_constant=reject_constant)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+            raise ResourceRuntimeError("webhook body is invalid JSON or contains duplicate fields") from None
+        if not isinstance(decoded, (dict, list)):
+            raise ResourceRuntimeError("webhook JSON root must be an object or array")
+        stack: list[tuple[Any, int]] = [(decoded, 0)]
+        member_count = 0
+        while stack:
+            current, depth = stack.pop()
+            if depth > 32:
+                raise ResourceRuntimeError("webhook JSON exceeds the protocol nesting bound")
+            if isinstance(current, Mapping):
+                member_count += len(current)
+                if member_count > 4096:
+                    raise ResourceRuntimeError("webhook JSON exceeds the protocol member bound")
+                stack.extend((value, depth + 1) for value in current.values())
+            elif isinstance(current, list):
+                stack.extend((value, depth + 1) for value in current)
 
         event = spec.get("event")
         event_type = ""
@@ -1863,7 +1894,12 @@ class WebhookVerifier:
         if not event_id or len(event_id) > 256 or any(ord(c) < 0x20 for c in event_id):
             raise ResourceRuntimeError("webhook delivery identity is missing or invalid")
         received_at = self.now()
-        if not self.replay_store.claim(resource_id, event_id, received_at + self.replay_window_seconds):
+        claimed_id = replay_identity if replay_identity is not None else event_id
+        if (not isinstance(claimed_id, str) or not 1 <= len(claimed_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in claimed_id)):
+            raise ResourceRuntimeError("webhook replay identity is malformed")
+        if claim_replay and not self.replay_store.claim(
+                resource_id, claimed_id, received_at + self.replay_window_seconds):
             raise ResourceRuntimeError("duplicate webhook delivery was rejected")
         return WebhookReceipt(resource_id, event_id, event_type, body,
                               hashlib.sha256(body).hexdigest(), received_at)
