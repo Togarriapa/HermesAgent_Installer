@@ -1197,3 +1197,7 @@ The installer SHALL carry only its previously authorized sealedFD3 through exist
 #### Scenario: Sealed memfd is already descriptor three
 - **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
 - **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins
+
+#### Scenario: Sealed handoff memfd is already descriptor 3
+- **WHEN** the fixed same-process re-exec installs its sealed transition memfd and that source descriptor is already 3 with close-on-exec set
+- **THEN** it explicitly clears and verifies close-on-exec on descriptor 3 before exec, and the child validates the same sealed bytes and journal binding

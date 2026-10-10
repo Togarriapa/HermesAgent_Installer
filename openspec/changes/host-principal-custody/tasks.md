@@ -467,3 +467,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
 
 - [ ] BD-T208.1 / VD-T208.2 (v220): Integrate exact reviewed FD3 source/evidence, full coherent checks and actual target handoff; no installed selfpin or acceptance inference.
+
+- [x] BD-T208.1 FD3 defect: explicitly clear and verify close-on-exec for the same-fd placement case; preserve seals and handoff identity checks.
+- [x] VD-T208.2 FD3 regression: real ARM64 Linux Python 3.14 fork/exec positive and CLOEXEC negative controls; repository Linux integration test added.
+- [ ] VD-T208.2 target: repeat exact handoff on enrolled Pi and retain genuine target result; development container evidence is not Pi acceptance.

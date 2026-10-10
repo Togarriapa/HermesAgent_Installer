@@ -392,3 +392,5 @@ Jarvis source-profile task identity v215: distinct protected source_profile_id/h
 OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/sourceobserver/Node npm Electron/native lockedclosure, no Hyperframesconsent or blanketlifecycle scripts. planning/official-desktop-build-acquisition-v218.json; BD-T218.1/.2 VD-T218.3 OPEN.
 
 SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.
+
+FD3 handoff custody: when the sealed memfd is already descriptor 3, explicitly set it inheritable and verify FD_CLOEXEC is clear before exec; retain the existing seals, exact bytes, journal hash/device/inode checks, and same-process handoff.
