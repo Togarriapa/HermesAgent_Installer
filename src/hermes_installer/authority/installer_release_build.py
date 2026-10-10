@@ -2499,9 +2499,7 @@ class RootInstalledReleaseBuilder:
         staged.append(self._last_output_row)
         runtime_fd = interpreter.open_executable()
         try:
-            info = os.fstat(runtime_fd)
-            digest, size = _hash_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
-            body = _read_exact_fd(runtime_fd, size)
+            digest, size, body = _hash_and_read_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
             _write_relative(output_fd, STAGED_INTERPRETER_PATH, body, mode=0o555)
             staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555, ("interpreter",)))
         finally:
@@ -3261,6 +3259,12 @@ def _hash_fd(fd: int, maximum: int) -> tuple[str, int]:
             raise InstallerReleaseBuildError("source file exceeds the protected byte bound")
         digest.update(part)
     return digest.hexdigest(), total
+
+
+def _hash_and_read_fd(fd: int, maximum: int) -> tuple[str, int, bytes]:
+    digest, size = _hash_fd(fd, maximum)
+    os.lseek(fd, 0, os.SEEK_SET)
+    return digest, size, _read_exact_fd(fd, size)
 
 
 def _read_exact_fd(fd: int, size: int) -> bytes:

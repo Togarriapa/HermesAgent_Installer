@@ -181,6 +181,20 @@ def test_enumeration_rejects_unsealed_symlink(tmp_path):
         os.close(fd)
 
 
+def test_hash_then_read_rewinds_a_consumed_descriptor(tmp_path):
+    body = b"sealed interpreter bytes" * 37
+    path = tmp_path / "interpreter"
+    path.write_bytes(body)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        digest, size, copied = release_build._hash_and_read_fd(fd, len(body))
+        assert copied == body
+        assert size == len(body)
+        assert digest == hashlib.sha256(body).hexdigest()
+    finally:
+        os.close(fd)
+
+
 def test_source_paths_reject_parent_and_platform_aliases():
     for value in ("../escape", "/absolute", "a//b", "a\\b", "a/./b"):
         with pytest.raises(release_build.InstallerReleaseBuildError):
