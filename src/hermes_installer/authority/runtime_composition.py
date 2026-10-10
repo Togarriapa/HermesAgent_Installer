@@ -1536,8 +1536,15 @@ def compose_root_authority_runtime(
             memory_network_lease_resolver = RootMemoryNetworkLeaseResolver(
                 bindings, monotonic=service.monotonic,
             )
-        except Exception:
-            memory_network_lease_resolver = None
+        except Exception as exc:
+            # Root composition must never fall back to the generic custody
+            # namespace resolver: it is not bound to the selected private
+            # endpoint/network row. Leave the memory service unavailable if
+            # the typed retained-lease resolver cannot be assembled.
+            raise AuthorityDenied(
+                "authority.composition",
+                f"active memory private-network lease resolver is unavailable ({type(exc).__name__})",
+            ) from None
         memory_runtime = build_memory_runtime(
             memory_targets, service,
             root_journal_resolver=bindings.resolve_root_journal,
