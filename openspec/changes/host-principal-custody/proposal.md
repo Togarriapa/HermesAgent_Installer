@@ -193,3 +193,7 @@ Financial alias source bound v121: `plans/amendments/2026-10-10-financial-alias-
 Native process role association v123: `plans/amendments/2026-10-10-native-process-role-association-v123.md`; actual role/source/loaded observer joins and acceptance remain open.
 
 Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-receipt-v126.md`; actual bounded captured source/CAS/handler proof required; HI-T08/HI-T11 acceptance open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.
+
+Native process-role delivery v134: `plans/amendments/2026-10-10-native-process-role-delivery-v134.md`; exact manifest role rows/digest and actual loader import observations with independently verified root custody, not adapter inference or catalog-only loaded proof. All AC open.
