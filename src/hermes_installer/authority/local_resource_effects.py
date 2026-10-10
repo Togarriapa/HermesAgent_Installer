@@ -852,3 +852,240 @@ def _validate_json_schema_instance(schema: Mapping[str, Any], value: Any) -> Non
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+_ACTIVE_LOCAL_OWNER_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootCurrentActiveLocalOwnerPrincipalSnapshot:
+    """Short-lived current NSS and publication projection for a local owner."""
+
+    snapshot_handle: str
+    identity_kind: str
+    source_choice_handle: str
+    source_choice_sha256: str
+    choice_epoch: int
+    revocation_epoch: int
+    owner_account_binding_sha256: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    service_uid: int
+    service_gid: int
+    profile_generation: str
+    service_generation_digest: str
+    active_publication_receipt_handle: str
+    owner_instance: str
+    observed_monotonic: float
+    expires_monotonic: float
+    adoption_sha256: str
+    _seal: object = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _ACTIVE_LOCAL_OWNER_SEAL
+                or self.identity_kind != "linux-local-owner-v1"
+                or self.expires_monotonic <= self.observed_monotonic):
+            raise TypeError("active local-owner principal snapshots are root-issued")
+
+    def verify_current(self, registry: Any) -> "RootCurrentActiveLocalOwnerPrincipalSnapshot":
+        if registry is not self._issuer:
+            raise LocalProfileOverlayEffectsDenied("active owner snapshot belongs to another root registry")
+        return registry.verify_current(self)
+
+    def __repr__(self) -> str:
+        return "RootCurrentActiveLocalOwnerPrincipalSnapshot(<root-private>)"
+
+
+class RootActiveLocalOwnerPrincipalRegistry:
+    """Resolve a published local owner against current signed source, NSS and service custody.
+
+    The registry holds no setup composer, setup view, or setup-session
+    snapshot. Every issue and verification reopens the current publication and
+    the fixed protected data-root/view recipe recorded in that publication.
+    """
+
+    def __init__(self, runtime: Any):
+        from .runtime_composition import RootAuthorityRuntime
+        from .root_setup_choices import RootSetupChoiceRegistry
+        from .runtime_bindings import RootRuntimeBindings
+
+        if (type(runtime) is not RootAuthorityRuntime
+                or type(runtime.bindings) is not RootRuntimeBindings
+                or type(runtime.root_setup_choice_registry) is not RootSetupChoiceRegistry
+                or runtime.service.root_runtime_bindings is not runtime.bindings
+                or runtime.boot_epoch != runtime.service.authority_epoch):
+            raise LocalProfileOverlayEffectsDenied("active owner principal requires the attached root runtime")
+        self._runtime = runtime
+        self._boot_epoch = runtime.boot_epoch
+        self._closed = False
+        self._snapshots: dict[str, RootCurrentActiveLocalOwnerPrincipalSnapshot] = {}
+
+    @classmethod
+    def from_root_runtime(cls, runtime: Any) -> "RootActiveLocalOwnerPrincipalRegistry":
+        return cls(runtime)
+
+    def resolve_profile(self, profile_id: str) -> RootCurrentActiveLocalOwnerPrincipalSnapshot:
+        if (self._closed or not isinstance(profile_id, str) or not profile_id
+                or self._runtime.boot_epoch != self._boot_epoch):
+            raise LocalProfileOverlayEffectsDenied("active local-owner profile selector is invalid or stale")
+        from .setup_policy_publication import (
+            PolicyPublicationReceiptResolver, PublishedSetupChoiceAdoption,
+            _choice_adoption_value, validate_owner_overlay_adoption_row,
+        )
+        from hermes_installer.protected_enrollment import ProtectedEnrollmentCatalog
+        try:
+            receipt = PolicyPublicationReceiptResolver.resolve_current()
+            if receipt.state != "active-committed" or not receipt.owner_overlay_adoption_records:
+                raise ValueError
+            rows = [validate_owner_overlay_adoption_row(row)
+                    for row in receipt.owner_overlay_adoption_records]
+            selected = [row for row in rows
+                        if row["owner"].get("profile_id") == profile_id]
+            if len(selected) != 1:
+                raise ValueError
+            row = selected[0]
+            choice_handle = row["signed_choice"]["selection_handle"]
+            choices = [item for item in receipt.choice_adoptions
+                       if type(item) is PublishedSetupChoiceAdoption
+                       and item.selection_handle == choice_handle
+                       and item.purpose == "native-policy-preparation"]
+            if len(choices) != 1:
+                raise ValueError
+            choice = choices[0]
+            choice.verify_current(self._runtime.root_setup_choice_registry)
+            choice_row = _choice_adoption_value(choice)
+            choice_row = {key: value for key, value in choice_row.items()
+                          if key not in {"publication_receipt_handle", "publication_sha256", "generation_id"}}
+            if (choice_row != row["signed_choice"]
+                    or choice.publication_receipt_handle != receipt.receipt_handle
+                    or choice.publication_sha256 != receipt.publication_sha256
+                    or choice.service_generation_digest != receipt.service_generation_digest
+                    or row["owner"]["service_generation_digest"] != receipt.service_generation_digest):
+                raise ValueError
+            catalog = self._runtime.bindings.enrollment_catalog
+            if (type(catalog) is not ProtectedEnrollmentCatalog
+                    or catalog.digest != receipt.service_generation_digest):
+                raise ValueError
+            profiles = [item for item in catalog._records.values()
+                        if item.profile_id == profile_id
+                        and item.generation == row["owner"]["service_generation_id"]]
+            if len(profiles) != 1:
+                raise ValueError
+            service = catalog.resolve(profiles[0].enrollment_id, profiles[0].generation)
+            process_profile = self._runtime.bindings.process_profiles.get(profile_id)
+            if (process_profile is None or process_profile.generation != service.generation
+                    or process_profile.owner_uid != service.service_uid
+                    or process_profile.owner_gid != service.service_gid
+                    or process_profile.data_root != service.roots.data
+                    or service.roots.data_id != row["view_custody"]["data_root_id"]
+                    or service.service_uid != row["owner"]["service_uid"]
+                    or service.service_gid != row["owner"]["service_gid"]):
+                raise ValueError
+            native_package = self._runtime.bindings.resolve_native_package(
+                row["native_package"]["package_id"], row["native_package"]["generation"],
+            )
+            package_rows = getattr(native_package, "owner_overlay_operation_records", None)
+            if (native_package.profile_id != profile_id
+                    or native_package.profile_generation != service.generation
+                    or not isinstance(package_rows, Mapping)
+                    or _canonical([dict(item) for item in sorted(
+                        package_rows.values(), key=lambda value: value["registration_id"])])
+                       != _canonical(row["operation_records"])):
+                raise ValueError
+            import grp
+            import os
+            import pwd
+            from hermes_installer.authority.bootstrap_runtime_factory import (
+                _open_root_owned_profile_overlay_directory,
+            )
+            owner = row["owner"]
+            account = pwd.getpwnam(owner["account_name"])
+            group = grp.getgrgid(account.pw_gid)
+            if (account.pw_uid != owner["account_uid"]
+                    or account.pw_gid != owner["primary_gid"]
+                    or group.gr_gid != owner["primary_gid"]
+                    or account.pw_uid <= 0 or account.pw_uid == service.service_uid
+                    or service.service_user != pwd.getpwuid(service.service_uid).pw_name):
+                raise ValueError
+            from hermes_installer.authority.bootstrap_enrollment import _read_machine_id
+            account_digest = hashlib.sha256(_canonical({
+                "name": account.pw_name, "uid": account.pw_uid,
+                "primary_gid": account.pw_gid, "primary_group": group.gr_name,
+            })).hexdigest()
+            machine_target_digest = hashlib.sha256(_canonical({
+                "machine_id": _read_machine_id(), "account_binding": account_digest,
+            })).hexdigest()
+            expected_principal_id = "linux-local-owner:" + hashlib.sha256(
+                (machine_target_digest + "\0" + account_digest).encode()).hexdigest()
+            expected_namespace_id = "hermes-native-" + hashlib.sha256(
+                (expected_principal_id + "\0" + owner["profile_id"]).encode()).hexdigest()[:32]
+            if (machine_target_digest != owner["machine_target_sha256"]
+                    or expected_principal_id != owner["principal_id"]
+                    or expected_namespace_id != owner["namespace_id"]):
+                raise ValueError
+            data_fd, view_fd, data_info, view_info, marker_info, marker = (
+                _open_root_owned_profile_overlay_directory(
+                    service.roots.data, service.service_uid, service.service_gid,
+                    profile_id, row["view_custody"]["resource_profile_id"],
+                ))
+            try:
+                view = row["view_custody"]
+                if ((data_info.st_dev, data_info.st_ino, data_info.st_uid, data_info.st_gid)
+                        != (view["data_root_device"], view["data_root_inode"],
+                            view["data_root_owner_uid"], view["data_root_owner_gid"])
+                        or (view_info.st_dev, view_info.st_ino, view_info.st_uid, view_info.st_gid,
+                            __import__("stat").S_IMODE(view_info.st_mode))
+                        != (view["view_device"], view["view_inode"], view["view_owner_uid"],
+                            view["view_owner_gid"], view["view_mode"])
+                        or hashlib.sha256(marker).hexdigest() != view["ownership_marker_sha256"]
+                        or not __import__("stat").S_ISREG(marker_info.st_mode)):
+                    raise ValueError
+            finally:
+                os.close(data_fd)
+                os.close(view_fd)
+            now = time.monotonic()
+            snapshot = RootCurrentActiveLocalOwnerPrincipalSnapshot(
+                secrets.token_urlsafe(32), "linux-local-owner-v1", choice_handle,
+                choice.signed_record_sha256, choice.choice_epoch, choice.revocation_epoch,
+                account_digest, owner["principal_id"], owner["profile_id"], owner["namespace_id"],
+                service.service_uid, service.service_gid, service.generation,
+                receipt.service_generation_digest, receipt.receipt_handle, self._boot_epoch,
+                now, now + 30.0, row["adoption_sha256"], _ACTIVE_LOCAL_OWNER_SEAL, self,
+            )
+            self._snapshots[snapshot.snapshot_handle] = snapshot
+            return snapshot
+        except LocalProfileOverlayEffectsDenied:
+            raise
+        except Exception:
+            raise LocalProfileOverlayEffectsDenied(
+                "current publication, signed owner source, NSS, service enrollment, or held view did not revalidate",
+            ) from None
+
+    def verify_current(self, snapshot: RootCurrentActiveLocalOwnerPrincipalSnapshot
+                       ) -> RootCurrentActiveLocalOwnerPrincipalSnapshot:
+        if (self._closed or type(snapshot) is not RootCurrentActiveLocalOwnerPrincipalSnapshot
+                or snapshot._issuer is not self or snapshot._seal is not _ACTIVE_LOCAL_OWNER_SEAL
+                or self._snapshots.get(snapshot.snapshot_handle) is not snapshot
+                or snapshot.expires_monotonic <= time.monotonic()
+                or snapshot.owner_instance != self._boot_epoch):
+            raise LocalProfileOverlayEffectsDenied("active local-owner snapshot is expired or unretained")
+        current = self.resolve_profile(snapshot.profile_id)
+        stable_fields = (
+            "identity_kind", "source_choice_handle", "source_choice_sha256", "choice_epoch",
+            "revocation_epoch", "owner_account_binding_sha256", "principal_id", "profile_id",
+            "namespace_id", "service_uid", "service_gid", "profile_generation",
+            "service_generation_digest", "active_publication_receipt_handle", "owner_instance",
+            "adoption_sha256",
+        )
+        if any(getattr(current, name) != getattr(snapshot, name) for name in stable_fields):
+            self._snapshots.pop(current.snapshot_handle, None)
+            raise LocalProfileOverlayEffectsDenied("active local-owner principal or publication changed")
+        self._snapshots.pop(current.snapshot_handle, None)
+        self._snapshots[snapshot.snapshot_handle] = snapshot
+        return snapshot
+
+    def close(self) -> None:
+        self._closed = True
+        self._snapshots.clear()
