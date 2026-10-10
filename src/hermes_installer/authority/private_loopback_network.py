@@ -527,7 +527,7 @@ def _linux_root() -> None:
 
 
 def _set_loopback_up() -> None:
-    """Initialize the sole interface in the current network namespace."""
+    """Initialize loopback and require the selected v97 lo-only topology."""
     import fcntl
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC)

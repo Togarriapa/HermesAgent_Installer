@@ -7,7 +7,9 @@ database, distribution trust root and fresh signed archive metadata.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import lzma
 import os
 import platform
 import re
@@ -17,6 +19,11 @@ import stat
 import struct
 import subprocess
 import time
+from datetime import timezone
+from email.utils import parsedate_to_datetime
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -34,10 +41,13 @@ CATALOG_PATH = Path(__file__).resolve().parents[3] / "templates" / "nft-tool-var
 INSTALLED_NFT = Path("/usr/sbin/nft")
 OBSERVATION_ROOT = Path("/run/hermes-installer/host-tool-observations")
 _VARIANT_ID = re.compile(r"nft-[A-Za-z0-9_.-]{1,120}\Z")
-_PACKAGE_LINE = re.compile(r"^([^:]+):\s+(.+)$")
+_PACKAGE_LINE = re.compile(r"^([^:]+)(?::[^:]+)?:\s+(.+)$")
 _MAX_TOOL_OUTPUT = 64 * 1024
 _MAX_ELF_BYTES = 128 * 1024 * 1024
 _MAX_LEASE_SECONDS = 30.0
+_MAX_METADATA_BYTES = 64 * 1024 * 1024
+_MAX_INDEX_EXPANDED_BYTES = 512 * 1024 * 1024
+_MAX_PACKAGE_BYTES = 128 * 1024 * 1024
 _SIGNERS = {
     "ubuntu": {"F6ECB3762474EDA9D21B7022871920D1991BC93C"},
     "debian": {
@@ -46,6 +56,193 @@ _SIGNERS = {
         "41587F7DB8C774BCCF131416762F67A0B2C39DE4",
     },
 }
+
+
+def _keyring_path(distribution: str) -> Path:
+    return Path("/usr/share/keyrings/debian-archive-keyring.pgp" if distribution == "debian"
+                else "/usr/share/keyrings/ubuntu-archive-keyring.gpg")
+
+
+class _NoCrossOriginRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        before, after = urllib.parse.urlsplit(request.full_url), urllib.parse.urlsplit(new_url)
+        if (before.scheme != "https" or after.scheme != "https" or before.hostname != after.hostname
+                or after.username or after.password or after.port not in (None, 443)):
+            raise HostToolObservationDenied("host_tool.origin", "archive redirected outside its exact HTTPS origin")
+        return super().redirect_request(request, response, code, message, headers, new_url)
+
+
+def _repositories(distribution: str, architecture: str) -> tuple[tuple[str, str, str], ...]:
+    if distribution == "debian" and architecture == "arm64":
+        return (("https://deb.debian.org/debian", "trixie", "debian"),
+                ("https://security.debian.org/debian-security", "trixie-security", "debian"))
+    if distribution == "ubuntu" and architecture in {"amd64", "arm64"}:
+        main = "https://ports.ubuntu.com/ubuntu-ports" if architecture == "arm64" else "https://archive.ubuntu.com/ubuntu"
+        return ((main, "noble", "ubuntu"), (main, "noble-updates", "ubuntu"),
+                ("https://security.ubuntu.com/ubuntu", "noble-security", "ubuntu"))
+    raise HostToolObservationDenied("host_tool.platform", "no finite signed package repositories for this platform")
+
+
+def _fetch_https(url: str, *, limit: int, opener: urllib.request.OpenerDirector) -> bytes:
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.port not in (None, 443) or parsed.fragment):
+        raise HostToolObservationDenied("host_tool.origin", "fixed official archive URL is malformed")
+    try:
+        with opener.open(urllib.request.Request(url, headers={"Accept-Encoding": "identity"}), timeout=30) as response:
+            if response.status != 200:
+                raise HostToolObservationDenied("host_tool.download", "official archive returned an unexpected status")
+            declared = response.headers.get("Content-Length")
+            if declared and int(declared) > limit:
+                raise HostToolObservationDenied("host_tool.download", "official archive exceeds its signed size bound")
+            body = response.read(limit + 1)
+            if len(body) > limit:
+                raise HostToolObservationDenied("host_tool.download", "official archive exceeds its fixed byte bound")
+            return body
+    except HostToolObservationDenied:
+        raise
+    except (OSError, ValueError, urllib.error.URLError):
+        raise HostToolObservationDenied("host_tool.download", "fixed official archive fetch failed") from None
+
+
+def _dearmor_inrelease(body: bytes) -> bytes:
+    marker = b"-----BEGIN PGP SIGNED MESSAGE-----\n"
+    if not body.startswith(marker):
+        raise HostToolObservationDenied("host_tool.index", "signed archive metadata is not clear-signed InRelease")
+    header_end = body.find(b"\n\n", len(marker))
+    signature = body.find(b"\n-----BEGIN PGP SIGNATURE-----", header_end + 2)
+    if header_end < 0 or signature < 0:
+        raise HostToolObservationDenied("host_tool.index", "clear-signed archive metadata is malformed")
+    cleartext = body[header_end + 2:signature]
+    return b"\n".join(line[2:] if line.startswith(b"- ") else line for line in cleartext.split(b"\n"))
+
+
+def _fields(stanza: bytes) -> dict[str, str]:
+    values: dict[str, str] = {}
+    current = ""
+    try:
+        lines = stanza.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError:
+        raise HostToolObservationDenied("host_tool.index", "archive package metadata is not UTF-8") from None
+    for line in lines:
+        if line.startswith((" ", "\t")):
+            if current:
+                values[current] += "\n" + line[1:]
+            continue
+        if ":" not in line:
+            raise HostToolObservationDenied("host_tool.index", "archive package metadata field is malformed")
+        current, value = line.split(":", 1)
+        if current in values:
+            raise HostToolObservationDenied("host_tool.index", "archive package metadata repeats a field")
+        values[current] = value.lstrip()
+    return values
+
+
+def _date(value: str) -> Any:
+    try:
+        result = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        raise HostToolObservationDenied("host_tool.index", "signed archive date is malformed") from None
+    if result.tzinfo is None:
+        raise HostToolObservationDenied("host_tool.index", "signed archive date lacks a timezone")
+    return result
+
+
+def _release_package_index(body: bytes, *, suite: str, arch: str, gpgv: bytes,
+                           signer_allowlist: set[str]) -> tuple[str, int, str, str | None, str, str, str, str]:
+    clear = _dearmor_inrelease(body)
+    fields = _fields(clear.split(b"\nSHA256:\n", 1)[0])
+    expected_codename = (
+        "trixie" if suite == "trixie" else "trixie-security" if suite == "trixie-security"
+        else "noble" if suite in {"noble", "noble-updates", "noble-security"} else suite
+    )
+    expected_suite = (
+        {"stable", "trixie"} if suite == "trixie"
+        else {"stable-security", "trixie-security"} if suite == "trixie-security"
+        else {suite}
+    )
+    if (not fields.get("Date") or fields.get("Codename") != expected_codename
+            or fields.get("Suite") not in expected_suite):
+        raise HostToolObservationDenied("host_tool.index", "signed archive suite or observation date is unexpected")
+    valid_signers: set[str] = set()
+    for line in gpgv.splitlines():
+        parts = line.split()
+        if len(parts) > 2 and b"[GNUPG:] VALIDSIG " in line:
+            for candidate in (parts[2], parts[-1]):
+                if re.fullmatch(rb"[0-9A-Fa-f]{40,64}", candidate):
+                    valid_signers.add(candidate.decode("ascii").upper())
+    if not valid_signers or not (valid_signers & signer_allowlist):
+        raise HostToolObservationDenied("host_tool.signature", "archive InRelease signer is outside the pinned official set")
+    relative = f"main/binary-{arch}/Packages.xz"
+    sha_section = clear.split(b"\nSHA256:\n", 1)
+    if len(sha_section) != 2:
+        raise HostToolObservationDenied("host_tool.index", "signed archive metadata lacks SHA256 index records")
+    row = re.search(rb"(?m)^\s*([0-9a-fA-F]{64})\s+([0-9]+)\s+" + re.escape(relative.encode("ascii")) + rb"\s*$", sha_section[1])
+    if row is None:
+        raise HostToolObservationDenied("host_tool.index", "signed InRelease does not select the fixed Packages index")
+    signed_date = fields["Date"]
+    date = _date(signed_date)
+    if date.tzinfo is None or date.timestamp() > time.time() + 300:
+        raise HostToolObservationDenied("host_tool.index", "signed archive date is malformed or in the future")
+    signer = next((item for item in valid_signers if item in signer_allowlist), None)
+    if signer is None:
+        raise HostToolObservationDenied("host_tool.signature", "archive signer does not match its distribution allowlist")
+    return (row.group(1).decode("ascii").lower(), int(row.group(2)), relative,
+            fields.get("Valid-Until"), signed_date, signer, fields["Suite"], fields["Codename"])
+
+
+def _package_stanzas(lines: Any, needed: set[str]) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    stanza = bytearray()
+    expanded = 0
+    for line in lines:
+        expanded += len(line)
+        if expanded > _MAX_INDEX_EXPANDED_BYTES:
+            raise HostToolObservationDenied("host_tool.index", "expanded package index exceeds its fixed bound")
+        if line in (b"\n", b"\r\n"):
+            if stanza:
+                row = _fields(bytes(stanza))
+                name = row.get("Package")
+                if name in needed:
+                    if name in result:
+                        raise HostToolObservationDenied("host_tool.index", "package appears more than once in one signed index")
+                    row["_stanza_sha256"] = hashlib.sha256(bytes(stanza).rstrip(b"\r\n")).hexdigest()
+                    result[name] = row
+                stanza.clear()
+        else:
+            stanza.extend(line)
+            if len(stanza) > 1024 * 1024:
+                raise HostToolObservationDenied("host_tool.index", "package stanza exceeds its fixed bound")
+    if stanza:
+        row = _fields(bytes(stanza))
+        if row.get("Package") in needed:
+            row["_stanza_sha256"] = hashlib.sha256(bytes(stanza).rstrip(b"\r\n")).hexdigest()
+            result[row["Package"]] = row
+    return result
+
+
+def _write_private_file(path: Path, body: bytes) -> tuple[int, os.stat_result, str]:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        view = memoryview(body)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    held, info = _owned_regular(path)
+    return held, info, _sha_fd(held)
+
+
+def _expand_index(body: bytes) -> bytes:
+    try:
+        output = lzma.decompress(body, memlimit=_MAX_METADATA_BYTES)
+    except (lzma.LZMAError, ValueError, EOFError):
+        raise HostToolObservationDenied("host_tool.index", "signed package index is malformed or exceeds its bound") from None
+    if len(output) > _MAX_INDEX_EXPANDED_BYTES:
+        raise HostToolObservationDenied("host_tool.index", "expanded package index exceeds its fixed bound")
+    return output
 
 
 class HostToolObservationDenied(AuthorityDenied):
@@ -117,6 +314,29 @@ def _sha_fd(fd: int) -> str:
     return digest.hexdigest()
 
 
+def _sha_fd_from_path(path: Path) -> str:
+    fd, _info = _owned_regular(path)
+    try:
+        return _sha_fd(fd)
+    finally:
+        os.close(fd)
+
+
+def _read_fd_bounded(fd: int, limit: int) -> bytes:
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+        raise HostToolObservationDenied("host_tool.file", "held source witness exceeds its fixed bound")
+    chunks: list[bytes] = []
+    offset = 0
+    while offset < info.st_size:
+        chunk = os.pread(fd, min(1024 * 1024, info.st_size - offset), offset)
+        if not chunk:
+            raise HostToolObservationDenied("host_tool.file", "held source witness changed during read")
+        chunks.append(chunk)
+        offset += len(chunk)
+    return b"".join(chunks)
+
+
 def _owned_regular(path: Path, *, expected_sha256: str | None = None) -> tuple[int, os.stat_result]:
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
@@ -139,10 +359,10 @@ def _apt_configuration(distribution: str, architecture: str, directory: Path) ->
     if distribution == "debian":
         if architecture != "arm64":
             raise HostToolObservationDenied("host_tool.platform", "Debian nft tool is pinned only for arm64")
-        keyring = Path("/usr/share/keyrings/debian-archive-keyring.gpg")
+        keyring = _keyring_path(distribution)
         lines = [f"deb [arch=arm64 signed-by={keyring}] https://deb.debian.org/debian trixie main",
                  f"deb [arch=arm64 signed-by={keyring}] https://security.debian.org/debian-security trixie-security main"]
-        if Path("/usr/share/keyrings/debian-archive-keyring.gpg").exists() is False:
+        if not keyring.exists():
             raise HostToolObservationDenied("host_tool.keyring", "official Debian archive keyring is unavailable")
     else:
         keyring = Path("/usr/share/keyrings/ubuntu-archive-keyring.gpg")
@@ -185,6 +405,14 @@ def _installed_package(package: str, architecture: str, *, env: Mapping[str, str
     if len(fields) != 3 or fields[1] not in (architecture, "all") or not fields[2].startswith("ii"):
         raise HostToolObservationDenied("host_tool.package", "required package is not installed for the selected architecture")
     return fields[0]
+
+
+def _installed_package_record(package: str, architecture: str, *, env: Mapping[str, str]) -> tuple[str, str]:
+    raw = _run(["/usr/bin/dpkg-query", "-W", "-f=${Version}\t${Architecture}\t${db:Status-Abbrev}", package], env=env)
+    fields = raw.decode("utf-8", "strict").split("\t")
+    if len(fields) != 3 or fields[1] not in (architecture, "all") or not fields[2].startswith("ii"):
+        raise HostToolObservationDenied("host_tool.package", "required package is not installed for the selected architecture")
+    return fields[0], fields[1]
 
 
 def _elf_dynamic(path: Path) -> tuple[str | None, tuple[str, ...]]:
@@ -272,7 +500,7 @@ def _elf_dynamic(path: Path) -> tuple[str | None, tuple[str, ...]]:
 
 
 def _elf_dependency_closure(binary: Path, *, architecture: str, env: Mapping[str, str],
-                            expected: Mapping[str, str]) -> tuple[str, tuple[tuple[str, int, int, str], ...]]:
+                            expected: Mapping[str, str]) -> tuple[str, tuple[tuple[str, int, int, str], ...], dict[str, tuple[str, str]]]:
     """Resolve a bounded ELF closure from distro library roots without ldd."""
     triplet = {"amd64": "x86_64-linux-gnu", "arm64": "aarch64-linux-gnu"}[architecture]
     roots = tuple(Path(item) for item in (f"/lib/{triplet}", f"/usr/lib/{triplet}", "/lib", "/usr/lib"))
@@ -310,6 +538,7 @@ def _elf_dependency_closure(binary: Path, *, architecture: str, env: Mapping[str
             pending.append(match)
     rows: list[dict[str, Any]] = []
     identities: list[tuple[str, int, int, str]] = []
+    packages: dict[str, tuple[str, str]] = {}
     for path in sorted(seen):
         fd, info = _owned_regular(path)
         try:
@@ -319,9 +548,14 @@ def _elf_dependency_closure(binary: Path, *, architecture: str, env: Mapping[str
             if match is None:
                 raise HostToolObservationDenied("host_tool.dependencies", "runtime ELF member has no exact dpkg package owner")
             package_name = match.group(1).split(":", 1)[0]
-            package_version = _installed_package(package_name, architecture, env=env)
+            package_version, package_arch = _installed_package_record(package_name, architecture, env=env)
+            prior = packages.get(package_name)
+            if prior is not None and prior != (package_version, package_arch):
+                raise HostToolObservationDenied("host_tool.dependencies", "ELF members have conflicting installed package identities")
+            packages[package_name] = (package_version, package_arch)
             rows.append({"path": str(path), "sha256": digest, "package": package_name,
-                         "version": package_version, "device": info.st_dev, "inode": info.st_ino})
+                         "version": package_version, "architecture": package_arch,
+                         "device": info.st_dev, "inode": info.st_ino})
             identities.append((str(path), info.st_dev, info.st_ino, digest))
         finally:
             os.close(fd)
@@ -330,7 +564,7 @@ def _elf_dependency_closure(binary: Path, *, architecture: str, env: Mapping[str
         operator, required = ("=", constraint[1:]) if constraint.startswith("=") else (">=", constraint[2:])
         _run(["/usr/bin/dpkg", "--compare-versions", version, operator, required], env=env)
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest(), tuple(identities)
+    return hashlib.sha256(canonical).hexdigest(), tuple(identities), packages
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -345,14 +579,79 @@ class VerifiedHostToolPackageObservation:
     executable_inode: int
     dependency_files: tuple[tuple[str, int, int, str], ...]
     held_fds: tuple[tuple[str, int, int, int, int, str], ...]
+    signed_index_records: tuple[Mapping[str, Any], ...]
+    package_records: tuple[Mapping[str, Any], ...]
     source_file_hashes: tuple[tuple[str, str], ...]
     keyring_identity: tuple[int, int, str]
+    dpkg_status_sha256: str
     workspace: Path = field(repr=False)
     observed_monotonic: float
     expires_monotonic: float
 
     def __repr__(self) -> str:
         return "VerifiedHostToolPackageObservation(<root-current>)"
+
+
+def _verify_signed_package_records(observation: VerifiedHostToolPackageObservation,
+                                  keyring_path: Path, env: Mapping[str, str]) -> None:
+    """Recheck the signed index row chain from held root files on each use."""
+    if _sha_fd_from_path(keyring_path) != observation.keyring_identity[2]:
+        raise HostToolObservationDenied("host_tool.keyring", "distribution trust keyring changed")
+    by_release = {str(row["inrelease_sha256"]): row for row in observation.signed_index_records}
+    for release_sha, record in by_release.items():
+        inrelease_path = Path(str(record["inrelease_path"]))
+        packages_path = Path(str(record["packages_path"]))
+        in_fd, _ = _owned_regular(inrelease_path, expected_sha256=release_sha)
+        packages_fd, packages_info = _owned_regular(packages_path, expected_sha256=str(record["packages_witness_sha256"]))
+        try:
+            inrelease = _read_fd_bounded(in_fd, 4 * 1024 * 1024)
+            packages_body = _read_fd_bounded(packages_fd, _MAX_METADATA_BYTES)
+            packages_digest = hashlib.sha256(packages_body).hexdigest()
+        finally:
+            os.close(in_fd)
+            os.close(packages_fd)
+        status = _run(["/usr/bin/gpgv", "--status-fd=1", "--keyring", str(keyring_path), str(inrelease_path)], env=env)
+        signed_sha, signed_size, relative, valid_until, signed_date, signer, signed_suite, codename = _release_package_index(
+            inrelease, suite=str(record["suite"]), arch=str(observation.variant["architecture"]),
+            gpgv=status, signer_allowlist=_SIGNERS[str(observation.variant["distribution"])],
+        )
+        if (signer != record["signer_fingerprint"] or signed_suite != record["signed_suite"]
+                or codename != record["codename"] or signed_sha != record["packages_sha256"]
+                or signed_size != record["packages_size_bytes"] or relative != record["packages_relative_path"]
+                or valid_until != record["valid_until"] or signed_date != record["signed_date"]
+                or packages_info.st_size != signed_size
+                or packages_digest != signed_sha
+                ):
+            raise HostToolObservationDenied("host_tool.index", "held signed InRelease-to-Packages link changed")
+        signed_at = _date(signed_date)
+        if signed_at.timestamp() > time.time() + 300:
+            raise HostToolObservationDenied("host_tool.index", "signed package index date is malformed or future-dated")
+        if valid_until is not None:
+            expiry = _date(valid_until)
+            if expiry.timestamp() <= time.time():
+                raise HostToolObservationDenied("host_tool.index", "signed package index expired during the selected lease")
+        package_rows = [row for row in observation.package_records
+                        if row["index_inrelease_sha256"] == release_sha]
+        if package_rows:
+            parsed = _package_stanzas(io.BytesIO(_expand_index(packages_body)),
+                                      {str(row["package_name"]) for row in package_rows})
+            for receipt in package_rows:
+                package = parsed.get(str(receipt["package_name"]))
+                if (package is None
+                        or package.get("Version") != receipt["version"]
+                        or package.get("Architecture") != receipt["architecture"]
+                        or package.get("Filename") != receipt["package_relative_path"]
+                        or package.get("SHA256") != receipt["package_sha256"]
+                        or package.get("Size") != str(receipt["package_size_bytes"])
+                        or package.get("_stanza_sha256") != receipt["index_record_sha256"]):
+                    raise HostToolObservationDenied("host_tool.package", "held signed Packages row differs from the exact selected package receipt")
+    for receipt in observation.package_records:
+        release_sha = str(receipt["index_inrelease_sha256"])
+        signed_record = by_release.get(release_sha)
+        if (signed_record is None or receipt["packages_sha256"] != signed_record["packages_sha256"]
+                or not _SHA.fullmatch(str(receipt["index_record_sha256"]))
+                or not _SHA.fullmatch(str(receipt["package_sha256"]))):
+            raise HostToolObservationDenied("host_tool.package", "selected package record lost its signed-index membership")
 
 
 class HostToolObservationRegistry:
@@ -429,9 +728,17 @@ class HostToolObservationRegistry:
             raise HostToolObservationDenied("host_tool.variant", "current OS has no exact executable-measured nft variant")
         parent = OBSERVATION_ROOT.parent
         try:
+            runtime_info = parent.parent.lstat()
+            if (not stat.S_ISDIR(runtime_info.st_mode) or runtime_info.st_uid != 0
+                    or runtime_info.st_mode & 0o022):
+                raise OSError("runtime parent is not root-protected")
+            try:
+                parent.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
             parent_info = parent.lstat()
             if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0 or parent_info.st_mode & 0o022):
-                raise OSError("runtime parent is not root-protected")
+                raise OSError("observation parent is not protected")
             OBSERVATION_ROOT.mkdir(mode=0o700, exist_ok=True)
             observation_root_info = OBSERVATION_ROOT.lstat()
             if (not stat.S_ISDIR(observation_root_info.st_mode) or observation_root_info.st_uid != 0
@@ -445,84 +752,117 @@ class HostToolObservationRegistry:
         opened_fd = -1
         held_fds: list[tuple[str, int, int, int, int, str]] = []
         try:
-            sources, lists = _apt_configuration(distribution, architecture, workspace)
-            options = _apt_options(sources, lists, workspace, architecture)
-            _run(["/usr/bin/apt-get", *options, "update"], env=env, timeout=300)
-            archives = workspace / "archives"
-            archives.mkdir(mode=0o700)
-            package = workspace / "nftables.deb"
-            package_spec = f"nftables:{architecture}={variant['version']}"
-            _run(["/usr/bin/apt-get", *options, "download", package_spec], env=env, cwd=workspace, timeout=180)
-            candidates = tuple(workspace.glob("nftables_*.deb"))
-            if len(candidates) != 1:
-                raise HostToolObservationDenied("host_tool.package", "signed archive did not yield one selected nft package")
-            downloaded = candidates[0]
-            deb_fd, deb_info = _owned_regular(downloaded, expected_sha256=variant["package_sha256"])
-            try:
-                if deb_info.st_size != variant["package_size_bytes"]:
-                    raise HostToolObservationDenied("host_tool.package", "downloaded nft package size differs from its pin")
-            finally:
-                os.close(deb_fd)
             installed_version = _installed_package("nftables", architecture, env=env)
             if installed_version != variant["version"]:
-                raise HostToolObservationDenied("host_tool.package", "installed nft package differs from the signed selected variant")
-            package_info = _run(["/usr/bin/dpkg-deb", "-f", str(downloaded), "Package", "Version", "Architecture"], env=env).decode("utf-8", "strict").splitlines()
-            if package_info != ["nftables", variant["version"], architecture]:
-                raise HostToolObservationDenied("host_tool.package", "signed nft archive metadata differs from the selected platform")
-            extracted = workspace / "extract"
-            extracted.mkdir(mode=0o700)
-            _run(["/usr/bin/dpkg-deb", "-x", str(downloaded), str(extracted)], env=env, timeout=30)
-            package_member_fd, _member_info = _owned_regular(
-                extracted / "usr/sbin/nft", expected_sha256=variant["executable_sha256"],
-            )
-            os.close(package_member_fd)
+                raise HostToolObservationDenied("host_tool.package", "installed nft package differs from the selected finite variant")
             owner = _run(["/usr/bin/dpkg-query", "-S", str(INSTALLED_NFT)], env=env).decode("utf-8", "strict").strip()
             if owner != "nftables: /usr/sbin/nft":
                 raise HostToolObservationDenied("host_tool.package", "installed nft executable is not owned by the selected package")
             opened_fd, executable_info = _owned_regular(INSTALLED_NFT, expected_sha256=variant["executable_sha256"])
-            dependency_sha256, dependency_files = _elf_dependency_closure(
+            dependency_sha256, dependency_files, needed_packages = _elf_dependency_closure(
                 INSTALLED_NFT, architecture=architecture, env=env,
                 expected=variant.get("dependency_requirements", {}),
             )
-            index_rows = []
-            source_file_hashes = [(str(downloaded), variant["package_sha256"])]
-            for inrelease in sorted(lists.glob("*InRelease")):
-                status = _run([
-                    "/usr/bin/gpgv", "--status-fd=1", "--keyring", str(keyring), str(inrelease)
-                ], env=env)
-                valid = [line.split()[2].decode("ascii").upper() for line in status.splitlines()
-                         if len(line.split()) > 2 and b"[GNUPG:] VALIDSIG " in line]
-                if not valid or not any(fingerprint in _SIGNERS[distribution] for fingerprint in valid):
-                    raise HostToolObservationDenied("host_tool.signature", "archive InRelease signer is outside the pinned official set")
-                expiry_text = _run([
-                    "/usr/bin/grep", "^Valid-Until:", str(inrelease)
-                ], env=env).decode("ascii", "strict").strip()
-                if not expiry_text:
-                    raise HostToolObservationDenied("host_tool.index", "signed index has no freshness bound")
-                index_fd, info = _owned_regular(inrelease)
-                try:
-                    index_digest = _sha_fd(index_fd)
-                    index_rows.append({"name": inrelease.name, "sha256": index_digest, "size": info.st_size,
-                                       "signer_fingerprints": valid, "valid_until": expiry_text})
-                    source_file_hashes.append((str(inrelease), index_digest))
-                    held_fds.append((str(inrelease), os.dup(index_fd), info.st_dev, info.st_ino,
-                                     info.st_uid, index_digest))
-                finally:
-                    os.close(index_fd)
-            if not index_rows:
-                raise HostToolObservationDenied("host_tool.index", "signed archive InRelease metadata was not retained")
             handle = "host-nft-observation:" + secrets.token_hex(24)
             network_key = (selected_network_binding.network_id, selected_network_binding.generation,
                            selected_network_binding.service_generation_digest)
-            keyring_path = Path("/usr/share/keyrings/debian-archive-keyring.gpg" if distribution == "debian"
-                                else "/usr/share/keyrings/ubuntu-archive-keyring.gpg")
-            keyring_fd, keyring_info = _owned_regular(keyring_path)
-            try:
-                keyring_identity = (keyring_info.st_dev, keyring_info.st_ino, _sha_fd(keyring_fd))
-                held_fds.append((str(keyring_path), os.dup(keyring_fd), keyring_info.st_dev,
-                                 keyring_info.st_ino, keyring_info.st_uid, keyring_identity[2]))
-            finally:
-                os.close(keyring_fd)
+            keyring_path = _keyring_path(distribution)
+            key_fd, _ = _owned_regular(keyring_path)
+            os.close(key_fd)
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoCrossOriginRedirect())
+            signed_index_records: list[Mapping[str, Any]] = []
+            package_rows: dict[str, tuple[dict[str, str], Mapping[str, Any]]] = {}
+            source_file_hashes: list[tuple[str, str]] = []
+            metadata_bytes = package_bytes = 0
+            for origin, suite, _distro in _repositories(distribution, architecture):
+                inrelease_url = f"{origin}/dists/{suite}/InRelease"
+                inrelease_body = _fetch_https(inrelease_url, limit=4 * 1024 * 1024, opener=opener)
+                metadata_bytes += len(inrelease_body)
+                if metadata_bytes > _MAX_METADATA_BYTES:
+                    raise HostToolObservationDenied("host_tool.limit", "signed metadata exceeds the v105 total byte limit")
+                index_name = f"inrelease-{suite}"
+                inrelease_path = workspace / index_name
+                held, inrelease_info, inrelease_digest = _write_private_file(inrelease_path, inrelease_body)
+                status = _run(["/usr/bin/gpgv", "--status-fd=1", "--keyring", str(keyring_path), str(inrelease_path)], env=env)
+                packages_sha, packages_size, packages_relative, valid_until, signed_date, signer, signed_suite, codename = _release_package_index(
+                    inrelease_body, suite=suite, arch=architecture, gpgv=status,
+                    signer_allowlist=_SIGNERS[distribution],
+                )
+                signed_at = _date(signed_date)
+                if signed_at.timestamp() > time.time() + 300:
+                    raise HostToolObservationDenied("host_tool.index", "signed package index date is malformed or future-dated")
+                if valid_until is not None:
+                    expiry = _date(valid_until)
+                    if int(expiry.timestamp()) <= int(time.time()):
+                        raise HostToolObservationDenied("host_tool.index", "signed package index is expired")
+                index_url = f"{origin}/dists/{suite}/{packages_relative}"
+                if packages_size > _MAX_METADATA_BYTES or metadata_bytes + packages_size > _MAX_METADATA_BYTES:
+                    raise HostToolObservationDenied("host_tool.limit", "signed package index exceeds the v105 metadata byte limit")
+                packages_body = _fetch_https(index_url, limit=packages_size, opener=opener)
+                if len(packages_body) != packages_size or hashlib.sha256(packages_body).hexdigest() != packages_sha:
+                    raise HostToolObservationDenied("host_tool.index", "Packages index does not match its signed InRelease row")
+                metadata_bytes += len(packages_body)
+                packages_path = workspace / f"packages-{suite}.xz"
+                packages_fd, packages_info, packages_digest = _write_private_file(packages_path, packages_body)
+                held_fds.extend([
+                    (str(inrelease_path), held, inrelease_info.st_dev, inrelease_info.st_ino,
+                     inrelease_info.st_uid, inrelease_digest),
+                    (str(packages_path), packages_fd, packages_info.st_dev, packages_info.st_ino,
+                     packages_info.st_uid, packages_digest),
+                ])
+                source_file_hashes.extend(((str(inrelease_path), inrelease_digest),
+                                           (str(packages_path), packages_digest)))
+                clear_index = _expand_index(packages_body)
+                index_rows = _package_stanzas(io.BytesIO(clear_index), set(needed_packages) | {"nftables"})
+                index_record = {
+                    "origin": origin, "suite": suite, "inrelease_sha256": inrelease_digest,
+                    "signer_fingerprint": signer, "keyring_sha256": _sha_fd_from_path(keyring_path),
+                    "signed_suite": signed_suite, "codename": codename,
+                    "packages_relative_path": packages_relative, "packages_sha256": packages_sha,
+                    "packages_size_bytes": packages_size, "valid_until": valid_until,
+                    "signed_date": signed_date,
+                    "packages_witness_sha256": packages_digest,
+                    "inrelease_path": str(inrelease_path), "packages_path": str(packages_path),
+                }
+                signed_index_records.append(index_record)
+                for package_name in index_rows:
+                    row = index_rows[package_name]
+                    expected_version, expected_arch = (variant["version"], architecture) if package_name == "nftables" else needed_packages[package_name]
+                    if (row.get("Version") != expected_version or row.get("Architecture") != expected_arch
+                            or not row.get("Filename") or not re.fullmatch(r"pool/[A-Za-z0-9+._/-]+\.deb", row["Filename"])
+                            or ".." in Path(row["Filename"]).parts
+                            or not re.fullmatch(r"[0-9a-f]{64}", row.get("SHA256", ""))):
+                        continue
+                    try:
+                        row_size = int(row["Size"])
+                    except (KeyError, ValueError):
+                        continue
+                    if row_size <= 0 or row_size > _MAX_PACKAGE_BYTES:
+                        continue
+                    package_entry = {"package_name": package_name, "version": expected_version,
+                                     "architecture": expected_arch, "package_relative_path": row["Filename"],
+                                     "package_sha256": row["SHA256"], "package_size_bytes": row_size,
+                                     "index_record_sha256": row["_stanza_sha256"],
+                                     "index_inrelease_sha256": inrelease_digest,
+                                     "packages_sha256": packages_sha,
+                                     "installed_status_sha256": ""}
+                    prior = package_rows.get(package_name)
+                    if prior is not None:
+                        comparable_prior = {key: value for key, value in prior[1].items()
+                                            if key not in {"index_inrelease_sha256", "packages_sha256"}}
+                        comparable_new = {key: value for key, value in package_entry.items()
+                                          if key not in {"index_inrelease_sha256", "packages_sha256"}}
+                        if comparable_prior != comparable_new:
+                            raise HostToolObservationDenied("host_tool.index", "selected package has ambiguous signed source rows")
+                    else:
+                        package_rows[package_name] = (row, package_entry)
+            required_packages = set(needed_packages) | {"nftables"}
+            if required_packages - package_rows.keys():
+                raise HostToolObservationDenied("host_tool.package", "an installed nft dependency has no exact row in the current signed indexes")
+            if (package_rows["nftables"][1]["package_relative_path"] != variant["package_path"]
+                    or package_rows["nftables"][1]["package_sha256"] != variant["package_sha256"]
+                    or package_rows["nftables"][1]["package_size_bytes"] != variant["package_size_bytes"]):
+                raise HostToolObservationDenied("host_tool.package", "signed nft package row differs from the measured finite variant")
             status_path = Path("/var/lib/dpkg/status")
             status_fd, status_info = _owned_regular(status_path)
             try:
@@ -531,6 +871,63 @@ class HostToolObservationRegistry:
                                  status_info.st_ino, status_info.st_uid, status_digest))
             finally:
                 os.close(status_fd)
+            package_receipts: list[Mapping[str, Any]] = []
+            extracted = workspace / "extract"
+            extracted.mkdir(mode=0o700)
+            package_directory = workspace / "deb"
+            package_directory.mkdir(mode=0o700)
+            installed_files = {path: digest for path, _device, _inode, digest in dependency_files}
+            installed_files[str(INSTALLED_NFT)] = variant["executable_sha256"]
+            owner_packages: dict[str, set[str]] = {"nftables": {str(INSTALLED_NFT)}}
+            for path, _device, _inode, _digest in dependency_files:
+                owner = _run(["/usr/bin/dpkg-query", "-S", path], env=env).decode("utf-8", "strict").strip()
+                match = _PACKAGE_LINE.fullmatch(owner)
+                if match is None:
+                    raise HostToolObservationDenied("host_tool.package", "dependency file has no exact installed package owner")
+                owner_packages.setdefault(match.group(1).split(":", 1)[0], set()).add(path)
+            for package_name in sorted(required_packages):
+                row, receipt = package_rows[package_name]
+                origin = next(index["origin"] for index in signed_index_records
+                              if index["inrelease_sha256"] == receipt["index_inrelease_sha256"])
+                archive_body = _fetch_https(f"{origin}/{row['Filename']}", limit=int(row["Size"]), opener=opener)
+                if len(archive_body) != int(row["Size"]) or hashlib.sha256(archive_body).hexdigest() != row["SHA256"]:
+                    raise HostToolObservationDenied("host_tool.package", "downloaded .deb differs from its exact signed Packages row")
+                package_path = package_directory / f"{package_name}.deb"
+                deb_fd, deb_info, deb_digest = _write_private_file(package_path, archive_body)
+                package_bytes += len(archive_body)
+                if package_bytes > 512 * 1024 * 1024:
+                    os.close(deb_fd)
+                    raise HostToolObservationDenied("host_tool.limit", "signed dependency archives exceed the total byte limit")
+                held_fds.append((str(package_path), deb_fd, deb_info.st_dev, deb_info.st_ino,
+                                 deb_info.st_uid, deb_digest))
+                source_file_hashes.append((str(package_path), deb_digest))
+                deb_info_fields = _run(["/usr/bin/dpkg-deb", "-f", str(package_path),
+                                        "Package", "Version", "Architecture"], env=env).decode("utf-8", "strict")
+                deb_identity = dict(line.split(": ", 1) for line in deb_info_fields.splitlines() if ": " in line)
+                if deb_identity != {"Package": package_name, "Version": row["Version"],
+                                    "Architecture": row["Architecture"]}:
+                    raise HostToolObservationDenied("host_tool.package", "downloaded archive control identity differs from signed Packages row")
+                _run(["/usr/bin/dpkg-deb", "-x", str(package_path), str(extracted)], env=env, timeout=60)
+                for member_path in owner_packages.get(package_name, set()):
+                    expected_digest = installed_files[member_path]
+                    member_fd, _member_info = _owned_regular(extracted / member_path.lstrip("/"), expected_sha256=expected_digest)
+                    os.close(member_fd)
+                package_receipts.append({**receipt, "installed_status_sha256": status_digest})
+            for path, digest in installed_files.items():
+                extracted_member = extracted / path.lstrip("/")
+                member_fd, _member_info = _owned_regular(extracted_member, expected_sha256=digest)
+                os.close(member_fd)
+            held_exec, exec_info = _owned_regular(INSTALLED_NFT, expected_sha256=variant["executable_sha256"])
+            os.close(opened_fd)
+            opened_fd = held_exec
+            executable_info = exec_info
+            keyring_fd, keyring_info = _owned_regular(keyring_path)
+            try:
+                keyring_identity = (keyring_info.st_dev, keyring_info.st_ino, _sha_fd(keyring_fd))
+                held_fds.append((str(keyring_path), os.dup(keyring_fd), keyring_info.st_dev,
+                                 keyring_info.st_ino, keyring_info.st_uid, keyring_identity[2]))
+            finally:
+                os.close(keyring_fd)
             # Retain every actual ELF object (including loader and interpreter),
             # not merely the top-level executable, for the full observation lease.
             for dependency_path, device, inode, digest in dependency_files:
@@ -539,8 +936,8 @@ class HostToolObservationRegistry:
             observation = VerifiedHostToolPackageObservation(
                 handle, network_key, dict(variant), handle, dependency_sha256,
                 opened_fd, executable_info.st_dev, executable_info.st_ino, dependency_files,
-                tuple(held_fds),
-                tuple(source_file_hashes), keyring_identity,
+                tuple(held_fds), tuple(signed_index_records), tuple(package_receipts),
+                tuple(source_file_hashes), keyring_identity, status_digest,
                 workspace, time.monotonic(), time.monotonic() + _MAX_LEASE_SECONDS,
             )
             if self._journal is not None:
@@ -615,8 +1012,7 @@ class HostToolObservationRegistry:
             if owner != "nftables: /usr/sbin/nft":
                 raise OSError("installed nft ownership changed")
             distribution = observation.variant["distribution"]
-            keyring_path = Path("/usr/share/keyrings/debian-archive-keyring.gpg" if distribution == "debian"
-                                else "/usr/share/keyrings/ubuntu-archive-keyring.gpg")
+            keyring_path = _keyring_path(distribution)
             keyring_fd, keyring_info = _owned_regular(keyring_path)
             try:
                 if (keyring_info.st_dev, keyring_info.st_ino, _sha_fd(keyring_fd)) != observation.keyring_identity:
@@ -633,12 +1029,26 @@ class HostToolObservationRegistry:
                         or (path_info.st_dev, path_info.st_ino, path_info.st_uid) != (device, inode, uid)
                         or uid != 0 or held_info.st_mode & 0o022 or _sha_fd(held_fd) != digest):
                     raise OSError("held host tool evidence changed")
-            dependency_hash, dependency_files = _elf_dependency_closure(
+            status_fd, status_info = _owned_regular(Path("/var/lib/dpkg/status"),
+                                                     expected_sha256=observation.dpkg_status_sha256)
+            os.close(status_fd)
+            _verify_signed_package_records(observation, keyring_path, env)
+            installed_packages: dict[str, tuple[str, str]] = {}
+            for package_record in observation.package_records:
+                package_name = str(package_record["package_name"])
+                package_identity = _installed_package_record(package_name, architecture, env=env)
+                if package_identity != (package_record["version"], package_record["architecture"]):
+                    raise OSError("installed package identity changed")
+                installed_packages[package_name] = package_identity
+            dependency_hash, dependency_files, current_packages = _elf_dependency_closure(
                 INSTALLED_NFT, architecture=architecture,
                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C", "APT_CONFIG": "/dev/null"},
                 expected=observation.variant.get("dependency_requirements", {}),
             )
-            if dependency_hash != observation.dependency_closure_sha256 or dependency_files != observation.dependency_files:
+            if (dependency_hash != observation.dependency_closure_sha256
+                    or dependency_files != observation.dependency_files
+                    or current_packages != installed_packages
+                    or set(installed_packages) != {str(row["package_name"]) for row in observation.package_records}):
                 raise OSError("nft runtime dependency closure changed")
         except Exception:
             raise HostToolObservationDenied("host_tool.current", "current root nft package or dependency proof changed") from None

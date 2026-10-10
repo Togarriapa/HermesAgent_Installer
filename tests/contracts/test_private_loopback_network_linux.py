@@ -13,12 +13,16 @@ import threading
 import time
 import uuid
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from hermes_installer.authority.private_loopback_network import (
-    POLICY_ID, POLICY_SHA256, RootResolvedHostTool, close_root_network_lease,
+    POLICY_ID, POLICY_SHA256, close_root_network_lease,
     create_root_namespace, namespace_path_for, validate_private_loopback_networks,
     verify_root_network_lease,
+)
+from hermes_installer.authority.host_tool_observation import (
+    HostToolObservationDenied, HostToolObservationRegistry,
 )
 
 
@@ -141,38 +145,10 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
     """Actual namespace/nft probes, separate from the host tool receipt fixture."""
 
     def test_kernel_namespace_nft_rules_allow_exact_role_and_deny_peer_routes(self):
-        variant_path = Path(__file__).resolve().parents[2] / "templates/nft-tool-variants-v1.json"
-        variants = json.loads(variant_path.read_text())["variants"]
-        architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
-        os_release = Path("/etc/os-release").read_text()
-        release_id = next((line.split("=", 1)[1].strip().strip('"')
-                           for line in os_release.splitlines() if line.startswith("VERSION_ID=")), "")
-        variant = next((row for row in variants
-                        if row["architecture"] == architecture
-                        and row["distribution"] in os_release.lower()
-                        and row["release"] == release_id
-                        and row["status"].startswith("source/package measured")), None)
-        if variant is None or variant["executable_sha256"] is None:
-            self.skipTest("host nft binary has no measured source variant")
-        executable = Path("/usr/sbin/nft")
-        info = executable.stat(follow_symlinks=False)
-        fd = os.open(executable, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        generation_digest = "a" * 64
+        registry = None
+        lease = None
         try:
-            digest = hashlib.sha256()
-            while True:
-                chunk = os.read(fd, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-            self.assertEqual(digest.hexdigest(), variant["executable_sha256"])
-            tool = RootResolvedHostTool(
-                variant["id"], variant["package_name"], variant["version"],
-                variant["distribution"], variant["release"], variant["architecture"],
-                variant["package_sha256"], "fixture-only-nft-executable",
-                variant["executable_sha256"], "f" * 64, "fixture-only-package-observation",
-                time.monotonic() + 60, executable, fd, info.st_dev, info.st_ino,
-            )
-            generation_digest = "a" * 64
             candidate_uids = (17001, 17002, 17003)
             active_uids: set[int] = set()
             for status_path in Path("/proc").glob("[0-9]*/status"):
@@ -206,6 +182,30 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                 "policy_artifact_id": POLICY_ID, "policy_sha256": POLICY_SHA256,
             }
             network, = validate_private_loopback_networks([record], services, generation_digest)
+            registry = HostToolObservationRegistry.for_linux_fixture()
+            observation_handle = registry.observe_selected_nft_tool(network)
+            tool = registry.resolve_selected_nft_tool(observation_handle, network)
+            observation = registry._observations[observation_handle]
+            witness_path = Path(observation.signed_index_records[0]["packages_path"])
+            witness_fd = os.open(witness_path, os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+            try:
+                original = os.pread(witness_fd, 1, 0)
+                self.assertEqual(len(original), 1)
+                os.pwrite(witness_fd, bytes((original[0] ^ 1,)), 0)
+                os.fsync(witness_fd)
+                with self.assertRaises(HostToolObservationDenied):
+                    tool.verify_current()
+                os.pwrite(witness_fd, original, 0)
+                os.fsync(witness_fd)
+            finally:
+                os.close(witness_fd)
+            tool.verify_current()
+            stale = replace(observation, expires_monotonic=time.monotonic() - 1)
+            registry._observations[observation_handle] = stale
+            with self.assertRaises(HostToolObservationDenied):
+                tool.verify_current()
+            registry._observations[observation_handle] = observation
+            tool.verify_current()
             lease = create_root_namespace(network, tool)
             try:
                 self.assertEqual(lease.namespace_path, namespace_path_for(network))
@@ -287,7 +287,10 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
             finally:
                 close_root_network_lease(lease)
         finally:
-            os.close(fd)
+            if lease is not None:
+                lease.close_fd()
+            if registry is not None:
+                registry.close()
 
 
 if __name__ == "__main__":
