@@ -9,6 +9,14 @@ the later terminal must join both receipts. The task registry joins this
 sequence to the current process identity, selected package mount and loader
 event, plus the root input observer receipt over the original prompt bytes.
 
+Runtime composition constructs the four-dependency task registry first, then
+the selected-execution registry, then the selected-only `RootNativeInputObserver`.
+It completes that dependency cycle with the one-time typed call
+`task_observations.attach_native_input_observer(input_observer, selections)`
+before admitting work. Attachment checks exact registry types and object
+identity across the task registry, selection registry, source registry, and
+service. It rejects repeat attachment or attachment after a task is bound.
+
 While the process is live, the registry watches the root-owned native bridge
 records. A model request is counted only when the actual bridge request handle
 has a completed provider response whose retained source receipt closure

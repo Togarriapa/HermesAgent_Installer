@@ -293,7 +293,14 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 producer_uid, producer_pid, producer_fd,
                 "native.response.take", lookup_payload, cancelled=lambda: False,
             )
-            self.assertEqual(set(metadata_wire), {"producer_context_handle", "tool_call_bindings"})
+            self.assertEqual(set(metadata_wire), {
+                "producer_context_handle", "tool_call_bindings", "turn_handle",
+                "final_response_delivery_handle",
+            })
+            # Provider tool dispatch does not establish a completed native
+            # conversation turn or its final-response delivery.
+            self.assertIsNone(metadata_wire["turn_handle"])
+            self.assertIsNone(metadata_wire["final_response_delivery_handle"])
             self.assertEqual(len(metadata_wire["tool_call_bindings"]), 1)
             call_binding = metadata_wire["tool_call_bindings"][0]
 

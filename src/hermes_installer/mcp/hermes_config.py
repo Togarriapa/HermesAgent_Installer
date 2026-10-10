@@ -171,6 +171,7 @@ def write_selected_profile_mcp_config(
     proposed: Mapping[str, Mapping[str, Any]],
     owned_fingerprints: Mapping[str, str] | None,
     expected_owner_uid: int,
+    commit_ownership=None,
 ) -> tuple[dict[str, str], str]:
     """Atomically merge MCP config into the selected native profile config.
 
@@ -248,8 +249,17 @@ def write_selected_profile_mcp_config(
         # Detect edits by writers that do not honor the advisory lock.
         if _read_private_config(target, expected_owner_uid) != existing_bytes:
             raise HermesMCPConfigError("Hermes config changed during the MCP merge; retry from a fresh read")
+        # Replace first, then commit ownership under the same lock. If the
+        # journal rejects the new fingerprint, restore the exact prior bytes
+        # (or prior absence) before returning failure.
         os.replace(temporary, target)
         temporary = None
+        if commit_ownership is not None:
+            try:
+                commit_ownership(next_owners, hashlib.sha256(payload).hexdigest())
+            except Exception:
+                _restore_config(target, profile_dir, existing_bytes, expected_owner_uid)
+                raise HermesMCPConfigError("MCP config ownership could not be committed") from None
         directory_fd = os.open(profile_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                | getattr(os, "O_NOFOLLOW", 0))
         try:
@@ -264,6 +274,47 @@ def write_selected_profile_mcp_config(
             except OSError:
                 pass
         os.close(lock_fd)
+
+
+def _restore_config(target: Path, profile_dir: Path, previous: bytes | None,
+                    expected_owner_uid: int) -> None:
+    """Restore the pre-transaction config after an ownership-journal failure."""
+    if previous is None:
+        try:
+            os.unlink(target)
+            directory_fd = os.open(profile_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                   | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise HermesMCPConfigError("MCP config rollback could not be completed") from None
+        return
+    temporary = profile_dir / f".config.yaml.rollback-{uuid.uuid4().hex}.tmp"
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(previous)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        directory_fd = os.open(profile_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                               | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        raise HermesMCPConfigError("MCP config rollback could not be completed") from None
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
 
 
 def _read_private_config(path: Path, expected_owner_uid: int) -> bytes | None:

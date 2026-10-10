@@ -36,6 +36,10 @@ def test_root_runtime_composition_requires_service_records_before_optional_hardw
         protected_build_records=[],
         protected_enrollment_digest="a" * 64,
         root_journal_root_records=(),
+        native_mcp_tool_binding_records=(), resource_controller_role_records=(),
+        remote_observation_records=(), resource_backend_enrollment_records=(),
+        native_schema_artifact_records=(),
+        composio_channel_enrollment_records=(), channel_delivery_binding_records=(),
     )
     with pytest.raises(EnrollmentDenied, match="service generation records"):
         build_root_runtime_bindings(
@@ -182,6 +186,320 @@ def test_selected_native_principal_returns_only_unique_current_protected_binding
         mismatched.resolve_selected_native_principal(
             service.profile_id, service.generation, "d" * 64,
         )
+
+
+def test_selected_gateway_boundary_joins_current_kernel_proof_and_pinned_remote_row():
+    profile = SimpleNamespace(profile_id="gateway-profile", generation="gateway-generation",
+                              enrollment_id="gateway-enrollment", owner_uid=2301)
+    proof = SimpleNamespace(
+        profile_id="gateway-profile", profile_generation="gateway-generation",
+        enrollment_id="gateway-enrollment", uid=2301, gid=2301, pid=321,
+        pid_starttime_ticks=456, executable_device=12, executable_inode=34,
+        executable_sha256="a" * 64, cgroup_id="/system.slice/gateway.service",
+        mount_namespace_inode=56, network_namespace_inode=78,
+    )
+    manager = SimpleNamespace(inspect_enrolled_process=lambda pid, generation: proof)
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=SimpleNamespace(digest="d" * 64), build_catalog=None,
+        device_catalog=None, process_manager=manager, effect_handlers={}, native_bridges={},
+        artifact_catalog=None, build_store=None, service_connector=None,
+        process_profiles={"gateway-profile": profile},
+        remote_observation_records=({"remote_enrollment_id": "remote-a",
+                                     "gateway_listener_port": 8743},),
+        remote_session_records=({"id": "remote-a", "gateway_profile_id": "gateway-profile",
+                                 "gateway_role_sha256": "a" * 64, "expected_hostname": "chat.example",
+                                 "policy_config_digest": "b" * 64, "policy_revision": "rev-a"},),
+    )
+    selected = runtime.selected_gateway_boundary("remote-a")
+    assert (selected.gateway_profile_id, selected.gateway_generation, selected.listener_port) == (
+        "gateway-profile", "gateway-generation", 8743)
+    assert selected.gateway_identity_digest != "a" * 64
+    proof.executable_sha256 = "c" * 64
+    with pytest.raises(EnrollmentDenied, match="current matching custody role proof"):
+        runtime.selected_gateway_boundary("remote-a")
+
+
+def test_selected_native_window_fails_closed_without_current_process_binding():
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=None, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None,
+        remote_observation_records=({"remote_enrollment_id": "remote-a"},),
+        remote_session_records=({"id": "remote-a"},),
+    )
+    with pytest.raises(EnrollmentDenied, match="process binding is incomplete"):
+        runtime.selected_native_window("remote-a")
+
+
+def test_native_mcp_selection_requires_current_native_adapter_scope_and_effect_rule():
+    service = SimpleNamespace(profile_id="profile-a", generation="generation-a",
+                              enrollment_id="enrollment-a")
+    adapter = SimpleNamespace(
+        action_id="binding-a", generation="generation-a",
+        adapter_artifact_id="handler-a", adapter_sha256="a" * 64,
+    )
+    package = SimpleNamespace(
+        profile_id="profile-a", generation="generation-a",
+        adapter_records={"hermes-installer.native-mcp-dispatch.v1": adapter},
+    )
+
+    class Catalog:
+        digest = "d" * 64
+
+        def resolve_profile_generation(self, profile_id, generation):
+            if (profile_id, generation) != ("profile-a", "generation-a"):
+                raise EnrollmentDenied("stale")
+            return service
+
+        def resolve_native_package(self, package_id, generation):
+            assert (package_id, generation) == ("package-a", "generation-a")
+            return package
+
+    row = {
+        "id": "binding-a", "profile_id": "profile-a", "process_generation": "generation-a",
+        "native_package_id": "package-a", "native_package_generation": "generation-a",
+        "mcp_enrollment_id": "mcp-a", "mcp_tool_name": "search",
+        "effect_operation": "mcp.request", "effect_target": "mcp:mcp-a:http",
+        "capability": "mcp:mcp-a:read", "recipient": None,
+        "scope_bindings": ({"argument_field": "resource", "selected_resource_id": "resource-a"},),
+        "handler_artifact_id": "handler-a", "handler_artifact_sha256": "a" * 64,
+    }
+    custody = SimpleNamespace(profile_id="profile-a", generation="generation-a",
+                              enrollment_id="enrollment-a")
+    rules = {("mcp:mcp-a:read", "mcp.request", "mcp:mcp-a:http"): object()}
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None, process_profiles={"profile-a": custody},
+        native_mcp_tool_binding_records=(row,),
+        mcp_services={"mcp-a": {"id": "mcp-a", "channel": "http",
+                                 "allowed_tools": ["search"],
+                                 "selection_arguments": {"search": ["resource"]}}},
+        protected_rules=rules,
+    )
+    assert runtime.resolve_native_mcp_tool_bindings(
+        "profile-a", "generation-a", "d" * 64) == (row,)
+    rules.clear()
+    with pytest.raises(EnrollmentDenied, match="exact selected authority rule"):
+        runtime.resolve_native_mcp_tool_bindings("profile-a", "generation-a", "d" * 64)
+
+
+def test_resource_credential_placeholder_resolves_only_after_backend_profile_and_observer_join():
+    from hermes_installer.authority.runtime_bindings import _derive_resource_credential_bindings
+
+    row = {
+        "id": "backend-a", "resource_id": "resource-a", "profile_id": "profile-a",
+        "principal_id": "principal-a", "generation": "resource-generation-a",
+        "profile_generation": "profile-generation-a", "observer_enrollment_id": "observer-a",
+        "credential_reference_ids": ["vault-reference-a"],
+        "credential_bindings": [{"source_placeholder": "${API_KEY}",
+                                  "credential_reference_id": "vault-reference-a",
+                                  "usage": "backend-account"}],
+    }
+    derived = _derive_resource_credential_bindings(SimpleNamespace(
+        resource_backend_enrollment_records=(row,),
+    ))
+    service = SimpleNamespace(profile_id="profile-a", generation="profile-generation-a")
+    issuer = SimpleNamespace(observer_enrollment_id="observer-a")
+    package = SimpleNamespace(profile_id="profile-a", generation="profile-generation-a")
+    join = SimpleNamespace(issuer=issuer, package=package)
+
+    class Catalog:
+        digest = "d" * 64
+        source_observer_joins = {"observer-a": join}
+
+        def resolve_profile_generation(self, profile_id, generation):
+            if (profile_id, generation) != ("profile-a", "profile-generation-a"):
+                raise EnrollmentDenied("stale profile")
+            return service
+
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None, resource_credential_bindings=derived,
+    )
+    binding = runtime.resolve_resource_credential_binding(
+        "backend-a", "${API_KEY}", "backend-account", profile_id="profile-a",
+        profile_generation="profile-generation-a", resource_id="resource-a",
+        resource_generation="resource-generation-a", observer_enrollment_id="observer-a",
+        service_generation_digest="d" * 64,
+    )
+    assert binding.credential_reference_id == "vault-reference-a"
+    with pytest.raises(EnrollmentDenied, match="does not match its current protected backend"):
+        runtime.resolve_resource_credential_binding(
+            "backend-a", "${API_KEY}", "channel-account", profile_id="profile-a",
+            profile_generation="profile-generation-a", resource_id="resource-a",
+            resource_generation="resource-generation-a", observer_enrollment_id="observer-a",
+            service_generation_digest="d" * 64,
+        )
+
+
+def test_resource_controller_role_requires_current_digest_observer_backend_and_artifact_pins():
+    role = {
+        "id": "controller-a", "source_observer_enrollment_ids": ["observer-a"],
+        "allowed_backend_enrollment_ids": ["backend-a"],
+        "daemon_executable_artifact_id": "daemon-a", "daemon_executable_sha256": "a" * 64,
+        "role_module_artifact_id": "module-a", "role_module_sha256": "b" * 64,
+    }
+    issuer = SimpleNamespace(observer_enrollment_id="observer-a")
+
+    class Catalog:
+        digest = "d" * 64
+        source_issuers = (issuer,)
+
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={},
+        artifact_catalog=SimpleNamespace(artifacts={
+            "daemon-a": SimpleNamespace(sha256="a" * 64),
+            "module-a": SimpleNamespace(sha256="b" * 64),
+        }), build_store=None, service_connector=None,
+        resource_controller_role_records=(role,),
+        resource_backend_records=({"id": "backend-a"},),
+    )
+    assert runtime.resolve_resource_controller_role("controller-a", "d" * 64)["id"] == "controller-a"
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        runtime.resolve_resource_controller_role("controller-a", "e" * 64)
+    runtime.artifact_catalog.artifacts["module-a"] = SimpleNamespace(sha256="c" * 64)
+    with pytest.raises(EnrollmentDenied, match="artifact does not match"):
+        runtime.resolve_resource_controller_role("controller-a", "d" * 64)
+
+
+def test_native_schema_record_selection_joins_protected_package_action_and_kind():
+    from hermes_installer.protected_enrollment import EnrollmentDenied
+
+    adapter = SimpleNamespace(
+        adapter_id="adapter-a", action_id="action-a",
+        argument_schema_id="direct-arguments-v1", result_schema_id="direct-result-v1",
+        adapter_artifact_id="adapter-artifact-a", adapter_sha256="b" * 64,
+        workflow_bindings=({
+            "external_tool_name": "lookup", "external_action_id": "external-lookup",
+            "external_argument_schema_id": "workflow-arguments-v1",
+            "external_result_schema_id": "workflow-result-v1",
+            "workflow_artifact_id": "workflow-artifact-a", "workflow_sha256": "f" * 64,
+        },),
+    )
+    package = SimpleNamespace(
+        adapter_records={"adapter-a": adapter},
+        entrypoint_artifact_id="entrypoint-a", entrypoint_sha256="c" * 64,
+        resolver_artifact_id="resolver-a", resolver_sha256="d" * 64,
+        compiled_closure_artifact_id="closure-a",
+    )
+    row = {
+        "id": "workflow-arguments-v1", "artifact_id": "schema-arguments-v1", "sha256": "a" * 64,
+        "schema_kind": "arguments", "native_package_id": "package-a",
+        "native_package_generation": "generation-a", "adapter_id": "adapter-a",
+        "action_id": "action-a", "source_receipt_handle": "receipt-a",
+    }
+
+    class Catalog:
+        def resolve_native_package(self, package_id, generation):
+            if (package_id, generation) != ("package-a", "generation-a"):
+                raise EnrollmentDenied("package generation unavailable")
+            return package
+
+    artifact_specs = {
+        "closure-a": SimpleNamespace(tree_files=(object(),)),
+        "entrypoint-a": SimpleNamespace(sha256="c" * 64),
+        "resolver-a": SimpleNamespace(sha256="d" * 64),
+        "adapter-artifact-a": SimpleNamespace(sha256="b" * 64),
+        "workflow-artifact-a": SimpleNamespace(sha256="f" * 64),
+    }
+
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=Catalog(), build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={},
+        artifact_catalog=SimpleNamespace(artifacts=artifact_specs),
+        build_store=None, service_connector=None, native_schema_artifact_records=(row,),
+    )
+    assert runtime.resolve_native_schema_record(
+        "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+    ) is row
+    adapter.workflow_bindings += ({
+        "external_tool_name": "lookup-copy", "external_action_id": "external-lookup-copy",
+        "external_argument_schema_id": "workflow-arguments-v1",
+        "external_result_schema_id": "workflow-result-v1",
+        "workflow_artifact_id": "workflow-artifact-b", "workflow_sha256": "1" * 64,
+    },)
+    artifact_specs["workflow-artifact-b"] = SimpleNamespace(sha256="1" * 64)
+    with pytest.raises(EnrollmentDenied, match="ambiguous across selected external actions"):
+        runtime.resolve_native_schema_record(
+            "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+        )
+    with pytest.raises(EnrollmentDenied, match="not selected"):
+        runtime.resolve_native_schema_record(
+            "workflow-result-v1", "package-a", "generation-a", "adapter-a", "action-a", "arguments",
+        )
+    with pytest.raises(EnrollmentDenied, match="not selected"):
+        runtime.resolve_native_schema_record(
+            "workflow-arguments-v1", "package-a", "generation-a", "adapter-a", "action-a", "result",
+        )
+
+
+def test_composio_channel_selection_joins_active_resource_controller_and_observer():
+    from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+    from hermes_installer.protected_enrollment import EnrollmentDenied
+
+    row = {"id": "channel-a", "channel_resource_id": "resource-a",
+           "resource_generation": "resource-generation-a", "profile_id": "profile-a",
+           "controller_role_id": "controller-a", "source_issuer_id": "observer-a",
+           "composio_enrollment_id": "composio-a", "composio_user_id": "user-a",
+           "connected_account_id": "account-a", "auth_config_id": "auth-a",
+           "toolkit_version": "20260721_00", "trigger_artifact_id": "trigger-a",
+           "trigger_artifact_sha256": "a" * 64, "trigger_slug": "messages.received",
+           "trigger_instance_id": "instance-a", "webhook_subscription_id": "subscription-a",
+           "webhook_route_enrollment_id": "route-a", "webhook_secret_reference_id": "secret-a",
+           "allowed_user_numbers": ("+14155550123",),
+           "payload_field_bindings": {key: (key,) for key in
+                                       ("sender_number", "message_id", "message_text", "event_timestamp")},
+           "max_event_age_seconds": 120, "account_receipt_handle": "account-receipt-a",
+           "setup_receipt_handle": "setup-receipt-a"}
+    observer = SimpleNamespace(profile_id="profile-a", generation="process-generation-a")
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=None, build_catalog=None, device_catalog=None, process_manager=None,
+        effect_handlers={}, native_bridges={}, artifact_catalog=None, build_store=None,
+        service_connector=None, process_profiles={"profile-a": SimpleNamespace(generation="process-generation-a")},
+        source_observer_enrollments={"observer-a": observer},
+        composio_channel_enrollment_records=(row,),
+        resource_job_records=({"resource_id": "resource-a", "generation": "resource-generation-a",
+                               "profile_id": "profile-a"},),
+        resource_controller_role_records=({"id": "controller-a", "controller_kind": "root-channel",
+                                           "source_observer_enrollment_ids": ("observer-a",)},),
+    )
+    assert runtime.resolve_composio_channel_enrollment("channel-a", "resource-generation-a") is row
+    with pytest.raises(EnrollmentDenied, match="absent or ambiguous"):
+        runtime.resolve_composio_channel_enrollment("channel-a", "stale-resource-generation")
+
+
+def test_native_window_getter_exposes_only_selected_identity_and_opaque_receipt():
+    from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+    from hermes_installer.protected_enrollment import EnrollmentDenied
+
+    native = SimpleNamespace(profile_id="desktop-profile", generation="desktop-generation",
+                             enrollment_id="desktop-enrollment")
+    display = SimpleNamespace(profile_id="display-profile", generation="display-generation",
+                              enrollment_id="display-enrollment")
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=None, build_catalog=None, device_catalog=None, process_manager=None,
+        effect_handlers={}, native_bridges={}, artifact_catalog=None, build_store=None,
+        service_connector=None, process_profiles={"desktop-profile": native, "display-profile": display},
+        remote_session_records=({"id": "remote-a", "native_desktop_profile_id": "desktop-profile",
+                                 "native_generation": "desktop-generation"},),
+        remote_observation_records=({"remote_enrollment_id": "remote-a",
+                                     "native_window_enrollment_id": "desktop-enrollment",
+                                     "display_server_profile_id": "display-profile",
+                                     "display_server_generation": "display-generation",
+                                     "display_name": ":0", "xauthority_receipt_handle": "xauth-receipt-a"},),
+    )
+    selected = runtime.selected_native_window("remote-a")
+    assert selected.xauthority_receipt_handle == "xauth-receipt-a"
+    assert selected.display_name == ":0"
+    assert not hasattr(selected, "xauthority_path")
+    runtime.process_profiles["display-profile"] = SimpleNamespace(
+        profile_id="display-profile", generation="stale", enrollment_id="display-enrollment",
+    )
+    with pytest.raises(EnrollmentDenied, match="stale process profile"):
+        runtime.selected_native_window("remote-a")
 
 
 def test_root_native_package_resolver_rejects_ambiguous_selected_profile_generation():

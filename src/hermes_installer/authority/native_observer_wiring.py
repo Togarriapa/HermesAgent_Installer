@@ -50,16 +50,23 @@ class RootTaskInputCoordinator:
                  initial_native_input_observer: Any,
                  source_delivery_registry: Any,
                  process_custody_registry: Any,
+                 native_input_delivery_registry: Any,
                  monotonic: Callable[[], float] = time.monotonic):
         if (not callable(getattr(task_native_observation_registry, "bind_running_task", None))
                 or not callable(getattr(task_native_observation_registry, "bind_task_input", None))
+                or not callable(getattr(task_native_observation_registry, "cancel_running_task", None))
+                or not callable(getattr(task_native_observation_registry, "cancel_task_input", None))
                 or not callable(getattr(selected_native_execution_registry, "select_resource_task", None))
                 or not callable(getattr(selected_native_execution_registry, "resolve_current_execution", None))
                 or not callable(getattr(selected_native_execution_registry, "resolve_selected_native_input_target", None))
                 or not callable(getattr(initial_native_input_observer, "record_selected_task_input", None))
                 or not callable(getattr(initial_native_input_observer, "retain_task_input_receipt", None))
                 or not callable(getattr(initial_native_input_observer, "resolve_task_input_receipt", None))
+                or not callable(getattr(initial_native_input_observer, "discard_task_input_observation", None))
                 or not callable(getattr(source_delivery_registry, "resolve_delivered_source_receipt", None))
+                or not callable(getattr(native_input_delivery_registry, "queue_selected_input", None))
+                or not callable(getattr(native_input_delivery_registry, "wait_delivered", None))
+                or not callable(getattr(native_input_delivery_registry, "cancel_selected_input", None))
                 or not callable(getattr(process_custody_registry, "resolve_managed_task_process_handle", None))
                 or not callable(monotonic)):
             raise ValueError("root task input coordinator dependencies are incomplete")
@@ -68,6 +75,7 @@ class RootTaskInputCoordinator:
         self.input_observer = initial_native_input_observer
         self.source_delivery = source_delivery_registry
         self.process_custody = process_custody_registry
+        self.native_input_delivery = native_input_delivery_registry
         self.monotonic = monotonic
         self._records: dict[str, _InitialInputRecord] = {}
         self._lock = threading.RLock()
@@ -77,13 +85,15 @@ class RootTaskInputCoordinator:
                           selected_native_execution_registry: Any,
                           initial_native_input_observer: Any,
                           source_delivery_registry: Any,
-                          process_custody_registry: Any) -> "RootTaskInputCoordinator":
+                          process_custody_registry: Any,
+                          native_input_delivery_registry: Any) -> "RootTaskInputCoordinator":
         return cls(
             task_native_observation_registry=task_native_observation_registry,
             selected_native_execution_registry=selected_native_execution_registry,
             initial_native_input_observer=initial_native_input_observer,
             source_delivery_registry=source_delivery_registry,
             process_custody_registry=process_custody_registry,
+            native_input_delivery_registry=native_input_delivery_registry,
         )
 
     def prepare_initial_input(self, *, task_admission: Any, admission_handle: Any,
@@ -120,21 +130,36 @@ class RootTaskInputCoordinator:
 
         # The caller passes the already-resolved source snapshot.  This first
         # bind is its one-use/currentness check; never resolve it again here.
-        self.task_native_observations.bind_running_task(
-            admission_handle, node_id, source, managed_task_handle)
-        self._check_cancelled(cancelled)
-        selected = self.selected_executions.select_resource_task(
-            admission_handle, node_id, managed_task_handle)
-        current = self.selected_executions.resolve_current_execution(selected)
-        if (current is not selected
-                or getattr(selected, "execution_handle", None) is not admission_handle
-                or getattr(selected, "process_handle", None) is not managed_task_handle
-                or getattr(selected, "kind", None) != "resource-task"
-                or getattr(selected, "observer_enrollment_id", None) is None):
-            self._release_selection(selected)
-            raise AuthorityDenied("native.input.selection", "selected native execution differs from the live task")
+        task_binding_attempted = True
+        selected = None
+        try:
+            self.task_native_observations.bind_running_task(
+                admission_handle, node_id, source, managed_task_handle)
+            self._check_cancelled(cancelled)
+            selected = self.selected_executions.select_resource_task(
+                admission_handle, node_id, managed_task_handle)
+            current = self.selected_executions.resolve_current_execution(selected)
+            if (current is not selected
+                    or getattr(selected, "execution_handle", None) is not admission_handle
+                    or getattr(selected, "process_handle", None) is not managed_task_handle
+                    or getattr(selected, "kind", None) != "resource-task"
+                    or getattr(selected, "observer_enrollment_id", None) is None):
+                raise AuthorityDenied("native.input.selection", "selected native execution differs from the live task")
+        except BaseException:
+            if selected is not None:
+                self._release_selection(selected)
+            cancel_running = getattr(self.task_native_observations, "cancel_running_task", None)
+            if callable(cancel_running):
+                try:
+                    cancel_running(managed_task_handle)
+                except Exception:
+                    pass
+            raise
 
         target = None
+        source_handle = None
+        receipt_handle = None
+        initial_receipt = None
         try:
             target = self.selected_executions.resolve_selected_native_input_target(selected)
             self._check_cancelled(cancelled)
@@ -166,6 +191,38 @@ class RootTaskInputCoordinator:
                 raise AuthorityDenied("native.input.receipt", "root input capture differs from the selected task")
 
             source_handle = getattr(event, "source_receipt_handle", None)
+            self.native_input_delivery.queue_selected_input(selected, event)
+            delivery = self.native_input_delivery.wait_delivered(
+                selected, timeout=min(float(timeout), 30.0), cancelled=cancelled)
+            from .source_observers import NativeInitialInputDelivery
+            if (type(delivery) is not NativeInitialInputDelivery
+                    or delivery.source_receipt_handle != source_handle
+                    or delivery.selected_execution_handle != selected.selection_handle
+                    or delivery.input_sha256 != task_admission.stdin_sha256
+                    or delivery.input_size_bytes != task_admission.stdin_size_bytes
+                    or delivery.expires_monotonic > event.expires_monotonic
+                    or delivery.expires_monotonic <= self.monotonic()):
+                raise AuthorityDenied("native.input.delivery", "producer take did not bind the selected input event")
+            delivery_lease = self.process_custody.resolve_managed_task_process_handle(
+                managed_task_handle)
+            if delivery_lease is None:
+                raise AuthorityDenied("native.input.delivery", "selected task exited before initial-input delivery")
+            try:
+                current_identity = self.process_custody.resolve_live_peer(
+                    delivery_lease.pid, delivery_lease.pidfd,
+                    profile_id=delivery_lease.profile_id,
+                    generation=delivery_lease.generation,
+                )
+                if (delivery_lease.pid != peer_pid or delivery_lease.uid != peer_uid
+                        or current_identity is None or current_identity != peer_identity):
+                    raise AuthorityDenied("native.input.delivery", "producer peer changed before initial-input delivery")
+                delivered = self.source_delivery.resolve_delivered_source_receipt(
+                    str(source_handle), peer_uid=delivery_lease.uid,
+                    peer_pid=delivery_lease.pid, peer_pidfd=delivery_lease.pidfd)
+            finally:
+                delivery_lease.close()
+            if str(delivered) != str(source_handle):
+                raise AuthorityDenied("native.input.delivery", "source receipt delivery handle changed")
             receipt = self._resolve_source_receipt(source_handle)
             # The input observer consumes the target PIDFD during capture; the
             # exact ready event is carried by its immutable root event record.
@@ -194,11 +251,6 @@ class RootTaskInputCoordinator:
                 issued_monotonic=self.monotonic(), expires_monotonic=expires,
             )
             self.input_observer.retain_task_input_receipt(initial_receipt)
-            self.task_native_observations.bind_task_input(
-                task_handle=managed_task_handle, admission=admission_handle,
-                source=source, selected_execution=selected,
-                initial_input=initial_receipt,
-            )
             with self._lock:
                 if receipt_handle in self._records:
                     raise AuthorityDenied("native.input.replay", "task input receipt handle collided")
@@ -210,8 +262,39 @@ class RootTaskInputCoordinator:
                     peer_identity=peer_identity, profile_id=target_profile_id,
                     generation=target_generation,
                 )
+            self.task_native_observations.bind_task_input(
+                task_handle=managed_task_handle, admission=admission_handle,
+                source=source, selected_execution=selected,
+                initial_input=initial_receipt,
+            )
             return initial_receipt
         except BaseException:
+            try:
+                self.native_input_delivery.cancel_selected_input(selected)
+            except Exception:
+                pass
+            if receipt_handle is not None:
+                with self._lock:
+                    self._records.pop(receipt_handle, None)
+            if source_handle is not None:
+                cancel = getattr(self.task_native_observations, "cancel_task_input", None)
+                if callable(cancel) and initial_receipt is not None:
+                    try:
+                        cancel(task_handle=managed_task_handle,
+                               initial_input_receipt=initial_receipt)
+                    except Exception:
+                        pass
+                self.input_observer.discard_task_input_observation(
+                    source_receipt_handle=str(source_handle),
+                    receipt_handle=receipt_handle,
+                )
+            if task_binding_attempted and initial_receipt is None:
+                cancel_running = getattr(self.task_native_observations, "cancel_running_task", None)
+                if callable(cancel_running):
+                    try:
+                        cancel_running(managed_task_handle)
+                    except Exception:
+                        pass
             if target is not None:
                 self._close_target(target)
             self._release_selection(selected)
@@ -232,6 +315,36 @@ class RootTaskInputCoordinator:
         record = self._lookup_record(receipt_handle, task_handle, stdin_sha256,
                                      stdin_size_bytes, consume=True)
         return record.receipt
+
+    def revoke_initial_input_receipt(self, receipt_handle: str, *,
+                                     task_handle: Any) -> bool:
+        """Revoke an exact prepared input on custody cancellation/failure."""
+        from ..managed_process_custodian import ManagedTaskHandle
+
+        if type(task_handle) is not ManagedTaskHandle:
+            raise AuthorityDenied("native.input.receipt", "task input revocation handle is malformed")
+        with self._lock:
+            record = self._records.get(receipt_handle)
+            if (record is None or record.managed_task_handle is not task_handle
+                    or record.receipt.receipt_handle != receipt_handle):
+                return False
+            self._records.pop(receipt_handle, None)
+            record.consumed = True
+        cancel = getattr(self.task_native_observations, "cancel_task_input", None)
+        if callable(cancel):
+            cancel(task_handle=task_handle, initial_input_receipt=record.receipt)
+        self.input_observer.discard_task_input_observation(
+            source_receipt_handle=record.receipt.source_receipt_handle,
+            receipt_handle=record.receipt.receipt_handle,
+        )
+        self.native_input_delivery.cancel_selected_input(record.selected_execution)
+        release = getattr(self.selected_executions, "release_selection", None)
+        if callable(release):
+            try:
+                release(record.selected_execution)
+            except Exception:
+                pass
+        return True
 
     def _lookup_record(self, receipt_handle: str, task_handle: Any,
                        stdin_sha256: str, stdin_size_bytes: int,
