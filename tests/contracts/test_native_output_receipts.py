@@ -200,6 +200,8 @@ def test_non_root_cannot_construct_or_publish_native_output_receipts(tmp_path: P
         pytest.skip("non-root denial is covered by root Linux fixture")
 
     class Binding:
+        claim = None
+
         def authorize_native_output(self, **_kwargs):
             raise AssertionError("must not authorize outside root")
 
@@ -232,7 +234,7 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
     class Binding:
         def authorize_native_output(self, *, artifact_role, output_kind,
                                     member_tree_sha256, output_sha256,
-                                    output_size_bytes):
+                                    output_size_bytes, assembly_selection_handle=None):
             artifact_id = ("native-candidate-index:package-1:generation-1"
                            if artifact_role == "native-candidate-index" else
                            f"native-output:{artifact_role}:package-1:generation-1")
@@ -244,12 +246,22 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
                 "3" * 64, "installer-module:native_materializer", "5" * 64,
                 ("A" * 48, "B" * 48), member_tree_sha256,
                 output_sha256, output_size_bytes, closure_tree_sha256, time.monotonic() + 3600,
+                assembly_selection_handle,
             )
 
         current = True
 
         def revalidate_native_output(self, selection):
             return self.current and selection.transaction_handle == "transaction-" + "1" * 64
+
+        def authorize_prepared_native_output(self, assembly_selection_handle, artifact_role,
+                                             output_kind, member_tree_sha256,
+                                             output_sha256, output_size_bytes):
+            return self.authorize_native_output(
+                artifact_role=artifact_role, output_kind=output_kind,
+                member_tree_sha256=member_tree_sha256, output_sha256=output_sha256,
+                output_size_bytes=output_size_bytes,
+                assembly_selection_handle=assembly_selection_handle)
 
     cas, journal = tmp_path / "cas", tmp_path / "journal"
     cas.mkdir(mode=0o700)
@@ -263,12 +275,14 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
         rows = members if role == "native-compiled-closure" else (
             NativeOutputMember(path, hashlib.sha256(data).hexdigest(), len(data), 0o644),)
         receipts[role] = registry.publish_selected(
-            artifact_role=role, output_kind=kind, payload=data, members=rows)
+            artifact_role=role, output_kind=kind, payload=data, members=rows,
+            assembly_selection_handle="C" * 48)
     receipt = receipts["native-compiled-closure"]
     object_path = cas / receipt.sha256[:2] / receipt.sha256
     assert object_path.read_bytes() == payload
     assert object_path.stat().st_uid == 0 and object_path.stat().st_mode & 0o777 == 0o400
     assert receipt.artifact_id == "native-output:native-compiled-closure:package-1:generation-1"
+    assert receipt.assembly_selection_handle == "C" * 48
     output_ids = tuple(receipts[role].receipt_id for role in outputs)
     reservation = registry.reserve_for_active_compilation(
         output_ids, prepared_generation_id="generation-1",
@@ -329,7 +343,7 @@ def test_active_reservation_recovers_after_registry_restart_and_completes_idempo
     class Binding:
         def authorize_native_output(self, *, artifact_role, output_kind,
                                     member_tree_sha256, output_sha256,
-                                    output_size_bytes):
+                                    output_size_bytes, assembly_selection_handle=None):
             artifact_id = ("native-candidate-index:package-1:generation-1"
                            if artifact_role == "native-candidate-index" else
                            f"native-output:{artifact_role}:package-1:generation-1")
@@ -339,7 +353,16 @@ def test_active_reservation_recovers_after_registry_restart_and_completes_idempo
                 "installer-module:native_materializer", "3" * 64,
                 "installer-module:native_materializer", "5" * 64,
                 ("A" * 48, "B" * 48), member_tree_sha256, output_sha256,
-                output_size_bytes, closure_tree_sha256, expires)
+                output_size_bytes, closure_tree_sha256, expires, assembly_selection_handle)
+
+        def authorize_prepared_native_output(self, assembly_selection_handle, artifact_role,
+                                             output_kind, member_tree_sha256,
+                                             output_sha256, output_size_bytes):
+            return self.authorize_native_output(
+                artifact_role=artifact_role, output_kind=output_kind,
+                member_tree_sha256=member_tree_sha256, output_sha256=output_sha256,
+                output_size_bytes=output_size_bytes,
+                assembly_selection_handle=assembly_selection_handle)
 
         def revalidate_native_output(self, selection):
             return selection.transaction_handle == transaction_handle
@@ -365,7 +388,8 @@ def test_active_reservation_recovers_after_registry_restart_and_completes_idempo
         rows = members if role == "native-compiled-closure" else (
             NativeOutputMember(path, hashlib.sha256(data).hexdigest(), len(data), 0o644),)
         receipts[role] = registry.publish_selected(
-            artifact_role=role, output_kind=kind, payload=data, members=rows)
+            artifact_role=role, output_kind=kind, payload=data, members=rows,
+            assembly_selection_handle="C" * 48)
     receipt_ids = tuple(sorted(row.receipt_id for row in receipts.values()))
     reservation = registry.reserve_for_active_compilation(
         receipt_ids, prepared_generation_id="generation-1",
@@ -416,3 +440,106 @@ def test_active_reservation_recovers_after_registry_restart_and_completes_idempo
     current_time[0] = expires + 1
     with pytest.raises(NativeOutputReceiptDenied, match="does not resolve"):
         reopened.resolve_active_compilation_reservation(publication)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="requires isolated root-owned Linux CAS fixture")
+def test_precompile_reservation_reopens_exact_five_outputs_and_assembly(tmp_path: Path) -> None:
+    payload, members = _compiled_closure()
+    archive_contents = {member.path: _read_archive_member(payload, member.path)
+                        for member in members}
+    outputs = {
+        "native-entrypoint-manifest": ("entrypoint-json", "manifest.json"),
+        "native-action-resolver": ("resolver-json", "resolver/resolver"),
+        "native-boundary-overlay": ("boundary-overlay", "overlay/manifest.json"),
+        "native-candidate-index": ("candidate-index-json", "catalog/native-candidates.json"),
+        "native-compiled-closure": ("compiled-closure", ""),
+    }
+    closure_digest = _closure_tree_sha256(payload)
+    selection_handle = "S" * 48
+
+    class Binding:
+        def authorize_native_output(self, *, artifact_role, output_kind,
+                                    member_tree_sha256, output_sha256,
+                                    output_size_bytes, assembly_selection_handle=None):
+            artifact_id = (f"native-candidate-index:package-1:generation-1"
+                           if artifact_role == "native-candidate-index" else
+                           f"native-output:{artifact_role}:package-1:generation-1")
+            return NativeOutputSelection(
+                artifact_id, artifact_role, output_kind, "package-1", "demo", "generation-1",
+                "session-1", "transaction-" + "4" * 64, "2" * 64, "generation-1",
+                "installer-module:native_materializer", "3" * 64,
+                "installer-module:native_materializer", "5" * 64,
+                ("A" * 48,), member_tree_sha256, output_sha256, output_size_bytes,
+                closure_digest, time.monotonic() + 3600, assembly_selection_handle)
+
+        def authorize_prepared_native_output(self, assembly_selection_handle, artifact_role,
+                                             output_kind, member_tree_sha256,
+                                             output_sha256, output_size_bytes):
+            return self.authorize_native_output(
+                artifact_role=artifact_role, output_kind=output_kind,
+                member_tree_sha256=member_tree_sha256, output_sha256=output_sha256,
+                output_size_bytes=output_size_bytes,
+                assembly_selection_handle=assembly_selection_handle)
+
+        def revalidate_native_output(self, selection):
+            return selection.assembly_selection_handle == selection_handle
+
+        def resolve_current_native_bootstrap_assembly(self, handle):
+            assert handle == selection_handle
+            return type("Assembly", (), {"definitions_sha256": "6" * 64})()
+
+        def resolve_current_active_policy_compilation_registry(self):
+            claim = self.claim
+            class Compiler:
+                def resolve_current_active_policy_claim(self, _handle):
+                    return claim
+
+                def verify_current_active_policy_claim(self, value):
+                    assert value is claim
+                    return claim
+            return Compiler()
+
+    cas, journal = tmp_path / "cas", tmp_path / "journal"
+    cas.mkdir(mode=0o700)
+    journal.mkdir(mode=0o700)
+    binding = Binding()
+    registry = RootMaterializationReceiptRegistry._from_root_factory(
+        binding=binding, cas_root=cas, journal_root=journal)
+    receipts = []
+    for role, (kind, path) in outputs.items():
+        data = payload if role == "native-compiled-closure" else archive_contents[path]
+        rows = members if role == "native-compiled-closure" else (
+            NativeOutputMember(path, hashlib.sha256(data).hexdigest(), len(data), 0o644),)
+        receipts.append(registry.publish_selected(
+            artifact_role=role, output_kind=kind, payload=data, members=rows,
+            assembly_selection_handle=selection_handle))
+    reserved = registry.reserve_for_precompile(
+        selection_handle, tuple(item.receipt_id for item in receipts), "P" * 48)
+    assert reserved.schema == 1
+    assert reserved.receipt_ids == tuple(item.receipt_id for item in receipts)
+    assert reserved.assembly_selection_sha256 == "6" * 64
+    reopened = RootMaterializationReceiptRegistry._from_root_factory(
+        binding=binding, cas_root=cas, journal_root=journal)
+    current = reopened.resolve_current_precompile_reservation(reserved.reservation_handle)
+    assert current == reserved
+    binding.claim = type("Claim", (), {
+        "publication_handle": reserved.publication_handle,
+        "_reservation_handle": reserved.reservation_handle,
+        "setup_session_id": reserved.setup_session_id,
+        "transaction_handle": reserved.transaction_handle,
+        "plan_sha256": reserved.plan_digest,
+        "prepared_generation_id": reserved.prepared_generation_id,
+        "materialization_receipt_handles": reserved.receipt_ids,
+        "expires_monotonic": reserved.expires_monotonic,
+        "claim_digest": "7" * 64,
+        "compiled_policy_sha256": "8" * 64,
+        "compiled_artifact_catalog_sha256": "9" * 64,
+        "compiled_selection_sha256": "a" * 64,
+    })()
+    output_claim = reopened.bind_compiled_policy_claim(
+        reserved.reservation_handle, reserved.publication_handle)
+    assert output_claim.reservation.reservation_handle == reserved.reservation_handle
+    assert output_claim.output_closure_sha256 == reserved.output_closure_sha256
+    with reopened._connect() as db:
+        states = {row["state"] for row in db.execute("SELECT state FROM outputs")}
+    assert states == {"reserved"}

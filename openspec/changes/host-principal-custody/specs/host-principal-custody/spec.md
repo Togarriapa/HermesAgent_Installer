@@ -724,3 +724,17 @@ The installer SHALL authorize and reserve actual generated outputs from genuine 
 #### Scenario: Prepared native package catalog is empty
 - **WHEN** genuine source-backed assembly has produced five valid selected outputs
 - **THEN** authorization resolves the sealed setup selection and never requires future active package policy
+
+### Requirement: Native output role correction v170
+The installer SHALL use exact source-established native output roles and output kinds.
+
+#### Scenario: Unknown overlay role is supplied
+- **WHEN** a receipt uses native-overlay-archive rather than native-boundary-overlay
+- **THEN** reservation and projection deny the unknown literal
+
+### Requirement: MCP discovery capture v171
+The installer SHALL separately validate and retain actual selected MCP discovery responses before deriving schemas, without treating metadata as tool execution.
+
+#### Scenario: Tools call is labelled discovery
+- **WHEN** actual retained request method is tools/call
+- **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it
