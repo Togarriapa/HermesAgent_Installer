@@ -11,8 +11,8 @@ from hermes_installer.authority.private_loopback_network import (
     POLICY_ID, POLICY_SHA256, POLICY_PATH, PrivateLoopbackMember,
     compile_nft_transaction, namespace_path_for, unit_network_properties,
     validate_private_loopback_networks, _topology_valid, verify_unit_network_readback,
-    RootPrivateLoopbackNetworkLease, RootNetworkMemberProof,
-    verify_root_network_lease,
+    RootPrivateLoopbackNetworkLease, RootNetworkMemberProof, RootResolvedHostTool,
+    create_root_namespace, renew_root_network_lease, verify_root_network_lease,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -169,6 +169,40 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
             with self.assertRaises(AuthorityDenied):
                 verify_root_network_lease(lease)
         stop.assert_called_once_with("hermes-installer-" + "1" * 32 + ".service")
+
+    def test_host_tool_capability_requires_registry_issued_instance(self):
+        from hermes_installer.authority.host_tool_observation import HostToolObservationRegistry
+
+        registry = object.__new__(HostToolObservationRegistry)
+        registry._lock = __import__("threading").RLock()
+        registry._resolved_tools = {}
+        registry._observations = {}
+        fake = object.__new__(RootResolvedHostTool)
+        object.__setattr__(fake, "observation_handle", "a" * 64)
+        object.__setattr__(fake, "observation_registry", registry)
+        with self.assertRaises(AuthorityDenied):
+            registry.verify_resolved_tool(fake)
+
+    def test_namespace_and_renewal_reject_unregistered_nft_before_effect(self):
+        network, = validate_private_loopback_networks([self.row], self.services, self.digest)
+        forged = object.__new__(RootResolvedHostTool)
+        object.__setattr__(forged, "observation_registry", None)
+        object.__setattr__(forged, "selected_network_key", (
+            network.network_id, network.generation, network.service_generation_digest,
+        ))
+        with patch("hermes_installer.authority.private_loopback_network._linux_root"):
+            with self.assertRaises(AuthorityDenied):
+                create_root_namespace(network, forged)
+
+        lease = RootPrivateLoopbackNetworkLease(
+            network, Path("/run/hermes-installer/netns/fixture"), -1, 1, 2,
+            forged, "a" * 64, "b" * 32, "fixture-kernel", "c" * 64,
+            "d" * 64, "e" * 64, "f" * 64, 1.0, 2.0, {},
+        )
+        with patch("hermes_installer.authority.private_loopback_network.verify_root_network_lease"):
+            with patch("hermes_installer.authority.private_loopback_network._linux_root"):
+                with self.assertRaises(AuthorityDenied):
+                    renew_root_network_lease(lease, forged)
 
 
 if __name__ == "__main__":

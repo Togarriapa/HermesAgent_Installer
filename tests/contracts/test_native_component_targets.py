@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+import hashlib
 import time
 
 import pytest
@@ -55,6 +56,19 @@ def test_plugin_target_contract_rejects_changed_source_owned_routes():
             "mcp-registry", changed.encode())
 
 
+def test_public_web_contract_is_read_from_exact_source_shape_and_rejects_bounds_drift():
+    source = (ROOT / "src/hermes_installer/components/plugin_public_https.py").read_bytes()
+    assert hashlib.sha256(source).hexdigest() == (
+        "63e4a128f0a48f0bfcbd3c0f6c7313d94f4a3e79f83c2655dde32a339b91ff0d")
+    RootNativeComponentTargetRegistry._verify_public_web_contract_source(source)
+
+    changed = source.replace(b"response_bytes_limit <= 2_097_152",
+                             b"response_bytes_limit <= 4_194_304")
+    with pytest.raises(NativeComponentTargetPending) as raised:
+        RootNativeComponentTargetRegistry._verify_public_web_contract_source(changed)
+    assert raised.value.missing_prerequisite_ids == ("reviewed-public-web-target-contract",)
+
+
 def test_target_source_inventory_is_descriptive_and_unconfigured_families_stay_pending():
     assert set(_SOURCE_CONTRACTS) == {
         "agent37-discovery", "mcp-registry", "resource-overlay-store",
@@ -74,11 +88,12 @@ def test_current_target_handle_uses_only_its_retained_policy_selection():
     policy = SimpleNamespace(selection_handle="root-policy", expires_monotonic=time.monotonic() + 30)
     target = SimpleNamespace(
         selection_handle="root-target", native_policy_selection_handle="root-policy",
-        expires_monotonic=time.monotonic() + 30, _seal=_TARGET_SEAL,
+        component_id="mcp-registry", expires_monotonic=time.monotonic() + 30, _seal=_TARGET_SEAL,
     )
     validated = []
     registry._targets = {"root-target": target}
     registry._policy_selections = {"root-policy": policy}
+    registry._binding = SimpleNamespace()
     registry._assert_binding_matches_selection = validated.append
 
     assert registry.resolve_current_target_handle("root-target") is target

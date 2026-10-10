@@ -491,10 +491,13 @@ class RootAuthorityRuntime:
     controller_release_receipt: Any | None = None
     controller_actor_observation: Any | None = None
     provider_runtime_selection: Any | None = None
+    root_setup_choice_registry: Any | None = None
     root_tty_consent_choices: Any | None = None
     private_input_consent_registry: Any | None = None
     memory_capture_consent_registry: Any | None = None
     memory_capture_coordinator: Any | None = None
+    memory_runtime_composition: Any | None = None
+    memory_lifecycle_unavailable_reason: str | None = None
     consent_unavailable_reason: str | None = None
 
     @property
@@ -610,9 +613,11 @@ class RootAuthorityRuntime:
             getattr(self.native_bridge_broker, "native_turn_observer", None),
             self.native_mcp_dispatcher,
             self.native_mcp_discovery_registry,
+            self.root_setup_choice_registry,
             self.root_tty_consent_choices,
             self.private_input_consent_registry,
             self.memory_capture_consent_registry,
+            self.memory_runtime_composition,
             self.selected_webhook_ingress,
             self.resource_scheduler,
             self.resource_dag_dispatcher,
@@ -1479,6 +1484,7 @@ def compose_root_authority_runtime(
         )
 
     memory_runtime = None
+    memory_network_lease_resolver = None
     if enrollment.memory_enrollments:
         if (bindings.enrollment_catalog is None
                 or not callable(getattr(bindings, "resolve_root_journal", None))
@@ -1527,6 +1533,20 @@ def compose_root_authority_runtime(
                 raise AuthorityDenied("memory.unavailable", "memory enrollment is not active in this generation")
             return selected
 
+        try:
+            from .memory_runtime_composition import RootMemoryNetworkLeaseResolver
+            memory_network_lease_resolver = RootMemoryNetworkLeaseResolver(
+                bindings, monotonic=service.monotonic,
+            )
+        except Exception as exc:
+            # Root composition must never fall back to the generic custody
+            # namespace resolver: it is not bound to the selected private
+            # endpoint/network row. Leave the memory service unavailable if
+            # the typed retained-lease resolver cannot be assembled.
+            raise AuthorityDenied(
+                "authority.composition",
+                f"active memory private-network lease resolver is unavailable ({type(exc).__name__})",
+            ) from None
         memory_runtime = build_memory_runtime(
             memory_targets, service,
             root_journal_resolver=bindings.resolve_root_journal,
@@ -1534,6 +1554,7 @@ def compose_root_authority_runtime(
             vault=vault, service_catalog=bindings.enrollment_catalog,
             process_manager=bindings.process_manager,
             enrollment_resolver=resolve_memory_enrollment,
+            private_network_lease_resolver=memory_network_lease_resolver,
         )
         if not memory_runtime.get("engines"):
             memory_runtime["private_engine_unavailable_reason"] = (
@@ -1943,6 +1964,30 @@ def compose_root_authority_runtime(
             "a fully attached active provider invocation and bridge graph is required for root TTY choices"
         )
 
+    memory_runtime_composition = None
+    memory_lifecycle_unavailable_reason = None
+    if enrollment.memory_enrollments:
+        try:
+            from .memory_runtime_composition import compose_root_memory_runtime
+
+            memory_runtime_composition = compose_root_memory_runtime(
+                bindings=bindings, enrollment=enrollment,
+                memory_runtime=memory_runtime, service=service,
+                vault=vault,
+                network_lease_resolver=memory_network_lease_resolver,
+                monotonic=service.monotonic,
+            )
+            memory_lifecycle_unavailable_reason = (
+                memory_runtime_composition.unavailable_reason
+            )
+        except Exception as exc:
+            # Lifecycle, provider-route, capture, and network authorities are
+            # independent. A missing lifecycle dependency must not substitute
+            # another consent registry or create a success-shaped runtime.
+            memory_lifecycle_unavailable_reason = (
+                f"root memory lifecycle composition rejected ({type(exc).__name__})"
+            )
+
     return RootAuthorityRuntime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=artifact_catalog, vault=vault,
@@ -1977,5 +2022,7 @@ def compose_root_authority_runtime(
         memory_capture_consent_registry=memory_capture_consent_registry,
         memory_capture_coordinator=(memory_runtime.get("capture_coordinator")
                                     if isinstance(memory_runtime, Mapping) else None),
+        memory_runtime_composition=memory_runtime_composition,
+        memory_lifecycle_unavailable_reason=memory_lifecycle_unavailable_reason,
         consent_unavailable_reason=consent_unavailable_reason,
     )

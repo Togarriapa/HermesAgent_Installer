@@ -463,10 +463,22 @@ class RootMemoryServiceLifecycle:
         verified = self.authority_service.consume_root_selected_service_effect(
             grant, admission, binding.service_profile, payload,
         )
+        # The signed effect authorizes exactly one short-lived action. Custody
+        # separately retains this sealed lifecycle admission's original service
+        # deadline and the root controller's actual PIDFD proof; grant expiry
+        # must not truncate a successfully supervised service lifetime.
+        controller_proof = admission._controller_lease
+
+        def effect_cancelled() -> bool:
+            return (not admission.is_current(now=self.monotonic())
+                    or cancelled is not None and cancelled())
+
         return self.custody.perform_root_selected_service_effect(
             binding.service_profile, verified, payload,
+            memory_admission=admission,
+            controller_proof=controller_proof,
             timeout=min(float(timeout), max(0.001, admission.original_deadline - self.monotonic())),
-            cancelled=cancelled,
+            cancelled=effect_cancelled,
         )
 
     def start_selected_memory(self, handle: str, *, timeout: float = 30.0,
