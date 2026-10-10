@@ -13,7 +13,7 @@ import re
 import stat
 import time
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -1685,273 +1685,351 @@ def build_root_runtime_bindings(
     its protected file verification. Missing joins fail closed. This makes the
     daemon callsite small while keeping raw configuration parsing in one owner.
     """
-    if type(expected_uid) is not int or expected_uid != 0:
-        raise EnrollmentDenied("root runtime bindings require the root identity")
-    required_attributes = (
-        "service_records", "protected_devices",
-        "protected_build_records", "protected_enrollment_digest",
-        "root_journal_root_records", "native_mcp_tool_binding_records",
-        "resource_controller_role_records", "remote_observation_records",
-        "native_schema_artifact_records",
-        "composio_channel_enrollment_records", "channel_delivery_binding_records",
-        "resource_backend_enrollment_records", "remote_startup_records",
-        "private_loopback_network_records", "selected_resource_execution_records",
-        "resource_scope_binding_records", "selected_application_runtime_records",
-        "public_web_scope_records",
-    )
-    if any(not hasattr(enrollment, name) for name in required_attributes):
-        raise EnrollmentDenied("verified generation, device, and build records are unavailable")
-    records = enrollment.service_records
-    devices = enrollment.protected_devices
-    builds = enrollment.protected_build_records
-    digest = enrollment.protected_enrollment_digest
-    if not isinstance(records, list) or not records:
-        raise EnrollmentDenied("protected service generation records are required")
-    if not isinstance(devices, list) or not isinstance(builds, list):
-        raise EnrollmentDenied("protected hardware catalog records are malformed")
-
-    service_catalog = ProtectedEnrollmentCatalog.from_verified_records(
-        records, protected_digest=digest, expected_uid=expected_uid,
-        native_packages=getattr(enrollment, "native_package_records", None),
-        source_issuers=getattr(enrollment, "source_issuers", None),
-        memory_enrollments=getattr(enrollment, "memory_enrollments", None),
-        memory_service_enablement_projections=getattr(
-            enrollment, "memory_service_enablement_projection_records", None,
-        ),
-        parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
-        selected_application_runtimes=getattr(enrollment, "selected_application_runtime_records", None),
-        private_memory_endpoint_selections=getattr(
-            enrollment, "private_memory_endpoint_selection_records", None,
-        ),
-        private_memory_model_selections=getattr(
-            enrollment, "private_memory_model_selection_records", None,
-        ),
-        public_web_scopes=getattr(enrollment, "public_web_scope_records", None),
-        native_schema_artifacts=getattr(enrollment, "native_schema_artifact_records", None),
-        native_mcp_tool_bindings=getattr(enrollment, "native_mcp_tool_binding_records", None),
-        native_worker_network_records=getattr(enrollment, "native_worker_network_records", None),
-        active_network_generation_records=getattr(enrollment, "active_network_generation_records", None),
-        native_worker_runtime_records=getattr(enrollment, "native_worker_runtime_records", None),
-        owner_overlay_observer_records=getattr(enrollment, "owner_overlay_observer_records", None),
-    )
-    build_catalog = ProtectedBuildCatalog.from_protected_records(
-        builds, service_generation_digest=digest,
-    )
-    root_journal_catalog = ProtectedRootJournalCatalog.from_protected_records(
-        enrollment.root_journal_root_records, generation_digest=digest,
-    )
-    for raw in builds:
-        try:
-            build_catalog.resolve_service(raw["target_id"], raw["generation"], service_catalog)
-        except (KeyError, TypeError, ValueError, PermissionError):
-            raise EnrollmentDenied(
-                "protected build target has no exact dedicated service enrollment join") from None
-    device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
-
-    process_profiles = {}
-    profile_to_principal: dict[str, tuple[int, Any]] = {}
-    for uid, binding in enrollment.bindings_by_uid.items():
-        if binding.profile_id in profile_to_principal:
-            raise EnrollmentDenied("authority principal profile binding is duplicated")
-        profile_to_principal[binding.profile_id] = (uid, binding)
-    for raw in records:
-        profile = service_catalog.resolve(raw["enrollment_id"], raw["generation"])
-        principal = profile_to_principal.get(profile.profile_id)
-        if principal is None:
-            raise EnrollmentDenied("service generation has no protected authority principal")
-        uid, binding = principal
-        if (uid != profile.service_uid or binding.principal_id != profile.principal_id
-                or binding.profile_id != profile.profile_id
-                or binding.namespace_id != profile.namespace_identity
-                or profile.profile_id in process_profiles):
-            raise EnrollmentDenied("service generation identity does not match its authority principal")
-        for operation, target in profile.operation_targets.items():
-            if not any(
-                rule.operation == operation and rule.target == target
-                and rule.capability in binding.capabilities
-                for rule in enrollment.rules.values()
-            ):
-                raise EnrollmentDenied("service operation target lacks an exact authority rule")
-        for recipe in profile.operation_recipes.values():
-            if recipe.parameter_schema_id not in service_catalog.parameter_schemas:
-                raise EnrollmentDenied("operation recipe parameter schema is absent from protected catalog")
-        # Every child executable is selected by immutable artifact identity and
-        # digest from the root-loaded artifact catalog; the worker supplies none.
-        child_refs: dict[str, str] = {}
-        for artifact_id in profile.runtime_artifact_ids:
-            spec = artifact_catalog.artifacts.get(artifact_id)
-            if spec is None:
-                raise EnrollmentDenied("service runtime artifact is absent from the protected artifact catalog")
-            child_refs[f"artifact:{artifact_id}:{spec.sha256}"] = spec.sha256
-        for recipe in profile.operation_recipes.values():
-            executable_spec = artifact_catalog.artifacts.get(recipe.executable_artifact_id)
-            if executable_spec is None or executable_spec.sha256 != recipe.executable_sha256:
-                raise EnrollmentDenied("operation executable pin differs from the protected artifact catalog")
-            for artifact_id, digest_value in recipe.child_artifact_refs.items():
-                child_spec = artifact_catalog.artifacts.get(artifact_id)
-                if child_spec is None or child_spec.sha256 != digest_value:
-                    raise EnrollmentDenied("operation child artifact pin differs from the protected catalog")
-        process_profiles[profile.profile_id] = profile.as_managed_profile(
-            artifact_root=enrollment.artifact_staging_directory,
-            child_artifact_refs=child_refs,
-            parameter_schemas=service_catalog.parameter_schemas,
+    committed_pm_resolver = None
+    committed_pm_identity = None
+    committed_pm_release = None
+    committed_pm_actor = None
+    pm_custody_transferred = False
+    try:
+        if type(expected_uid) is not int or expected_uid != 0:
+            raise EnrollmentDenied("root runtime bindings require the root identity")
+        required_attributes = (
+            "service_records", "protected_devices",
+            "protected_build_records", "protected_enrollment_digest",
+            "root_journal_root_records", "native_mcp_tool_binding_records",
+            "resource_controller_role_records", "remote_observation_records",
+            "native_schema_artifact_records",
+            "composio_channel_enrollment_records", "channel_delivery_binding_records",
+            "resource_backend_enrollment_records", "remote_startup_records",
+            "private_loopback_network_records", "selected_resource_execution_records",
+            "resource_scope_binding_records", "selected_application_runtime_records",
+            "public_web_scope_records",
         )
-    if set(process_profiles) != set(profile_to_principal):
-        raise EnrollmentDenied("authority process profiles and protected service generations differ")
+        if any(not hasattr(enrollment, name) for name in required_attributes):
+            raise EnrollmentDenied("verified generation, device, and build records are unavailable")
+        records = enrollment.service_records
+        devices = enrollment.protected_devices
+        builds = enrollment.protected_build_records
+        digest = enrollment.protected_enrollment_digest
+        if not isinstance(records, list) or not records:
+            raise EnrollmentDenied("protected service generation records are required")
+        if not isinstance(devices, list) or not isinstance(builds, list):
+            raise EnrollmentDenied("protected hardware catalog records are malformed")
 
-    from hermes_installer.managed_process_custodian import create_managed_process_handler
-    manager_options = dict(process_handler_options or {})
-    if "artifact_resolver" in manager_options or "native_package_resolver" in manager_options:
-        raise EnrollmentDenied("artifact and native package resolvers are fixed by the verified root catalog")
-    manager_options["artifact_resolver"] = lambda store_id, sha256: artifact_catalog.resolve_store_id(
-        store_id, enrollment.artifact_staging_directory, expected_uid=expected_uid,
-    )
-    native_package_resolver = _build_native_package_resolver(
-        enrollment=enrollment, catalog=service_catalog,
-        artifact_catalog=artifact_catalog,
-        staging_root=enrollment.artifact_staging_directory,
-        expected_uid=expected_uid,
-    )
-    manager_options["native_package_resolver"] = native_package_resolver
-    process_manager = create_managed_process_handler(process_profiles, **manager_options)
-
-    remote_session_enrollments: Mapping[str, Any] = MappingProxyType({})
-    remote_records = getattr(enrollment, "remote_session_records", ())
-    if remote_records:
-        principal_bindings: dict[str, Mapping[str, str]] = {}
-        identities = enrollment.policy.enrollment.principal_identities
-        for binding in enrollment.bindings_by_uid.values():
-            identity = identities.get(binding.principal_id)
-            subject = getattr(identity, "subject_id", None)
-            if identity is None or not isinstance(subject, str) or not subject:
-                continue
-            if subject in principal_bindings:
-                raise EnrollmentDenied("remote Access subjects are duplicated in protected principals")
-            principal_bindings[subject] = MappingProxyType({
-                "principal_id": binding.principal_id,
-                "profile_id": binding.profile_id,
-                "email": identity.email.casefold(),
-            })
-        role_artifacts = {
-            artifact_id: spec.sha256
-            for artifact_id, spec in artifact_catalog.artifacts.items()
-        }
-        try:
-            from .remote_enrollment import parse_remote_session_enrollments
-            remote_session_enrollments = parse_remote_session_enrollments(
-                remote_records, principal_bindings=principal_bindings,
-                process_profiles=process_profiles, role_artifacts=role_artifacts,
-            )
-        except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError):
-            raise EnrollmentDenied("active remote-session records do not join the protected root catalogs") from None
-
-    from hermes_installer.artifacts import build_artifact_handlers
-    artifact_handlers = dict(build_artifact_handlers(
-        artifact_catalog, enrollment.artifact_staging_directory,
-        expected_uid=expected_uid, authorization_check=authorization_check,
-    ))
-    effect_handlers = {key: handler for key, handler in artifact_handlers.items()
-                       if key[0] == "artifact.fetch"}
-    for key, handler in process_manager.handlers().items():
-        if key in effect_handlers:
-            raise EnrollmentDenied("managed process handler conflicts with an existing root handler")
-        effect_handlers[key] = handler
-
-    # Generic wheel/environment installation does not bind a selected Coral
-    # source-build output. Use only the signed package-set API and resolve its
-    # runtime from the same immutable service-generation/build catalogs.
-    if signing_key is None:
-        from .enrollment import read_protected_file, AUTHORITY_KEY_PATH
-        signing_key = read_protected_file(AUTHORITY_KEY_PATH, expected_uid=expected_uid, maximum=64)
-    if not isinstance(signing_key, bytes) or len(signing_key) != 32:
-        raise EnrollmentDenied("root package-set signing key is unavailable")
-    from .build_execution import ContentAddressedBuildStore
-    build_store = ContentAddressedBuildStore.root_store(authority_key=signing_key)
-    from hermes_installer.artifacts import build_package_set_handlers
-    package_sets = _load_optional_package_sets(
-        catalog=artifact_catalog, signing_key=signing_key,
-        key_id=enrollment.key_id, expected_uid=expected_uid,
-    )
-    for package_set_id, spec in package_sets.items():
-        profile = service_catalog.resolve(spec.enrollment_id, spec.generation)
-        if package_set_id not in profile.package_runtime_records:
-            raise EnrollmentDenied("signed package set has no matching protected service runtime record")
-        target = f"package-set:{package_set_id}:{spec.manifest_sha256}"
-        if not any(getattr(rule, "operation", None) == "package.install"
-                   and getattr(rule, "target", None) == target
-                   for rule in enrollment.rules.values()):
-            raise EnrollmentDenied("signed package set has no exact package.install authority rule")
-    if package_sets:
-        effect_handlers.update(build_package_set_handlers(
-            artifact_catalog, enrollment.artifact_staging_directory, package_sets,
-            runtime_resolver=lambda spec: service_catalog.resolve_package_runtime(
-                spec.enrollment_id, spec.generation, spec.package_set_id, build_catalog,
-                build_store=build_store,
+        service_catalog = ProtectedEnrollmentCatalog.from_verified_records(
+            records, protected_digest=digest, expected_uid=expected_uid,
+            native_packages=getattr(enrollment, "native_package_records", None),
+            source_issuers=getattr(enrollment, "source_issuers", None),
+            memory_enrollments=getattr(enrollment, "memory_enrollments", None),
+            memory_service_enablement_projections=getattr(
+                enrollment, "memory_service_enablement_projection_records", None,
             ),
+            parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
+            selected_application_runtimes=getattr(enrollment, "selected_application_runtime_records", None),
+            private_memory_endpoint_selections=getattr(
+                enrollment, "private_memory_endpoint_selection_records", None,
+            ),
+            private_memory_model_selections=getattr(
+                enrollment, "private_memory_model_selection_records", None,
+            ),
+            public_web_scopes=getattr(enrollment, "public_web_scope_records", None),
+            native_schema_artifacts=getattr(enrollment, "native_schema_artifact_records", None),
+            native_mcp_tool_bindings=getattr(enrollment, "native_mcp_tool_binding_records", None),
+            native_worker_network_records=getattr(enrollment, "native_worker_network_records", None),
+            active_network_generation_records=getattr(enrollment, "active_network_generation_records", None),
+            native_worker_runtime_records=getattr(enrollment, "native_worker_runtime_records", None),
+            owner_overlay_observer_records=getattr(enrollment, "owner_overlay_observer_records", None),
+        )
+        build_catalog = ProtectedBuildCatalog.from_protected_records(
+            builds, service_generation_digest=digest,
+        )
+        root_journal_catalog = ProtectedRootJournalCatalog.from_protected_records(
+            enrollment.root_journal_root_records, generation_digest=digest,
+        )
+        for raw in builds:
+            try:
+                build_catalog.resolve_service(raw["target_id"], raw["generation"], service_catalog)
+            except (KeyError, TypeError, ValueError, PermissionError):
+                raise EnrollmentDenied(
+                    "protected build target has no exact dedicated service enrollment join") from None
+        device_catalog = ProtectedDeviceCatalog.from_protected_records(devices)
+
+        committed_pm_resolver = None
+        committed_pm_identity = None
+        committed_pm_release = None
+        committed_pm_actor = None
+        observed_pm_executable_id = "observed:pm-committed-venv-python"
+        native_profile_ids = set()
+        for raw in records:
+            candidate = service_catalog.resolve(raw["enrollment_id"], raw["generation"])
+            if observed_pm_executable_id in candidate.runtime_artifact_ids:
+                native_profile_ids.add(candidate.profile_id)
+        if len(native_profile_ids) > 1:
+            raise EnrollmentDenied("observed PM executable is selected by more than one native profile")
+        if native_profile_ids:
+            try:
+                # This is a distinct root-held source identity. It must be created
+                # before profile construction and cannot use the later resource-
+                # controller role receipt or the generic artifact catalog.
+                from .committed_pm_executable import RootActiveCommittedPMExecutableResolver
+                from .installer_release import InstalledRootReleaseVerifier
+
+                committed_pm_release, committed_pm_actor = \
+                    InstalledRootReleaseVerifier.from_current_root_process()
+                committed_pm_resolver = RootActiveCommittedPMExecutableResolver.from_protected_runtime_sources(
+                    service_catalog, root_journal_catalog, committed_pm_release, committed_pm_actor,
+                )
+                committed_pm_identity = committed_pm_resolver.resolve_selected()
+                if (committed_pm_identity.profile_id not in native_profile_ids
+                        or committed_pm_identity.service_generation_digest != digest
+                        or committed_pm_identity.executable_sha256 == ""
+                        or committed_pm_resolver.verify_current(committed_pm_identity)
+                           is not committed_pm_identity):
+                    raise EnrollmentDenied("current committed PM executable does not join the selected native profile")
+            except Exception as exc:
+                raise EnrollmentDenied(
+                    f"selected native PM executable source is unavailable ({type(exc).__name__})") from None
+
+        process_profiles = {}
+        profile_to_principal: dict[str, tuple[int, Any]] = {}
+        for uid, binding in enrollment.bindings_by_uid.items():
+            if binding.profile_id in profile_to_principal:
+                raise EnrollmentDenied("authority principal profile binding is duplicated")
+            profile_to_principal[binding.profile_id] = (uid, binding)
+        for raw in records:
+            profile = service_catalog.resolve(raw["enrollment_id"], raw["generation"])
+            principal = profile_to_principal.get(profile.profile_id)
+            if principal is None:
+                raise EnrollmentDenied("service generation has no protected authority principal")
+            uid, binding = principal
+            if (uid != profile.service_uid or binding.principal_id != profile.principal_id
+                    or binding.profile_id != profile.profile_id
+                    or binding.namespace_id != profile.namespace_identity
+                    or profile.profile_id in process_profiles):
+                raise EnrollmentDenied("service generation identity does not match its authority principal")
+            for operation, target in profile.operation_targets.items():
+                if not any(
+                    rule.operation == operation and rule.target == target
+                    and rule.capability in binding.capabilities
+                    for rule in enrollment.rules.values()
+                ):
+                    raise EnrollmentDenied("service operation target lacks an exact authority rule")
+            for recipe in profile.operation_recipes.values():
+                if recipe.parameter_schema_id not in service_catalog.parameter_schemas:
+                    raise EnrollmentDenied("operation recipe parameter schema is absent from protected catalog")
+            if profile.profile_id in native_profile_ids:
+                if (committed_pm_identity is None
+                        or committed_pm_identity.profile_id != profile.profile_id
+                        or committed_pm_identity.executable_sha256 != profile.executable_sha256):
+                    raise EnrollmentDenied("selected native profile lacks its exact held PM executable identity")
+                profile = replace(profile, executable=committed_pm_identity.executable_path,
+                                  executable_sha256=committed_pm_identity.executable_sha256)
+            # Every generic child executable is selected by immutable artifact
+            # identity and digest from the root-loaded catalog. The one exact
+            # committed PM executable is separately source-observed above.
+            child_refs: dict[str, str] = {}
+            for artifact_id in profile.runtime_artifact_ids:
+                if artifact_id == observed_pm_executable_id:
+                    if profile.profile_id not in native_profile_ids:
+                        raise EnrollmentDenied("observed PM token escaped its selected native profile")
+                    continue
+                spec = artifact_catalog.artifacts.get(artifact_id)
+                if spec is None:
+                    raise EnrollmentDenied("service runtime artifact is absent from the protected artifact catalog")
+                child_refs[f"artifact:{artifact_id}:{spec.sha256}"] = spec.sha256
+            for recipe in profile.operation_recipes.values():
+                if recipe.executable_artifact_id == observed_pm_executable_id:
+                    if (profile.profile_id not in native_profile_ids
+                            or committed_pm_identity is None
+                            or recipe.executable_sha256 != committed_pm_identity.executable_sha256):
+                        raise EnrollmentDenied("native operation executable differs from its held PM identity")
+                else:
+                    executable_spec = artifact_catalog.artifacts.get(recipe.executable_artifact_id)
+                    if executable_spec is None or executable_spec.sha256 != recipe.executable_sha256:
+                        raise EnrollmentDenied("operation executable pin differs from the protected artifact catalog")
+                for artifact_id, digest_value in recipe.child_artifact_refs.items():
+                    if artifact_id == observed_pm_executable_id:
+                        raise EnrollmentDenied("observed PM executable cannot be a generic child artifact")
+                    child_spec = artifact_catalog.artifacts.get(artifact_id)
+                    if child_spec is None or child_spec.sha256 != digest_value:
+                        raise EnrollmentDenied("operation child artifact pin differs from the protected catalog")
+            process_profiles[profile.profile_id] = profile.as_managed_profile(
+                artifact_root=enrollment.artifact_staging_directory,
+                child_artifact_refs=child_refs,
+                parameter_schemas=service_catalog.parameter_schemas,
+            )
+        if set(process_profiles) != set(profile_to_principal):
+            raise EnrollmentDenied("authority process profiles and protected service generations differ")
+
+        from hermes_installer.managed_process_custodian import create_managed_process_handler
+        manager_options = dict(process_handler_options or {})
+        reserved_pm_options = {"_committed_pm_executable_resolver", "_committed_pm_executable_identity"}
+        if ("artifact_resolver" in manager_options or "native_package_resolver" in manager_options
+                or reserved_pm_options.intersection(manager_options)):
+            raise EnrollmentDenied("artifact, native package, and committed PM resolvers are fixed by protected composition")
+        manager_options["artifact_resolver"] = lambda store_id, sha256: artifact_catalog.resolve_store_id(
+            store_id, enrollment.artifact_staging_directory, expected_uid=expected_uid,
+        )
+        native_package_resolver = _build_native_package_resolver(
+            enrollment=enrollment, catalog=service_catalog,
+            artifact_catalog=artifact_catalog,
+            staging_root=enrollment.artifact_staging_directory,
+            expected_uid=expected_uid,
+        )
+        manager_options["native_package_resolver"] = native_package_resolver
+        if committed_pm_resolver is not None and committed_pm_identity is not None:
+            manager_options["_committed_pm_executable_resolver"] = committed_pm_resolver
+            manager_options["_committed_pm_executable_identity"] = committed_pm_identity
+        process_manager = create_managed_process_handler(process_profiles, **manager_options)
+
+        remote_session_enrollments: Mapping[str, Any] = MappingProxyType({})
+        remote_records = getattr(enrollment, "remote_session_records", ())
+        if remote_records:
+            principal_bindings: dict[str, Mapping[str, str]] = {}
+            identities = enrollment.policy.enrollment.principal_identities
+            for binding in enrollment.bindings_by_uid.values():
+                identity = identities.get(binding.principal_id)
+                subject = getattr(identity, "subject_id", None)
+                if identity is None or not isinstance(subject, str) or not subject:
+                    continue
+                if subject in principal_bindings:
+                    raise EnrollmentDenied("remote Access subjects are duplicated in protected principals")
+                principal_bindings[subject] = MappingProxyType({
+                    "principal_id": binding.principal_id,
+                    "profile_id": binding.profile_id,
+                    "email": identity.email.casefold(),
+                })
+            role_artifacts = {
+                artifact_id: spec.sha256
+                for artifact_id, spec in artifact_catalog.artifacts.items()
+            }
+            try:
+                from .remote_enrollment import parse_remote_session_enrollments
+                remote_session_enrollments = parse_remote_session_enrollments(
+                    remote_records, principal_bindings=principal_bindings,
+                    process_profiles=process_profiles, role_artifacts=role_artifacts,
+                )
+            except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError):
+                raise EnrollmentDenied("active remote-session records do not join the protected root catalogs") from None
+
+        from hermes_installer.artifacts import build_artifact_handlers
+        artifact_handlers = dict(build_artifact_handlers(
+            artifact_catalog, enrollment.artifact_staging_directory,
             expected_uid=expected_uid, authorization_check=authorization_check,
         ))
+        effect_handlers = {key: handler for key, handler in artifact_handlers.items()
+                           if key[0] == "artifact.fetch"}
+        for key, handler in process_manager.handlers().items():
+            if key in effect_handlers:
+                raise EnrollmentDenied("managed process handler conflicts with an existing root handler")
+            effect_handlers[key] = handler
 
-    from hermes_installer.service_connector import build_enrolled_service_connector_handlers
-    service_connector, connector_handlers = build_enrolled_service_connector_handlers(
-        catalog=service_catalog, process_manager=process_manager,
-    )
-    for key, handler in connector_handlers.items():
-        if key in effect_handlers:
-            raise EnrollmentDenied("fixed service connector handler conflicts with an existing root handler")
-        effect_handlers[key] = handler
+        # Generic wheel/environment installation does not bind a selected Coral
+        # source-build output. Use only the signed package-set API and resolve its
+        # runtime from the same immutable service-generation/build catalogs.
+        if signing_key is None:
+            from .enrollment import read_protected_file, AUTHORITY_KEY_PATH
+            signing_key = read_protected_file(AUTHORITY_KEY_PATH, expected_uid=expected_uid, maximum=64)
+        if not isinstance(signing_key, bytes) or len(signing_key) != 32:
+            raise EnrollmentDenied("root package-set signing key is unavailable")
+        from .build_execution import ContentAddressedBuildStore
+        build_store = ContentAddressedBuildStore.root_store(authority_key=signing_key)
+        from hermes_installer.artifacts import build_package_set_handlers
+        package_sets = _load_optional_package_sets(
+            catalog=artifact_catalog, signing_key=signing_key,
+            key_id=enrollment.key_id, expected_uid=expected_uid,
+        )
+        for package_set_id, spec in package_sets.items():
+            profile = service_catalog.resolve(spec.enrollment_id, spec.generation)
+            if package_set_id not in profile.package_runtime_records:
+                raise EnrollmentDenied("signed package set has no matching protected service runtime record")
+            target = f"package-set:{package_set_id}:{spec.manifest_sha256}"
+            if not any(getattr(rule, "operation", None) == "package.install"
+                       and getattr(rule, "target", None) == target
+                       for rule in enrollment.rules.values()):
+                raise EnrollmentDenied("signed package set has no exact package.install authority rule")
+        if package_sets:
+            effect_handlers.update(build_package_set_handlers(
+                artifact_catalog, enrollment.artifact_staging_directory, package_sets,
+                runtime_resolver=lambda spec: service_catalog.resolve_package_runtime(
+                    spec.enrollment_id, spec.generation, spec.package_set_id, build_catalog,
+                    build_store=build_store,
+                ),
+                expected_uid=expected_uid, authorization_check=authorization_check,
+            ))
 
-    private_memory_engine_selections = _parse_private_memory_engine_selections(
-        getattr(enrollment, "private_memory_engine_selections", ()),
-    )
+        from hermes_installer.service_connector import build_enrolled_service_connector_handlers
+        service_connector, connector_handlers = build_enrolled_service_connector_handlers(
+            catalog=service_catalog, process_manager=process_manager,
+        )
+        for key, handler in connector_handlers.items():
+            if key in effect_handlers:
+                raise EnrollmentDenied("fixed service connector handler conflicts with an existing root handler")
+            effect_handlers[key] = handler
 
-    return RootRuntimeBindings(
-        enrollment_catalog=service_catalog,
-        build_catalog=build_catalog,
-        device_catalog=device_catalog,
-        process_manager=process_manager,
-        effect_handlers=MappingProxyType(effect_handlers),
-        native_bridges=MappingProxyType(dict(enrollment.native_bridges)),
-        artifact_catalog=artifact_catalog,
-        build_store=build_store,
-        service_connector=service_connector,
-        native_package_resolver=native_package_resolver,
-        remote_session_enrollments=remote_session_enrollments,
-        process_profiles=MappingProxyType(dict(process_profiles)),
-        protected_principal_bindings=tuple(enrollment.bindings_by_uid.values()),
-        root_journal_catalog=root_journal_catalog,
-        source_observer_enrollments=_derive_source_observer_enrollments(
-            catalog=service_catalog, process_profiles=process_profiles,
+        private_memory_engine_selections = _parse_private_memory_engine_selections(
+            getattr(enrollment, "private_memory_engine_selections", ()),
+        )
+
+        result = RootRuntimeBindings(
+            enrollment_catalog=service_catalog,
+            build_catalog=build_catalog,
+            device_catalog=device_catalog,
+            process_manager=process_manager,
+            effect_handlers=MappingProxyType(effect_handlers),
+            native_bridges=MappingProxyType(dict(enrollment.native_bridges)),
             artifact_catalog=artifact_catalog,
-        ),
-        native_mcp_tool_binding_records=tuple(enrollment.native_mcp_tool_binding_records),
-        native_schema_artifact_records=tuple(enrollment.native_schema_artifact_records),
-        composio_channel_enrollment_records=tuple(getattr(enrollment, "composio_channel_enrollment_records", ())),
-        channel_delivery_binding_records=tuple(getattr(enrollment, "channel_delivery_binding_records", ())),
-        resource_job_records=tuple(enrollment.resource_job_records),
-        protected_rules=MappingProxyType(dict(enrollment.rules)),
-        mcp_services=MappingProxyType(dict(enrollment.mcp_services)),
-        remote_observation_records=tuple(enrollment.remote_observation_records),
-        remote_session_records=tuple(enrollment.remote_session_records),
-        resource_credential_bindings=_derive_resource_credential_bindings(enrollment),
-        resource_controller_role_records=tuple(enrollment.resource_controller_role_records),
-        resource_backend_records=tuple(enrollment.resource_backend_enrollment_records),
-        private_memory_engine_selections=private_memory_engine_selections,
-        remote_startup_records=tuple(enrollment.remote_startup_records),
-        private_loopback_network_records=tuple(enrollment.private_loopback_network_records),
-        selected_resource_execution_records=tuple(enrollment.selected_resource_execution_records),
-        resource_scope_binding_records=tuple(enrollment.resource_scope_binding_records),
-        selected_application_runtime_records=tuple(enrollment.selected_application_runtime_records),
-        private_memory_endpoint_selection_records=tuple(enrollment.private_memory_endpoint_selection_records),
-        private_memory_model_selection_records=tuple(enrollment.private_memory_model_selection_records),
-        native_materialization=native_materialization,
-        native_registry=native_registry,
-        native_discoveries=MappingProxyType(dict(native_discoveries or {})),
-        artifact_staging_directory=Path(enrollment.artifact_staging_directory),
-        application_source_receipts=application_source_receipts,
-        application_runtime_receipts=application_runtime_receipts,
-        native_component_target_registry=native_component_target_registry,
-        root_setup_choice_registry=root_setup_choice_registry,
-    )
+            build_store=build_store,
+            service_connector=service_connector,
+            native_package_resolver=native_package_resolver,
+            remote_session_enrollments=remote_session_enrollments,
+            process_profiles=MappingProxyType(dict(process_profiles)),
+            protected_principal_bindings=tuple(enrollment.bindings_by_uid.values()),
+            root_journal_catalog=root_journal_catalog,
+            source_observer_enrollments=_derive_source_observer_enrollments(
+                catalog=service_catalog, process_profiles=process_profiles,
+                artifact_catalog=artifact_catalog,
+            ),
+            native_mcp_tool_binding_records=tuple(enrollment.native_mcp_tool_binding_records),
+            native_schema_artifact_records=tuple(enrollment.native_schema_artifact_records),
+            composio_channel_enrollment_records=tuple(getattr(enrollment, "composio_channel_enrollment_records", ())),
+            channel_delivery_binding_records=tuple(getattr(enrollment, "channel_delivery_binding_records", ())),
+            resource_job_records=tuple(enrollment.resource_job_records),
+            protected_rules=MappingProxyType(dict(enrollment.rules)),
+            mcp_services=MappingProxyType(dict(enrollment.mcp_services)),
+            remote_observation_records=tuple(enrollment.remote_observation_records),
+            remote_session_records=tuple(enrollment.remote_session_records),
+            resource_credential_bindings=_derive_resource_credential_bindings(enrollment),
+            resource_controller_role_records=tuple(enrollment.resource_controller_role_records),
+            resource_backend_records=tuple(enrollment.resource_backend_enrollment_records),
+            private_memory_engine_selections=private_memory_engine_selections,
+            remote_startup_records=tuple(enrollment.remote_startup_records),
+            private_loopback_network_records=tuple(enrollment.private_loopback_network_records),
+            selected_resource_execution_records=tuple(enrollment.selected_resource_execution_records),
+            resource_scope_binding_records=tuple(enrollment.resource_scope_binding_records),
+            selected_application_runtime_records=tuple(enrollment.selected_application_runtime_records),
+            private_memory_endpoint_selection_records=tuple(enrollment.private_memory_endpoint_selection_records),
+            private_memory_model_selection_records=tuple(enrollment.private_memory_model_selection_records),
+            native_materialization=native_materialization,
+            native_registry=native_registry,
+            native_discoveries=MappingProxyType(dict(native_discoveries or {})),
+            artifact_staging_directory=Path(enrollment.artifact_staging_directory),
+            application_source_receipts=application_source_receipts,
+            application_runtime_receipts=application_runtime_receipts,
+            native_component_target_registry=native_component_target_registry,
+            root_setup_choice_registry=root_setup_choice_registry,
+        )
+        pm_custody_transferred = True
+        return result
+    finally:
+        if not pm_custody_transferred:
+            if committed_pm_resolver is not None:
+                committed_pm_resolver.close()
+            else:
+                for item in (committed_pm_actor, committed_pm_release):
+                    close = getattr(item, "close", None)
+                    if callable(close):
+                        close()
 
 
 _PRIVATE_MEMORY_SELECTION_FIELDS = frozenset({

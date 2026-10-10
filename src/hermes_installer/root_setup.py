@@ -466,6 +466,7 @@ def run_root_setup_action(
     from .authority.installer_release import InstalledRootReleaseVerifier
     # The predecessor probe above already verified the installed pointer.
     _import_v180_native_support_closure()
+    _import_v187_listener_activation_closure()
     from .authority.bootstrap_runtime_factory import (
         RootBootstrapRuntimeFactory,
         RootInitialSetupAggregate,
@@ -627,6 +628,76 @@ def run_root_setup_action(
                 recipe_registry = session.resolve_current_native_worker_recipe_registry()
                 recipe_registry.retain_runnable_closure(native_policy_selection, role_closure)
                 session.resolve_current_native_worker_service_generation_producer()
+
+                # Compile and durably publish the exact selected active policy,
+                # then let the session build its native generation from the
+                # sealed six-role projection. The empty generic receipt map is
+                # intentional here: PM plus the five outputs are supplied by
+                # the root-owned typed projection, never fabricated as CAS
+                # receipts.
+                active_claim_handle = compiler.compile_active_policy(
+                    session._handle, bundle, precompile,
+                )
+                predecessor = session.selected_installation.resolve_current_active_policy_predecessor(
+                    active_claim_handle,
+                )
+                publication = session.selected_installation.resolve_current_active_policy_publisher().publish(
+                    active_claim_handle, predecessor,
+                )
+                active_receipt = session.activate_runnable({})
+                if active_receipt.state != "committed" or not active_receipt.enrollment_ids:
+                    raise BootstrapEnrollmentPending(
+                        "selected typed native role projection did not commit an active enrollment")
+                current_publication = session.selected_installation.resolve_current_active_policy_publication()
+                if current_publication.publication_handle != publication.publication_handle:
+                    raise BootstrapEnrollmentPending(
+                        "active publication changed before supervised listener activation")
+
+                endpoint = session._native_worker_endpoint_receipt
+                endpoint_custodian = session._native_worker_endpoint_custodian
+                authority_root_receipt = session._prepared_authority_runtime_root_receipt
+                if endpoint is None or endpoint_custodian is None or authority_root_receipt is None:
+                    raise BootstrapEnrollmentPending(
+                        "committed native enrollment lacks its held endpoint and authority-root receipts")
+                from .authority.listener_activation import (
+                    ListenerActivationUnavailable,
+                    RootAuthorityListenerActivationSupervisor,
+                )
+                supervisor = None
+                active_listener_receipt = None
+                try:
+                    supervisor = RootAuthorityListenerActivationSupervisor.from_root_setup(
+                        session.selected_installation, endpoint_custodian,
+                        session._factory._release, session._factory._actor,
+                        authority_root_receipt,
+                    )
+                    active_listener_receipt = supervisor.begin_active_listener_activation(
+                        endpoint.receipt_handle, current_publication,
+                    )
+                except ListenerActivationUnavailable as exc:
+                    raise BootstrapEnrollmentPending(
+                        f"committed active enrollment awaits supervised listener adoption ({type(exc).__name__})"
+                    ) from None
+                except (OSError, RuntimeError, ValueError) as exc:
+                    raise BootstrapEnrollmentPending(
+                        f"committed active enrollment awaits supervised listener adoption ({type(exc).__name__})"
+                    ) from None
+                finally:
+                    if supervisor is not None:
+                        supervisor.close()
+
+                # Functional health is a distinct protected receipt phase; an
+                # ACK proves listener custody only and cannot enable capability.
+                return _result(
+                    selected_action, RootSetupState.PENDING, "health",
+                    "Active enrollment and supervised listener ACK are current; functional-health observation remains required.",
+                    resume_allowed=True, session_id=session._handle.session_id,
+                    transaction_ref=_report_ref(active_receipt.transaction_handle),
+                    generation_ref=_report_ref(active_receipt.generation_id),
+                    receipt_refs=(_report_ref(active_receipt.provision_receipt_handle),
+                                  _report_ref(publication.receipt_handle),
+                                  _report_ref(active_listener_receipt.activation_id)),
+                )
         except BootstrapEnrollmentPending as exc:
             failure_refs = [_report_ref(receipt.provision_receipt_handle)]
             if bundle is not None:
