@@ -264,6 +264,7 @@ class RootActivePolicyCompilationClaim:
     _root_setup_session: Any = field(repr=False, compare=False)
     _reservation_handle: str = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
+    _root_prepared_native_bundle: Any = field(default=None, repr=False, compare=False)
 
 
 class RootActivePolicyTemplateResolver:
@@ -341,21 +342,19 @@ class RootActivePolicyCompilationRegistry:
 
     def compile_active_policy(
             self, setup_session_handle: RootSetupSessionHandle,
-            prepared_enrollment_receipt_handle: str,
-            runtime_receipt_handles: Sequence[str],
+            prepared_bundle: Any,
             materialization_receipt_handles: Sequence[str]) -> str:
         self._require_root()
         session = self.factory.resolve_live_session(setup_session_handle)
+        prepared = self._verify_prepared_native_bundle(session, prepared_bundle)
         if getattr(self.runtime_receipts, "setup_session", None) is not session:
             raise BootstrapEnrollmentPending("PM runtime registry is not bound to this exact live setup session")
         output_binding = getattr(self.materialization_receipts, "_binding", None)
         if getattr(output_binding, "_session", None) is not session:
             raise BootstrapEnrollmentPending("native output registry is not bound to this exact live setup session")
         session._refresh_authorization()
-        prepared = session.resolve_prepared_receipt(prepared_enrollment_receipt_handle)
-        self._validate_prepared(session, prepared)
-        runtime_handles = self._handles(runtime_receipt_handles, "runtime receipt")
-        output_handles = self._handles(materialization_receipt_handles, "native materialization receipt")
+        runtime_handles = (prepared_bundle.pm_runtime_receipt_handle,)
+        output_handles = self._handles(materialization_receipt_handles, "native output receipt")
         if len(runtime_handles) != 1 or not output_handles:
             raise BootstrapEnrollmentPending("active policy compilation requires selected PM runtime and complete native outputs")
         resolved_runtime = tuple(self.runtime_receipts.resolve_runtime(
@@ -385,12 +384,17 @@ class RootActivePolicyCompilationRegistry:
             prepared.generation_id, selection_digest, prepared.generation_digest,
             session._policy.artifact_id, session._policy.sha256, principal_handle,
             runtime_handles, output_handles,
-            (*runtime_handles, *output_handles, principal_handle),
+            (prepared_bundle.hermes_source_receipt_handle,
+             prepared_bundle.pm_runtime_receipt_handle,
+             prepared_bundle.resources_source_receipt_handle,
+             prepared_bundle.resource_profile_selection_receipt_handle,
+             prepared_bundle.materialization_receipt_handle,
+             *runtime_handles, *output_handles, principal_handle),
             _sha(policy_bytes), _sha(catalog_bytes),
             _sha(_canonical(dict(selection_document))), selection_document["catalog_sha256"],
             issued, expires, "0" * 64, policy_bytes, catalog_bytes,
             selection_document, observed_handle, self.root_journal, session,
-            "", self._seal,
+            "", self._seal, prepared_bundle,
         )
         claim_digest = _sha(_canonical(_manifest(provisional)))
         reservation = self.materialization_receipts.reserve_for_active_compilation(
@@ -424,18 +428,20 @@ class RootActivePolicyCompilationRegistry:
             _root_journal_root=provisional._root_journal_root,
             _root_setup_session=provisional._root_setup_session,
             _reservation_handle=reservation.reservation_handle, _seal=self._seal,
+            _root_prepared_native_bundle=provisional._root_prepared_native_bundle,
         )
         # Durable claim record reserves the transaction before the publisher can
         # create any generation. Same-transaction replay remains denied until
         # explicit release or committed active state.
-        _ensure_private_directory(self._claim_root)
-        lock_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".lock")
-        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        os.fchown(lock_fd, 0, 0)
-        os.fchmod(lock_fd, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        lock_fd = -1
+        state_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".json")
         try:
-            state_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".json")
+            _ensure_private_directory(self._claim_root)
+            lock_path = self._claim_root / ("transaction-" + session._authorization.transaction_handle + ".lock")
+            lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.fchown(lock_fd, 0, 0)
+            os.fchmod(lock_fd, 0o600)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             if state_path.exists():
                 state = _read_json(state_path)
                 if state.get("state") not in {"released"}:
@@ -449,9 +455,33 @@ class RootActivePolicyCompilationRegistry:
             lock_fd = -1
             return publication_handle
         except Exception:
-            self.materialization_receipts.release_active_compilation(
-                reservation.reservation_handle, prepared_generation_id=prepared.generation_id,
-                publication_handle=publication_handle, claim_digest=claim_digest)
+            # If persistence failed after some immutable files were written,
+            # remove only artifacts whose names are derived from this fresh
+            # unreturned handle. Keep the reservation if durable cleanup itself
+            # fails; that is the safe outcome after an uncertain interruption.
+            try:
+                if state_path.exists():
+                    state = _read_json(state_path)
+                    if (state.get("publication_handle") == publication_handle
+                            and state.get("claim_digest") == claim_digest):
+                        state_path.unlink()
+                for suffix in (".policy", ".catalog", ".selection", ".claim.json"):
+                    path = self._claim_root / (publication_handle + suffix)
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+                if self._claim_root.exists():
+                    directory = os.open(self._claim_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+                self.materialization_receipts.release_active_compilation(
+                    reservation.reservation_handle, prepared_generation_id=prepared.generation_id,
+                    publication_handle=publication_handle, claim_digest=claim_digest)
+            except Exception:
+                pass
             raise
         finally:
             if lock_fd >= 0:
@@ -485,6 +515,9 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("prepared receipt was lost during active policy compilation")
         prepared = session.resolve_prepared_receipt(retained.provision_receipt_handle)
         self._validate_prepared(session, prepared)
+        bundle = claim._root_prepared_native_bundle
+        if bundle is None or self._verify_prepared_native_bundle(session, bundle) is not prepared:
+            raise BootstrapEnrollmentPending("prepared native bundle changed during active policy publication")
         if (session is not claim._root_setup_session
                 or session._handle.session_id != claim.setup_session_id
                 or session._authorization.transaction_handle != claim.transaction_handle
@@ -731,6 +764,67 @@ class RootActivePolicyCompilationRegistry:
                 or committed.plan_digest != proof.plan_digest):
             raise BootstrapEnrollmentPending("prepared receipt is not the exact durable root commit")
 
+    def _verify_prepared_native_bundle(self, session: Any, bundle: Any) -> EnrollmentReceipt:
+        """Resolve every pre-active source from the live factory-owned bundle."""
+        from .bootstrap_runtime_factory import RootPreparedNativeBundle
+        from .native_materialization import NativeMaterializationReceipt
+        from .pm_runtime import VerifiedPMRuntimeSelection
+        if (type(bundle) is not RootPreparedNativeBundle
+                or not isinstance(getattr(bundle, "_session_seal", None), str)
+                or not secrets.compare_digest(bundle._session_seal, session._seal)):
+            raise BootstrapEnrollmentPending("active compilation requires the root-prepared native bundle")
+        session._check_live()
+        session._refresh_authorization()
+        retained = session._last_receipt
+        if (not isinstance(retained, EnrollmentReceipt) or retained.state != "prepared"
+                or not retained.provision_receipt_handle or retained.enrollment_ids):
+            raise BootstrapEnrollmentPending("prepared native bundle no longer has an empty current generation")
+        prepared = session.resolve_prepared_receipt(retained.provision_receipt_handle)
+        self._validate_prepared(session, prepared)
+        if ((bundle.setup_session_id, bundle.transaction_handle,
+             bundle.prepared_generation_id, bundle.prepared_generation_digest)
+                != (session._handle.session_id, session._authorization.transaction_handle,
+                    prepared.generation_id, prepared.generation_digest)):
+            raise BootstrapEnrollmentPending("prepared native bundle belongs to another setup transaction")
+        materialized = getattr(bundle, "materialization_receipt", None)
+        expected_enrollments = {
+            row.get("record", {}).get("enrollment_id")
+            for row in session._policy.service_record_templates
+            if isinstance(row, Mapping) and isinstance(row.get("record"), Mapping)
+        }
+        if (not isinstance(materialized, NativeMaterializationReceipt)
+                or session._native_materialization_receipts.get(bundle.materialization_receipt_handle) is not materialized
+                or materialized.receipt_handle != bundle.materialization_receipt_handle
+                or materialized.enrollment_id not in expected_enrollments
+                or materialized.service_generation != prepared.generation_id
+                or materialized.protected_enrollment_digest != prepared.generation_digest
+                or materialized.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("prepared native materialization receipt is stale or changed")
+        pm_runtime = session._resolve_current_pm_runtime()
+        if (not isinstance(pm_runtime, VerifiedPMRuntimeSelection)
+                or pm_runtime.receipt_handle != bundle.pm_runtime_receipt_handle
+                or pm_runtime.prepared_generation_id != prepared.generation_id
+                or pm_runtime.transaction_handle != session._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("prepared native bundle PM receipt is stale")
+        source = session._resolve_current_hermes_source()
+        if (getattr(source, "receipt_handle", None) != bundle.hermes_source_receipt_handle
+                or getattr(session, "_source_receipt_handle", None) != bundle.hermes_source_receipt_handle):
+            raise BootstrapEnrollmentPending("prepared native bundle Hermes source receipt is stale")
+        profile = session.selected_installation.resolve_selected_resource_profile(
+            bundle.resource_profile_selection_receipt_handle)
+        resources_registry = getattr(session, "_resources_registry", None)
+        if (profile.receipt_handle != bundle.resource_profile_selection_receipt_handle
+                or profile.resources_source_receipt_handle != bundle.resources_source_receipt_handle
+                or profile.resources_source_receipt_handle != getattr(session, "_resources_source_handle", None)
+                or profile.prepared_generation_id != prepared.generation_id
+                or profile.transaction_handle != session._authorization.transaction_handle
+                or profile.profile_id != materialized.resource_profile_id
+                or profile.resources_revision != materialized.resources_revision
+                or resources_registry is None
+                or materialized.resources_content_digest != getattr(resources_registry.source, "content_digest", None)):
+            raise BootstrapEnrollmentPending("prepared native bundle Resources profile selection is stale")
+        return prepared
+
     def _verify_postpublication_claim(self,
                                       claim: RootActivePolicyCompilationClaim) -> None:
         if (not isinstance(claim, RootActivePolicyCompilationClaim)
@@ -749,6 +843,9 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("prepared receipt was lost after active publication")
         prepared = session.resolve_prepared_receipt(retained.provision_receipt_handle)
         self._validate_prepared(session, prepared)
+        bundle = claim._root_prepared_native_bundle
+        if bundle is None or self._verify_prepared_native_bundle(session, bundle) is not prepared:
+            raise BootstrapEnrollmentPending("prepared native bundle changed after active publication")
         if (session is not claim._root_setup_session
                 or session._authorization.transaction_handle != claim.transaction_handle
                 or session._authorization.plan_digest != claim.plan_sha256

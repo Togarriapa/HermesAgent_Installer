@@ -1648,7 +1648,7 @@ class InstalledBootstrapPolicyResolver:
                 or roots["service_parent_root"] != _SERVICE_PARENT_ROOT):
             _fail("bootstrap service root policy does not use the selected private root layout")
         base = doc["authority_base_template"]
-        self._validate_authority_base_template(base)
+        self._validate_authority_base_template(base, compilation_phase=compilation_phase)
         templates = doc["service_record_templates"]
         if not isinstance(templates, list) or not 1 <= len(templates) <= 64:
             _fail("bootstrap service-record template list is empty or oversized")
@@ -1701,7 +1701,8 @@ class InstalledBootstrapPolicyResolver:
                             "root_journal_roots", "resource_controller_roles",
                             "native_mcp_tool_bindings", "remote_observation_enrollments",
                             "native_schema_artifacts", "composio_channel_enrollments",
-                            "channel_delivery_bindings"}
+                            "channel_delivery_bindings", "selected_resource_executions",
+                            "selected_application_runtimes"}
         catalogs = doc["catalog_selections"]
         if not isinstance(catalogs, dict) or set(catalogs) != selection_fields:
             _fail("bootstrap catalog selections do not cover the exact enrollment schema")
@@ -1710,11 +1711,12 @@ class InstalledBootstrapPolicyResolver:
             if not isinstance(rows, list) or len(rows) > 1024 or any(not isinstance(row, dict) for row in rows):
                 _fail("bootstrap catalog selection rows are malformed")
             clean_catalogs[name] = tuple(copy.deepcopy(rows))
-        if any(clean_catalogs[name] for name in selection_fields - {"root_journal_roots"}):
-            # Nonempty secondary catalogs need their own exact nested-schema
-            # validator and selected policy receipts. The current bootstrap
-            # policy supports only the finite service profile and source set.
-            _fail("bootstrap policy requests an unimplemented protected catalog enrollment")
+        active_catalog_names = selection_fields - {"root_journal_roots"}
+        if compilation_phase == "prepared":
+            if any(clean_catalogs[name] for name in active_catalog_names):
+                _fail("prepared bootstrap policy cannot preselect active catalogs")
+        else:
+            self._validate_active_catalog_selections(clean_catalogs, base)
         binding_rules = self._validate_receipt_binding_rules(
             doc["receipt_binding_rules"], plan_row["allowed_artifact_ids"],
             dormant_prepared=(compilation_phase == "prepared"))
@@ -1822,7 +1824,7 @@ class InstalledBootstrapPolicyResolver:
         return field_name in common | role_specific.get(role, set())
 
     @staticmethod
-    def _validate_authority_base_template(value: Any) -> None:
+    def _validate_authority_base_template(value: Any, *, compilation_phase: str = "prepared") -> None:
         required = {"schema", "key_id", "principals", "rules", "authentik", "process_profiles",
                     "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers",
                     "native_bridges", "normalization_policies", "delegations", "service_generations"}
@@ -1853,11 +1855,61 @@ class InstalledBootstrapPolicyResolver:
             "resource_scope_bindings", "resource_validators", "resource_controller_roles",
             "native_mcp_tool_bindings", "remote_observation_enrollments", "native_schema_artifacts",
             "composio_channel_enrollments", "channel_delivery_bindings",
+            "selected_resource_executions", "selected_application_runtimes",
         )
-        if (normalized["service_records"]
-                or any(normalized[name] for name in empty_snapshot_catalogs)
-                or len(normalized["root_journal_roots"]) != 1):
-            _fail("prepared authority base must bind the exact empty root-journal service snapshot")
+        if len(normalized["root_journal_roots"]) != 1:
+            _fail("authority base must bind the exact root-journal identity")
+        if compilation_phase == "prepared" and (
+                normalized["service_records"]
+                or any(normalized[name] for name in empty_snapshot_catalogs)):
+            _fail("prepared authority base must bind the exact empty service snapshot")
+
+    @staticmethod
+    def _validate_active_catalog_selections(catalogs: Mapping[str, tuple[Mapping[str, Any], ...]],
+                                            base: Mapping[str, Any]) -> None:
+        """Require active catalog selections to equal strict, digest-bound rows.
+
+        The policy parser proves structure and joins only. The active compiler
+        and publisher additionally prove the source receipts/current selection
+        before these rows can be published.
+        """
+        from .enrollment import _validate_service_generations
+        generation = base.get("service_generations")
+        if (not isinstance(generation, dict)
+                or generation == {"root_binding": "prepared_service_generation.exact_empty_snapshot"}):
+            _fail("active bootstrap policy requires a complete digest-bound service generation")
+        try:
+            normalized = _validate_service_generations(generation)
+        except Exception:
+            _fail("active bootstrap policy service generation is malformed or has broken joins")
+        joins = {
+            "protected_devices": "protected_devices",
+            "protected_build_records": "protected_build_records",
+            "native_packages": "native_packages",
+            "memory_enrollments": "memory_enrollments",
+            "operation_parameter_schemas": "operation_parameter_schemas",
+            "source_issuers": "source_issuers",
+            "resource_jobs": "resource_jobs",
+            "remote_session_enrollments": "remote_session_enrollments",
+            "resource_backend_enrollments": "resource_backend_enrollments",
+            "resource_body_recipes": "resource_body_recipes",
+            "resource_scope_bindings": "resource_scope_bindings",
+            "resource_validators": "resource_validators",
+            "root_journal_roots": "root_journal_roots",
+            "resource_controller_roles": "resource_controller_roles",
+            "native_mcp_tool_bindings": "native_mcp_tool_bindings",
+            "remote_observation_enrollments": "remote_observation_enrollments",
+            "native_schema_artifacts": "native_schema_artifacts",
+            "composio_channel_enrollments": "composio_channel_enrollments",
+            "channel_delivery_bindings": "channel_delivery_bindings",
+            "selected_resource_executions": "selected_resource_executions",
+            "selected_application_runtimes": "selected_application_runtimes",
+        }
+        for selected_name, generation_name in joins.items():
+            selected = tuple(_plain_json(row) for row in catalogs[selected_name])
+            actual = tuple(_plain_json(row) for row in normalized[generation_name])
+            if selected != actual:
+                _fail("active catalog selection differs from its digest-bound service-generation rows")
 
     @staticmethod
     def _selection_row(value: Any, keys: set[str]) -> dict[str, Any]:
