@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import os
 import stat
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -197,7 +198,21 @@ class RootMemoryServiceEnablementRegistry:
         if not callable(source_resolver):
             raise RootMemoryServiceEnablementDenied("retained root TTY service choice resolver is unavailable")
         choice = source_resolver(row["selection_handle"])
-        if (getattr(choice, "choice_observation_id", None) != row["choice_observation_id"]
+        from .root_setup_choices import RootAdoptedMemoryServiceEnablementChoice
+        now = time.monotonic()
+        if (type(choice) is not RootAdoptedMemoryServiceEnablementChoice
+                or choice.selection_handle != row["selection_handle"]
+                or not _valid_digest(choice.source_choice_row_sha256)
+                or not _valid_digest(choice.choice_payload_sha256)
+                or choice.revocation_epoch != row["revocation_epoch"]
+                or choice.principal_id != row["principal_id"]
+                or choice.profile_id != row["profile_id"]
+                or choice.namespace_id != row["namespace_id"]
+                or choice.policy_revision != row["policy_revision"]
+                or choice.service_generation_digest != _active_digest(self.bindings)
+                or choice.issued_monotonic > now
+                or choice.expires_monotonic <= now
+                or choice.choice_observation_id != row["choice_observation_id"]
                 or getattr(choice, "provider", None) != enrollment.provider
                 or getattr(choice, "backend_variant", None) != enrollment.backend_variant
                 or getattr(choice, "enabled", None) is not True):
