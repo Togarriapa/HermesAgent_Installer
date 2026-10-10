@@ -1034,3 +1034,18 @@ The installer SHALL adopt Xpra receipts only through the v198 schema2 signed cur
 
 - **WHEN** any current source/build/selection/signature join is absent, expired or replaced, or only an ACK exists
 - **THEN** startup remains denied or unavailable, with owned incomplete-start cleanup and no fabricated completed active worker proof
+
+
+### Requirement: Actual setup and fixture source producers
+
+The installer SHALL produce the v199 current setup startup projection from actual selected source roles and protected publication, and independently issue the child-owned closed qualification source transaction/session before fixture publication.
+
+#### Scenario: Current producers issue genuine selections
+
+- **WHEN** actual selected source roles and protected publication are current, or the independently observed fixed fixture controller issues its own source transaction
+- **THEN** only the concrete owner may issue its private startup projection or fixture source session, preserving original deadlines and source/PM custody
+
+#### Scenario: Caller identity or acquisition cycle is substituted
+
+- **WHEN** caller rows, copied session handles, stale receipts, production activation under fixture authority or publication as source-session prerequisite is attempted
+- **THEN** the operation is denied without a capability proof or acceptance promotion
