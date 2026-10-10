@@ -43,11 +43,6 @@ def _archive(path: str, content: bytes) -> bytes:
 
 
 def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[NativeOutputMember, ...]]:
-    if candidate is None:
-        candidate = (b'{"candidates":[],"generation":"generation-1",'
-                 b'"package_id":"package-1","profile_id":"demo",'
-                 b'"resolver_sha256":"' + b"a" * 64 + b'","schema":1}')
-    resolver = b'{"schema":1}'
     leaf = b"selected native module"
     overlay = json.dumps({
         "compiler_artifact_id": "installer-module:native_materializer",
@@ -72,6 +67,17 @@ def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[Nati
         "registration_ids": ["registration-1"],
         "action_binding_ids": ["action-1"], "workflow_ids": [],
     }
+    process_roles_sha256 = hashlib.sha256(json.dumps(
+        [process_role], sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode()).hexdigest()
+    resolver = json.dumps({"process_role_records_sha256": process_roles_sha256, "schema": 1},
+                          sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    resolver_sha256 = hashlib.sha256(resolver).hexdigest()
+    if candidate is None:
+        candidate = json.dumps({"candidates": [], "generation": "generation-1",
+                                "package_id": "package-1", "profile_id": "demo",
+                                "resolver_sha256": resolver_sha256, "schema": 1},
+                               sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     manifest = json.dumps({
         "candidate_index": {"artifact_id": "native-candidate-index:package-1:generation-1",
                             "relative_path": "catalog/native-candidates.json",
@@ -81,6 +87,8 @@ def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[Nati
         "adapters": [],
         "dependencies": [],
         "process_role_records": [process_role],
+        "process_role_records_sha256": process_roles_sha256,
+        "resolver_sha256": resolver_sha256,
         "generation": "generation-1",
         "package_id": "package-1",
         "profile_id": "demo",

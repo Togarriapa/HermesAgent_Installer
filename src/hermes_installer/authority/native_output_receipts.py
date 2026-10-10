@@ -868,13 +868,22 @@ class RootMaterializationReceiptRegistry:
             if manifest != embedded_manifest:
                 raise NativeOutputReceiptDenied("entrypoint receipt differs from the selected closure manifest")
             _verify_closure_tree_manifest(manifest, closure)
-            pin = _parse_canonical_json(manifest)["candidate_index"]
+            manifest_doc = _parse_canonical_json(manifest)
+            pin = manifest_doc["candidate_index"]
             if (pin["sha256"] != hashlib.sha256(embedded_index).hexdigest()
                     or pin["size_bytes"] != len(embedded_index)):
                 raise NativeOutputReceiptDenied("entrypoint candidate pin differs from the closure member")
         resolver = payloads.get("native-action-resolver")
-        if resolver is not None and resolver != _read_archive_member(closure, "resolver/resolver"):
-            raise NativeOutputReceiptDenied("resolver receipt differs from the selected closure resolver")
+        if resolver is not None:
+            embedded_resolver = _read_archive_member(closure, "resolver/resolver")
+            if resolver != embedded_resolver:
+                raise NativeOutputReceiptDenied("resolver receipt differs from the selected closure resolver")
+            if manifest is not None:
+                resolver_doc = _parse_canonical_json(resolver)
+                if (manifest_doc["resolver_sha256"] != hashlib.sha256(resolver).hexdigest()
+                        or resolver_doc["process_role_records_sha256"]
+                        != manifest_doc["process_role_records_sha256"]):
+                    raise NativeOutputReceiptDenied("manifest and resolver process-role cross-pins differ")
         overlay = payloads.get("native-boundary-overlay")
         if overlay is not None:
             overlay_doc = _verify_boundary_overlay(overlay)
@@ -1171,13 +1180,18 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
             if hashlib.sha256(_canonical(tree_rows)).hexdigest() != selection.compiled_closure_sha256:
                 raise NativeOutputReceiptDenied("selected compiled closure tree digest differs from its entrypoint")
             resolver = _parse_canonical_json(_read_archive_member(payload, "resolver/resolver"))
-            if not isinstance(resolver, dict):
+            manifest = _parse_canonical_json(embedded_manifest)
+            resolver_bytes = _read_archive_member(payload, "resolver/resolver")
+            if (not isinstance(resolver, dict)
+                    or hashlib.sha256(resolver_bytes).hexdigest() != manifest.get("resolver_sha256")
+                    or resolver.get("process_role_records_sha256")
+                    != manifest.get("process_role_records_sha256")):
                 raise NativeOutputReceiptDenied("compiled closure resolver document is malformed")
     if role == "native-entrypoint-manifest":
         value = _parse_canonical_json(payload)
         expected_top = {"schema", "package_id", "profile_id", "generation",
                         "closure_files", "adapters", "dependencies", "candidate_index",
-                        "process_role_records"}
+                        "process_role_records", "process_role_records_sha256", "resolver_sha256"}
         if (set(value) != expected_top or value.get("schema") != 1
                 or value.get("package_id") != selection.package_id
                 or value.get("profile_id") != selection.profile_id
@@ -1214,6 +1228,11 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
         _validate_member_rows(normalized)
         if hashlib.sha256(_canonical(closure_files)).hexdigest() != selection.compiled_closure_sha256:
             raise NativeOutputReceiptDenied("entrypoint closure tree differs from selected package binding")
+        role_digest = hashlib.sha256(_canonical(value["process_role_records"])).hexdigest()
+        if (value["process_role_records_sha256"] != role_digest
+                or not isinstance(value["resolver_sha256"], str)
+                or not _HEX.fullmatch(value["resolver_sha256"])):
+            raise NativeOutputReceiptDenied("entrypoint role or resolver digest cross-pin is invalid")
         _validate_process_role_records(selection, value["process_role_records"], normalized)
     if role == "native-boundary-overlay":
         value = _verify_boundary_overlay(payload)
@@ -1267,7 +1286,7 @@ def _validate_process_role_records(selection: NativeOutputSelection,
         for key in ("observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids"):
             values = row[key]
             if (not isinstance(values, list) or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in values)
-                    or len(set(values)) != len(values)):
+                    or len(set(values)) != len(values) or values != sorted(values)):
                 raise NativeOutputReceiptDenied("process-role foreign-key list is invalid")
         if not row["observer_enrollment_ids"] or row["module_name"] in module_names:
             raise NativeOutputReceiptDenied("process-role observer or module identity is incomplete")
