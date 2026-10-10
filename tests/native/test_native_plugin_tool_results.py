@@ -208,7 +208,7 @@ class NativePluginToolResultTests(unittest.TestCase):
                 pass
 
         adapter = _NativePluginContextResultAdapter(Context(), Package(), adapter_id)
-        registered = adapter.register_tool(name, adapter_id, schema,
+        registered = adapter.register_tool(name, adapter_id, parameters,
             lambda _args: {"result": "raw-backend", "schema": 1}, description="sandbox")
         response = json.loads(registered["handler"]({}))
         self.assertEqual(response, {"schema": 1, "result_trust": "untrusted-backend-data",
