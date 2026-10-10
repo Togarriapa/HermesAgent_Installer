@@ -1421,5 +1421,295 @@
       "SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies"
     ],
     "status": "All original scope and AC open; no baseline edit, live account/weights/endpoint effect or privileged Mac install."
+  },
+  "runtime_member_role_v149": {
+    "schema": 1,
+    "requirements": [
+      "HI-T33",
+      "HI-T62",
+      "HI-T76",
+      "HI-T123",
+      "HI-T137",
+      "HI-T138"
+    ],
+    "why": "Actual runtime closure files were mislabeled interpreter despite unique interpreter path; prepared worker module proof wrongly required root-actor imports; first public input needs genuine per-input disclosure, not public profile or empty parent bypass.",
+    "runtime_layout": {
+      "role": "runtime-member",
+      "addition": "Append finite release manifest role runtime-member, existing interpreter role unchanged and unique.",
+      "interpreter": "Only runtime/bin/python with roles exactly [interpreter]; actual selected interpreter bytes/held FD. No stdlib/library/package file assigned interpreter.",
+      "members": "Every other selected verified isolated installer runtime closure regular member maps runtime/<exact normalized runtime-relative path>, roles exactly [runtime-member]. No filename/suffix inference or arbitrary runtime directory sweep. Must be exact retained VerifiedInstallerInterpreterReceipt.files/actual runtime closure manifest selected by v76, executable/root/stdlib/PyYAML receipts; source digest never executable proof.",
+      "bounds": "Existing <=50000 release rows/portable unique normalized nofollow relative paths, no dot/dotdot/symlink/hardlink/special files. Mode0555 only actual selected executable member mode, otherwise0444. Root0/no untrusted writable ancestors; full actual hash/size/member closure validated before publication and every held release resolve. Manifest includes all runtime members, excludes unselected caches/bytecode/local files.",
+      "producer_verifier": "RootInstalledReleaseBuilder emits runtime-member rows, InstalledRootReleaseVerifier fixed role validator accepts only exact runtime/ prefix and declared selected interpreter closure membership; fails if unique interpreter absent/duplicated, mixed roles or undeclared runtime files. Preserve actual isolated stdlib/shared-library/dependency import origins; role alone proves no executed origin."
+    },
+    "prepared_role_source": {
+      "type": "hermes_installer.authority.bootstrap_runtime_factory.RootPreparedReleaseMemberReceipt",
+      "semantics": "Actual source-defined held-release membership/bytes only, distinct existing RootReleaseModuleReceipt (current root actor imported origin) and later LoadedNativePackageProof/loaded_process_roles (actual worker import/PIDFD). Do not require root actor to import native_invocations/native_boundary worker source to prepare role definitions.",
+      "fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256",
+        "size_bytes",
+        "release_commit",
+        "deployment_receipt_sha256",
+        "source_receipt_handle",
+        "setup_session_id",
+        "prepared_generation_id"
+      ],
+      "issuer": "RootSelectedInstallationBinding.resolve_prepared_native_process_role_member(native_policy_preparation_handle,role_id)->RootPreparedReleaseMemberReceipt; current source-defined exact v137 role module/member descriptor chooses artifact, not caller path.",
+      "checks": "Current genuine setup/controller/principal/source-definition adapter and selected release/plan/prepared generation. Exact reviewed role descriptor artifact/path/SHA/size held release row roles[module] or actual reviewed source role; securely reopen release member through held release FD, compute bytes SHA and retain genuine registry handle. No imported-origin assertion in this type. read_current revalidates same release/member/source/session.",
+      "later": "Assembler v134 serializes exact source-defined process_role_records/digest. After active publication, custody independently joins genuine selected role/source receipts to actual mounted closure and authenticated loaded_process_roles import paths/dev/inode/hash with current worker PIDFD/mount/cgroup/profile/package generations. Prepared held member proof never substitutes live import/source receipt. Root definition adapter itself remains current actual imported RootReleaseModuleReceipt where root code executes it."
+    },
+    "public_first_input": {
+      "owner": "root public input permission registry + genuine root TTY/native input source observer",
+      "persistent": "v138 normal configuration signed durable public-free-web-read choice selects exact v142 scopes; configuration alone never classifies input or grants egress.",
+      "method": "RootPublicInputPermissionRegistry.observe_public_input_disclosure(public_permission_selection_handle,retained_observed_input_handle,selected_execution_handle,actual_root_tty_disclosure)->RootPublicNativeInputObservation",
+      "order": [
+        "Root observer retains exact actual new input bytes/hash/size and selected native execution/current peer/profile/process/package generation/source origin in a pending non-authority record; no SourceReceipt PUBLIC ceiling issued yet.",
+        "Trusted foreground root TTY presents exact bounded disclosure of that new input and selected public web destination scope/zero budget; user explicitly identifies this own new input as PUBLIC for public-free web-read. No default/bool/worker label; receipt binds input SHA/size/selection/peer and genuine TTY/controller observation.",
+        "Root observer/permission registry verifies same retained bytes, current selected source/peer, actual TTY subject/private namespace/current source origin and ancestry. Any PRIVATE/UNKNOWN parent, history/memory/credential/imported attachment remains denied; user disclosure does not relabel existing private source. Empty parents only permitted for this genuinely observed fresh disclosed public input, not caller omission.",
+        "Registry issues sealed RootPublicNativeInputObservation with source choice/disclosure/input binding, then existing resolve_for_selected_input yields current <=30s public permission and source issuer mints actual source receipt through same selected input ancestry. Every dispatch/retry current resolver rechecks epoch/scope/selection/source."
+      ],
+      "fields": "Existing v138 public input observation plus disclosure_observation_handle,disclosure_sha256,retained_observed_input_handle,input_sha256,input_size_bytes,selected_execution_handle,tty_controller_observation_handle. All root registry membership/currentness, exact existing selected input handles not caller claims.",
+      "failure": "No actual foreground per-input disclosure or source proof => no PUBLIC receipt/egress. Persistent public choice/private consent/profile/captured worker flag cannot bypass. No public model/memory export or paid route."
+    },
+    "tasks": [
+      {
+        "id": "HI-T149.1",
+        "owner": "release builder/verifier",
+        "work": "Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance."
+      },
+      {
+        "id": "HI-T149.2",
+        "owner": "factory/source observer/native custody",
+        "work": "Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies."
+      },
+      {
+        "id": "HI-T149.3",
+        "owner": "public permission/factory/source input",
+        "work": "Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny."
+      }
+    ],
+    "acceptance": "All original AC/baseline unchanged. Source role/layout/disclosure producers required; no actual runtime/public target acceptance inferred."
+  },
+  "prepared_source_module_layout_v154": {
+    "schema": 1,
+    "requirements": [
+      "HI-T123",
+      "HI-T137",
+      "HI-T149"
+    ],
+    "why": "Actual builder stages prepared worker source at src members, while root-imported definition adapter is installed under lib/python. Source membership cannot require root import or substitute later live worker proof. Final reviewed adapter corrects logical closure versus release member paths.",
+    "release_role": {
+      "role": "source-module",
+      "role_fields": "Append finite release descriptor role source-module. Exactly the two worker members below, roles=[source-module], root-owned immutable regular bytes; no wildcard src sweep. Preserve all existing roles and unique interpreter/runtime-member constraints.",
+      "actor_closure": "Exclude source-module rows from root actor import closure. Root-imported definition adapter remains roles=[module], actual installed identity installer-module:hermes_installer.authority.native_source_definitions. Raw source catalog identity is separate.",
+      "receipt": "RootPreparedReleaseMemberReceipt proves held verified release membership/current bytes only. RootReleaseModuleReceipt separately proves root actor imported source; LoadedNativePackageProof/current loaded_process_roles separately proves later actual worker mounted origins/PIDFD. Neither earlier receipt implies later evidence."
+    },
+    "worker_members": [
+      {
+        "artifact_id": "installer-native-invocations-module-v137",
+        "relative_path": "src/hermes_installer/native_invocations.py",
+        "logical_closure_member_path": "hermes_installer/native_invocations.py",
+        "module_name": "hermes_installer.native_invocations",
+        "sha256": "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226",
+        "size_bytes": 40107,
+        "roles": [
+          "source-module"
+        ]
+      },
+      {
+        "artifact_id": "installer-native-boundary-module-v137",
+        "relative_path": "src/hermes_installer/native_boundary.py",
+        "logical_closure_member_path": "hermes_installer/native_boundary.py",
+        "module_name": "hermes_installer.native_boundary",
+        "sha256": "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb",
+        "size_bytes": 14356,
+        "roles": [
+          "source-module"
+        ]
+      }
+    ],
+    "definition_adapter": {
+      "source_commit": "2d19ce81336d0dac686d8f1bcc45e2ab862da6aa",
+      "source_artifact_id": "installer-native-source-definitions-module-v137",
+      "source_relative_path": "src/hermes_installer/authority/native_source_definitions.py",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_source_definitions",
+      "installed_relative_path": "lib/python/hermes_installer/authority/native_source_definitions.py",
+      "module_name": "hermes_installer.authority.native_source_definitions",
+      "sha256": "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c",
+      "size_bytes": 10311,
+      "roles": [
+        "module"
+      ],
+      "source": "Actual reviewed committed module bytes, not intermediate 77ed pin. Source catalog acquisition identity binds raw source; installed actor descriptor identity binds exact copied installed bytes. Never alias IDs or paths."
+    },
+    "producer": "RootInstalledReleaseBuilder finite REVIEWED_SOURCE_MODULES worker staging emits source-module. InstalledRootReleaseVerifier fixed layout validates exact member/path/role/hash/size and rejects actor-import claims for workers. Factory resolve_prepared_worker_role_module_receipts reopens held worker members; resolve_prepared_native_source_definition_module_receipt requires real imported adapter receipt. Source definition registry emits only explicit separate selected role/action/schema/source facts, missing capture/action rows stay pending until real producer, not inferred adapter labels.",
+    "tasks": [
+      {
+        "id": "HI-T154.1",
+        "owner": "broker/release/factory/source observer",
+        "work": "Publish exact final source catalog and installed module/source-module descriptors; verify separate membership/import proofs and current bytes; preserve actual later worker role/PIDFD validation."
+      }
+    ],
+    "acceptance": "Source proof and layout correction only; no functional runtime or acceptance claim; all original AC remain open and baseline unchanged."
+  },
+  "root_native_health_start_v159": {
+    "schema": 1,
+    "requirements": [
+      "BD-F03",
+      "LC-F03",
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "Existing activation order already resolves health/profile cycle, but custody lacks root-local health start admission carrying genuine committed transaction/enrollment/source/fixture before process start. Generic worker start or presentation status cannot substitute.",
+    "activation_order": "Use existing activate_runnable actual strict active enrollment from source/PM/runtime/native closure receipts; normal product enablement withheld and functional health pending. Prepared snapshots never health-start. Root factory resolves genuine current committed enrollment receipt and original transaction, starts fixed health recipe through admission below, then record_functional_health consumes actual passed same-generation observer receipt to permit enablement. Changed generation invalidates health. No activation success/AC claim from runnable publication.",
+    "authority": {
+      "owner_module": "hermes_installer.authority.native_health_observer",
+      "class": "RootNativeHealthStartAuthority",
+      "constructor": "from_root_runtime(active_bindings,committed_enrollment_registry,verified_installer_release,current_installed_actor_verifier,authority_service,managed_process_custody,health_observer,root_journal)",
+      "admit": "admit_selected_health(committed_enrollment_receipt_handle)->opaque root health admission_handle",
+      "resolve": "resolve_current_health_admission(admission_handle)->RootNativeHealthStartAdmission",
+      "start": "start_selected_health(admission_handle)->RootSelectedHealthControl",
+      "fields": [
+        "schema",
+        "admission_handle",
+        "committed_enrollment_receipt_handle",
+        "committed_enrollment_receipt_id",
+        "bootstrap_transaction_handle",
+        "enrollment_id",
+        "profile_id",
+        "principal_id",
+        "process_generation",
+        "service_generation_digest",
+        "operation_id",
+        "parameter_schema_id",
+        "parameter_schema_sha256",
+        "recipe_sha256",
+        "health_fixture_artifact_id",
+        "health_fixture_sha256",
+        "health_fixture_receipt_handle",
+        "health_result_schema_id",
+        "health_result_schema_sha256",
+        "native_package_id",
+        "native_package_generation",
+        "native_closure_sha256",
+        "controller_binding_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "validation": "Root-only actual committed enrollment registry membership/current pointer/signature/transaction and full current receipt closure, state committed, exact enrolled target/profile/UID/recipe hermes-agent-health-v1. Resolve parameter-free schema and held reviewed fixture bytes/result schema via exact current protected catalog/source receipts; no caller fixture/body/argv/path/profile/transaction fields. Installed actor/current source/controller PIDFD lease separate from native service subject. Profile process generation and native package generation separate. Original <=30s admission bounded controller/source/fixture/transaction current evidence; no old setup lease extension."
+    },
+    "service_grant": "Extend existing finite root-selected-service lifecycle role set with health ONLY for RootNativeHealthStartAuthority admitted hermes-agent-health-v1. Reuse AuthorityService.issue_root_selected_service_effect/consume_root_selected_service_effect and existing signed selected subject/profile/principal/UID operation+recipe+payload digest, with separate retained RootControllerProcessIdentityLease. Never relabel root controller as worker or use worker RPC/peer grant. Grant binds genuine health admission handle/current committed receipt/transaction/fixture/schema/package closure. Fixed empty canonical parameter payload {} only; fixture input is separate authenticated root input delivery after loader/observer readiness, not caller process.start arguments. Custody verifier independently resolves admission and current grant/lease before one-use start.",
+    "custody": "ManagedProcessEffectHandler.start_selected_health_operation(verified_root_selected_service_effect,health_admission_handle)->RootSelectedHealthControl. Requires role health, fixed recipe, re-resolved current admission and actual held source/runtime executable/child bytes. Start managed selected UID/profile/cgroup/PIDFD; register existing v21 control exact process_id/handle/starttime/generation/transaction/committed receipt/fixture binding. Root observer begin_selected_health(control_handle) immediately after live control retention and BEFORE any fixture bytes/input delivery. Existing authenticated selected input issuer joins same live peer/package/loader/role/source ancestry then delivers actual fixture bytes once. No fake control/source handles.",
+    "completion": "Actual root observer captures same-run loader/native request/provider result where required/tool invocation/bounded validated semantic result and terminal cleanup; finish_selected_health creates immutable receipt. Provider result nullable only explicit reviewed no-provider fixture, never runtime omission. RootSelectedHermesOperations gains health() that delegates this root authority through BootstrapCustody; raw enrollment/profile selectors are not start authorization. Owned cancellation/expiry cleans retained cgroup/PIDFD and records incomplete/failed; terminal stdout/exit0 cannot pass.",
+    "fixture_source": "Existing health fixture contract remains: actual reviewed local finite request/body/expected semantic result/action IDs from selected root catalog artifact bytes and source proof; compatible selected private zero-budget provider if required. This amendment introduces no invented fixture digest or default model/account. Fixture producer owner must provide actual source asset + schema/source/member receipts; missing fixture/principal/native observer/private route stays incomplete with exact next step. Installed qualification suites are separate owned fixture action, not accepted install health.",
+    "tasks": [
+      {
+        "id": "HI-T159.1",
+        "owner": "factory/entrypoint/startup/custody/health observer",
+        "work": "Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement."
+      },
+      {
+        "id": "HI-T159.2",
+        "owner": "native fixture/observer/registration source owners",
+        "work": "Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests."
+      }
+    ],
+    "acceptance": "All original AC remain open; genuine health operation and semantic receipt still required, no prepared start or acceptance inferred; baseline unchanged."
+  },
+  "installed_local_qualification_v160": {
+    "schema": 1,
+    "requirements": [
+      "HI-T09",
+      "HI-T13",
+      "RB-T07",
+      "BD-F03",
+      "LC-F03"
+    ],
+    "why": "The installed fixed launcher has only mutating install/resume/update actions; unittest interpreter cannot satisfy genuine installed actor/MainPID. Production task/display positive fixtures need a bounded fixed source-owned dispatcher, not PYTHONPATH/sitecustomize or synthetic actor/grant DTOs.",
+    "launcher": {
+      "action": "qualify",
+      "argv": "Exact fixed installed bin/hermes-installer-root-setup qualify --suite <finite suite ID>; no other qualification options",
+      "suites": [
+        "resource-cron-task-v1",
+        "display-xauthority-v1"
+      ],
+      "module": "hermes_installer.authority.installed_qualification",
+      "entrypoint": "run_selected_installed_qualification(suite_id)->RootInstalledQualificationResult",
+      "actor": "Call InstalledRootReleaseVerifier.from_current_root_process inside actual fixed installed launcher with installed isolated interpreter and closed source import origins. Actual root UID/PIDFD/starttime/current release, root namespaces and genuine systemd current MainPID/executable required wherever controller contract demands them. Qualification action is only a finite dispatcher selector, never authority. No alternate executable/test Python/import interception/actor test bypass.",
+      "source": "Root entrypoint imports only reviewed installed source module/closure. Fixed suite recipe/schema assets must be genuine held release members with exact source-reviewed IDs/hashes/size/roles; actual source owner implements assets and Sol reviews measured pins before execution. No invented fixture digest, caller test path/module/code/JSON/env or arbitrary executable. Missing source asset stays pending."
+    },
+    "fixture_producer": {
+      "owner": "task kernel fixture + display fixture + root controller custody; root entrypoint owns dispatcher",
+      "class": "RootOwnedQualificationFixtureRegistry",
+      "constructor": "from_current_installed_actor(verified_installer_release,current_actor_observation,selected_fixture_source_catalog,root_journal,managed_process_custody)",
+      "observe": "observe_owned_fixture(suite_id)->RootOwnedQualificationFixtureSelection",
+      "verify": "verify_current(selection)->current held fixture/source/environment proof",
+      "fields": [
+        "schema",
+        "selection_handle",
+        "suite_id",
+        "fixture_recipe_artifact_id",
+        "fixture_recipe_sha256",
+        "fixture_schema_artifact_id",
+        "fixture_schema_sha256",
+        "release_deployment_receipt_sha256",
+        "root_actor_observation_handle",
+        "fixture_root_observation_handle",
+        "fixture_environment_observation_handle",
+        "controller_unit_observation_handle",
+        "fixture_generation_id",
+        "fixture_namespace_id",
+        "fixture_profile_id",
+        "fixture_principal_id",
+        "fixture_payload_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "source": "Exact fixed suite recipe source owns fixture package/action/profile/source/observer/backend/operation/schema and bounded expected results. The registry observes/creates only that recipe-owned ephemeral root journal child qualification/<root-generated run ID>, held nofollow private FDs and immutable source members, actual identified isolated Linux fixture environment and unit/MainPID/cgroup/namespace receipts. Existing unrelated unit/data/profile/policy is never adopted or modified. Root-generated fixture IDs are not receipt proof until registry membership/current physical observations. Caller suite ID selects only closed source recipe, not target authority.",
+      "environment": "No privileged development Mac execution. Require an identified isolated Linux fixture deployment and genuine observed environment/owned unit/root/source boundaries; a Docker label, caller bool or arbitrary namespace inode is insufficient. Fail closed when capabilities/systemd/source/native prerequisites absent. Create only owned ephemeral fixture UID/profile/cgroup/network/mount/root selected by recipe and actual observations; no global module/network/service replacement. Keep real deployment/fixture identities in evidence.",
+      "publication": "Source-owned fixture runtime producer compiles exact reviewed fixture selection through real policy/source/materialization/current signer and atomic publication APIs into a separate owned fixture authority generation under the held fixture journal root. Never production /etc authority pointer or existing setup choices. Genuine RootSetupSessionStore/committed enrollment/publication handles come from that source-bound fixture producer using existing verifier/registry mechanisms; never manually constructed seals/SimpleNamespace. Scope/purpose is qualification only and cannot authorize normal install/account/provider effects. Actual source key/custody/signature evidence required, not _FixtureSigner. Missing concrete producer stays pending, never counterfeit production session."
+    },
+    "runtime": {
+      "resource-cron-task-v1": "Actual RootControllerRoleRuntime with installed actor/current unit/MainPID and reviewed role member proof, actual source-pinned Resources discovery/materialization selected row/current source issuers/backend/DAG. Run RootSelectedCronProducer -> ResourceJobAuthority genuine RootResourceJobAdmissionHandle -> selected child claim/backend -> RootResourceTaskRunner/root task authority/custody -> RootTaskInputCoordinator exact stdin write+EOF -> actual terminal/result capsule. No test injected admitted task/controller/loader resolver. Retain cancel/expiry/hash mismatch and cgroup/descendant/terminal cleanup assertions.",
+      "display-xauthority-v1": "Actual selected remote startup/network/Xpra source+overlay/Xauthority fixture closure, real fixture publication/setup session and RootSelectedDisplayLaunchAuthority.admit_selected_start(session_handle,selected_remote_enrollment_id), actual issue_role_grant and AuthorityService.issue_root_selected_service_effect/consume, custody mount/start and observed cookie/inode/display semantics. No _root_selected_effect, fake signer, preconstructed VerifiedRootSelectedServiceEffect or fake mount/source proof. No Cloudflare/account/public tunnel/Desktop host shell mutation.",
+      "boundaries": "Use existing managed process original deadlines/resource limits and zero additional metered budget. Input effects limited exact owned fixture schema/roots/recipes; no messaging/accounts/model download/public egress. After success/failure/cancel deadline, close owned input and clean exact retained PIDFD/cgroup/namespace/root closure; preserve unrelated services and evidence. Unavailable prerequisites produce incomplete with exact missing source/capability, not skipped success."
+    },
+    "result": {
+      "type": "RootInstalledQualificationResult",
+      "fields": [
+        "schema",
+        "suite_id",
+        "fixture_selection_handle",
+        "fixture_generation_id",
+        "release_deployment_receipt_sha256",
+        "controller_observation_handle",
+        "parent_receipt_handles",
+        "terminal_receipt_handle",
+        "cleanup_receipt_handle",
+        "evidence_sha256",
+        "status"
+      ],
+      "status": [
+        "passed",
+        "failed",
+        "incomplete"
+      ],
+      "semantics": "Root registry retains actual production effect/source/observer/terminal/cleanup closure; typed presentation cannot manufacture evidence. Passed requires exact expected semantic result and successful owned cleanup. Local container fixture qualification does not close Pi/hardware/external account/full MVP AC or authorize normal enablement."
+    },
+    "tasks": [
+      {
+        "id": "HI-T160.1",
+        "owner": "root entrypoint/task kernel fixture/display fixture/controller custody",
+        "work": "Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts."
+      },
+      {
+        "id": "HI-T160.2",
+        "owner": "task/display fixture owners",
+        "work": "Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance."
+      }
+    ],
+    "acceptance": "Source/action scope refinement only; no actual fixture qualification or Pi acceptance claimed. All original AC open, baseline immutable."
   }
 }

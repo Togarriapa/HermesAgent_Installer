@@ -190,3 +190,37 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T139.1 factory/release builder: Pin literal root template in genuine release/source descriptor, implement actual root-held filesystem observer and same normal configuration existing-child model selection; absent/unowned/symlink/writable/root/source mismatch denies.
 
 - [ ] SK-T139.2 models/active publisher: Consume actual root/child/source observations and signed durable selection/current adoption, complete model member verification independent deployment; no arbitrary paths/copies/downloads or inferred embedding.
+
+- [ ] SK-T144.1 app build/source broker: Exact finite Node/Bun source/license/notice catalog selection and held isolated toolchain producer; actual digest/member/currentness failures and no global effects.
+
+- [ ] SK-T144.2 application environment build/probe: Actual offline lock-preserving Bun package closure/build and separate Node/Bun/native origin probe; missing artifact/license/cache/native support exact unavailable prerequisites.
+
+- [ ] SK-T145.1 memory lifecycle/selected startup authority/custody: Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD.
+
+- [ ] SK-T145.2 memory lifecycle integration: Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership.
+
+- [ ] SK-T146.1 factory/model selection/consent: Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately.
+
+- [ ] HI-T146.2 native target/factory/enrollment: Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation.
+
+- [ ] SK-T147.1 application build/package broker: Implement exact lock-derived export/active closure comparison and offline require-hashes pip sync with held wheelhouse/no ambient dependencies; preserve original lock and source receipts.
+
+- [ ] SK-T147.2 app source/build/probe: Review exact per-project offline backend/source-wheel stage and genuine observed wheel receipt; full installed env/probe requires project plus complete103 closure where selected, no dependency-only success.
+
+- [ ] SK-T148.1 uv probe/application build: Exact nonreceipt container provenance and production PM/runtime/project proof separation.
+
+- [ ] SK-T150.1 toolchain producer/artifact broker: Implement finite selected-plan-bound64MiB source observer/held FD and actual exact catalog/plan source rows; require current explicit package acquisition choice and exactNode/Bunpolicy.
+
+- [ ] SK-T150.2 toolchain registry/application build: Use genuine observer result instead of disconnected HTTP/CAS path; source/member/plan mismatch negatives and actual isolated executable/version/notice observation.
+
+- [ ] SK-T151.1 host enrollment/factory/active compiler: Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins.
+
+- [ ] SK-T151.2 models/private providers/runtime composer: Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute.
+
+- [ ] SK-T152.1 app build/source broker: Actual separate reviewed backend table source/member observation, finite artifact/license/CAS receipt and complete current backend closure.
+
+- [ ] SK-T152.2 factory/application selection/build/probe: Final backend handle join, isolated actual project wheel frontend/backend/no-network source hook execution and genuine wheel output/install/probe; extra build requirements/source/license/currentness failures deny.
+
+- [ ] SK-T155.1 Broker/release/toolchain producer: exact held finite policy member/current selected dependency joins, no disconnected artifact authority.
+
+- [ ] SK-T157.1 Builder/broker/backend source producer: actual finite backend policy/wheel/license/CAS observer and closure consumer with meaningful denial tests.
