@@ -806,6 +806,107 @@ def test_native_source_observer_stays_unavailable_without_protected_process_role
     assert result == {}
 
 
+def test_native_source_observer_derives_process_role_separately_from_action_adapter():
+    from hermes_installer.authority.runtime_bindings import _derive_source_observer_enrollments
+
+    action = SimpleNamespace(
+        action_id="authenticated-input", action_binding_id="adapter:binding:input",
+        operation="native.input.capture", capability="native-input",
+        target_id="target-input", recipient="local-private", generation="package-generation",
+        observer_enrollment_ids=("observer-input",), adapter_artifact_id="action-adapter",
+        adapter_sha256="a" * 64, argument_schema_id="input-v1", result_schema_id="output-v1",
+        effect_enrollment_id="effect-input",
+    )
+    package = SimpleNamespace(
+        package_id="package-input", profile_id="profile-input", profile_generation="process-generation",
+        generation="package-generation", compiled_closure_sha256="b" * 64,
+    )
+    role = SimpleNamespace(
+        role_id="role-input", role_artifact_id="process-role-module", role_sha256="c" * 64,
+        package_id="package-input", native_package_generation="package-generation",
+        profile_id="profile-input", profile_generation="process-generation",
+        role_source_receipt_handle="role-source", module_name="hermes_installer.runtime.input_role",
+        closure_member_path="roles/input_role.py", role_source_revision="source-rev",
+        role_source_tree_sha256="d" * 64, action_binding_ids=(action.action_binding_id,),
+    )
+    issuer = SimpleNamespace(
+        issuer_channel_id="native-input", producer_profile_id="profile-input",
+        generation="process-generation", allowed_parent_channels=(), capture_schema_id="input-v1",
+        source_action_ids=("authenticated-input",), private_provider_route_ids=(),
+    )
+    join = SimpleNamespace(issuer=issuer, package=package, process_role=role,
+                           actions={action.action_binding_id: action})
+    service = SimpleNamespace(
+        profile_id="profile-input", principal_id="principal-input", namespace_identity="ns-input",
+        enrollment_id="enrollment-input", service_uid=1200, executable_sha256="e" * 64,
+    )
+    catalog = SimpleNamespace(
+        source_observer_joins={"observer-input": join},
+        resolve_profile_generation=lambda _profile, _generation: service,
+    )
+    artifact_catalog = SimpleNamespace(artifacts={
+        "process-role-module": SimpleNamespace(sha256="c" * 64),
+    })
+
+    result = _derive_source_observer_enrollments(
+        catalog=catalog, process_profiles={}, artifact_catalog=artifact_catalog,
+    )
+
+    observer = result["observer-input"]
+    assert observer.role_artifact_id == "process-role-module"
+    assert observer.role_sha256 == "c" * 64
+    assert observer.role_artifact_id != action.adapter_artifact_id
+    assert observer.source_action_binding_id == action.action_binding_id
+    assert observer.generation == "process-generation"
+    assert observer.native_package_generation == "package-generation"
+
+
+def test_native_source_observer_rejects_ambiguous_process_role_actions():
+    from hermes_installer.authority.runtime_bindings import _derive_source_observer_enrollments
+
+    action = SimpleNamespace(
+        action_id="authenticated-input", action_binding_id="adapter:binding:input",
+        operation="native.input.capture", capability="native-input", target_id="target-input",
+        recipient="local-private", generation="package-generation",
+        observer_enrollment_ids=("observer-input",),
+    )
+    duplicate = SimpleNamespace(**{**vars(action), "action_binding_id": "adapter:binding:other"})
+    package = SimpleNamespace(
+        package_id="package-input", profile_id="profile-input", profile_generation="process-generation",
+        generation="package-generation", compiled_closure_sha256="b" * 64,
+    )
+    role = SimpleNamespace(
+        role_id="role-input", role_artifact_id="process-role-module", role_sha256="c" * 64,
+        package_id="package-input", native_package_generation="package-generation",
+        profile_id="profile-input", profile_generation="process-generation",
+        action_binding_ids=(action.action_binding_id, duplicate.action_binding_id),
+    )
+    issuer = SimpleNamespace(
+        issuer_channel_id="native-input", producer_profile_id="profile-input",
+        generation="process-generation", allowed_parent_channels=(), capture_schema_id="input-v1",
+        source_action_ids=("authenticated-input",), private_provider_route_ids=(),
+    )
+    join = SimpleNamespace(issuer=issuer, package=package, process_role=role,
+                           actions={action.action_binding_id: action,
+                                    duplicate.action_binding_id: duplicate})
+    service = SimpleNamespace(
+        profile_id="profile-input", principal_id="principal-input", namespace_identity="ns-input",
+        enrollment_id="enrollment-input", service_uid=1200, executable_sha256="e" * 64,
+    )
+    catalog = SimpleNamespace(
+        source_observer_joins={"observer-input": join},
+        resolve_profile_generation=lambda _profile, _generation: service,
+    )
+    artifact_catalog = SimpleNamespace(artifacts={
+        "process-role-module": SimpleNamespace(sha256="c" * 64),
+    })
+
+    with pytest.raises(EnrollmentDenied, match="one exact process-role action binding"):
+        _derive_source_observer_enrollments(
+            catalog=catalog, process_profiles={}, artifact_catalog=artifact_catalog,
+        )
+
+
 def test_root_native_package_materializer_uses_only_protected_artifact_references(tmp_path):
     import json
     from hermes_installer.authority.runtime_bindings import _build_native_package_resolver
