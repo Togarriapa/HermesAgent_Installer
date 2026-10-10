@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 import re
@@ -81,6 +82,35 @@ class NativeResourceBinding:
 
 _PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,95}$")
+_STANDALONE_HERMES = re.compile(r"(?<![A-Za-z0-9_-])Hermes(?![A-Za-z0-9_-])")
+
+# The Resources registry keeps its stable source identity.  The only source
+# profile authorized as the native user entry is projected onto Hermes'
+# canonical default profile; the other source identities remain registry IDs
+# and are resolved by the protected internal-home router.
+PRIMARY_USER_SOURCE_PROFILE_ID = "hermes"
+PRIMARY_NATIVE_PROFILE_KEY = "default"
+PRIMARY_USER_DISPLAY_NAME = "Jarvis"
+
+
+def _jarvis_identity_text(value: Any) -> Any:
+    """Rename human-facing primary identity text without changing source IDs."""
+    if isinstance(value, str):
+        return _STANDALONE_HERMES.sub(PRIMARY_USER_DISPLAY_NAME, value)
+    if isinstance(value, list):
+        return [_jarvis_identity_text(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_jarvis_identity_text(item) for item in value)
+    if isinstance(value, Mapping):
+        return {key: _jarvis_identity_text(item) for key, item in value.items()}
+    return value
+
+
+def effective_native_profile_spec(profile_id: str, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Return digestable native instructions with the primary name adapted."""
+    effective = deepcopy(dict(spec))
+    return (_jarvis_identity_text(effective)
+            if profile_id == PRIMARY_USER_SOURCE_PROFILE_ID else effective)
 
 
 def _profile_files(item: ResolvedResource, source_path: str, source_document: Mapping[str, Any]) -> dict[str, bytes]:
@@ -90,7 +120,7 @@ def _profile_files(item: ResolvedResource, source_path: str, source_document: Ma
     name = item.resource.id
     if not _PROFILE_NAME.fullmatch(name):
         raise RegistryError(f"profile name cannot be represented as a Hermes profile: {name}")
-    spec = item.effective_spec or item.resource.body
+    spec = effective_native_profile_spec(name, item.effective_spec or item.resource.body)
     content_sections = []
     for field, value in spec.items():
         if field in {"extends", "requires"}:
@@ -110,8 +140,13 @@ def _profile_files(item: ResolvedResource, source_path: str, source_document: Ma
     description = metadata.get("description", "") if isinstance(metadata, Mapping) else ""
     if not isinstance(description, str):
         description = ""
+    if name == PRIMARY_USER_SOURCE_PROFILE_ID:
+        description = _jarvis_identity_text(description)
+    native_title = (PRIMARY_USER_DISPLAY_NAME if name == PRIMARY_USER_SOURCE_PROFILE_ID
+                    else name.replace('-', ' ').replace('_', ' ').title())
+    display_name = native_title
     soul = (
-        f"# {name.replace('-', ' ').replace('_', ' ').title()}\n\n"
+        f"# {native_title}\n\n"
         + (f"{description.strip()}\n\n" if description.strip() else "")
         + "\n\n".join(content_sections)
         + "\n\n## Complete registry profile declaration\n\n"
@@ -120,7 +155,7 @@ def _profile_files(item: ResolvedResource, source_path: str, source_document: Ma
         + "```\n"
         + f"\n<!-- Source: {source_path}; version: {item.resource.version}; revision: {item.resource.source_revision} -->\n"
     )
-    metadata = {"description": description, "display_name": name.replace("-", " ").replace("_", " ").title()}
+    metadata = {"description": description, "display_name": display_name}
     return {
         f"homes/profiles/{name}/SOUL.md": soul.encode("utf-8"),
         f"homes/profiles/{name}/config.yaml": b"{}\n",
@@ -321,7 +356,10 @@ class NativeRegistry:
                 "enabled": False, "target_verified": False,
             }
             if kind == "profiles":
-                native_path = f"profiles/{name}"
+                # Hermes' canonical default identity lives at HERMES_HOME
+                # itself; named identities live under profiles/<id>/.
+                native_path = ("." if name == PRIMARY_USER_SOURCE_PROFILE_ID
+                               else f"profiles/{name}")
                 adapter_id = "hermes.isolated-home.v1"
                 discoverability = "Hermes native HERMES_HOME selected by the internal orchestrator"
                 invocation = "orchestrator-internal-profile.v1"

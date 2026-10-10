@@ -5,6 +5,7 @@ import json
 import hashlib
 import os
 import sqlite3
+import stat
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from hermes_installer.authority.native_materialization import (
     NativeMaterializedItem,
     _retained_resource_definitions,
     RootNativeMaterialization,
+    _deny_legacy_user_profile_identity,
     _atomic_service_write_at,
     _hash_file_at,
     _open_parent,
@@ -57,6 +59,132 @@ def test_root_operation_selects_only_native_profile_and_resolved_skill_closure()
     assert all(path.startswith(f"profiles/{profile_id}/") for path in selected)
     assert all(path.startswith("homes/profiles/") or path.startswith("homes/skills/")
                for path in compiled if path.startswith("homes/"))
+
+
+def test_primary_resources_profile_projects_to_the_only_desktop_identity_jarvis() -> None:
+    registry = _registry()
+    discovery = registry.discover(["profiles/hermes@*"])
+    compiled = registry.materialize(discovery)
+    selected = _selected_files(compiled, "hermes", native_profile_key="default")
+    bindings = {row.resource_id: row for row in registry.crosswalk(discovery)}
+    definitions = _retained_resource_definitions(registry, discovery, compiled)
+    source_profile = next(row for row in definitions
+                          if row.kind == "profiles" and row.resource_id == "hermes")
+
+    assert len([row for row in registry.resolver.raw if row.startswith("profiles/")]) == 208
+    assert bindings["hermes"].native_path == "."
+    assert {path.split("/", 1)[0] for path in selected} <= {"SOUL.md", "profile.yaml", "config.yaml", "skills"}
+    assert b"display_name: Jarvis" in selected["profile.yaml"]
+    assert selected["SOUL.md"].startswith(b"# Jarvis\n")
+    assert b"through Jarvis before delivery" in selected["SOUL.md"]
+    assert b"hermes-response-contract" in selected["SOUL.md"]
+    # Stable source identity and source manifest bytes remain available beside
+    # the explicitly transformed native presentation/instructions.
+    assert source_profile.resource_id == "hermes"
+    assert source_profile.source_path == "profiles/hermes.yaml"
+    assert b"name: hermes" in compiled[source_profile.source_path]
+
+
+def test_specialist_profile_projects_to_default_only_in_an_isolated_home() -> None:
+    registry = _registry()
+    specialist = next(raw.identity for raw in registry.resolver.raw.values()
+                      if raw.kind == "profiles" and raw.identity != "hermes")
+    discovery = registry.discover([f"profiles/{specialist}@*"])
+    compiled = registry.materialize(discovery)
+    selected = _selected_files(compiled, specialist, native_profile_key="default")
+
+    assert {"SOUL.md", "profile.yaml", "config.yaml"} <= set(selected)
+    assert not any(path.startswith("profiles/") for path in selected)
+    assert all(path.startswith("skills/") or path in {"SOUL.md", "profile.yaml", "config.yaml"}
+               for path in selected)
+    assert b"display_name: Jarvis" not in selected["profile.yaml"]
+
+
+def _legacy_migration_fixture(tmp_path: Path):
+    home = tmp_path / "home"
+    journal = tmp_path / "journal"
+    home.mkdir(mode=0o700)
+    journal.mkdir(mode=0o700)
+    legacy = home / "profiles" / "hermes"
+    legacy.mkdir(parents=True, mode=0o700)
+    values = {
+        "SOUL.md": b"# Hermes\nowned legacy profile\n",
+        "profile.yaml": b"display_name: Hermes\n",
+        "config.yaml": b"credential_reference: existing-only\n",
+    }
+    for name, content in values.items():
+        path = legacy / name
+        path.write_bytes(content)
+        path.chmod(0o600)
+    database = journal / "native-materialization.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE managed_files(relative_path TEXT PRIMARY KEY, source_digest TEXT, installed_digest TEXT, resource_profile_id TEXT, state TEXT)")
+        for name, content in values.items():
+            relative = f"profiles/hermes/{name}"
+            digest = hashlib.sha256(content).hexdigest()
+            db.execute("INSERT INTO managed_files VALUES(?,?,?,?,?)",
+                       (relative, digest, digest, "hermes", "installed"))
+        db.execute("""CREATE TABLE home_migration_members(
+            migration_id TEXT,source_path TEXT,archive_path TEXT,sha256 TEXT,
+            device INTEGER,inode INTEGER,owner_uid INTEGER,owner_gid INTEGER,
+            mode INTEGER,state TEXT,PRIMARY KEY(migration_id,source_path))""")
+    operation = RootNativeMaterialization.__new__(RootNativeMaterialization)
+    operation._home_root = home
+    operation._database = database
+    operation._monotonic = __import__("time").monotonic
+    selection = SimpleNamespace(
+        service_generation="generation-fixture", protected_enrollment_digest="a" * 64,
+        service_uid=os.getuid(), service_gid=os.getgid())
+    return operation, selection, values
+
+
+def test_owned_legacy_hermes_files_move_verbatim_to_journaled_hidden_archive(tmp_path: Path) -> None:
+    operation, selection, values = _legacy_migration_fixture(tmp_path)
+    operation._migrate_owned_legacy_primary(selection)
+    with sqlite3.connect(operation._database) as db:
+        rows = db.execute("SELECT source_path,archive_path,state FROM home_migration_members").fetchall()
+    assert len(rows) == 3
+    for source, archive, state in rows:
+        assert state == "moved"
+        assert not (operation._home_root / source).exists()
+        assert (operation._home_root / archive).read_bytes() == values[source.rsplit("/", 1)[1]]
+    # A retry confirms the exact archived inode/bytes and does not duplicate or
+    # rewrite the legacy credential-bearing config file.
+    before = {row["archive_path"]: (operation._home_root / row["archive_path"]).stat().st_ino
+              for row in (dict(zip(("source_path", "archive_path", "state"), item)) for item in rows)}
+    operation._migrate_owned_legacy_primary(selection)
+    assert before == {archive: (operation._home_root / archive).stat().st_ino
+                      for archive in before}
+
+
+def test_unowned_or_modified_legacy_hermes_home_fails_before_any_move(tmp_path: Path) -> None:
+    operation, selection, _values = _legacy_migration_fixture(tmp_path)
+    with sqlite3.connect(operation._database) as db:
+        db.execute("DELETE FROM managed_files WHERE relative_path='profiles/hermes/profile.yaml'")
+    with pytest.raises(NativeMaterializationDenied):
+        operation._migrate_owned_legacy_primary(selection)
+    assert (operation._home_root / "profiles/hermes/profile.yaml").exists()
+    assert not (operation._home_root / "native-migration").exists()
+
+
+def test_partial_legacy_home_move_rolls_back_on_failure(tmp_path: Path, monkeypatch) -> None:
+    operation, selection, _values = _legacy_migration_fixture(tmp_path)
+    original_rename = os.rename
+    calls = 0
+
+    def failing_rename(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected rename failure")
+        return original_rename(*args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", failing_rename)
+    with pytest.raises(OSError):
+        operation._migrate_owned_legacy_primary(selection)
+    assert all((operation._home_root / f"profiles/hermes/{name}").exists()
+               for name in ("SOUL.md", "profile.yaml", "config.yaml"))
+    assert not (operation._home_root / "native-migration").exists()
 
 
 def test_all_bundled_profiles_compile_to_their_exact_profile_local_skill_closures() -> None:
@@ -139,6 +267,17 @@ def test_public_materialization_receipt_cannot_contain_filesystem_paths() -> Non
     assert not any("path" in name.casefold() or name.endswith("_root") for name in names)
 
 
+def test_legacy_hermes_identity_blocks_before_jarvis_migration_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    legacy = home / "profiles" / "hermes"
+    legacy.mkdir(parents=True)
+    (legacy / "SOUL.md").write_text("keep my existing profile", encoding="utf-8")
+
+    with pytest.raises(NativeMaterializationDenied, match="ownership-journaled Jarvis migration"):
+        _deny_legacy_user_profile_identity(home)
+    assert (legacy / "SOUL.md").read_text(encoding="utf-8") == "keep my existing profile"
+
+
 def test_native_mutation_is_denied_outside_root_authority() -> None:
     operation = RootNativeMaterialization.__new__(RootNativeMaterialization)
     operation._authority_uid = 0
@@ -163,7 +302,8 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
         """)
     selection = NativeMaterializationSelection(
         "enrollment", "generation", "service", "b" * 64, 123, 456,
-        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
+        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32,
+        "profile", "profiles/profile.yaml", "e" * 64, "resources-revision")
     discovery = NativeInstallReceipt(
         PINNED_HERMES_REVISION, "3.14.7", "profile", True, True,
         ("skill-one",), ("skill-one",), {"profile": "d" * 64})
@@ -197,7 +337,8 @@ def test_pm_python_resolver_is_bound_to_the_selected_receipt(tmp_path: Path) -> 
     operation._pm_runtime_resolver = Resolver()
     selection = NativeMaterializationSelection(
         "enrollment", "generation", "service", "b" * 64, 123, 456,
-        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
+        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32,
+        "profile", "profiles/profile.yaml", "e" * 64, "resources-revision")
     assert operation._resolve_hermes_python(selection) == executable
     assert seen == {
         "pm_runtime_handle": "d" * 32,

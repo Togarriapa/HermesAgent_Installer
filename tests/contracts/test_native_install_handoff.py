@@ -39,6 +39,12 @@ def test_profile_scoped_materialization_maps_skill_closure_to_hermes_profile_hom
         "homes/profiles/demo/SOUL.md": "profiles/demo/SOUL.md",
         "homes/skills/howto/SKILL.md": "profiles/demo/skills/howto/SKILL.md",
     }
+    assert selected_profile_materialization(
+        generation, "demo", native_profile_key="default",
+    ) == {
+        "homes/profiles/demo/SOUL.md": "SOUL.md",
+        "homes/skills/howto/SKILL.md": "skills/howto/SKILL.md",
+    }
 
 
 def test_selected_profile_and_skill_use_pinned_hermes_apis(tmp_path: Path) -> None:

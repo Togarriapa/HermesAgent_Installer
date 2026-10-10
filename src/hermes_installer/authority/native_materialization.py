@@ -27,10 +27,16 @@ from hermes_installer.authority.native_output_receipts import (
     RuntimeArtifactReceipt,
 )
 from hermes_installer.registry.native import NativeRegistry
+from hermes_installer.registry.native import (
+    PRIMARY_NATIVE_PROFILE_KEY,
+    PRIMARY_USER_SOURCE_PROFILE_ID,
+    effective_native_profile_spec,
+)
 from hermes_installer.registry.native_install import (
     PINNED_HERMES_REVISION,
     NativeInstallError,
     NativeInstallReceipt,
+    discover_profile_names,
     discover_and_load_selected,
 )
 
@@ -55,6 +61,10 @@ class NativeMaterializationSelection:
     source_artifact_id: str
     source_receipt_handle: str
     pm_runtime_handle: str
+    resource_profile_id: str
+    resource_manifest_path: str
+    resource_manifest_sha256: str
+    resources_revision: str
 
 
 class RootSelectedInstallationBinding(Protocol):
@@ -133,6 +143,7 @@ class RootNativeMaterialization:
                  journal_root: Path, hermes_source: Path,
                  pm_runtime_resolver: NativePMRuntimeResolver,
                  output_registry: RootMaterializationReceiptRegistry | None = None,
+                 delegate_profile_id: str | None = None,
                  authority_uid: int = 0,
                  monotonic=time.monotonic):
         if (not isinstance(registry, NativeRegistry)
@@ -151,6 +162,12 @@ class RootNativeMaterialization:
         self._hermes_source = _absolute_root(hermes_source)
         self._pm_runtime_resolver = pm_runtime_resolver
         self._output_registry = output_registry
+        if (delegate_profile_id is not None
+                and (not isinstance(delegate_profile_id, str)
+                     or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", delegate_profile_id)
+                     or delegate_profile_id == PRIMARY_USER_SOURCE_PROFILE_ID)):
+            raise NativeMaterializationDenied("delegate source profile identity is malformed")
+        self._delegate_profile_id = delegate_profile_id
         if len({self._home_root, self._data_root, self._journal_root}) != 3:
             raise NativeMaterializationDenied("selected home, data, and journal roots must be distinct")
         self._authority_uid = authority_uid
@@ -181,9 +198,21 @@ class RootNativeMaterialization:
                        resource_profile_id: str) -> NativeMaterializationReceipt:
         """Compile and atomically write one current profile and its skill closure."""
         self._require_authority()
+        # The installer backend is always the one user-facing profile. A
+        # specialist materializer is separately constructed with its fixed
+        # source ID and its own HERMES_HOME; it cannot redirect this primary
+        # materializer by passing another profile ID.
+        is_primary = resource_profile_id == PRIMARY_USER_SOURCE_PROFILE_ID
+        if (is_primary and self._delegate_profile_id is not None
+                or not is_primary and resource_profile_id != self._delegate_profile_id):
+            raise NativeMaterializationDenied(
+                "selected Resources profile does not match this fixed native home"
+            )
         selection = self._selection(enrollment_id, service_generation, resource_profile_id)
         _verify_root(self._home_root, owner_uid=selection.service_uid, owner_gid=selection.service_gid)
         _verify_root(self._data_root, owner_uid=selection.service_uid, owner_gid=selection.service_gid)
+        if is_primary:
+            self._migrate_owned_legacy_primary(selection)
         discovery = self._registry.discover([f"profiles/{resource_profile_id}@*"])
         profile_items = [item for item in discovery.resources
                          if item.resource.kind.value == "profiles"]
@@ -191,7 +220,24 @@ class RootNativeMaterialization:
                 or profile_items[0].resource.id != resource_profile_id):
             raise NativeMaterializationDenied("selected resource profile is absent or ambiguous")
         compiled = self._registry.materialize(discovery)
-        mapping = _selected_files(compiled, resource_profile_id)
+        native_profile_key = PRIMARY_NATIVE_PROFILE_KEY
+        mapping = _selected_files(compiled, resource_profile_id,
+                                  native_profile_key=native_profile_key)
+        hermes_python = self._resolve_hermes_python(selection)
+        try:
+            existing_profiles = discover_profile_names(
+                hermes_source=self._hermes_source, python=hermes_python,
+                hermes_root=self._home_root, timeout=20.0,
+            )
+        except NativeInstallError as exc:
+            raise NativeMaterializationDenied(
+                "pinned Hermes cannot verify the existing Desktop profile listing"
+            ) from exc
+        if existing_profiles != (native_profile_key,):
+            raise NativeMaterializationDenied(
+                "the selected Desktop home already exposes other Hermes profiles; "
+                "preserve them and complete an ownership-journaled home migration before Jarvis setup"
+            )
         resource_definitions = _retained_resource_definitions(
             self._registry, discovery, compiled,
         )
@@ -215,8 +261,7 @@ class RootNativeMaterialization:
         self._persist_plan(plan)
         results = self._apply_plan(plan, selection)
         conflicting = [relative for relative, _kind, _id, _digest, state in results
-                       if state == "preserved"
-                       and relative != f"profiles/{resource_profile_id}/config.yaml"]
+                       if state == "preserved" and relative != "config.yaml"]
         if conflicting:
             raise NativeMaterializationDenied(
                 "native profile/skill bytes conflict with preserved user overlays; "
@@ -225,19 +270,19 @@ class RootNativeMaterialization:
         items = _receipt_items(results)
         # No receipt usable for activation is issued until all required profile
         # identity and selected skill files match the compiled generation.
-        required = {("profile", resource_profile_id)} | {
+        required = {("profile", native_profile_key)} | {
             ("skill", skill_id) for skill_id in _skill_ids(mapping)
         }
         if {(item.kind, item.resource_id) for item in items} != required:
             raise NativeMaterializationDenied("native profile or skill closure was not fully materialized")
         try:
-            hermes_python = self._resolve_hermes_python(selection)
             discovery = discover_and_load_selected(
                 hermes_source=self._hermes_source,
                 python=hermes_python,
                 hermes_root=self._home_root,
-                profile_id=resource_profile_id,
+                profile_id=native_profile_key,
                 skill_ids=tuple(sorted(_skill_ids(mapping))),
+                require_sole_profile=True,
                 timeout=60.0,
             )
         except NativeInstallError as exc:
@@ -246,6 +291,7 @@ class RootNativeMaterialization:
             ) from exc
         if (discovery.hermes_revision != PINNED_HERMES_REVISION
                 or not discovery.python_version.startswith("3.14.")
+                or discovery.profile_id != native_profile_key
                 or not discovery.discovered_profile or not discovery.profile_identity_loaded
                 or set(discovery.loaded_skills) != _skill_ids(mapping)):
             raise NativeMaterializationDenied("native Hermes discovery receipt does not match the selected closure")
@@ -354,7 +400,10 @@ class RootNativeMaterialization:
             if (not isinstance(content, bytes) or len(content) != member.size_bytes
                     or hashlib.sha256(content).hexdigest() != member.sha256):
                 return False
-            target = _hermes_target_path(member.relative_path, record["resource_profile_id"])
+            target = _hermes_target_path(
+                member.relative_path, record["resource_profile_id"],
+                PRIMARY_NATIVE_PROFILE_KEY,
+            )
             return target is None or self._read_home_member(target) == member.sha256
         except (OSError, sqlite3.Error):
             return False
@@ -420,7 +469,13 @@ class RootNativeMaterialization:
                 or type(selection.service_gid) is not int or selection.service_gid <= 0
                 or not selection.home_root_id or not selection.data_root_id
                 or not selection.source_artifact_id or not _opaque_handle(selection.source_receipt_handle)
-                or not _opaque_handle(selection.pm_runtime_handle)):
+                or not _opaque_handle(selection.pm_runtime_handle)
+                or selection.resource_profile_id != resource_profile_id
+                or not isinstance(selection.resource_manifest_path, str)
+                or not selection.resource_manifest_path.startswith("profiles/")
+                or not selection.resource_manifest_path.endswith(".yaml")
+                or not re.fullmatch(r"[0-9a-f]{64}", selection.resource_manifest_sha256)
+                or not selection.resources_revision):
             raise NativeMaterializationDenied("root setup binding did not authorize this selected generation")
         return selection
 
@@ -448,6 +503,13 @@ class RootNativeMaterialization:
                     relative_path TEXT PRIMARY KEY, source_digest TEXT NOT NULL,
                     installed_digest TEXT NOT NULL, resource_profile_id TEXT NOT NULL,
                     state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS home_migration_members(
+                    migration_id TEXT NOT NULL, source_path TEXT NOT NULL,
+                    archive_path TEXT NOT NULL, sha256 TEXT NOT NULL,
+                    device INTEGER NOT NULL, inode INTEGER NOT NULL,
+                    owner_uid INTEGER NOT NULL, owner_gid INTEGER NOT NULL,
+                    mode INTEGER NOT NULL, state TEXT NOT NULL,
+                    PRIMARY KEY(migration_id,source_path));
                 CREATE TABLE IF NOT EXISTS receipts(
                     handle TEXT PRIMARY KEY, enrollment_id TEXT NOT NULL,
                     service_generation TEXT NOT NULL, protected_enrollment_digest TEXT NOT NULL,
@@ -582,6 +644,175 @@ class RootNativeMaterialization:
                 db.execute("UPDATE plans SET state='recovered',updated=? WHERE operation_id=? AND state='applying'",
                            (self._monotonic(), plan["operation_id"]))
 
+    def _migrate_owned_legacy_primary(self, selection: NativeMaterializationSelection) -> None:
+        """Move only journal-owned legacy Hermes identity files into a hidden archive.
+
+        The rename preserves bytes and inode; no credentials are copied into the
+        new Jarvis identity. Unowned, modified, linked, or conflicting files
+        stop the migration before any move. The root journal makes interrupted
+        moves idempotently resumable and records exact custody observations.
+        """
+        legacy = self._home_root / "profiles" / PRIMARY_USER_SOURCE_PROFILE_ID
+        if not legacy.exists() and not legacy.is_symlink():
+            return
+        info = legacy.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise NativeMaterializationDenied("legacy Hermes profile identity is not a directory")
+
+        def member_digest(relative: str) -> str:
+            with _open_parent(self._home_root, relative, uid=selection.service_uid,
+                              gid=selection.service_gid, create_parents=False) as (fd, leaf):
+                return _hash_file_at(fd, leaf)
+        candidates = [f"profiles/hermes/{name}" for name in
+                      ("SOUL.md", "profile.yaml", "config.yaml")]
+        skills_root = legacy / "skills"
+        if skills_root.exists() or skills_root.is_symlink():
+            if skills_root.is_symlink() or not skills_root.is_dir():
+                raise NativeMaterializationDenied("legacy Hermes skill directory is unsafe")
+            for directory, dirs, names in os.walk(skills_root, followlinks=False):
+                base = Path(directory)
+                if any((base / name).is_symlink() for name in dirs):
+                    raise NativeMaterializationDenied("legacy Hermes skill tree contains linked directories")
+                for name in names:
+                    path = base / name
+                    if path.is_symlink():
+                        raise NativeMaterializationDenied("legacy Hermes skill tree contains linked files")
+                    if name == "SKILL.md":
+                        candidates.append(path.relative_to(self._home_root).as_posix())
+        present = [relative for relative in candidates
+                   if (self._home_root / relative).exists() or (self._home_root / relative).is_symlink()]
+        migration_id = hashlib.sha256(
+            ("jarvis-v205-legacy-home\0" + selection.service_generation + "\0"
+             + selection.protected_enrollment_digest).encode("utf-8")
+        ).hexdigest()
+        with self._connect() as db:
+            prior_migrations = [dict(row) for row in db.execute(
+                "SELECT * FROM home_migration_members WHERE migration_id=?", (migration_id,)
+            ).fetchall()]
+        for saved in prior_migrations:
+            source_exists = os.path.lexists(self._home_root / saved["source_path"])
+            archive_exists = os.path.lexists(self._home_root / saved["archive_path"])
+            if not source_exists and archive_exists:
+                archived = (self._home_root / saved["archive_path"]).lstat()
+                if ((archived.st_dev, archived.st_ino) != (saved["device"], saved["inode"])
+                        or member_digest(saved["archive_path"]) != saved["sha256"]):
+                    raise NativeMaterializationDenied("archived Hermes migration member changed after interruption")
+            elif not source_exists and not archive_exists:
+                raise NativeMaterializationDenied("journaled legacy Hermes bytes are missing from source and archive")
+        if not present:
+            return
+        plans: list[tuple[str, str, str, os.stat_result]] = []
+        with self._connect() as db:
+            managed = {row["relative_path"]: dict(row) for row in db.execute(
+                "SELECT relative_path,installed_digest,resource_profile_id,state FROM managed_files"
+            ).fetchall()}
+        for source_path in sorted(set(present)):
+            row = managed.get(source_path)
+            path = self._home_root / source_path
+            current = path.lstat()
+            if (row is None or row["resource_profile_id"] != PRIMARY_USER_SOURCE_PROFILE_ID
+                    or stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode)
+                    or current.st_uid != selection.service_uid or current.st_gid != selection.service_gid
+                    or stat.S_IMODE(current.st_mode) & 0o077
+                    or member_digest(source_path) != row["installed_digest"]):
+                raise NativeMaterializationDenied(
+                    "legacy Hermes identity is unowned or modified; preserve it and resolve ownership before migration"
+                )
+            archive = (f"native-migration/{migration_id}/"
+                       + source_path.removeprefix("profiles/hermes/"))
+            plans.append((source_path, archive, row["installed_digest"], current))
+
+        with self._connect() as db:
+            prior = {row["source_path"]: dict(row) for row in db.execute(
+                "SELECT * FROM home_migration_members WHERE migration_id=?", (migration_id,)
+            ).fetchall()}
+            for source_path, archive, digest, current in plans:
+                saved = prior.get(source_path)
+                expected = (archive, digest, current.st_dev, current.st_ino,
+                            current.st_uid, current.st_gid, stat.S_IMODE(current.st_mode))
+                if saved is None:
+                    db.execute("INSERT INTO home_migration_members VALUES(?,?,?,?,?,?,?,?,?,?)",
+                               (migration_id, source_path, archive, digest, current.st_dev,
+                                current.st_ino, current.st_uid, current.st_gid,
+                                stat.S_IMODE(current.st_mode), "planned"))
+                elif (saved["archive_path"], saved["sha256"], saved["device"], saved["inode"],
+                      saved["owner_uid"], saved["owner_gid"], saved["mode"]) != expected:
+                    # A moved member is no longer in its source location; its
+                    # durable inode/hash entry is checked in the apply pass.
+                    if os.path.lexists(self._home_root / source_path):
+                        raise NativeMaterializationDenied("legacy migration journal conflicts with current file identity")
+
+        moved: list[tuple[str, str, dict[str, Any]]] = []
+        try:
+            for source_path, archive, digest, _current in plans:
+                with self._connect() as db:
+                    saved_row = db.execute(
+                        "SELECT * FROM home_migration_members WHERE migration_id=? AND source_path=?",
+                        (migration_id, source_path)).fetchone()
+                if saved_row is None:
+                    raise NativeMaterializationDenied("legacy migration journal row disappeared")
+                saved = dict(saved_row)
+                source_exists = os.path.lexists(self._home_root / source_path)
+                archive_exists = os.path.lexists(self._home_root / archive)
+                if not source_exists and archive_exists:
+                    archived = (self._home_root / archive).lstat()
+                    if ((archived.st_dev, archived.st_ino) != (saved["device"], saved["inode"])
+                            or member_digest(archive) != digest):
+                        raise NativeMaterializationDenied("archived Hermes identity changed after interruption")
+                    moved.append((source_path, archive, saved))
+                    continue
+                if not source_exists or archive_exists:
+                    raise NativeMaterializationDenied("legacy Hermes source/archive path conflicts")
+                current = (self._home_root / source_path).lstat()
+                if ((current.st_dev, current.st_ino) != (saved["device"], saved["inode"])
+                        or current.st_uid != saved["owner_uid"] or current.st_gid != saved["owner_gid"]
+                        or stat.S_IMODE(current.st_mode) != saved["mode"]
+                        or member_digest(source_path) != digest):
+                    raise NativeMaterializationDenied("legacy Hermes identity changed before migration")
+                with _open_parent(self._home_root, source_path, uid=selection.service_uid,
+                                  gid=selection.service_gid, create_parents=False) as (source_fd, source_name):
+                    with _open_parent(self._home_root, archive, uid=selection.service_uid,
+                                      gid=selection.service_gid, create_parents=True) as (archive_fd, archive_name):
+                        os.rename(source_name, archive_name, src_dir_fd=source_fd, dst_dir_fd=archive_fd)
+                        os.fsync(source_fd)
+                        os.fsync(archive_fd)
+                with self._connect() as db:
+                    db.execute("UPDATE home_migration_members SET state='moved' WHERE migration_id=? AND source_path=?",
+                               (migration_id, source_path))
+                moved.append((source_path, archive, saved))
+        except BaseException:
+            for source_path, archive, saved in reversed(moved):
+                try:
+                    with _open_parent(self._home_root, archive, uid=selection.service_uid,
+                                      gid=selection.service_gid, create_parents=False) as (archive_fd, archive_name):
+                        current = os.stat(archive_name, dir_fd=archive_fd, follow_symlinks=False)
+                    if ((current.st_dev, current.st_ino) != (saved["device"], saved["inode"])
+                            or member_digest(archive) != saved["sha256"]):
+                        continue
+                    with _open_parent(self._home_root, source_path, uid=selection.service_uid,
+                                      gid=selection.service_gid, create_parents=True) as (source_fd, source_name):
+                        with _open_parent(self._home_root, archive, uid=selection.service_uid,
+                                          gid=selection.service_gid, create_parents=False) as (archive_fd, archive_name):
+                            os.rename(archive_name, source_name, src_dir_fd=archive_fd, dst_dir_fd=source_fd)
+                            os.fsync(archive_fd)
+                            os.fsync(source_fd)
+                    with self._connect() as db:
+                        db.execute("UPDATE home_migration_members SET state='rolled-back' WHERE migration_id=? AND source_path=?",
+                                   (migration_id, source_path))
+                except (OSError, NativeMaterializationDenied):
+                    pass
+            # Remove only the now-empty directories this interrupted attempt
+            # created.  The migration journal remains as the recovery record.
+            for directory in (
+                self._home_root / "native-migration" / migration_id,
+                self._home_root / "native-migration",
+            ):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            raise
+
     def _receipt(self, handle: str) -> dict[str, Any]:
         if not isinstance(handle, str) or len(handle) < 32:
             raise NativeMaterializationDenied("native receipt handle is malformed")
@@ -629,7 +860,8 @@ class RootNativeMaterialization:
         return candidate
 
 
-def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str, bytes]:
+def _selected_files(compiled: Mapping[str, bytes], profile_id: str, *,
+                    native_profile_key: str | None = None) -> dict[str, bytes]:
     try:
         crosswalk = json.loads(compiled["installer-registry/crosswalk.json"])
         items = crosswalk["items"]
@@ -640,7 +872,8 @@ def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str,
     selected_profiles = [row for row in profiles if row.get("id") == profile_id]
     if len(selected_profiles) != 1:
         raise NativeMaterializationDenied("compiled closure does not contain exactly one selected profile")
-    mapping: dict[str, str] = {}
+    target_profile_id = native_profile_key or profile_id
+    mapping: dict[str, bytes] = {}
     for row in rows:
         if (not isinstance(row, dict) or row.get("conflict_policy") != "preserve-existing"
                 or not isinstance(row.get("staged"), str) or not isinstance(row.get("target"), str)):
@@ -648,13 +881,16 @@ def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str,
         staged, target = row["staged"], row["target"]
         if staged.startswith(f"homes/profiles/{profile_id}/"):
             expected_source_target = "profiles/" + staged.removeprefix("homes/profiles/")
-            destination = expected_source_target
+            relative = staged.removeprefix(f"homes/profiles/{profile_id}/")
+            destination = (relative if target_profile_id == "default"
+                           else f"profiles/{target_profile_id}/{relative}")
         elif staged.startswith("homes/skills/"):
             parts = staged.split("/")
             if len(parts) != 4 or parts[-1] != "SKILL.md":
                 raise NativeMaterializationDenied("selected skill path is malformed")
             expected_source_target = f"skills/{parts[2]}/SKILL.md"
-            destination = f"profiles/{profile_id}/skills/{parts[2]}/SKILL.md"
+            destination = (f"skills/{parts[2]}/SKILL.md" if target_profile_id == "default"
+                           else f"profiles/{target_profile_id}/skills/{parts[2]}/SKILL.md")
         else:
             continue
         if target != expected_source_target or staged not in compiled:
@@ -662,13 +898,30 @@ def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str,
         if destination in mapping:
             raise NativeMaterializationDenied("compiled native closure maps multiple files to one Hermes destination")
         mapping[destination] = compiled[staged]
-    required = {f"profiles/{profile_id}/SOUL.md", f"profiles/{profile_id}/profile.yaml",
-                f"profiles/{profile_id}/config.yaml"}
+    required = ({"SOUL.md", "profile.yaml", "config.yaml"} if target_profile_id == "default"
+                else {f"profiles/{target_profile_id}/SOUL.md",
+                      f"profiles/{target_profile_id}/profile.yaml",
+                      f"profiles/{target_profile_id}/config.yaml"})
     if not required.issubset(mapping):
         raise NativeMaterializationDenied("selected profile is missing required native identity files")
     if not mapping:
         raise NativeMaterializationDenied("selected resource closure has no native profile files")
     return mapping
+
+
+def _deny_legacy_user_profile_identity(home_root: Path) -> None:
+    """Avoid serving both the legacy ``hermes`` and canonical ``default`` rows.
+
+    Removal or adoption of an existing identity requires the ownership journal
+    migration specified by v205. Until that migration is available, fail before
+    writing the Jarvis profile rather than leaving two user-facing identities.
+    """
+    legacy = home_root / "profiles" / PRIMARY_USER_SOURCE_PROFILE_ID
+    if legacy.exists() or legacy.is_symlink():
+        raise NativeMaterializationDenied(
+            "legacy Hermes profile is present in the Desktop home; preserve it and "
+            "resume only after an ownership-journaled Jarvis migration is available"
+        )
 
 
 def _retained_resource_definitions(
@@ -685,7 +938,10 @@ def _retained_resource_definitions(
         binding = bindings.get((kind, resource.id, resource.version))
         if raw is None or source_path is None or binding is None:
             raise NativeMaterializationDenied("selected resource lacks its verified source projection")
-        effective = dict(resolved.effective_spec or resource.body)
+        effective = (effective_native_profile_spec(resource.id,
+                     resolved.effective_spec or resource.body)
+                     if kind == "profiles"
+                     else dict(resolved.effective_spec or resource.body))
         effective_bytes = json.dumps(
             effective, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")
@@ -711,13 +967,17 @@ def _retained_resource_definitions(
     return tuple(sorted(definitions, key=lambda row: (row.kind, row.resource_id, row.version)))
 
 
-def _hermes_target_path(relative_path: str, profile_id: str) -> str | None:
+def _hermes_target_path(relative_path: str, profile_id: str,
+                        native_profile_key: str | None = None) -> str | None:
     if relative_path.startswith(f"homes/profiles/{profile_id}/"):
-        return "profiles/" + relative_path.removeprefix("homes/")
+        relative = relative_path.removeprefix(f"homes/profiles/{profile_id}/")
+        return (relative if native_profile_key == "default"
+                else f"profiles/{native_profile_key or profile_id}/{relative}")
     if relative_path.startswith("homes/skills/"):
         parts = PurePosixPath(relative_path).parts
         if len(parts) == 4 and parts[-1] == "SKILL.md":
-            return f"profiles/{profile_id}/skills/{parts[2]}/SKILL.md"
+            return (f"skills/{parts[2]}/SKILL.md" if native_profile_key == "default"
+                    else f"profiles/{native_profile_key or profile_id}/skills/{parts[2]}/SKILL.md")
     return None
 
 
@@ -744,8 +1004,11 @@ def _skill_ids(mapping: Mapping[str, bytes]) -> set[str]:
     result = set()
     for path in mapping:
         parts = PurePosixPath(path).parts
-        if len(parts) == 5 and parts[0] == "profiles" and parts[2] == "skills" and parts[4] == "SKILL.md":
+        if (len(parts) == 5 and parts[0] == "profiles" and parts[2] == "skills"
+                and parts[4] == "SKILL.md"):
             result.add(parts[3])
+        elif len(parts) == 3 and parts[0] == "skills" and parts[2] == "SKILL.md":
+            result.add(parts[1])
     return result
 
 
@@ -777,10 +1040,14 @@ def _receipt_items(results: list[tuple[str, str, str, str, str]]) -> tuple[Nativ
 
 def _native_identity(relative: str) -> tuple[str, str]:
     parts = PurePosixPath(relative).parts
+    if relative in {"SOUL.md", "profile.yaml", "config.yaml"}:
+        return "profile", "default"
     if len(parts) == 3 and parts[0] == "profiles":
         return "profile", parts[1]
     if len(parts) == 5 and parts[0] == "profiles" and parts[2] == "skills" and parts[4] == "SKILL.md":
         return "skill", parts[3]
+    if len(parts) == 3 and parts[0] == "skills" and parts[2] == "SKILL.md":
+        return "skill", parts[1]
     raise NativeMaterializationDenied("native output path has no supported Hermes identity")
 
 
