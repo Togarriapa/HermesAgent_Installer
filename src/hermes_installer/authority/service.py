@@ -533,6 +533,11 @@ class AuthorityService:
             raise ValueError("active service generation digest is invalid")
         self.service_generation_digest = service_generation_digest
         self.root_runtime_bindings = None
+        self.root_authority_runtime = None
+        # Set once by daemon composition after the durable choice registry and
+        # all runtime fields are final. The owner retains that exact runtime.
+        self.active_network_generation_owner = None
+        self.active_network_generation_unavailable_reason = None
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()

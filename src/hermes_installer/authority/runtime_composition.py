@@ -657,6 +657,7 @@ class RootAuthorityRuntime:
             self.native_mcp_discovery_registry,
             self.active_owner_overlay_registry,
             self.active_local_owner_principal_registry,
+            getattr(self.service, "active_network_generation_owner", None),
             self.root_setup_choice_registry,
             self.root_tty_consent_choices,
             self.private_input_consent_registry,
