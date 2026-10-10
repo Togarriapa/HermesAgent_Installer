@@ -97,6 +97,7 @@ class MemoryLifecycleBinding:
 
     service_enrollment_id: str
     service_generation: str
+    enablement_selection_handle: str
     start_operation_id: str
     start_parameter_schema_id: str
     prestart_receipt_handles: tuple[str, ...]
@@ -113,7 +114,8 @@ class MemoryLifecycleBinding:
                               fixed_route_map: Mapping[str, MemoryRouteRecipe]
                               ) -> "MemoryLifecycleBinding":
         fields = {
-            "service_enrollment_id", "service_generation", "start_operation_id",
+            "service_enrollment_id", "service_generation", "enablement_selection_handle",
+            "start_operation_id",
             "start_parameter_schema_id", "prestart_receipt_handles", "readiness_route_id",
             "readiness_schema_id", "restart_policy", "maximum_restart_attempts",
             "original_deadline_seconds",
@@ -123,6 +125,8 @@ class MemoryLifecycleBinding:
         if (value["service_enrollment_id"] != service_enrollment_id
                 or value["service_generation"] != service_generation):
             raise MemoryEnrollmentError("memory lifecycle binding differs from selected service generation")
+        enablement_selection_handle = _id(
+            value["enablement_selection_handle"], "memory enablement selection handle")
         if value["start_parameter_schema_id"] != "no-caller-parameters-v1":
             raise MemoryEnrollmentError("memory startup parameters must use the protected empty schema")
 
@@ -167,6 +171,7 @@ class MemoryLifecycleBinding:
         return cls(
             service_enrollment_id=service_enrollment_id,
             service_generation=service_generation,
+            enablement_selection_handle=enablement_selection_handle,
             start_operation_id=expected_start,
             start_parameter_schema_id="no-caller-parameters-v1",
             prestart_receipt_handles=tuple(receipts),
