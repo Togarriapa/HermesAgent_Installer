@@ -838,6 +838,7 @@ class ProtectedEnrollment:
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
     private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
     private_memory_model_selection_records: tuple[Mapping[str, Any], ...] = ()
+    public_web_scope_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -1085,6 +1086,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "selected_resource_executions",
             "selected_application_runtimes",
             "private_memory_endpoint_selections", "private_memory_model_selections",
+            "public_web_scopes",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -1105,7 +1107,8 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "resource_controller_roles", "remote_observation_enrollments",
                    "remote_startup_enrollments", "private_loopback_networks",
                    "selected_resource_executions", "selected_application_runtimes",
-                   "private_memory_endpoint_selections", "private_memory_model_selections")
+                   "private_memory_endpoint_selections", "private_memory_model_selections",
+                   "public_web_scopes")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
@@ -1117,6 +1120,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         from hermes_installer.protected_enrollment import (
             RootSelectedPrivateMemoryEndpointBinding,
             RootSelectedPrivateMemoryModelBinding,
+            RootSelectedPublicWebScope,
         )
         endpoints = {}
         for row in item["private_memory_endpoint_selections"]:
@@ -1134,8 +1138,16 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             if selected.binding_id in models or selected.endpoint_binding_id not in endpoints:
                 raise ValueError("duplicate model binding or unknown endpoint foreign key")
             models.add(selected.binding_id)
+        public_scopes = []
+        for row in item["public_web_scopes"]:
+            selected = RootSelectedPublicWebScope.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            public_scopes.append(selected.enrollment_id)
+        if public_scopes != sorted(set(public_scopes)):
+            raise ValueError("public web scopes are duplicated or unsorted")
     except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError) as exc:
-        raise AuthorityDenied("enrollment.generation", "private memory model selection catalog is invalid") from exc
+        raise AuthorityDenied("enrollment.generation", "protected selection catalog is invalid") from exc
     native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
     composio_channel_records = _parse_composio_channel_enrollment_records(
         item["composio_channel_enrollments"],
@@ -2446,6 +2458,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             native_mcp_tool_bindings=service_generations["native_mcp_tool_bindings"],
             private_memory_endpoint_selections=service_generations["private_memory_endpoint_selections"],
             private_memory_model_selections=service_generations["private_memory_model_selections"],
+            public_web_scopes=service_generations["public_web_scopes"],
         )
         generation_profiles = {}
         for service_record in service_generations["service_records"]:
@@ -2497,6 +2510,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_application_runtimes"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_endpoint_selections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["public_web_scopes"]),
     )
 
 
