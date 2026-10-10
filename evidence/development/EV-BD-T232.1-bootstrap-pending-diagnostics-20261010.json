@@ -48,7 +48,21 @@
     "compileall": "passed",
     "git_diff_check": "passed",
     "validate_specs": "passed 13/13",
-    "validate_plan": "passed; frozen baseline 160 hashes verified; runtime acceptance not established"
+    "validate_plan": "passed; frozen baseline 160 hashes verified; runtime acceptance not established",
+    "isolated_linux_arm64": {
+      "image": "hermes-display-arm64-python314-systemd:20261010",
+      "image_id": "sha256:6f1b374c072b1a6c8d9bf844a48b8111d27596f064f553dbbb7c8919b0bfab2a",
+      "architecture": "linux/arm64",
+      "python": "3.14.7",
+      "pytest": "8.4.2",
+      "source_mount": "read-only",
+      "command": "python -m pytest -p no:cacheprovider -q tests/contracts/test_root_setup.py tests/contracts/test_bootstrap_runtime_factory.py tests/contracts/test_native_worker_launch.py -k 'not test_factory_refuses_non_linux_or_uninstalled_root_trust'",
+      "passed": 76,
+      "failed": 0,
+      "deselected": 1,
+      "result": "passed",
+      "exclusion_reason": "That test enters the real root installed-release verifier in this Linux root container because it assumes an uninstalled host; the isolated fixture intentionally has no deployment receipt."
+    }
   },
   "pin_check": {
     "command": "tests/contracts/test_installer_release_build.py::test_release_builder_pins_literal_model_store_template_and_native_source_modules",
