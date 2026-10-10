@@ -24,7 +24,7 @@ class _SourceObservers:
     def __init__(self):
         self.observers = {"observer.tool": SimpleNamespace(
             source_kind="tool-result", profile_id="profile-a", generation="generation-a",
-            producer_uid=2001,
+            producer_uid=2001, capture_schema_id="native-registered-tool-result-v1",
         )}
         self.calls = []
 
@@ -210,21 +210,18 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         self.assertEqual(registration.tools["selected_tool"][2](), "root-brokered")
         self.assertEqual(runtime_context.plugin_effects, effects)
 
-    def test_completed_result_is_root_observed_and_receipt_is_one_use_handle(self):
+    def test_completed_effect_without_selected_action_schema_cannot_mint_tool_source(self):
         observer, source_observers = self._observer()
         service = SimpleNamespace(_source_receipt_handles={})
         context = _context()
-        result = observer.observe_effect_result(
-            service=service, context=context, authorization=_authorization(context),
-            operation="plugin.resource-overlay-store.write", target="overlay.target",
-            response_status=200, result_payload=b"exact root-validated response",
-            peer_pid=123, peer_pidfd=456,
-        )
-        self.assertEqual(result, "r" * 40)
-        self.assertEqual([call[0] for call in source_observers.calls], ["record", "capture"])
-        self.assertEqual(source_observers.calls[0][1], "observer.tool")
-        self.assertEqual(source_observers.calls[0][2]["payload_bytes"], b"exact root-validated response")
-        self.assertEqual(source_observers.calls[1][2], "e" * 40)
+        with self.assertRaises(AuthorityDenied):
+            observer.observe_effect_result(
+                service=service, context=context, authorization=_authorization(context),
+                operation="plugin.resource-overlay-store.write", target="overlay.target",
+                response_status=200, result_payload=b"exact root-validated response",
+                peer_pid=123, peer_pidfd=456,
+            )
+        self.assertEqual(source_observers.calls, [])
 
     def test_native_tool_result_clears_only_root_resolved_pending_call(self):
         from hermes_installer.authority.native_runtime_observer import RootNativeToolEffectInvocation
@@ -260,6 +257,10 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         invocation_registry.service = service
         invocation_registry.source_observers = source_observers
         invocation_registry.resolve_invocation_for_effect = lambda *args: invocation
+        def validate_effect_result(current, raw):
+            if current is not invocation or raw != b"exact result":
+                raise AuthorityDenied("fixture", "invalid result")
+        invocation_registry.validate_effect_result = validate_effect_result
         turn_registry = object.__new__(RootNativeTurnObservationRegistry)
         turn_registry.service = service
         recorded = []
@@ -279,6 +280,54 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         self.assertEqual(recorded[0][0][0], "t" * 40)
         self.assertEqual(recorded[0][0][1], receipt)
         self.assertEqual(recorded[0][1]["observed_call_handle"], "c" * 40)
+
+    def test_invalid_selected_raw_result_is_rejected_before_source_capture(self):
+        from hermes_installer.authority.native_runtime_observer import RootNativeToolEffectInvocation
+
+        observer, source_observers = self._observer()
+        context = _context()
+        payload = b'{"operation":"selected"}'
+        digest = canonical_digest(payload)
+        authorization = _authorization(context)
+        authorization.request_digest = digest
+        identity = SimpleNamespace(kernel_uid=2001, profile_id="profile-a", generation="generation-a")
+        invocation = RootNativeToolEffectInvocation(
+            invocation_handle="i" * 40, observed_call_handle="c" * 40,
+            response_observation_handle="o" * 40, response_receipt_handle="r" * 40,
+            native_request_handle="n" * 40, turn_handle="t" * 40,
+            producer_identity=identity, producer_pid=123, profile_id="profile-a",
+            generation="generation-a", package_id="package-a",
+            native_package_generation="package-generation-a",
+            service_generation_digest="a" * 64, adapter_id="adapter-a",
+            action_id="action-a", registration_id="registration-a",
+            tool_name="selected_tool", arguments_sha256="b" * 64,
+            source_receipt_handles=("r" * 40,),
+            operation="plugin.resource-overlay-store.write", request_digest=digest,
+            expires_monotonic=time.monotonic() + 30.0,
+        )
+        service = SimpleNamespace(_source_receipt_handles={}, service_generation_digest="a" * 64)
+        invocation_registry = SimpleNamespace(
+            service=service, source_observers=source_observers,
+            resolve_invocation_for_effect=lambda *_args: invocation,
+            validate_effect_result=lambda *_args: (_ for _ in ()).throw(
+                AuthorityDenied("native.effect.result", "selected schema rejected bytes")),
+        )
+        from hermes_installer.authority.native_turn_observation import RootNativeTurnObservationRegistry
+        turn_registry = object.__new__(RootNativeTurnObservationRegistry)
+        turn_registry.service = service
+        turn_registry.record_tool_result = lambda *_args, **_kwargs: None
+        observer.attach_turn_observation(
+            invocation_registry=invocation_registry,
+            native_turn_observation_registry=turn_registry,
+        )
+        with self.assertRaises(AuthorityDenied):
+            observer.observe_effect_result(
+                service=service, context=context, authorization=authorization,
+                operation="plugin.resource-overlay-store.write", target="overlay.target",
+                response_status=200, result_payload=b'{"unexpected":true}',
+                peer_pid=123, peer_pidfd=456, request_payload=payload, request_sha256=digest,
+            )
+        self.assertEqual(source_observers.calls, [])
 
     def test_wrong_operation_cancelled_or_closed_generation_produces_no_event(self):
         observer, source_observers = self._observer()
@@ -492,6 +541,8 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             package_generation="package-generation",
             adapter_id="adapter", action_id="read", registration_id=registration_id,
             operation="plugin.adapter.read", validate_arguments=lambda _args: True,
+            result_schema_id="schema.result", result_schema_sha256="a" * 64,
+            validate_result=lambda _raw: True,
         )
         join = NativeInvocationRegistry._selected_action_registration_ids
         self.assertEqual(join(observer=observer, package=package, selection=selection), (registration_id,))
@@ -532,6 +583,8 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             package_generation="stale-package-generation", adapter_id="adapter",
             action_id="read", registration_id=registration_id,
             operation="plugin.adapter.read", validate_arguments=lambda _args: True,
+            result_schema_id="schema.result", result_schema_sha256="a" * 64,
+            validate_result=lambda _raw: True,
         )
         invalid_cases.append((observer, package, wrong_selected_package_generation))
         missing_role_registration = deepcopy(package)
@@ -595,7 +648,8 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
                                        "package-generation-a",
                                        "hermes-installer.native-mcp-dispatch.v1",
                                        "mcp-row-a", "registration.native.mcp",
-                                       "mcp.request", lambda value: value == args)
+                                       "mcp.request", lambda value: value == args,
+                                       "schema.mcp.result", "a" * 64, lambda _raw: True)
         registry = object.__new__(NativeInvocationRegistry)
         registry.service = service
         registry.source_observers = source_observers
@@ -626,6 +680,7 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             canonical_arguments=args, observer_id="observer-id", loaded_package_proof=proof,
             expires_monotonic=25.0, service_generation_digest="c" * 64,
             operation="mcp.request",
+            result_schema_id="schema.mcp.result", result_schema_sha256="a" * 64,
         )
         registry._invocations = {invocation.invocation_handle: invocation}
         registry._mcp_dispatches = {}

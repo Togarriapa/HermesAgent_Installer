@@ -49,13 +49,19 @@ class NativeActionSelection:
     registration_id: str
     operation: str
     validate_arguments: Callable[[bytes], bool]
+    result_schema_id: str
+    result_schema_sha256: str
+    validate_result: Callable[[bytes], bool]
 
     def __post_init__(self) -> None:
         if (any(not isinstance(getattr(self, name), str) or not getattr(self, name)
                 for name in ("package_id", "profile_id", "generation", "package_generation",
                              "adapter_id", "action_id",
                              "registration_id", "operation"))
-                or not callable(self.validate_arguments)):
+                or not callable(self.validate_arguments)
+                or not isinstance(self.result_schema_id, str) or not self.result_schema_id
+                or not _SHA256.fullmatch(self.result_schema_sha256)
+                or not callable(self.validate_result)):
             raise ValueError("selected native action binding is incomplete")
 
 
@@ -101,7 +107,7 @@ class RootNativeToolEffectInvocation:
     response_observation_handle: str
     response_receipt_handle: str
     native_request_handle: str
-    turn_handle: str
+    turn_handle: str | None
     producer_identity: Any
     producer_pid: int
     profile_id: str
@@ -122,7 +128,7 @@ class RootNativeToolEffectInvocation:
     def __post_init__(self) -> None:
         opaque = (self.invocation_handle, self.observed_call_handle,
                   self.response_observation_handle, self.response_receipt_handle,
-                  self.native_request_handle, self.turn_handle)
+                  self.native_request_handle)
         if (any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", value)
                 for value in opaque)
                 or type(self.producer_pid) is not int or self.producer_pid <= 0
@@ -140,6 +146,9 @@ class RootNativeToolEffectInvocation:
                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", value)
                        for value in self.source_receipt_handles)
                 or self.producer_identity is None
+                or (self.turn_handle is not None and (
+                    not isinstance(self.turn_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle)))
                 or not isinstance(self.expires_monotonic, (int, float))
                 or not math.isfinite(self.expires_monotonic)):
             raise ValueError("root native tool invocation record is malformed")
@@ -291,8 +300,12 @@ class _NativeInvocation:
     expires_monotonic: float
     service_generation_digest: str
     operation: str = ""
+    result_schema_id: str = ""
+    result_schema_sha256: str = ""
     mcp_dispatch_consumed: bool = False
     effect_result_consumed: bool = False
+    effect_result_schema_validated: bool = False
+    effect_request_digest: str | None = None
 
 
 class NativeRuntimeObserverUnavailable(PermissionError):
@@ -547,7 +560,9 @@ class NativeInvocationRegistry:
         observer = self.source_observers.observers.get(observer_id) if observer_id else None
         if (observer is None or observer.profile_id != bridge.producer_profile_id
                 or observer.generation != bridge.producer_generation
-                or observer.producer_uid != bridge.producer_uid):
+                or observer.producer_uid != bridge.producer_uid
+                or getattr(observer, "capture_schema_id", None)
+                != "native-root-provider-response-v1"):
             raise AuthorityDenied("native.invocation.observer", "selected provider-result observer is unavailable")
         loaded_proof = self._loaded_proof(
             observer_id, producer_identity, producer_pid, producer_pidfd)
@@ -965,6 +980,8 @@ class NativeInvocationRegistry:
                 response.receipt_handles, bytes(canonical_arguments), response.observer_id,
                 current_proof, lease,
                 self.service.service_generation_digest, operation=selection.operation,
+                result_schema_id=selection.result_schema_id,
+                result_schema_sha256=selection.result_schema_sha256,
             )
             # Consume the observed call before publishing a binding. No failed
             # or concurrent begin can re-open this response call.
@@ -1107,11 +1124,13 @@ class NativeInvocationRegistry:
                     or not isinstance(action, NativeActionSelection)
                     or (action.package_id, action.profile_id, action.generation,
                         action.package_generation, action.adapter_id, action.action_id,
-                        action.registration_id, action.operation)
+                        action.registration_id, action.operation,
+                        action.result_schema_id, action.result_schema_sha256)
                     != (invocation.package_id, invocation.profile_id, invocation.generation,
                         invocation.package_generation, invocation.adapter_id, invocation.action_id,
                         invocation.registration_id,
-                        getattr(invocation, "operation", None))
+                        getattr(invocation, "operation", None),
+                        invocation.result_schema_id, invocation.result_schema_sha256)
                     or not set(selected_registrations).issubset(observed_registrations)
                     or not self._validate_selection(action, invocation.canonical_arguments)
                     or hashlib.sha256(invocation.canonical_arguments).hexdigest()
@@ -1194,7 +1213,7 @@ class NativeInvocationRegistry:
             for row in self._invocations.values():
                 response = self._responses.get(row.response_handle)
                 if (row.effect_result_consumed or row.expires_monotonic <= self.monotonic()
-                        or response is None or response.turn_handle is None
+                        or response is None
                         or row.operation != operation
                         or row.producer_identity.kernel_uid != context.uid
                         or row.profile_id != context.profile_id
@@ -1245,6 +1264,7 @@ class NativeInvocationRegistry:
             # A grant is single-use at the AuthorityService boundary. This
             # separate bit prevents a result receipt from being attached twice.
             row.effect_result_consumed = True
+            row.effect_request_digest = payload_digest
             return RootNativeToolEffectInvocation(
                 invocation_handle=row.invocation_handle,
                 observed_call_handle=row.observed_call_handle,
@@ -1269,6 +1289,92 @@ class NativeInvocationRegistry:
                 request_digest=payload_digest,
                 expires_monotonic=row.expires_monotonic,
             )
+
+    def validate_effect_result(self, invocation: RootNativeToolEffectInvocation,
+                               result_payload: bytes) -> None:
+        """Validate raw result bytes against the current protected action schema.
+
+        The callback is re-resolved from the selected root action row. The
+        invocation DTO is only a lookup key; it cannot supply a schema or a
+        validator. Successful validation is one-use and precedes source-event
+        recording/capture.
+        """
+        if (type(invocation) is not RootNativeToolEffectInvocation
+                or not isinstance(result_payload, bytes)
+                or not 1 <= len(result_payload) <= _MAX_RESULT_BYTES):
+            raise AuthorityDenied("native.effect.result", "native result validation input is malformed")
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            row = self._invocations.get(invocation.invocation_handle)
+            response = self._responses.get(row.response_handle) if row is not None else None
+            if (row is None or response is None or not row.effect_result_consumed
+                    or row.effect_result_schema_validated
+                    or row.invocation_handle != invocation.invocation_handle
+                    or row.observed_call_handle != invocation.observed_call_handle
+                    or row.response_handle != invocation.response_observation_handle
+                    or response.response_receipt_handle != invocation.response_receipt_handle
+                    or response.native_request_handle != invocation.native_request_handle
+                    or response.turn_handle != invocation.turn_handle
+                    or row.producer_identity != invocation.producer_identity
+                    or row.producer_pid != invocation.producer_pid
+                    or row.profile_id != invocation.profile_id
+                    or row.generation != invocation.generation
+                    or row.package_id != invocation.package_id
+                    or row.package_generation != invocation.native_package_generation
+                    or row.service_generation_digest != invocation.service_generation_digest
+                    or row.adapter_id != invocation.adapter_id
+                    or row.action_id != invocation.action_id
+                    or row.registration_id != invocation.registration_id
+                    or row.tool_name != invocation.tool_name
+                    or row.arguments_sha256 != invocation.arguments_sha256
+                    or row.receipt_handles != invocation.source_receipt_handles
+                    or row.operation != invocation.operation
+                    or row.effect_request_digest != invocation.request_digest
+                    or not math.isclose(row.expires_monotonic, invocation.expires_monotonic,
+                                        rel_tol=0.0, abs_tol=0.0)
+                    or row.expires_monotonic <= self.monotonic()):
+                raise AuthorityDenied("native.effect.result", "native result has no current one-use invocation")
+            try:
+                identity = self.process_resolver(
+                    row.producer_pid, row.producer_pidfd,
+                    profile_id=row.profile_id, generation=row.generation)
+                gateway = self.process_resolver(
+                    row.gateway_pid, row.gateway_pidfd,
+                    profile_id=row.bridge.gateway_profile_id,
+                    generation=row.bridge.gateway_generation)
+                proof = self._loaded_proof(
+                    row.observer_id, identity, row.producer_pid, row.producer_pidfd)
+                selected = self.action_resolver(row.bridge, identity, row.tool_name)
+                observer = self.source_observers.observers.get(row.observer_id)
+                package, _role = self.source_observers._resolve_package_role(observer)
+                registrations = self._selected_action_registration_ids(
+                    observer=observer, package=package, selection=selected)
+                observed = self._require_observed_registrations(observer, proof)
+            except Exception:
+                raise AuthorityDenied("native.effect.result", "current result schema binding is unavailable") from None
+            if (identity != row.producer_identity or gateway != row.gateway_identity
+                    or proof != row.loaded_package_proof
+                    or not isinstance(selected, NativeActionSelection)
+                    or (selected.package_id, selected.profile_id, selected.generation,
+                        selected.package_generation, selected.adapter_id, selected.action_id,
+                        selected.registration_id, selected.operation,
+                        selected.result_schema_id, selected.result_schema_sha256)
+                    != (row.package_id, row.profile_id, row.generation,
+                        row.package_generation, row.adapter_id, row.action_id,
+                        row.registration_id, row.operation,
+                        row.result_schema_id, row.result_schema_sha256)
+                    or not registrations or not set(registrations).issubset(observed)
+                    or getattr(observer, "capture_schema_id", None)
+                    != "native-registered-tool-result-v1"):
+                raise AuthorityDenied("native.effect.result", "selected result schema or capture profile changed")
+            try:
+                valid = selected.validate_result(result_payload)
+            except Exception:
+                valid = False
+            if valid is not True:
+                raise AuthorityDenied("native.effect.result", "raw native tool result failed its selected schema")
+            row.effect_result_schema_validated = True
 
     def resolve_current_invocation_for_effect(
             self, context: HostContext, authorization: Any, operation: str,
@@ -1940,11 +2046,11 @@ class NativeRuntimeObserver:
         invocation = None
         if invocation_registry is not None or turn_registry is not None:
             from .native_runtime_observer import RootNativeToolEffectInvocation
-            if (invocation_registry is None or turn_registry is None
+            if (invocation_registry is None
                     or request_payload is None or request_sha256 is None
                     or hashlib.sha256(request_payload).hexdigest() != request_sha256
                     or request_sha256 != getattr(authorization, "request_digest", None)):
-                raise AuthorityDenied("native.turn.effect", "validated native action bytes are unavailable")
+                raise AuthorityDenied("native.effect", "validated native action bytes are unavailable")
             invocation = invocation_registry.resolve_invocation_for_effect(
                 context, authorization, operation, request_sha256)
             if (type(invocation) is not RootNativeToolEffectInvocation
@@ -1958,14 +2064,29 @@ class NativeRuntimeObserver:
                     or invocation.generation != context.generation
                     or invocation.service_generation_digest != getattr(
                         service, "service_generation_digest", None)
+                    or (invocation.turn_handle is not None and turn_registry is None)
                     or invocation.expires_monotonic <= time.monotonic()):
-                raise AuthorityDenied("native.turn.effect", "validated effect does not join a current observed call")
+                raise AuthorityDenied("native.effect", "validated effect does not join a current observed call")
         observer_id = self.effect_observer_ids.get((capability, operation, target))
         observer = self.source_observers.observers.get(observer_id) if observer_id else None
-        if (observer is None or getattr(observer, "profile_id", None) != context.profile_id
+        if (observer is None or getattr(observer, "source_kind", None) != "tool-result"
+                or getattr(observer, "profile_id", None) != context.profile_id
                 or getattr(observer, "generation", None) != context.generation
                 or getattr(observer, "producer_uid", None) != context.uid):
             raise AuthorityDenied("source.observer", "completed effect has no matching root observer enrollment")
+        if (invocation is None or invocation_registry is None
+                or (invocation.turn_handle is not None and turn_registry is None)
+                or getattr(observer, "capture_schema_id", None)
+                != "native-registered-tool-result-v1"):
+            raise AuthorityDenied(
+                "native.effect.result", "root selected tool result schema/profile is unavailable",
+            )
+        validate_result = getattr(invocation_registry, "validate_effect_result", None)
+        if not callable(validate_result):
+            raise AuthorityDenied(
+                "native.effect.result", "root selected result-schema validator is unavailable",
+            )
+        validate_result(invocation, result_payload)
         if cancelled():
             raise AuthorityDenied("source.cancelled", "native result delivery was cancelled")
         parent_handles = self._parent_handles(service, context)
@@ -1980,12 +2101,19 @@ class NativeRuntimeObserver:
             observer_id, event_id, result_payload, parent_receipt_handles=parent_handles)
         if not isinstance(receipt_handle, str) or len(receipt_handle) < 32:
             raise AuthorityDenied("source.issuer", "root observer returned no opaque result handle")
-        if invocation is not None:
-            turn_registry.record_tool_result(
-                invocation.turn_handle, str(receipt_handle),
-                live_producer_identity=invocation.producer_identity,
-                observed_call_handle=invocation.observed_call_handle,
-            )
+        if cancelled():
+            self.source_observers.revoke_source_handle(receipt_handle)
+            raise AuthorityDenied("source.cancelled", "native result was cancelled before turn binding")
+        if invocation.turn_handle is not None:
+            try:
+                turn_registry.record_tool_result(
+                    invocation.turn_handle, str(receipt_handle),
+                    live_producer_identity=invocation.producer_identity,
+                    observed_call_handle=invocation.observed_call_handle,
+                )
+            except Exception:
+                self.source_observers.revoke_source_handle(receipt_handle)
+                raise AuthorityDenied("native.turn.result", "root result could not join the selected turn") from None
         return str(receipt_handle)
 
     def close(self) -> None:
