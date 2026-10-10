@@ -3463,14 +3463,16 @@ def _runtime_dependency_receipts(prefix: Path,
     packages: list[tuple[str, str]] = []
     handles: list[str] = []
     seen: set[tuple[str, str]] = set()
-    search_paths = [str(Path(sysconfig.get_path(key)).resolve(strict=True))
-                    for key in ("purelib", "platlib") if sysconfig.get_path(key)]
+    search_paths = _runtime_site_search_paths()
     for dist in importlib.metadata.distributions(path=search_paths):
         name = dist.metadata.get("Name")
         version = dist.version
         if not isinstance(name, str) or not isinstance(version, str):
             raise InstallerReleaseBuildError("installed runtime dependency identity is incomplete")
         normalized = _normalize_package_name(name)
+        if normalized == "pip":
+            _verify_bundled_pip_distribution(dist, prefix)
+            continue
         if version not in locked.get(normalized, frozenset()):
             raise InstallerReleaseBuildError("installed runtime dependency is not pinned by selected requirements-runtime.txt")
         identity = (normalized, version)
@@ -3498,6 +3500,45 @@ def _runtime_dependency_receipts(prefix: Path,
     if not packages:
         raise BootstrapEnrollmentPending("selected installer runtime has no verified locked dependencies")
     return packages, tuple(handles)
+
+
+def _runtime_site_search_paths() -> list[str]:
+    paths: list[str] = []
+    for key in ("purelib", "platlib"):
+        value = sysconfig.get_path(key)
+        if not value:
+            continue
+        try:
+            resolved = str(Path(value).resolve(strict=True))
+        except OSError:
+            raise InstallerReleaseBuildError("isolated runtime dependency directory is unavailable") from None
+        if resolved not in paths:
+            paths.append(resolved)
+    return paths
+
+
+def _verify_bundled_pip_distribution(dist: Any, prefix: Path) -> None:
+    """Bind the runtime's bundled pip metadata to its fixed CPython closure.
+
+    The pinned standalone CPython archive includes pip; it is not selected from
+    requirements-runtime.txt and receives no separate dependency receipt. Its
+    complete bytes are already covered by the verified runtime closure.
+    """
+    files = dist.files
+    if not files:
+        raise BootstrapEnrollmentPending("bundled runtime pip has no installed file manifest")
+    version = dist.version
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
+        raise InstallerReleaseBuildError("bundled runtime pip version is malformed")
+    site_root = "lib/python3.14/site-packages/"
+    package_root = site_root + "pip/"
+    metadata_root = site_root + "pip-" + version + ".dist-info/"
+    bundled_scripts = {"bin/pip", "bin/pip3", "bin/pip3.14"}
+    for item in files:
+        relative = _relative_below(prefix, Path(dist.locate_file(item)))
+        if not (relative.startswith(package_root) or relative.startswith(metadata_root)
+                or relative in bundled_scripts):
+            raise InstallerReleaseBuildError("bundled runtime pip escaped its fixed CPython site directory")
 
 
 def _runtime_artifact_current_files(
