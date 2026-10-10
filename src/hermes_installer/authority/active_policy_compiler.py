@@ -49,6 +49,19 @@ def _sha(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _ordered_unique_receipt_handles(handles: Sequence[str], label: str) -> tuple[str, ...]:
+    """Return one stable receipt order while rejecting malformed source handles."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for handle in handles:
+        if not isinstance(handle, str) or not _HANDLE.fullmatch(handle):
+            raise BootstrapEnrollmentPending(f"{label} receipt closure contains a malformed handle")
+        if handle not in seen:
+            seen.add(handle)
+            result.append(handle)
+    return tuple(result)
+
+
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -291,7 +304,13 @@ def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> 
     if (not isinstance(claim.policy_bytes, bytes) or _sha(claim.policy_bytes) != claim.compiled_policy_sha256
             or not isinstance(claim.artifact_catalog_bytes, bytes)
             or _sha(claim.artifact_catalog_bytes) != claim.compiled_artifact_catalog_sha256
-            or not isinstance(claim.selection_document, Mapping)):
+            or not isinstance(claim.selection_document, Mapping)
+            or not isinstance(claim.source_receipt_handles, tuple)
+            or _ordered_unique_receipt_handles(claim.source_receipt_handles, "active claim")
+            != claim.source_receipt_handles
+            or not set(claim.runtime_receipt_handles).issubset(claim.source_receipt_handles)
+            or not set(claim.materialization_receipt_handles).issubset(claim.source_receipt_handles)
+            or claim.principal_selection_receipt_handle not in claim.source_receipt_handles):
         raise BootstrapEnrollmentPending("active policy claim output bytes changed")
     document = dict(claim.selection_document)
     catalog_digest = document.get("catalog_sha256")
@@ -453,6 +472,16 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("active policy compilation lease expired")
         publication_handle = secrets.token_urlsafe(36)
         observed_handle = self._mint_actor_observation(session, prepared, expires)
+        source_receipt_handles = _ordered_unique_receipt_handles((
+            prepared_bundle.hermes_source_receipt_handle,
+            prepared_bundle.pm_runtime_receipt_handle,
+            prepared_bundle.resources_source_receipt_handle,
+            prepared_bundle.resource_profile_selection_receipt_handle,
+            prepared_bundle.materialization_receipt_handle,
+            *runtime_handles, *output_handles, principal_handle,
+            *(handle for row in choice_adoptions
+              for handle in row.source_member_receipt_handles)),
+            "active source")
         provisional = RootActivePolicyCompilationClaim(
             1, session._authorization.plan_artifact_id,
             session._factory._release.release_commit,
@@ -461,14 +490,7 @@ class RootActivePolicyCompilationRegistry:
             prepared.generation_id, selection_digest, prepared.generation_digest,
             session._policy.artifact_id, session._policy.sha256, principal_handle,
             runtime_handles, output_handles,
-            (prepared_bundle.hermes_source_receipt_handle,
-             prepared_bundle.pm_runtime_receipt_handle,
-             prepared_bundle.resources_source_receipt_handle,
-             prepared_bundle.resource_profile_selection_receipt_handle,
-             prepared_bundle.materialization_receipt_handle,
-             *runtime_handles, *output_handles, principal_handle,
-             *(handle for row in choice_adoptions
-               for handle in row.source_member_receipt_handles)),
+            source_receipt_handles,
             _sha(policy_bytes), _sha(catalog_bytes),
             _sha(_canonical(dict(selection_document))), selection_document["catalog_sha256"],
             issued, expires, "0" * 64, policy_bytes, catalog_bytes,
@@ -641,7 +663,13 @@ class RootActivePolicyCompilationRegistry:
         publication_handle = getattr(receipt, "publication_handle", None)
         claim_digest = getattr(receipt, "claim_digest", None)
         claim = self._get_claim(publication_handle)
-        self._verify_postpublication_claim(claim)
+        claim_state = self._states.get(publication_handle)
+        if claim_state == "claimed":
+            self._verify_postpublication_claim(claim)
+        elif claim_state == "active-committed":
+            self._verify_committed_claim(claim)
+        else:
+            raise BootstrapEnrollmentPending("active compilation claim is not eligible for publication completion")
         current_receipt = PolicyPublicationReceiptResolver.verify_current_active_claim(
             publication_handle=claim.publication_handle,
             claim_digest=claim.claim_digest,
@@ -661,28 +689,56 @@ class RootActivePolicyCompilationRegistry:
                 or receipt.artifact_catalog_sha256 != claim.compiled_artifact_catalog_sha256
                 or receipt.runtime_receipt_handles != claim.runtime_receipt_handles
                 or receipt.materialization_receipt_handles != claim.materialization_receipt_handles
-                or receipt.input_receipt_handles != (claim.observed_root_receipt_handle,
-                                                     *claim.source_receipt_handles)):
+                or receipt.input_receipt_handles != _ordered_unique_receipt_handles(
+                    (claim.observed_root_receipt_handle, *claim.source_receipt_handles),
+                    "published input")):
             raise BootstrapEnrollmentPending("active publication receipt does not bind the compiled claim outputs")
         # Publication is already the atomic externally visible commit. Persist
         # that fact before consuming output capabilities so a later local CAS
         # failure cannot make the selected generation look releasable/replayable.
-        self._write_state(claim, "active-committed", receipt.receipt_handle)
         state_path = self._claim_root / ("transaction-" + claim.transaction_handle + ".json")
-        state_record = dict(_read_json(state_path))
-        state_record["active_selection_catalog_sha256"] = receipt.current_selection_catalog_sha256
-        state_record["publication_sha256"] = receipt.publication_sha256
-        state_record["descriptor_sha256"] = receipt.descriptor_sha256
-        state_record["publication_generation_id"] = receipt.generation_id
-        state_record["publication_generation_device"] = receipt.generation_device
-        state_record["publication_generation_inode"] = receipt.generation_inode
-        _write_json(state_path, state_record)
-        self._states[publication_handle] = "active-committed"
-        self._close_lock(publication_handle)
+        if claim_state == "claimed":
+            self._write_state(claim, "active-committed", receipt.receipt_handle)
+            state_record = dict(_read_json(state_path))
+            state_record["active_selection_catalog_sha256"] = receipt.current_selection_catalog_sha256
+            state_record["publication_sha256"] = receipt.publication_sha256
+            state_record["descriptor_sha256"] = receipt.descriptor_sha256
+            state_record["publication_generation_id"] = receipt.generation_id
+            state_record["publication_generation_device"] = receipt.generation_device
+            state_record["publication_generation_inode"] = receipt.generation_inode
+            _write_json(state_path, state_record)
+            self._states[publication_handle] = "active-committed"
+            self._close_lock(publication_handle)
+        else:
+            state_record = _read_json(state_path)
+            expected_state = {
+                "state": "active-committed",
+                "publication_handle": claim.publication_handle,
+                "claim_digest": claim.claim_digest,
+                "publication_receipt_handle": receipt.receipt_handle,
+                "active_selection_catalog_sha256": receipt.current_selection_catalog_sha256,
+                "publication_sha256": receipt.publication_sha256,
+                "descriptor_sha256": receipt.descriptor_sha256,
+                "publication_generation_id": receipt.generation_id,
+                "publication_generation_device": receipt.generation_device,
+                "publication_generation_inode": receipt.generation_inode,
+            }
+            if any(state_record.get(key) != value for key, value in expected_state.items()):
+                raise BootstrapEnrollmentPending("durable active publication completion record changed")
         self.materialization_receipts.complete_active_compilation(
             claim._reservation_handle, receipt,
             prepared_generation_id=claim.prepared_generation_id,
             publication_handle=claim.publication_handle, claim_digest=claim.claim_digest)
+
+    def _verify_committed_claim(self, claim: RootActivePolicyCompilationClaim) -> None:
+        """Verify retained compiler bytes for retry after the selection CAS."""
+        if (not isinstance(claim, RootActivePolicyCompilationClaim)
+                or claim._seal is not self._seal
+                or self._claims.get(claim.publication_handle) is not claim
+                or not secrets.compare_digest(claim.claim_digest, _sha(_canonical(_manifest(claim))))):
+            raise BootstrapEnrollmentPending("committed active policy claim is altered or unsealed")
+        _validate_claim_output_hashes(claim)
+        self._verify_claim_bundle(claim)
 
     def release_active_policy(self, publication_handle: str) -> None:
         claim = self._get_claim(publication_handle)
