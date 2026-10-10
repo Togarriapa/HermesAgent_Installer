@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import stat
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -10,11 +11,13 @@ import pytest
 from hermes_installer.managed_process_custodian import RemoteOriginKernelProof
 from hermes_installer.models.private_deployment import (
     _inspect_existing_model_tree_fd,
+    _revalidate_existing_model_tree_metadata,
     PrivateEndpointObservation,
     PrivateDeploymentDenied,
     PrivateModelDeploymentObservation,
     _tcp4_listener_inodes,
     inspect_loopback_listener,
+    RootExistingModelArtifactObserver,
 )
 from hermes_installer.models.artifacts import ArtifactFile, ArtifactManifest
 
@@ -168,8 +171,10 @@ def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Pat
         assert facts.total_size_bytes == len(first) + len(second)
         assert [row["path"] for row in facts.members] == ["config.json", "weights/shard.bin"]
         assert len(facts.tree_manifest_sha256) == len(facts.member_observation_sha256) == 64
+        _revalidate_existing_model_tree_metadata(fd, facts, expected_uid=os.getuid())
     finally:
         os.close(fd)
+
 
     (model_root / "unexpected.txt").write_text("extra")
     fd = os.open(model_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -187,6 +192,8 @@ def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Pat
     try:
         with pytest.raises(PrivateDeploymentDenied):
             _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
+        with pytest.raises(PrivateDeploymentDenied):
+            _revalidate_existing_model_tree_metadata(fd, facts, expected_uid=os.getuid())
     finally:
         os.close(fd)
 
@@ -200,3 +207,43 @@ def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Pat
             _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
     finally:
         os.close(fd)
+
+def test_pinned_glm_manifest_parses_from_already_observed_bytes() -> None:
+    from hermes_installer.models.artifacts import MODEL_BYTES, MODEL_SIZE_CLAIM
+
+    metadata = Path("planning/glm52-artifact-metadata.json").read_bytes()
+    manifest = ArtifactManifest.from_metadata_bytes(metadata)
+    assert manifest.model_id == "mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp"
+    assert manifest.revision == "6bbb01ed3e515a8730b694dfae73aadfd6774581"
+    assert manifest.total_bytes == MODEL_BYTES == 429_276_220_139
+    assert manifest.declared_storage_bytes == MODEL_SIZE_CLAIM == 429_276_080_522
+
+
+def test_existing_model_observer_rejects_unissued_selection_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller-created lookalike selection cannot select a root model directory."""
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+    class FakeSelectionRegistry:
+        def resolve_selection(self, _handle: str) -> object:
+            return SimpleNamespace(selection_handle="selection-from-caller")
+
+        def verify_current(self, _selection: object) -> object:
+            return _selection
+
+        def open_selected_directory(self, _handle: str) -> object:
+            raise AssertionError("unissued selections must be rejected before opening a directory")
+
+    class FakeArtifactObserver:
+        def observe(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("source artifact resolution must not precede selection validation")
+
+        def verify_current(self, _observation: object) -> bool:
+            return False
+
+    observer = RootExistingModelArtifactObserver(
+        object(), object(), object(), FakeSelectionRegistry(), FakeArtifactObserver(),
+    )
+    with pytest.raises(PrivateDeploymentDenied, match="not issued by the protected root setup factory"):
+        observer.observe_selected_tree("selection-from-caller")
