@@ -31,6 +31,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _OPERATION = re.compile(r"plugin\.([A-Za-z0-9][A-Za-z0-9_.-]{0,127})\.([a-z][A-Za-z0-9_.-]{0,95})\Z", re.ASCII)
 _MAX_ADAPTERS = 692
 _MAX_RESOLVER_BYTES = 2 * 1024 * 1024
+_MAX_PROCESS_ROLE_RECORDS = 256
 _MAX_BINDING_LEASE_SECONDS = 600.0
 
 
@@ -165,7 +166,8 @@ def _effect_from_wire(raw: object, *, package_generation: str) -> SelectedPlugin
 class RootSelectedPluginEffects:
     """Validated immutable projection from one active root package binding."""
 
-    __slots__ = ("_binding", "_profile_id", "_effects", "_clock")
+    __slots__ = ("_binding", "_profile_id", "_effects", "_clock",
+                 "_process_role_records_sha256", "_process_role_records")
 
     def __init__(self, authority: NativePackageAuthority, *, clock=time.monotonic) -> None:
         bind = getattr(authority, "bind_selected_native_package", None)
@@ -187,12 +189,15 @@ class RootSelectedPluginEffects:
             raise NativePluginBindingUnavailable("root native package binding is unavailable") from None
         if not isinstance(raw, Mapping) or set(raw) != {
             "schema", "package_id", "profile_id", "generation",
-            "resolver_sha256", "adapters",
+            "resolver_sha256", "process_role_records_sha256", "adapters",
         }:
             raise NativePluginBindingUnavailable("root returned an invalid native package resolver")
         try:
             digest_preimage = {
-                key: raw[key] for key in ("schema", "package_id", "profile_id", "generation", "adapters")
+                key: raw[key] for key in (
+                    "schema", "package_id", "profile_id", "generation",
+                    "process_role_records_sha256", "adapters",
+                )
             }
             canonical_resolver = json.dumps(
                 digest_preimage, ensure_ascii=False, sort_keys=True,
@@ -203,12 +208,15 @@ class RootSelectedPluginEffects:
         if (not canonical_resolver or len(canonical_resolver) > _MAX_RESOLVER_BYTES
                 or hashlib.sha256(canonical_resolver).hexdigest() != raw["resolver_sha256"]):
             raise NativePluginBindingUnavailable("root resolver digest or byte bound is invalid")
+        process_role_digest = raw["process_role_records_sha256"]
         if (type(raw["schema"]) is not int or raw["schema"] != 1
                 or _valid_id(raw["package_id"], "resolver package ID") != binding.package_id
                 or _valid_id(raw["generation"], "resolver generation") != binding.generation
                 or not isinstance(raw["resolver_sha256"], str)
                 or raw["resolver_sha256"] != binding.resolver_digest
-                or not _SHA256.fullmatch(raw["resolver_sha256"])):
+                or not _SHA256.fullmatch(raw["resolver_sha256"])
+                or not isinstance(process_role_digest, str)
+                or not _SHA256.fullmatch(process_role_digest)):
             raise NativePluginBindingUnavailable("root resolver does not match its package binding")
         profile_id = _valid_id(raw["profile_id"], "resolver profile ID")
         if profile_id != binding.profile_id:
@@ -232,6 +240,8 @@ class RootSelectedPluginEffects:
         self._profile_id = profile_id
         self._effects = effects
         self._clock = clock
+        self._process_role_records_sha256 = process_role_digest
+        self._process_role_records: tuple[Mapping[str, object], ...] = ()
 
     @property
     def package_id(self) -> str:
@@ -266,6 +276,40 @@ class RootSelectedPluginEffects:
         """Root-pinned native assembly entrypoint manifest digest."""
         self._require_live()
         return self._binding.entrypoint_sha256
+
+    @property
+    def process_role_records(self) -> tuple[Mapping[str, object], ...]:
+        """Root-pinned role selection from the verified mounted entrypoint manifest.
+
+        This is loader metadata only. Root custody independently joins every
+        emitted import origin to the active role record and current process.
+        """
+        self._require_live()
+        return self._process_role_records
+
+    @property
+    def process_roles(self) -> tuple[Mapping[str, object], ...]:
+        """Loader-facing alias for the verified selected role record tuple."""
+        return self.process_role_records
+
+    @property
+    def process_role_records_sha256(self) -> str:
+        self._require_live()
+        return self._process_role_records_sha256
+
+    def _accept_verified_process_role_records(
+        self, rows: tuple[Mapping[str, object], ...], digest: str,
+    ) -> None:
+        """Attach rows only after the pinned manifest and closure were verified."""
+        self._require_live()
+        if (not isinstance(rows, tuple) or not 1 <= len(rows) <= _MAX_PROCESS_ROLE_RECORDS
+                or digest != self._process_role_records_sha256):
+            raise NativePluginBindingUnavailable("native process-role selection is unavailable")
+        if self._process_role_records:
+            if self._process_role_records != rows:
+                raise NativePluginBindingUnavailable("native process-role selection changed during its lease")
+            return
+        self._process_role_records = rows
 
     @property
     def adapter_rows(self) -> tuple[SelectedPluginEffect, ...]:
