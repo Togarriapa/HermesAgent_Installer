@@ -2618,6 +2618,7 @@ class AuthorityService:
                                                 request_digest=request_digest,
                                                 retry_index=retry_index)):
             raise AuthorityDenied("effect.revalidation", "fresh host policy denied the final effect boundary")
+        self._revalidate_selected_input_egress(context, rule.recipient)
         return True
 
     def serve_unix(self, socket_path: Path, *, socket_gid: int,
@@ -3693,6 +3694,8 @@ class AuthorityService:
                 or type(retry_index) is not int or not 0 <= retry_index <= 100):
             raise AuthorityDenied("effect.request", "effect binding is invalid")
         rule = self.rules.get((capability, context.operation, target))
+        if rule is not None:
+            self._revalidate_selected_input_egress(context, rule.recipient)
         if (rule is None or (rule.operation, rule.target) not in self.handlers
                 or rule.recipient != recipient
                 or context.operation != rule.operation
@@ -3725,6 +3728,58 @@ class AuthorityService:
         signed = self._sign(grant.claims())
         return {**grant.claims(), "signature": signed}
 
+    def _revalidate_selected_input_egress(self, context: HostContext,
+                                          recipient: str | None) -> None:
+        """Recheck root-selected private-input consent at every egress boundary.
+
+        A signed source receipt preserves the original consent ceiling, but it
+        does not preserve revocation state. Any non-null recipient effect whose
+        complete lineage contains native input must therefore resolve the
+        retained native selection and its current consent again immediately
+        before grant issuance and effect dispatch.
+        """
+        if recipient is None:
+            return
+        input_receipts = tuple(
+            receipt for receipt in context.source_receipts
+            if getattr(receipt, "source_kind", None) == "native-input"
+        )
+        if not input_receipts:
+            return
+        observers = self.source_observer_registry
+        resolve_selection = getattr(observers, "resolve_retained_selected_input_execution", None)
+        resolve_consent = getattr(observers, "resolve_selected_input_consent", None)
+        if (observers is None or not callable(resolve_selection)
+                or not callable(resolve_consent)):
+            raise AuthorityDenied("source.native_consent", "retained selected-input consent resolver is unavailable")
+        with self._lock:
+            receipt_handles: dict[str, str] = {}
+            for handle, retained in self._source_receipt_handles.items():
+                if retained.monotonic_expires_at > self.monotonic():
+                    receipt_handles.setdefault(retained.receipt_id, handle)
+        for receipt in input_receipts:
+            handle = receipt_handles.get(receipt.receipt_id)
+            if handle is None:
+                raise AuthorityDenied("source.native_consent", "selected-input source handle is no longer retained")
+            try:
+                from .source_observers import SourceReceiptHandle
+                root_handle = SourceReceiptHandle(handle)
+                selection = resolve_selection(root_handle)
+                retained_consent = resolve_consent(root_handle, selection)
+            except Exception:
+                raise AuthorityDenied("source.native_consent", "selected-input consent is absent or revoked") from None
+            consent = getattr(retained_consent, "consent", None)
+            if (getattr(retained_consent, "source_receipt_handle", None) != root_handle
+                    or getattr(retained_consent, "selected_execution", None) is not selection
+                    or getattr(consent, "profile_id", None) != receipt.profile_id
+                    or getattr(consent, "principal_id", None) != receipt.principal_id
+                    or getattr(consent, "namespace_id", None) != receipt.namespace_id
+                    or getattr(consent, "service_generation_digest", None) != self.service_generation_digest
+                    or consent is None
+                    or recipient not in getattr(consent, "private_recipient_ids", ())
+                    or recipient not in receipt.recipient_ceiling):
+                raise AuthorityDenied("source.native_consent", "selected-input consent does not permit this recipient")
+
     def _verify_effect(self, uid: int, payload: Any, *, peer_pid: int | None = None) -> dict[str, Any]:
         grant, context, rule = self._parse_effect_request(uid, payload, peer_pid=peer_pid)
         return {"operation": rule.operation, "verified_at_monotonic": self.monotonic(),
@@ -3756,6 +3811,7 @@ class AuthorityService:
                 or grant.final_payload_digest != grant.request_digest):
             raise AuthorityDenied("effect.binding", "fixed effect operation does not match protected target")
         context = self._context_from_grant(grant, binding)
+        self._revalidate_selected_input_egress(context, rule.recipient)
         if (enforce_peer_identity
                 and context.native_process_identity != self._native_process_identity(peer_pid, uid)):
             raise AuthorityDenied("peer.process", "effect grant belongs to a different native process")
