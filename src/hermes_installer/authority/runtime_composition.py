@@ -1964,29 +1964,15 @@ def compose_root_authority_runtime(
             "a fully attached active provider invocation and bridge graph is required for root TTY choices"
         )
 
+    # Lifecycle evidence depends on the durable setup-choice registry, whose
+    # signer is available only after this core runtime has been attached to the
+    # service. The daemon performs the one-time lifecycle composition in its
+    # post-choice phase; composing it here would permanently omit enablement.
     memory_runtime_composition = None
-    memory_lifecycle_unavailable_reason = None
-    if enrollment.memory_enrollments:
-        try:
-            from .memory_runtime_composition import compose_root_memory_runtime
-
-            memory_runtime_composition = compose_root_memory_runtime(
-                bindings=bindings, enrollment=enrollment,
-                memory_runtime=memory_runtime, service=service,
-                vault=vault,
-                network_lease_resolver=memory_network_lease_resolver,
-                monotonic=service.monotonic,
-            )
-            memory_lifecycle_unavailable_reason = (
-                memory_runtime_composition.unavailable_reason
-            )
-        except Exception as exc:
-            # Lifecycle, provider-route, capture, and network authorities are
-            # independent. A missing lifecycle dependency must not substitute
-            # another consent registry or create a success-shaped runtime.
-            memory_lifecycle_unavailable_reason = (
-                f"root memory lifecycle composition rejected ({type(exc).__name__})"
-            )
+    memory_lifecycle_unavailable_reason = (
+        "memory lifecycle composition is pending post-runtime setup-choice attachment"
+        if enrollment.memory_enrollments else None
+    )
 
     return RootAuthorityRuntime(
         service=service, enrollment=enrollment, bindings=bindings,
