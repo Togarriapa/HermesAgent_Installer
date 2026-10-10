@@ -208,3 +208,5 @@ Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-ac
 Root service process lane v236: plans/amendments/2026-10-10-root-service-process-authority-lane-v236.md; HI-T236.1 → HI-T236.2 → VD-T236.3 OPEN. Actual source-selected six-operation declaration, separate root binding/current admission/consume, localuser ceiling unchanged, strict6process checks/kernel evidence preserved/allACOPEN.
 
 Root process proof joins236b: plans/amendments/2026-10-10-root-service-process-proof-joins-v236b.md; existing236tasks OPEN; actual primaryhealthhome/PM/FD, currentpolicy/serviceepoch, distinctpublisheddeclaration, schema4preserves225schema3; allACOPEN.
+
+Cold root process custody236b: plans/amendments/2026-10-10-root-service-process-cold-source-custody-v236b.md and planning/root-service-process-cold-source-custody-v236b.json; source verification before strict parser, genuine dormant runtime revalidation before effects. HI-T236.1/.2/VD-T236.3 and all AC OPEN.

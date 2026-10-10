@@ -537,3 +537,16 @@ The installer SHALL use planning/root-service-process-proof-joins-v236b.json for
 #### Scenario: Restart or schema conflicts cannot reuse setup proof
 - **WHEN** a reader restarts, a setup seal/lease expired, a homehash has no actual producer or schema3 is used for root process rows
 - **THEN** the reader requires a fresh current published declaration/home source proof and exact schema4 validation or remains unavailable; no reconstructed seal, inferred hash or altered legacy digest is accepted
+
+## ADDED Requirements
+
+### Requirement: Independent read-only cold declaration custody
+The installer SHALL apply planning/root-service-process-cold-source-custody-v236b.json to verify signed adopted choice and installed declaration custody before full strict parsing, then repeat ordinary real runtime validation before all serving and effects.
+
+#### Scenario: Current cold sources permit strict runtime composition
+- **WHEN** current held core, release, existing protected key, signed adoption and revocation journals and declaration members verify through independent read-only custody
+- **THEN** the ordinary strict parser validates the published declaration, and the genuine dormant runtime repeats its service-bound validators before activation
+
+#### Scenario: A construction or currentness gap denies activation
+- **WHEN** source custody or ordinary runtime validation fails or changes between phases
+- **THEN** partial custody is closed and no socket, native unit, task, health, root or user effect is enabled; no fake service or reconstructed setup proof is accepted

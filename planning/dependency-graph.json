@@ -3515,5 +3515,20 @@
       "VD-T236.3"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "root_service_process_cold_source_custody_v236b": {
+    "contract": "planning/root-service-process-cold-source-custody-v236b.json",
+    "tasks": [
+      "HI-T236.1",
+      "HI-T236.2",
+      "VD-T236.3"
+    ],
+    "sequence": [
+      "current held core/release/key/journal source verification",
+      "strict published declaration parser",
+      "genuine dormant runtime ordinary revalidation",
+      "enable exact root service lane"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }
