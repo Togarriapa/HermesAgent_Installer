@@ -26,16 +26,17 @@ _HEALTH_FIELDS = {
     "service_generation_digest", "process_id", "loader_ready_event_id", "native_request_event_id",
     "tool_invocation_event_id", "tool_result_event_id", "provider_result_event_id",
     "terminal_receipt_handle", "result_schema_id", "result_sha256", "parent_closure_digest",
-    "status", "issued_monotonic", "expires_monotonic",
+    "health_run_proof_sha256", "status", "issued_monotonic", "expires_monotonic",
 }
 
 
 def _completion_bytes(transaction_id: str = "journal-tx-1") -> bytes:
     receipt = {name: "event:1" for name in _HEALTH_FIELDS}
     receipt.update({
-        "schema": 1, "health_receipt_handle": "h" * 32,
+        "schema": 2, "health_receipt_handle": "h" * 32,
         "service_generation_digest": "a" * 64, "result_sha256": "b" * 64,
-        "parent_closure_digest": "c" * 64, "status": "passed",
+        "parent_closure_digest": "c" * 64, "health_run_proof_sha256": "d" * 64,
+        "status": "passed",
         "issued_monotonic": 1.0, "expires_monotonic": 2.0,
         "provider_result_event_id": None,
     })
