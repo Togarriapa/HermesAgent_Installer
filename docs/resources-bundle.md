@@ -16,6 +16,13 @@ the readable, reviewable source copy; runtime install, update, restore, and
 verification must consume only installer-owned bytes. The pinned upstream URL
 is provenance, not a fetch dependency.
 
+The protected root artifact catalog separately enrolls this exact vendored
+archive as `resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83` with
+the pinned 295,368-byte SHA-256 and a per-file digest/size/mode manifest for all
+739 files. Root materialization can therefore import the source into its
+immutable artifact CAS and verify the complete tree offline without treating
+the provenance URL as a download instruction.
+
 Keep edits and user experience in installer-owned overlays and generations;
 do not edit the vendored source snapshot in place. Installation and recovery use only the Installer-owned archive and expanded
 snapshot, so the original Resources repository may be unavailable or deleted.

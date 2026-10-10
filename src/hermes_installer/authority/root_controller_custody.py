@@ -408,6 +408,7 @@ class RootControllerRoleModuleRegistry:
         self._monotonic, self._pid, self._proc_root = monotonic, pid, proc_root
         self._start_time_resolver = start_time_resolver or self._read_start_time
         self._proofs: dict[str, LoadedRootControllerRoleProof] = {}
+        self._release_receipts: dict[str, Any] = {}
 
     def _read_start_time(self, pid: int) -> int:
         data = (self._proc_root / str(pid) / "stat").read_text()
@@ -457,6 +458,66 @@ class RootControllerRoleModuleRegistry:
         self._proofs[proof.proof_handle] = proof
         return proof
 
+    def load_from_installed_release(self, *, release_receipt: Any,
+                                    module_name: str, artifact_id: str,
+                                    expected_sha256: str,
+                                    service_generation_digest: str,
+                                    controller_generation: str) -> LoadedRootControllerRoleProof:
+        """Load bounded source from an exact module member of the held release.
+
+        The release verifier owns path traversal, ownership and the closure
+        manifest.  This method uses only its artifact-ID FD interface and
+        retains the receipt in each proof so currentness is checked whenever
+        the proof is consumed.
+        """
+        from .installer_release import VerifiedInstallerReleaseReceipt
+
+        if not isinstance(release_receipt, VerifiedInstallerReleaseReceipt):
+            raise AuthorityDenied("controller.module", "verified installed-release receipt is required")
+        try:
+            release_receipt.verify_current()
+            members = [item for item in release_receipt.files
+                       if item.artifact_id == artifact_id]
+            if (len(members) != 1 or members[0].roles != ("module",)
+                    or members[0].sha256 != expected_sha256
+                    or not 0 < members[0].size_bytes <= 1_048_576):
+                raise AuthorityDenied("controller.module", "role artifact is outside the installed module closure")
+            fd = release_receipt.open_file(artifact_id)
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                        or stat.S_IMODE(info.st_mode) & 0o222
+                        or info.st_size != members[0].size_bytes):
+                    raise AuthorityDenied("controller.module", "role module FD custody is invalid")
+                chunks: list[bytes] = []
+                remaining = 1_048_577
+                while remaining:
+                    chunk = os.read(fd, min(65536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                source_bytes = b"".join(chunks)
+            finally:
+                os.close(fd)
+            if (not source_bytes or len(source_bytes) != members[0].size_bytes
+                    or hashlib.sha256(source_bytes).hexdigest() != expected_sha256):
+                raise AuthorityDenied("controller.module", "role module bytes differ from installed release pin")
+            release_receipt.verify_current()
+            proof = self.load_verified(
+                module_name=module_name, artifact_id=artifact_id,
+                expected_sha256=expected_sha256, source_bytes=source_bytes,
+                service_generation_digest=service_generation_digest,
+                controller_generation=controller_generation,
+            )
+            self._release_receipts[proof.proof_handle] = release_receipt
+            release_receipt.verify_current()
+            return proof
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("controller.module", "role module could not be loaded from current installed release") from None
+
     def require_loaded(self, artifact_id: str, module_sha256: str, *, pid: int,
                        start_time_ticks: int, service_generation_digest: str,
                        controller_generation: str) -> LoadedRootControllerRoleProof:
@@ -479,6 +540,7 @@ class RootControllerRoleModuleRegistry:
                   if proof.service_generation_digest == service_generation_digest]
         for key in doomed:
             proof = self._proofs.pop(key)
+            self._release_receipts.pop(key, None)
             if sys.modules.get(proof.module.__name__) is proof.module:
                 del sys.modules[proof.module.__name__]
         return len(doomed)
@@ -494,7 +556,12 @@ class RootControllerRoleModuleRegistry:
             return False
         try:
             actual_start = self._start_time_resolver(self._pid())
+            release = self._release_receipts.get(proof.proof_handle)
+            if release is not None:
+                release.verify_current()
         except (OSError, ValueError, IndexError):
+            return False
+        except Exception:
             return False
         return (
             proof.module_artifact_id == module_artifact_id
