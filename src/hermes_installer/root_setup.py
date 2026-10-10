@@ -378,6 +378,15 @@ def _import_v180_native_support_closure() -> None:
          resource_backends, pm_runtime)
 
 
+def _import_v187_listener_activation_closure() -> None:
+    """Load the finite installed daemon/adoption modules before actor capture."""
+    from .authority import daemon, listener_activation, native_worker_endpoint_custody
+
+    # The worker and supervisor use the same pinned endpoint implementation;
+    # keep these imports explicit so the installed actor sees the full closure.
+    _ = (daemon, listener_activation, native_worker_endpoint_custody)
+
+
 def run_root_setup_action(
     action: RootSetupAction | str,
     *,
@@ -694,9 +703,29 @@ def run_root_setup_action(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "authority-daemon-adopt":
+        if (len(arguments) != 3 or arguments[1] != "--activation-id"
+                or not re.fullmatch(r"[0-9a-f]{32}", arguments[2])):
+            print("Use exactly: authority-daemon-adopt --activation-id <32 lowercase hexadecimal characters>.",
+                  file=sys.stderr)
+            return 1
+        try:
+            _require_root_linux()
+        except RuntimeError:
+            print("Authority daemon adoption requires the installed Linux root actor.", file=sys.stderr)
+            return 4
+        try:
+            _import_v187_listener_activation_closure()
+            from .authority.daemon import main_adopt
+
+            return main_adopt(arguments[2])
+        except Exception as exc:
+            # Never forward daemon/runtime exception details into a unit log.
+            print(f"Authority daemon adoption failed ({type(exc).__name__}).", file=sys.stderr)
+            return 1
     parser.add_argument("action", choices=tuple(item.value for item in RootSetupAction))
     parser.add_argument("--suite", choices=tuple(item.value for item in RootInstalledQualificationSuite))
-    arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
     if args.action == RootSetupAction.QUALIFY.value:
         if (args.suite is None or len(arguments) != 3
