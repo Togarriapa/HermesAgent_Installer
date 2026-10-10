@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_read_only_sudo_diagnostic",
+  "state": "report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "target": {
+    "connect_device_id": "48dfbc75-8877-40bb-b391-9b08301911ad",
+    "target_name": "PI-HERMES",
+    "owner": "admin",
+    "uid": 1000,
+    "gid": 1000,
+    "architecture": "aarch64",
+    "model": "Raspberry Pi 5 Model B Rev 1.1"
+  },
+  "stage": {
+    "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010",
+    "owner": "admin",
+    "mode": "0700"
+  },
+  "observations": [
+    {
+      "purpose": "verify noninteractive sudo authorization after user enablement",
+      "command_summary": "timeout 5s sudo -n /usr/bin/true",
+      "started_at": "2026-10-10T08:50:36Z",
+      "ended_at": "2026-10-10T08:50:36Z",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "effect_limit": "Only /usr/bin/true was executed through sudo; no installer or service mutation occurred."
+    },
+    {
+      "purpose": "read-only identity, selected existing service, and listening-socket inventory",
+      "command_summary": "sudo -n id; read-only systemctl show for cloudflared-hermes.service and hermes-pi-testd.service; ss -ltnp",
+      "started_at": "2026-10-10T08:51:02Z",
+      "ended_at": "2026-10-10T08:51:02Z",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout": {
+        "bytes": 1413,
+        "sha256": "a0e1342f2c074537cf56752b971947471bdd4e77501e6fd73688fdf2a9b03f3a"
+      },
+      "stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_identity": "uid=0",
+      "existing_services": [
+        {"unit": "cloudflared-hermes.service", "loaded": true, "active_state": "inactive", "sub_state": "dead", "modified": false},
+        {"unit": "hermes-pi-testd.service", "loaded": true, "active_state": "inactive", "sub_state": "dead", "modified": false}
+      ],
+      "listeners": [
+        {"port": 111, "process": "rpcbind/systemd"},
+        {"port": 22, "process": "sshd"},
+        {"address": "127.0.0.1", "port": 9119, "process": "socat", "pid": 1285923},
+        {"port": 42537, "process": "containerd", "pid": 963},
+        {"port": 8000, "process": "docker-proxy", "pid": 1973057}
+      ],
+      "effect_limit": "Inventory only. Foreign services and processes were preserved; no service, listener, account, or installation changes occurred."
+    }
+  ],
+  "retention": {
+    "output_file_paths_returned": false,
+    "raw_outputs_copied": false
+  },
+  "supersedes": {
+    "prior_observation": "The 2026-10-10T07:17:38Z sudo -n result was exit 1 and password-required before user enablement.",
+    "scope": "Supersedes only the earlier conclusion about current sudo availability; it does not alter earlier command outcomes or acceptance state."
+  },
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "not_observed": [
+    "privileged installer execution or deployment",
+    "service activation, adoption, or mutation",
+    "resolution of listener-port conflicts",
+    "Cloudflare or other account mutation",
+    "native profile/plugin operation",
+    "authenticated enrolled-target Result"
+  ],
+  "claim_limit": "These bounded read-only commands show sudo availability and current service/listener observations only. All AC01-AC18 remain open."
+}
