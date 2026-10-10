@@ -5591,7 +5591,7 @@ class _RootApplicationBuildInputs:
     argv_recipe: tuple[Any, ...]
     environment: Mapping[str, str]
     output_specs: Mapping[str, Any]
-    output_root: None
+    output_root: Path
     output_root_id: str
     output_owner_uid: int
     output_owner_gid: int
@@ -5981,7 +5981,12 @@ class ManagedBuildJobRunner:
                 builder_artifact_id=profile.builder_artifact_id,
                 builder_sha256=profile.builder_sha256, builder_executable=builder_file,
                 argv_recipe=profile.argv_recipe, environment=profile.environment,
-                output_specs=profile.output_specs, output_root=None,
+                # The shared transient-unit core needs a mount source string;
+                # it is anchored to this still-open descriptor, never a
+                # selection or caller path. The core separately validates
+                # output_root_fd identity and contents before and after run.
+                output_specs=profile.output_specs,
+                output_root=Path(f"/proc/self/fd/{output_fd}"),
                 output_root_id=inputs.output_root_id, output_owner_uid=inputs.output_owner_uid,
                 output_owner_gid=inputs.output_owner_gid,
                 max_lifetime_seconds=profile.max_lifetime_seconds, output_root_fd=output_fd)
