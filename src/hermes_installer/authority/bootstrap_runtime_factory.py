@@ -4049,9 +4049,6 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("existing model selection requires the current empty prepared generation")
         if not isinstance(private_profile_selection_handle, str) or not private_profile_selection_handle:
             raise BootstrapEnrollmentPending("existing model selection requires a root-issued private-profile handle")
-        authority_service = self._factory._authority_service
-        if authority_service is None:
-            raise BootstrapEnrollmentPending("root model-store observation awaits the same-graph AuthorityService binding")
         profile = self.resolve_current_private_profile(
             private_profile_selection_handle, "existing-model-selection")
         if (profile.profile_id != "hermes-agent-native-v1"
@@ -4064,7 +4061,9 @@ class RootBootstrapSession:
         if self._model_store_filesystem_registry is None:
             self._model_store_filesystem_registry = RootOwnedFilesystemSelectionRegistry.from_root_setup(
                 self._selected_installation, self._root_private_profile_registry(),
-                self._selected_installation, self._current_root_journal_selection(), authority_service)
+                self._selected_installation, self._current_root_journal_selection(),
+                self._selected_installation.resolve_setup_choice_registry(),
+                self._selected_installation.resolve_current_setup_choice_signer())
         root_selection = self._model_store_filesystem_registry.observe_existing_model_store(
             private_profile_selection_handle)
         try:
