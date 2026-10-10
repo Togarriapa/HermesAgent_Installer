@@ -3270,7 +3270,36 @@ class RootBootstrapRuntimeFactory:
         if self._initial_compilation_registry is None:
             raise BootstrapEnrollmentPending("fresh setup has no retained stage-zero publication registry")
         handle = self.session_store.begin_from_initial_publication(handoff_handle)
-        return self._wrap_live_session(handle)
+        try:
+            session = self._wrap_live_session(handle)
+            if (self._initial_principal_registry is None
+                    or self._initial_identity_observer is None
+                    or self._initial_identity_intake is None):
+                raise BootstrapEnrollmentPending(
+                    "published setup lacks retained principal and identity adoption dependencies")
+            normal_observer, identity_receipt_handle = self._initial_identity_intake.rebind_published_policy(
+                normal_session_store=self.session_store,
+                normal_session_handle=handle,
+                initial_principal_registry=self._initial_principal_registry,
+                initial_identity_observer=self._initial_identity_observer,
+            )
+            normal_principal_registry, principal_selection_handle = (
+                self._initial_principal_registry.adopt_initial_publication(
+                    normal_session_store=self.session_store,
+                    normal_session_handle=handle,
+                    authenticated_identity_receipt_handle=identity_receipt_handle,
+                    normal_identity_resolver=normal_observer,
+                )
+            )
+            session._adopted_identity_observer = normal_observer
+            session._adopted_identity_receipt_handle = identity_receipt_handle
+            session._adopted_principal_registry = normal_principal_registry
+            session._adopted_principal_selection_handle = principal_selection_handle
+            return session
+        except Exception:
+            self.session_store.close_session(handle)
+            self._sessions.pop(handle.session_id, None)
+            raise
 
     def _wrap_live_session(self, handle: RootSetupSessionHandle) -> "RootBootstrapSession":
         try:
@@ -3384,6 +3413,10 @@ class RootBootstrapSession:
         self._closed = False
         self._source_receipt_handle: str | None = None
         self._source_handoff: Any | None = None
+        self._adopted_identity_observer: Any | None = None
+        self._adopted_identity_receipt_handle: str | None = None
+        self._adopted_principal_registry: Any | None = None
+        self._adopted_principal_selection_handle: str | None = None
         self._native_output_receipts: Any | None = None
         self._pm_runtime_registry: Any | None = None
         self._pm_runtime_handle: str | None = None
@@ -3423,6 +3456,26 @@ class RootBootstrapSession:
         if self._last_receipt is None or self._last_receipt.state != "prepared":
             raise BootstrapEnrollmentPending("selected installation binding requires committed prepared custody")
         return self._selected_installation
+
+    def resolve_adopted_principal_selection(self) -> Any:
+        """Return the freshly re-observed principal bound to this normal session."""
+        self._check_live()
+        registry = self._adopted_principal_registry
+        resolver = getattr(registry, "resolve_adopted_initial_principal", None)
+        if not callable(resolver):
+            raise BootstrapEnrollmentPending(
+                "normal root setup session has no freshly adopted principal selection")
+        return resolver(self._factory.session_store, self._handle)
+
+    def resolve_adopted_namespace_selection(self) -> Any:
+        """Resolve the distinct namespace receipt for the adopted normal principal."""
+        self._check_live()
+        registry = self._adopted_principal_registry
+        resolver = getattr(registry, "resolve_adopted_namespace_selection", None)
+        if not callable(resolver):
+            raise BootstrapEnrollmentPending(
+                "normal root setup session has no adopted namespace resolver")
+        return resolver(self._factory.session_store, self._handle)
 
     def provision(self) -> EnrollmentReceipt:
         self._check_live()
