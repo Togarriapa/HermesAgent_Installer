@@ -29,7 +29,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 

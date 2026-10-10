@@ -395,6 +395,12 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
     """
     if type(expected_uid) is not int or expected_uid != 0:
         raise RuntimeArchiveError("runtime extraction requires enrolled root identity")
+    # Inspect the complete archive before checking or extracting any member.
+    initial_pos = stream.tell()
+    verified = inspect_runtime_archive(stream, expected_application_id=expected_application_id,
+                                       expected_runtime_kind=expected_runtime_kind,
+                                       expected_entrypoint=expected_entrypoint)
+    stream.seek(initial_pos)
     if expected_runtime_kind == "python":
         if held_interpreter is None:
             raise RuntimeArchiveError("Python runtime extraction lacks a selected held interpreter")
@@ -416,11 +422,6 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
     # First pass validates the full archive and manifest before any destination
     # path is created. The archive file is read again only from the same held
     # descriptor supplied by root.
-    initial_pos = stream.tell()
-    verified = inspect_runtime_archive(stream, expected_application_id=expected_application_id,
-                                       expected_runtime_kind=expected_runtime_kind,
-                                       expected_entrypoint=expected_entrypoint)
-    stream.seek(initial_pos)
     if destination.exists() or destination.is_symlink():
         raise RuntimeArchiveError("runtime extraction destination must be a new path")
     destination.mkdir(mode=0o700, parents=False)
