@@ -506,3 +506,10 @@ The system SHALL use the v114 literal catalog-compatible schema/artifact IDs for
 #### Scenario: Earlier impossible identity
 - **WHEN** a source row contains the superseded colon artifact ID
 - **THEN** selection fails until the corrected exact source map is used.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
