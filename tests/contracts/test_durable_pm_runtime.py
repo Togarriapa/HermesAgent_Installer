@@ -129,14 +129,26 @@ def test_fresh_current_published_row_holds_and_duplicates_actual_runtime_fds(
     assert proof.pm_runtime_receipt_handle == row.runtime_receipt_handle
     executable_fd = resolver.duplicate_executable_fd(proof, row)
     member_fd = resolver.duplicate_runtime_member_fd(proof, row, "home/bin/python")
+    owned_fd = resolver.duplicate_runtime_member_fd(proof, row, "home/bin/python")
+    owned_fd = resolver.duplicate_runtime_member_fd(proof, row, "home/bin/python")
     assert os.fstat(executable_fd).st_ino == proof.executable_inode
     assert os.fstat(member_fd).st_ino == proof.executable_inode
     assert resolver.verify_current(proof, row)
+    transferred_fd = resolver.release_duplicate_fd(proof, row, executable_fd)
+    reused_fd = member_fd
+    os.close(member_fd)
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"preserve this descriptor")
+    unrelated_fd = os.open(unrelated, os.O_RDONLY)
+    assert unrelated_fd == reused_fd
     proof.close()
+    assert os.read(unrelated_fd, 9) == b"preserve "
+    os.close(unrelated_fd)
+    os.close(transferred_fd)
     with pytest.raises(OSError):
-        os.fstat(executable_fd)
+        os.fstat(owned_fd)
     with pytest.raises(OSError):
-        os.fstat(member_fd)
+        os.fstat(owned_fd)
 
 
 def test_expired_setup_is_not_needed_and_restart_mints_a_new_process_proof(

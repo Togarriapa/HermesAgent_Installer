@@ -95,7 +95,7 @@ class RootPublishedProfileHomePMRuntimeResolver:
         self._journal_catalog = root_journal_catalog
         self._issuer = object()
         self._issued: dict[str, RootVerifiedPublishedProfileHomePMRuntime] = {}
-        self._duplicates: dict[str, set[int]] = {}
+        self._duplicates: dict[str, dict[int, tuple[int, int]]] = {}
         self._lock = threading.RLock()
         self._closed = False
 
@@ -169,7 +169,7 @@ class RootPublishedProfileHomePMRuntimeResolver:
                 if self._closed:
                     raise ValueError("published PM runtime resolver is closed")
                 self._issued[proof.proof_handle] = proof
-                self._duplicates[proof.proof_handle] = set()
+                self._duplicates[proof.proof_handle] = {}
             return proof
         except PublishedPMRuntimeUnavailable:
             if identity is not None:
@@ -234,6 +234,7 @@ class RootPublishedProfileHomePMRuntimeResolver:
 
     def duplicate_executable_fd(self, proof: RootVerifiedPublishedProfileHomePMRuntime,
                                 row: RootPublishedNativeProfileHomeRow) -> int:
+        """Return a proof-owned FD; call release_duplicate_fd before closing it."""
         self.verify_current(proof, row)
         for fd in proof.identity.member_fds:
             try:
@@ -255,6 +256,7 @@ class RootPublishedProfileHomePMRuntimeResolver:
     def duplicate_runtime_member_fd(self, proof: RootVerifiedPublishedProfileHomePMRuntime,
                                    row: RootPublishedNativeProfileHomeRow,
                                    member_id: str) -> int:
+        """Return a proof-owned FD; call release_duplicate_fd before closing it."""
         self.verify_current(proof, row)
         matches = [fd for path, fd in proof.identity.runtime_member_fds if path == member_id]
         if len(matches) != 1:
@@ -273,20 +275,45 @@ class RootPublishedProfileHomePMRuntimeResolver:
         except Exception:
             raise PublishedPMRuntimeUnavailable("held PM runtime member is unavailable") from None
 
+    def release_duplicate_fd(self, proof: RootVerifiedPublishedProfileHomePMRuntime,
+                             row: RootPublishedNativeProfileHomeRow,
+                             descriptor: int) -> int:
+        """Transfer one still-open duplicate to the caller for caller-managed close.
+
+        Until transfer, callers must not close or replace the descriptor. The
+        device/inode check also prevents a stale tracked descriptor number from
+        being closed if a caller already violated that ownership rule.
+        """
+        self.verify_current(proof, row)
+        if type(descriptor) is not int or descriptor < 0:
+            raise PublishedPMRuntimeUnavailable("PM duplicate descriptor is malformed")
+        with self._lock:
+            owned = self._duplicates.get(proof.proof_handle, {})
+            expected = owned.get(descriptor)
+            if expected is None:
+                raise PublishedPMRuntimeUnavailable("PM duplicate descriptor is not owned by this proof")
+            try:
+                info = os.fstat(descriptor)
+            except OSError:
+                owned.pop(descriptor, None)
+                raise PublishedPMRuntimeUnavailable("PM duplicate descriptor was already closed") from None
+            if (info.st_dev, info.st_ino) != expected:
+                owned.pop(descriptor, None)
+                raise PublishedPMRuntimeUnavailable("PM duplicate descriptor number was reused")
+            owned.pop(descriptor)
+        return descriptor
+
     def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             proofs = tuple(self._issued.values())
-            duplicates = tuple(fd for owned in self._duplicates.values() for fd in owned)
+            duplicates = tuple((fd, identity) for owned in self._duplicates.values()
+                               for fd, identity in owned.items())
             self._issued.clear()
             self._duplicates.clear()
-        for fd in duplicates:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        self._close_owned_duplicates(duplicates)
         for proof in proofs:
             proof.identity.close()
 
@@ -336,14 +363,10 @@ class RootPublishedProfileHomePMRuntimeResolver:
         with self._lock:
             if self._issued.get(proof.proof_handle) is proof:
                 self._issued.pop(proof.proof_handle, None)
-                duplicates = self._duplicates.pop(proof.proof_handle, set())
+                duplicates = self._duplicates.pop(proof.proof_handle, {})
             else:
-                duplicates = set()
-        for fd in duplicates:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+                duplicates = {}
+        self._close_owned_duplicates(tuple(duplicates.items()))
         proof.identity.close()
 
     def _track_duplicate(self, proof: RootVerifiedPublishedProfileHomePMRuntime,
@@ -352,7 +375,18 @@ class RootPublishedProfileHomePMRuntimeResolver:
             if self._issued.get(proof.proof_handle) is not proof:
                 os.close(fd)
                 raise PublishedPMRuntimeUnavailable("published PM proof was released during descriptor duplication")
-            self._duplicates[proof.proof_handle].add(fd)
+            info = os.fstat(fd)
+            self._duplicates[proof.proof_handle][fd] = (info.st_dev, info.st_ino)
+
+    @staticmethod
+    def _close_owned_duplicates(duplicates: tuple[tuple[int, tuple[int, int]], ...]) -> None:
+        for fd, expected_identity in duplicates:
+            try:
+                current = os.fstat(fd)
+                if (current.st_dev, current.st_ino) == expected_identity:
+                    os.close(fd)
+            except OSError:
+                pass
 
 
 _RESOLVER_SEAL = object()
