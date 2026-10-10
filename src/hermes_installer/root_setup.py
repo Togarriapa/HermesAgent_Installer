@@ -539,16 +539,17 @@ def run_root_setup_action(
                 receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
             )
 
-        # Producing selected package bytes is still not an active installation.
-        # Do not publish a new active pointer until the installed-session
-        # factory can continue through selected service startup and the live
-        # health observer in a resumable transaction.
+        # These five package outputs are not the separate allowlisted runtime
+        # role receipts required by RootBootstrapSession.activate_runnable.
+        # Keep the prepared generation selected until the factory has a
+        # reviewed closure-to-runtime receipt producer; do not equate receipt
+        # IDs or hashes across the two registries.
         references = [_report_ref(receipt.provision_receipt_handle),
                       _report_ref(bundle.materialization_receipt_handle)]
         references.extend(_report_ref(item.receipt_id) for item in output_receipts)
         return _result(
             selected_action, RootSetupState.PENDING, "publication",
-            "Pinned source, PM runtime, selected Resources, native materialization, and package outputs are retained; active publication and selected-run health are not yet connected.",
+            "Pinned source, PM runtime, selected Resources, native materialization, and package outputs are retained; strict active enrollment is pending its separate allowlisted runtime-role receipts.",
             resume_allowed=True,
             session_id=session._handle.session_id,
             transaction_ref=_report_ref(receipt.transaction_handle),
