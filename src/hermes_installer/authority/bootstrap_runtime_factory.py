@@ -1473,22 +1473,20 @@ class RootRunnableRoleProjectionRegistry:
                 or not isinstance(pm_runtime_receipt_handle, str)
                 or not isinstance(native_output_claim_handle, str)):
             raise BootstrapEnrollmentPending("runnable role projection requires the exact current empty prepared generation")
-        claim = self.compiler.resolve_current_active_policy_claim(native_output_claim_handle)
-        if (claim._root_setup_session is not session
-                or claim.setup_session_id != session._handle.session_id
-                or claim.transaction_handle != session._authorization.transaction_handle
-                or claim.plan_sha256 != session._authorization.plan_digest
-                or claim.prepared_generation_id != prepared.generation_id
-                or claim.expected_service_generation_digest != prepared.generation_digest
-                or claim.runtime_receipt_handles != (pm_runtime_receipt_handle,)):
-            raise BootstrapEnrollmentPending("active compiler claim does not bind this setup and PM selection")
+        reservation = self.output_registry.resolve_current_precompile_reservation(
+            native_output_claim_handle)
+        if (reservation.setup_session_id != session._handle.session_id
+                or reservation.transaction_handle != session._authorization.transaction_handle
+                or reservation.plan_digest != session._authorization.plan_digest
+                or reservation.prepared_generation_id != prepared.generation_id):
+            raise BootstrapEnrollmentPending("native precompile reservation does not bind this setup session")
         pm = self.pm_registry.resolve_runtime(
-            pm_runtime_receipt_handle, claim.transaction_handle, claim.prepared_generation_id)
-        if (pm.setup_session_id != claim.setup_session_id
-                or pm.transaction_handle != claim.transaction_handle
-                or pm.prepared_generation_id != claim.prepared_generation_id
+            pm_runtime_receipt_handle, reservation.transaction_handle, reservation.prepared_generation_id)
+        if (pm.setup_session_id != reservation.setup_session_id
+                or pm.transaction_handle != reservation.transaction_handle
+                or pm.prepared_generation_id != reservation.prepared_generation_id
                 or pm.source_artifact_id != session._policy.source_artifact_id):
-            raise BootstrapEnrollmentPending("observed PM runtime differs from the current active claim")
+            raise BootstrapEnrollmentPending("observed PM runtime differs from the current precompile reservation")
         try:
             pm_size = pm.python_path.stat().st_size
         except OSError:
@@ -1497,9 +1495,13 @@ class RootRunnableRoleProjectionRegistry:
             "official-pm-runtime", "pm-runtime", pm_runtime_receipt_handle,
             pm.source_artifact_id, pm.runtime_sha256, pm_size, "pm-runtime", (),
         )]
-        native = self.output_registry.verify_active_compilation(
-            claim._reservation_handle, prepared_generation_id=claim.prepared_generation_id,
-            publication_handle=claim.publication_handle, claim_digest=claim.claim_digest)
+        native = tuple(self.output_registry._receipt_from_id(receipt_id)
+                       for receipt_id in reservation.receipt_ids)
+        if (len(native) != 5
+                or any(item.state != "reserved" for item in native)
+                or self.output_registry.resolve_current_precompile_reservation(
+                    reservation.reservation_handle) != reservation):
+            raise BootstrapEnrollmentPending("native reserved output receipts changed during role projection")
         by_role = {item.artifact_role: item for item in native}
         if set(by_role) != set(_RUNNABLE_OUTPUT_ROLE_MAP):
             raise BootstrapEnrollmentPending("reserved native output closure lacks the exact five runnable roles")
@@ -1538,7 +1540,7 @@ class RootRunnableRoleProjectionRegistry:
             native_output_claim_handle=native_output_claim_handle,
             role_rows=tuple(rows), role_closure_sha256=digest,
             issued_monotonic=now,
-            expires_monotonic=min(claim.expires_monotonic, pm.expires_monotonic,
+            expires_monotonic=min(reservation.expires_monotonic, pm.expires_monotonic,
                                   *(item.expires_monotonic for item in native)),
             _registry_seal=self._seal,
         )
