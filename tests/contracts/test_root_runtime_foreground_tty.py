@@ -58,3 +58,15 @@ def test_revocation_runtime_requires_installed_root_composition():
             verified_installer_release=object(),
             current_installed_actor_verifier=object(),
             active_bindings=object(), root_journal=object())
+
+
+def test_observer_attachment_is_exact_registry_and_binding_identity():
+    observer = object.__new__(RootRuntimeForegroundTTYObserver)
+    registry = object()
+    bindings = object()
+    observer._registry = registry
+    observer._bindings = bindings
+
+    assert observer.is_bound_to(registry, bindings)
+    assert not observer.is_bound_to(object(), bindings)
+    assert not observer.is_bound_to(registry, object())
