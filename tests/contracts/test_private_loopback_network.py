@@ -183,6 +183,26 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             registry.verify_resolved_tool(fake)
 
+    def test_host_tool_accepts_exact_registry_handle_format(self):
+        from hermes_installer.authority.host_tool_observation import HostToolObservationRegistry
+        import time
+
+        registry = object.__new__(HostToolObservationRegistry)
+        common = {
+            "variant_id": "nftables-1", "package_name": "nftables", "version": "1.0",
+            "distribution": "ubuntu", "release": "noble", "architecture": "amd64",
+            "package_sha256": "a" * 64, "executable_artifact_id": "nft-executable:test",
+            "executable_sha256": "b" * 64, "dependency_closure_sha256": "c" * 64,
+            "package_set_receipt_handle": "d" * 32, "expires_monotonic": time.monotonic() + 30,
+            "path": Path("/usr/sbin/nft"), "executable_fd": 0, "device": 1, "inode": 2,
+            "observation_registry": registry, "observation_handle": "host-nft-observation:" + "e" * 48,
+            "selected_network_key": ("network", "generation", "f" * 64),
+        }
+        tool = RootResolvedHostTool(**common)
+        self.assertEqual(tool.observation_handle, "host-nft-observation:" + "e" * 48)
+        with self.assertRaises(ValueError):
+            RootResolvedHostTool(**{**common, "observation_handle": "e" * 64})
+
     def test_namespace_and_renewal_reject_unregistered_nft_before_effect(self):
         network, = validate_private_loopback_networks([self.row], self.services, self.digest)
         forged = object.__new__(RootResolvedHostTool)
