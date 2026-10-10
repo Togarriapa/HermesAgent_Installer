@@ -335,11 +335,11 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
     def test_owner_overlay_result_handler_receipt_is_finite_and_root_imported(self):
         artifact_id = "installer-module:hermes_installer.authority.local_resource_effects"
         relative_path = "lib/python/hermes_installer/authority/local_resource_effects.py"
-        digest = "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6"
+        digest = "1d1f72655ed335ae486c76df80f97ffd997b07440a2b9417563c2918d874be9d"
         source_artifact_id = "installer-reviewed-source-local-resource-effects-v180"
         row = SimpleNamespace(
             artifact_id=artifact_id, relative_path=relative_path, sha256=digest,
-            size_bytes=47_854, roles=("module",), mode=0o444)
+            size_bytes=142_474, roles=("module",), mode=0o444)
         release = SimpleNamespace(
             files=(row,), release_root=Path("/release"), release_commit="commit",
             deployment_receipt_sha256="d" * 64)
@@ -364,7 +364,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         receipt = session._resolve_prepared_owner_overlay_result_handler_module_receipt()
         self.assertIs(type(receipt), RootReleaseModuleReceipt)
         self.assertEqual((receipt.artifact_id, receipt.relative_path, receipt.sha256, receipt.size_bytes),
-                         (artifact_id, relative_path, digest, 47_854))
+                         (artifact_id, relative_path, digest, 142_474))
         self.assertEqual(receipt.read_current(), b"held verified module bytes")
         self.assertIs(receipt, session._resolve_prepared_owner_overlay_result_handler_module_receipt())
 
