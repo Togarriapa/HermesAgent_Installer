@@ -16,6 +16,7 @@ import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from .types import AuthorityDenied
@@ -231,9 +232,12 @@ class RootActiveNativeWorkerRuntimeRegistry:
             base = pm_root / receipt["generation"]
             executable = base / receipt["runtime_relative"]
             runtime_root = executable.parent.parent
-            from .pm_runtime import _observe_runtime, _match_receipt
+            from .pm_runtime import (
+                _observe_runtime, _match_receipt,
+            )
             identity = _observe_runtime(executable, expected_uid=0, expected_root=base)
             _match_receipt(receipt, executable, identity, runtime_root)
+            self._match_committed_venv_identity(row, receipt, raw, identity, base, fds)
             base_tree = bindings.artifact_catalog.materialize_tree(
                 PYTHON_ID, PYTHON_SHA256, self.runtime.enrollment.artifact_staging_directory,
                 expected_uid=0,
@@ -293,6 +297,62 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     os.close(root)
                 except OSError:
                     pass
+
+    @staticmethod
+    def _match_committed_venv_identity(row: Any, receipt: Any, raw_receipt: bytes,
+                                       identity: Any, base: Path, held_fds: list[int]) -> None:
+        """Recheck the v189 identity against receipt bytes and held full venv."""
+        from .pm_runtime import observe_committed_pm_venv_tree
+
+        descriptor = row.get("committed_venv_identity") if isinstance(row, Mapping) else None
+        fields = {
+            "schema", "identity_kind", "pm_runtime_receipt_handle", "pm_receipt_sha256",
+            "pm_generation", "source_commit", "runtime_relative", "runtime_venv_relative",
+            "runtime_closure_sha256", "executable_identity_id", "executable_sha256",
+            "executable_device", "executable_inode", "executable_uid", "executable_gid",
+            "executable_mode",
+        }
+        expected = {
+            "schema": 1,
+            "identity_kind": "pm-committed-hermes-venv-v1",
+            "pm_runtime_receipt_handle": receipt.get("handle"),
+            "pm_receipt_sha256": hashlib.sha256(raw_receipt).hexdigest(),
+            "pm_generation": receipt.get("generation"),
+            "source_commit": receipt.get("source_commit"),
+            "runtime_relative": receipt.get("runtime_relative"),
+            "runtime_venv_relative": receipt.get("runtime_venv_relative"),
+            "runtime_closure_sha256": receipt.get("runtime_closure_sha256"),
+            "executable_identity_id": "observed:pm-committed-venv-python",
+            "executable_sha256": identity.get("sha256"),
+            "executable_device": identity.get("device"),
+            "executable_inode": identity.get("inode"),
+            "executable_uid": identity.get("uid"),
+            "executable_gid": identity.get("gid"),
+            "executable_mode": identity.get("mode"),
+        }
+        if not isinstance(descriptor, Mapping) or set(descriptor) != fields or dict(descriptor) != expected:
+            raise ValueError("committed PM executable descriptor differs from current signed receipt")
+        relative = receipt.get("runtime_venv_relative")
+        if not isinstance(relative, str) or not relative or relative.startswith("/"):
+            raise ValueError("committed PM venv path is malformed")
+        venv_root = base / relative
+        observation = observe_committed_pm_venv_tree(
+            venv_root, expected_closure_sha256=receipt["runtime_closure_sha256"],
+        )
+        held_fds.append(observation.root_fd)
+        held_fds.extend(item.fd for item in observation.members if item.fd is not None)
+        resolved = (base / receipt["runtime_relative"]).resolve(strict=True)
+        try:
+            executable_relative = resolved.relative_to(venv_root.resolve(strict=True)).as_posix()
+        except ValueError:
+            raise ValueError("committed PM executable resolves outside its venv") from None
+        member = next((item for item in observation.members
+                       if item.relative_path == executable_relative and item.kind == "file"), None)
+        if (member is None or (member.device, member.inode, member.uid, member.gid,
+                               member.mode, member.sha256)
+                != (identity["device"], identity["inode"], identity["uid"], identity["gid"],
+                    identity["mode"], identity["sha256"])):
+            raise ValueError("committed PM executable is absent from held venv member closure")
 
     def _open_native_output_members(self, row: Any) -> tuple[list[int], tuple[int, int]]:
         """Reopen generated members from the root-private active materialization."""
