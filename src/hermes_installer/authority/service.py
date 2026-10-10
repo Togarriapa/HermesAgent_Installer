@@ -1668,8 +1668,7 @@ class AuthorityService:
         self.selected_application_router = router
 
     def dispatch_selected_application(
-        self, invocation_context_handle: str, application_id: str,
-        canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
+        self, invocation_context_handle: str, canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
         peer_pidfd: int | None, cancelled: Callable[[], bool],
     ) -> Any:
         """Dispatch one invocation through the attached typed root router.
@@ -1683,18 +1682,16 @@ class AuthorityService:
         router = self.selected_application_router
         if (router is None or not isinstance(invocation_context_handle, str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_context_handle)
-                or not isinstance(application_id, str) or not application_id
-                or len(application_id) > 256
                 or not isinstance(canonical_arguments, bytes)
-                or not 1 <= len(canonical_arguments) <= 1_048_576
+                or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024
                 or type(peer_uid) is not int or peer_uid <= 0
                 or type(peer_pid) is not int or peer_pid <= 0
                 or type(peer_pidfd) is not int or peer_pidfd < 0
                 or not callable(cancelled) or cancelled()):
             raise AuthorityDenied("application.dispatch", "selected application invocation is unavailable")
         try:
-            receipt = router.dispatch(
-                invocation_context_handle, application_id, canonical_arguments,
+            receipt = router.dispatch_workload(
+                invocation_context_handle, canonical_arguments,
                 peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                 cancelled=cancelled,
             )
@@ -1704,6 +1701,39 @@ class AuthorityService:
             raise AuthorityDenied("application.dispatch", "selected application invocation failed") from None
         if type(receipt) is not RootApplicationRunReceipt or cancelled():
             raise AuthorityDenied("application.dispatch", "application receipt is not root retained")
+        return receipt
+
+    def dispatch_application_qualification(
+        self, setup_session_handle: str, workflow_id: str, *, peer_uid: int, peer_pid: int,
+        peer_pidfd: int | None, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Dispatch the finite root-observed application qualification workflow."""
+        from .application_runtime import RootApplicationRunReceipt
+
+        workflows = {
+            "qualify-browser-use-v1", "qualify-graphify-v1",
+            "qualify-hyperframes-v1", "qualify-scrapegraph-v1",
+        }
+        router = self.selected_application_router
+        if (router is None or not isinstance(setup_session_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", setup_session_handle)
+                or workflow_id not in workflows
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("application.qualification", "application qualification is unavailable")
+        try:
+            receipt = router.dispatch_qualification(
+                setup_session_handle, workflow_id, peer_uid=peer_uid, peer_pid=peer_pid,
+                peer_pidfd=peer_pidfd, cancelled=cancelled,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.qualification", "application qualification failed") from None
+        if type(receipt) is not RootApplicationRunReceipt or cancelled():
+            raise AuthorityDenied("application.qualification", "qualification receipt is not root retained")
         return receipt
 
     def attach_native_input_delivery_registry(self, registry: Any) -> None:
