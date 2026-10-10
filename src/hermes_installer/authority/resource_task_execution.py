@@ -24,6 +24,7 @@ from hermes_installer.authority.resource_jobs import (
 )
 from hermes_installer.authority.service import AuthorityService
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.authority.source_observers import RootTaskNativeObservationRegistry
 from hermes_installer.managed_process_custodian import (
     ManagedTaskHandle,
     RootTaskTerminalReceipt,
@@ -38,6 +39,7 @@ from hermes_installer.registry.resource_jobs import (
     RootAdmittedTask,
     RootAdmittedTaskSource,
     RootResourceJobAdmissionHandle,
+    RootTaskNativeExecutionReceipt,
     RootTaskController,
 )
 
@@ -49,6 +51,7 @@ _HEX64 = __import__("re").compile(r"[0-9a-f]{64}\Z")
 class _TaskCapsule:
     receipt: RootResourceProcessReceipt
     process_receipt: RootTaskTerminalReceipt
+    native_execution_receipt: RootTaskNativeExecutionReceipt
     source: RootAdmittedTaskSource
     task: RootAdmittedTask
     validator: RootSelectedResultValidator
@@ -183,13 +186,15 @@ class RootResourceTaskRunner:
                  job_authority: ResourceJobAuthority,
                  profile_task_adapters: Mapping[tuple[str, str], ResourceProfileTaskAdapter],
                  protected_bindings: Any,
-                 result_validator: RootArtifactValidator):
+                 result_validator: RootArtifactValidator,
+                 native_observations: RootTaskNativeObservationRegistry):
         if (not isinstance(service, AuthorityService)
                 or not isinstance(job_authority, ResourceJobAuthority)
                 or job_authority.service is not service
                 or not isinstance(profile_task_adapters, Mapping)
                 or not profile_task_adapters
                 or not isinstance(result_validator, RootArtifactValidator)
+                or not isinstance(native_observations, RootTaskNativeObservationRegistry)
                 or getattr(protected_bindings, "process_manager", None) is not service.process_effect_handler):
             raise ValueError("root resource task runtime bindings are incomplete")
         self.service = service
@@ -197,6 +202,7 @@ class RootResourceTaskRunner:
         self.adapters = MappingProxyType(dict(profile_task_adapters))
         self.bindings = protected_bindings
         self.results = result_validator
+        self.native_observations = native_observations
         self.manager = service.process_effect_handler
         self._lock = threading.RLock()
         self._capsules: dict[str, _TaskCapsule] = {}
@@ -264,6 +270,13 @@ class RootResourceTaskRunner:
             )
             self._validate_terminal(admission, task, managed_handle, terminal,
                                     deadline_monotonic=task_deadline)
+            native_execution = self.native_observations.resolve_task_execution(
+                managed_handle, terminal.terminal_receipt_handle,
+            )
+            self._validate_native_execution(
+                task, managed_handle, terminal, native_execution,
+                deadline_monotonic=task_deadline,
+            )
             result_validator = self.results.resolve_selected_result(
                 admission.backend_enrollment_id, backend.result_schema_id,
                 expected_service_generation_digest=self.service.service_generation_digest,
@@ -287,7 +300,8 @@ class RootResourceTaskRunner:
                 result_capsule_handle=capsule_handle, expires_monotonic=expiry,
             )
             capsule = _TaskCapsule(
-                receipt=receipt, process_receipt=terminal, source=source, task=task,
+                receipt=receipt, process_receipt=terminal,
+                native_execution_receipt=native_execution, source=source, task=task,
                 validator=result_validator, result_fields=MappingProxyType(dict(fields)),
                 canonical_body=body, result_receipt_id=receipt_id,
                 service_generation_digest=self.service.service_generation_digest,
@@ -360,6 +374,51 @@ class RootResourceTaskRunner:
                        if now >= capsule.receipt.expires_monotonic]
             for key in expired:
                 self._capsules.pop(key, None)
+
+    def _validate_native_execution(
+        self,
+        task: RootAdmittedTask,
+        managed_handle: ManagedTaskHandle,
+        terminal: RootTaskTerminalReceipt,
+        native_receipt: Any,
+        *,
+        deadline_monotonic: float,
+    ) -> None:
+        """Require the separately issued, one-use live native event companion."""
+        if type(native_receipt) is not RootTaskNativeExecutionReceipt:
+            raise AuthorityDenied("resource.task_native", "root native execution companion is unavailable")
+        # Consume exact issuance before inspecting contents, so a malformed
+        # companion returned by the root registry cannot be replayed later.
+        if not self.native_observations.verify_receipt(native_receipt):
+            raise AuthorityDenied("resource.task_native", "native execution companion is forged or replayed")
+        ids = (native_receipt.native_request_event_ids,
+               native_receipt.native_result_event_ids,
+               native_receipt.required_tool_result_event_ids)
+        if (native_receipt.schema != 1
+                or native_receipt.task_handle != managed_handle.handle_id
+                or native_receipt.process_id != managed_handle.process_id
+                or native_receipt.process_generation != task.process_generation
+                or native_receipt.native_package_generation != task.native_package_generation
+                or native_receipt.loader_ready_event_id != terminal.native_loader_ready_event_id
+                or not native_receipt.initial_input_event_id
+                or native_receipt.parent_closure_digest != task.parent_closure_digest
+                or native_receipt.task_payload_sha256 != task.task_payload_sha256
+                or native_receipt.terminal_receipt_handle != terminal.terminal_receipt_handle
+                or terminal.native_execution_receipt_handle not in (None, native_receipt.native_execution_receipt_handle)
+                or any(not isinstance(items, tuple) for items in ids)
+                or not native_receipt.native_request_event_ids
+                or not native_receipt.native_result_event_ids
+                or len(native_receipt.native_request_event_ids) != len(native_receipt.native_result_event_ids)
+                or any(not items or any(not isinstance(item, str) or not item for item in items)
+                       for items in ids[:2])
+                or any(not isinstance(item, str) or not item for item in ids[2])
+                or len(set(native_receipt.native_request_event_ids)) != len(native_receipt.native_request_event_ids)
+                or len(set(native_receipt.native_result_event_ids)) != len(native_receipt.native_result_event_ids)
+                or len(set(native_receipt.required_tool_result_event_ids)) != len(native_receipt.required_tool_result_event_ids)
+                or not math.isfinite(native_receipt.observed_monotonic)
+                or terminal.observed_monotonic > native_receipt.observed_monotonic
+                or native_receipt.observed_monotonic > deadline_monotonic):
+            raise AuthorityDenied("resource.task_native", "native execution companion differs from the admitted terminal")
 
     @staticmethod
     def _validate_terminal(

@@ -23,6 +23,7 @@ from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
     NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeResponseMetadata,
     NativeToolCallBinding,
+    RootCompletedNativeTurnPresentation,
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
 from .process_controls import ProcessControlResponse
@@ -219,6 +220,60 @@ class AuthorityClient:
             raise AuthorityDenied("source.delivery", "root returned a mismatched source receipt handle")
         return receipt_handle
 
+    def take_selected_native_input(self, *,
+                                   cancelled: Callable[[], bool] | None = None
+                                   ) -> "NativeInitialInputDelivery | None":
+        """Take this live producer's one queued native input, without selectors.
+
+        The root identifies the current execution solely from SO_PEERCRED and
+        the authenticated peer PIDFD. ``None`` means that no input is queued
+        yet; callers may only retry under their bounded selected startup wait.
+        """
+        from .source_observers import NativeInitialInputDelivery
+
+        result = self._rpc("native.input.take", {"schema": 1}, timeout=min(30.0, self.timeout),
+                           cancelled=cancelled)
+        if (not isinstance(result, dict) or type(result.get("schema")) is not int
+                or result["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed input delivery")
+        if set(result) == {"schema", "state"} and result.get("state") == "pending":
+            return None
+        fields = {"schema", "source_receipt_handle", "selected_execution_handle",
+                  "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if set(result) not in (fields, fields | {"turn_handle"}):
+            raise AuthorityDenied("native.input.take", "authority returned unexpected input delivery fields")
+        turn_handle = result.get("turn_handle")
+        if turn_handle is not None and (not isinstance(turn_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle)):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed turn handle")
+        try:
+            delivery = NativeInitialInputDelivery(**result)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.input.take", "authority returned an invalid input delivery") from None
+        if not self.monotonic() < delivery.expires_monotonic <= self.monotonic() + 30.0:
+            raise AuthorityDenied("native.input.take", "authority returned an expired input delivery")
+        return delivery
+
+    def finish_selected_native_turn(
+        self, turn_handle: str, final_response_delivery_handle: str,
+    ) -> RootCompletedNativeTurnPresentation:
+        """Finish one peer-bound native turn and receive only its opaque receipt."""
+        for name, handle in (("turn", turn_handle),
+                             ("final response delivery", final_response_delivery_handle)):
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("native.turn.finish", f"{name} handle is malformed")
+        result = self._rpc("native.turn.finish", {
+            "schema": 1,
+            "turn_handle": turn_handle,
+            "final_response_delivery_handle": final_response_delivery_handle,
+        })
+        presentation = RootCompletedNativeTurnPresentation.from_wire(result)
+        if (presentation.turn_handle != turn_handle
+                or presentation.state != "completed"
+                or not self.monotonic() < presentation.expires_monotonic):
+            raise AuthorityDenied("native.turn.finish", "root returned a stale or mismatched turn receipt")
+        return presentation
+
     def begin_native_invocation(self, producer_context_handle: str,
                                 observed_call_handle: str,
                                 canonical_arguments: bytes) -> NativeInvocationBinding:
@@ -379,6 +434,59 @@ class AuthorityClient:
             tool_calls = tuple(NativeToolCallBinding.from_wire(item) for item in raw_calls)
         return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"],
                                       source_handle, producer_handle, tool_calls)
+
+    def dispatch_native_mcp(self, invocation_handle: str,
+                            canonical_arguments: bytes) -> BrokeredEffectResponse:
+        """Dispatch one root-observed native MCP tool call through the host.
+
+        The invocation handle is a lookup key for the lexical tool binding.
+        This request carries no caller-selected MCP service, tool, target,
+        capability, recipient, context, or effect grant.
+        """
+        import base64
+
+        if (not isinstance(invocation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle)
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024):
+            raise AuthorityDenied("native.mcp", "native MCP invocation is malformed or over its bound")
+        try:
+            parsed = strict_json_loads(canonical_arguments.decode("utf-8"))
+            if (not isinstance(parsed, dict)
+                    or canonical_bytes(parsed) != canonical_arguments):
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are not a canonical JSON object") from None
+        result = self._rpc("native.mcp.dispatch", {
+            "schema": 1,
+            "invocation_handle": invocation_handle,
+            "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+        })
+        base_fields = {"status", "body", "headers", "receipt_id"}
+        allowed = {frozenset(base_fields), frozenset(base_fields | {"source_receipt_handle"})}
+        if not isinstance(result, dict) or frozenset(result) not in allowed:
+            raise AuthorityDenied("native.mcp", "authority returned a malformed native MCP response")
+        try:
+            body = base64.b64decode(result["body"], validate=True)
+        except Exception:
+            raise AuthorityDenied("native.mcp", "authority returned a malformed native MCP body") from None
+        headers = result["headers"]
+        if (type(result["status"]) is not int or not 0 <= result["status"] <= 599
+                or len(body) > 4 * 1024 * 1024
+                or not isinstance(headers, dict) or len(headers) > 32
+                or any(not isinstance(key, str) or not isinstance(value, str)
+                       or any(char in key + value for char in "\r\n\x00")
+                       for key, value in headers.items())
+                or not isinstance(result["receipt_id"], str)
+                or not 1 <= len(result["receipt_id"]) <= 256):
+            raise AuthorityDenied("native.mcp", "authority native MCP response exceeds its bound")
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("native.mcp", "authority returned a malformed result lineage handle")
+        return BrokeredEffectResponse(
+            result["status"], body, dict(headers), result["receipt_id"], source_handle,
+        )
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,

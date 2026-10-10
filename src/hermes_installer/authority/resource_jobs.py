@@ -21,6 +21,7 @@ from typing import Any, Callable, Mapping
 
 from hermes_installer.registry.resource_jobs import (
     ResourceChildAdmission,
+    ResourceCredentialBinding,
     ResourceBackendEnrollment,
     ResourceBodyRecipe,
     ResourceBodyRecipeField,
@@ -62,6 +63,7 @@ _BACKEND_FIELDS = {
     "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
     "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
     "profile_generation", "execution_binding",
+    "credential_bindings",
 }
 _BODY_RECIPE_FIELDS = {
     "id", "schema_id", "source_artifact_id", "source_sha256", "output_fields",
@@ -90,7 +92,12 @@ def parse_resource_backend_records(records: Any) -> Mapping[str, ResourceBackend
             if (not isinstance(raw["approved_action_ids"], list)
                     or any(not isinstance(item, str) for item in raw["approved_action_ids"])
                     or not isinstance(raw["credential_reference_ids"], list)
-                    or any(not isinstance(item, str) for item in raw["credential_reference_ids"])):
+                    or any(not isinstance(item, str) for item in raw["credential_reference_ids"])
+                    or not isinstance(raw["credential_bindings"], list)
+                    or len(raw["credential_bindings"]) > 16
+                    or any(not isinstance(item, Mapping)
+                           or set(item) != {"source_placeholder", "credential_reference_id", "usage"}
+                           for item in raw["credential_bindings"])):
                 raise ValueError
             backend = ResourceBackendEnrollment(
                 backend_id=raw["id"], resource_id=raw["resource_id"],
@@ -115,6 +122,8 @@ def parse_resource_backend_records(records: Any) -> Mapping[str, ResourceBackend
                 maximum_seconds=raw["maximum_seconds"],
                 profile_generation=raw["profile_generation"],
                 execution_binding=raw["execution_binding"],
+                credential_bindings=tuple(ResourceCredentialBinding(**item)
+                                           for item in raw["credential_bindings"]),
             )
         except (TypeError, ValueError, ResourceJobDenied):
             raise AuthorityDenied("resource.backend", "protected backend row is invalid") from None
@@ -561,6 +570,183 @@ class ResourceJobAuthority:
         self._result_fields_expiry: dict[str, float] = {}
         self._event_field_reservations: dict[str, bytearray] = {}
         self._event_field_bytes = 0
+        # Root ingress admission is intentionally separate from the worker
+        # resource.job.admit RPC. These maps bind the exact registry-minted
+        # event and returned admission objects; neither IDs nor DTO contents
+        # alone are bearer authority.
+        self._root_event_admissions: dict[str, tuple[Any, ResourceJobAdmission]] = {}
+        self._root_admission_objects: dict[str, ResourceJobAdmission] = {}
+
+    def admit_root_resource_event(
+        self, root_event_handle: Any, *, timeout: float = 30.0,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> ResourceJobAdmission:
+        """Durably admit one already captured, root-verified resource event.
+
+        This is an in-process producer API. It accepts only the exact opaque
+        handle retained by this AuthorityService's root controller registry;
+        workers cannot call it over RPC or supply event fields, receipt IDs,
+        resource identity, controller evidence, or a DAG.
+        """
+        from .resource_source_controllers import RootResourceEventHandle
+
+        if (type(root_event_handle) is not RootResourceEventHandle
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0.1 <= timeout <= 600
+                or not callable(cancelled)):
+            raise AuthorityDenied("resource.event", "root resource event admission request is malformed")
+        issuer = getattr(self.service, "resource_event_context_issuer", None)
+        controller_registry = getattr(issuer, "controller_registry", None)
+        if controller_registry is None or getattr(issuer, "service", None) is not self.service:
+            raise AuthorityDenied("resource.event", "root resource event registry is unavailable")
+        key = (root_event_handle.resource_id, root_event_handle.resource_generation)
+        enrollment = self.enrollments.get(key)
+        if enrollment is None:
+            raise AuthorityDenied("resource.selection", "root event is outside the active job enrollment")
+        with self._event_lock:
+            self._prune_root_admissions_locked(self.service.monotonic())
+            prior = self._root_event_admissions.get(root_event_handle.handle)
+            if prior is not None:
+                raise AuthorityDenied("resource.event_replay", "root event was already admitted")
+            if len(self._root_event_admissions) >= min(4096, self.ledger.max_jobs):
+                raise AuthorityDenied("resource.capacity", "root admission handle store is full")
+
+        # Resolve through the owning controller registry, which checks object
+        # identity, event epoch/deadline, selected source role, observer,
+        # resource generation, backend, and node membership.
+        try:
+            first_node = enrollment.nodes[0]
+            record, selected, _node, _backend = controller_registry._resolve_event_node(
+                root_event_handle, first_node.node_id)
+        except Exception:
+            raise AuthorityDenied("resource.event", "root event is stale or not selected") from None
+        if selected is not enrollment:
+            raise AuthorityDenied("resource.selection", "event and job authorities selected different generations")
+        if cancelled():
+            raise AuthorityDenied("resource.event", "root event was cancelled before admission")
+
+        # The event issuer rechecks current consent, signed HostContext,
+        # complete source receipt signatures/closure and source-origin joins.
+        # Never derive these facts from the worker admission handler.
+        try:
+            issuer._require_live_selection(enrollment)
+            context, receipts = issuer._verify_source_closure(
+                record, enrollment, controller_registry._profile_binding(enrollment),
+                self.service.monotonic(),
+            )
+            self.service._verify_context_signature(context)
+            binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, binding, context.uid)
+            for receipt in receipts:
+                self.service._verify_source_receipt(receipt, binding)
+        except Exception:
+            raise AuthorityDenied("resource.source", "root event source closure or consent is stale") from None
+        expected_ids = tuple(sorted(receipt.receipt_id for receipt in receipts))
+        closure_digest = canonical_digest(sorted(
+            (receipt.receipt_id, canonical_digest(receipt.claims())) for receipt in receipts
+        ))
+        if (context.source_receipts != receipts
+                or expected_ids != tuple(sorted(root_event_handle.source_receipt_ids))
+                or context.source_receipts != record.parent_receipts
+                or record.handle is not root_event_handle
+                or canonical_digest(record.payload) != root_event_handle.payload_sha256
+                or closure_digest != root_event_handle.parent_closure_digest
+                or context.profile_id != enrollment.profile_id
+                or context.principal_id != enrollment.principal_id
+                or context.generation != enrollment.profile_generation):
+            raise AuthorityDenied("resource.source", "root event payload or authenticated closure changed")
+
+        # Revalidate live controller custody before the durable state change.
+        # The duplicated PIDFD is immediately closed; per-node issuer calls
+        # acquire their own fresh lease later.
+        import os
+        controller = None
+        try:
+            controller = controller_registry.resolve_for_event(
+                root_event_handle, first_node.node_id)
+            if (controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                    or controller.uid != 0
+                    or controller.service_generation_digest != getattr(
+                        self.service, "service_generation_digest", None)):
+                raise AuthorityDenied("resource.controller", "root ingress controller lease is invalid")
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("resource.controller", "root ingress controller is stale") from None
+        finally:
+            if controller is not None:
+                try:
+                    os.close(controller.pidfd)
+                except OSError:
+                    pass
+
+        now = self.service.monotonic()
+        current_generation = self._resource_generation(enrollment)
+        if current_generation != root_event_handle.resource_generation:
+            raise AuthorityDenied("resource.selection", "resource generation changed before admission")
+        deadline = min(
+            [root_event_handle.expires_monotonic, context.monotonic_expires_at]
+            + [receipt.monotonic_expires_at for receipt in receipts]
+        )
+        remaining = deadline - now
+        ttl = min(enrollment.max_runtime_seconds, max(1, int(timeout)), int(remaining))
+        if remaining < 1 or ttl < 1:
+            raise AuthorityDenied("resource.source", "root event has no usable execution lease")
+
+        # Root-authenticated source fields are derived only from the retained
+        # event record. Bounded reservation prevents memory exhaustion while
+        # admission commits; the SQLite event key makes retry/replay durable.
+        reservation = self._reserve_event_fields(record.event_fields)
+        try:
+            admission = self.ledger.admit_job(
+                enrollment, event_id=root_event_handle.event_id,
+                verified_source_receipt_ids=expected_ids,
+                current_generation=current_generation, ttl_seconds=ttl,
+                parent_lineage_hash=context.lineage_hash,
+                parent_sensitivity=context.sensitivity.value,
+            )
+        except ResourceJobDenied as exc:
+            self._discard_event_field_reservation(reservation)
+            raise AuthorityDenied("resource.admission", str(exc)) from None
+        except Exception:
+            self._discard_event_field_reservation(reservation)
+            raise
+
+        lineage = MappingProxyType({
+            "root_event_handle": root_event_handle.handle,
+            "event_id": root_event_handle.event_id,
+            "source_kind": root_event_handle.source_kind,
+            "observer_enrollment_id": root_event_handle.source_observer_enrollment_id,
+            "payload_sha256": root_event_handle.payload_sha256,
+            "parent_closure_digest": root_event_handle.parent_closure_digest,
+            "parent_receipt_ids": expected_ids,
+            "issued_monotonic": root_event_handle.issued_monotonic,
+            "expires_monotonic": root_event_handle.expires_monotonic,
+        })
+        self._promote_event_fields(
+            reservation, admission.job_id, admission.expires_monotonic,
+            source_closure=(context, tuple(receipts), lineage, admission.expires_monotonic),
+        )
+        with self._event_lock:
+            if root_event_handle.handle in self._root_event_admissions:
+                # This should be prevented by the ledger's unique event key;
+                # fail closed if in-memory state disagrees after a race.
+                self._discard_job_event_fields(admission.job_id)
+                raise AuthorityDenied("resource.event_replay", "root event admission was already retained")
+            self._root_event_admissions[root_event_handle.handle] = (root_event_handle, admission)
+            self._root_admission_objects[admission.job_id] = admission
+        if cancelled() or self._resource_generation(enrollment) != enrollment.generation:
+            self.ledger.cancel_job(admission.job_id, current_generation=enrollment.generation)
+            self._discard_job_event_fields(admission.job_id)
+            raise AuthorityDenied("resource.event", "root event was revoked immediately after admission")
+        return admission
+
+    def _prune_root_admissions_locked(self, now: float) -> None:
+        """Drop expired in-memory dispatch authority without pruning ledger replay rows."""
+        for handle_id, (handle, admission) in tuple(self._root_event_admissions.items()):
+            if admission.expires_monotonic <= now or handle.authority_epoch != self.service.authority_epoch:
+                self._root_event_admissions.pop(handle_id, None)
+                self._root_admission_objects.pop(admission.job_id, None)
 
     def handlers(self) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
         """Return exact protected handler registrations; absent joins stay absent."""

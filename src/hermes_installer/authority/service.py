@@ -185,7 +185,6 @@ class AuthorityService:
                  background_consent_active: Callable[[str], bool] | None = None,
                  delegations: Mapping[str, ChildDelegationRule] | None = None,
                  process_effect_handler: Any | None = None,
-                 native_bridge_broker: Any | None = None,
                  selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
                  remote_session_authority: Any | None = None,
                  source_receipt_delivery: Any | None = None,
@@ -193,8 +192,6 @@ class AuthorityService:
                  native_runtime_observer: Any | None = None,
                  native_invocation_registry: Any | None = None,
                  memory_step_effect_authority: Any | None = None,
-                 resource_task_runner: Any | None = None,
-                 resource_job_authority: Any | None = None,
                  service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
@@ -224,16 +221,20 @@ class AuthorityService:
         self.authority_epoch = secrets.token_urlsafe(24)
         self.delegations = dict(delegations or {})
         self.process_effect_handler = process_effect_handler
-        self.native_bridge_broker = native_bridge_broker
+        self.native_bridge_broker = None
         self.selected_operation_resolver = selected_operation_resolver
         self.remote_session_authority = remote_session_authority
         self.source_receipt_delivery = source_receipt_delivery
         self.source_observer_registry = source_observer_registry
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
+        self.native_input_delivery_registry = None
+        self.native_turn_observation_registry = None
+        self.native_mcp_dispatcher = None
         self.memory_step_effect_authority = memory_step_effect_authority
-        self.resource_task_runner = resource_task_runner
-        self.resource_job_authority = resource_job_authority
+        self.resource_task_runner = None
+        self.resource_job_authority = None
+        self.resource_event_context_issuer = None
         if (service_generation_digest is not None
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
@@ -268,6 +269,52 @@ class AuthorityService:
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
 
+    def revoke_source_handle(self, handle: Any) -> bool:
+        """Revoke and scrub one root-retained source handle in-process only.
+
+        This is used by root input/task coordinators when delivery or startup
+        fails. It is deliberately not part of the worker RPC surface.
+        """
+        from .source_observers import SourceObserverRegistry, SourceReceiptHandle
+
+        registry = self.source_observer_registry
+        revoke = getattr(registry, "revoke_source_handle", None)
+        if (type(handle) is not SourceReceiptHandle
+                or type(registry) is not SourceObserverRegistry
+                or not callable(revoke)):
+            raise AuthorityDenied("source.capsule", "root source handle revocation is unavailable")
+        return revoke(handle)
+
+    def resolve_retained_source_receipt(
+        self, handle: Any, *, payload_digest: str,
+        profile_id: str | None = None, generation: str | None = None,
+    ) -> SourceReceipt:
+        """Resolve a root-retained receipt for another protected root verifier.
+
+        This is an in-process integrity check, not an RPC or receipt minting
+        API. Callers must already hold the opaque handle from a protected
+        registry; the exact stored, signed receipt is returned only if its
+        payload and any requested identity pins match.
+        """
+        from .source_observers import SourceReceiptHandle
+
+        if (type(handle) is not SourceReceiptHandle
+                or not isinstance(payload_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", payload_digest)
+                or profile_id is not None and (not isinstance(profile_id, str) or not profile_id)
+                or generation is not None and (not isinstance(generation, str) or not generation)):
+            raise AuthorityDenied("source.receipt", "root retained receipt lookup is malformed")
+        with self._lock:
+            receipt = self._source_receipt_handles.get(str(handle))
+            if receipt is None:
+                raise AuthorityDenied("source.receipt", "root retained source receipt is unavailable")
+            if (receipt.payload_digest != payload_digest
+                    or profile_id is not None and receipt.profile_id != profile_id
+                    or generation is not None and receipt.process_generation != generation):
+                raise AuthorityDenied("source.receipt", "root retained source receipt binding does not match")
+            self._verify_source_receipt(receipt, self._binding(receipt.uid))
+            return receipt
+
     def attach_native_runtime_observer(self, observer: Any) -> None:
         """Attach the root-only post-effect observer exactly once after loading.
 
@@ -288,6 +335,54 @@ class AuthorityService:
                 or not callable(getattr(registry, "take_native_response_metadata", None))):
             raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
         self.native_invocation_registry = registry
+
+    def attach_native_bridge_broker(self, broker: Any) -> None:
+        """Attach the one root-built native provider broker after registries exist."""
+        from .native_bridge import NativeBridgeBroker
+
+        if (self.native_bridge_broker is not None
+                or not isinstance(broker, NativeBridgeBroker)
+                or broker.service is not self
+                or self.process_effect_handler is None
+                or not isinstance(broker.bridges, Mapping) or not broker.bridges
+                or set(broker.root_selected_enrollments) != set(broker.bridges)
+                or broker.provider_response_registry is None
+                or broker.provider_response_registry is not self.native_invocation_registry
+                or not callable(broker.process_resolver)
+                or not callable(broker.canonicalizer)
+                or not re.fullmatch(r"[0-9a-f]{64}", broker.canonicalizer_sha256)):
+            raise AuthorityDenied("native.broker", "root native bridge broker binding is invalid")
+        self.native_bridge_broker = broker
+
+    def attach_native_mcp_dispatcher(self, dispatcher: Any) -> None:
+        """Attach the fixed root MCP dispatcher; it is never exposed as generic RPC."""
+        if (self.native_mcp_dispatcher is not None
+                or getattr(dispatcher, "service", None) is not self
+                or not callable(getattr(dispatcher, "dispatch_native_mcp", None))):
+            raise AuthorityDenied("native.mcp", "root native MCP dispatcher binding is invalid")
+        self.native_mcp_dispatcher = dispatcher
+
+    def attach_native_input_delivery_registry(self, registry: Any) -> None:
+        """Attach the fixed selected-input queue/consumer once during assembly."""
+        from .source_observers import RootNativeInputDeliveryRegistry
+
+        if (self.native_input_delivery_registry is not None
+                or type(registry) is not RootNativeInputDeliveryRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "take_selected_native_input", None))):
+            raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
+        self.native_input_delivery_registry = registry
+
+    def attach_native_turn_observation_registry(self, registry: Any) -> None:
+        """Attach the exact root-native turn observer once during assembly."""
+        from .native_turn_observation import RootNativeTurnObservationRegistry
+
+        if (self.native_turn_observation_registry is not None
+                or type(registry) is not RootNativeTurnObservationRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "finish_selected_native_turn", None))):
+            raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
+        self.native_turn_observation_registry = registry
 
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
         """Attach the root-only memory compound step issuer exactly once."""
@@ -316,6 +411,59 @@ class AuthorityService:
         self.process_effect_handler.task_admission_current = current_admission
         self.resource_task_runner = runner
         self.resource_job_authority = job_authority
+
+    def attach_resource_event_context_issuer(self, issuer: Any) -> None:
+        """Attach the root source-event context issuer once during assembly."""
+        from .resource_event_issuance import ResourceEventContextIssuer
+
+        if (self.resource_event_context_issuer is not None
+                or not isinstance(issuer, ResourceEventContextIssuer)
+                or issuer.service is not self
+                or getattr(issuer.controller_registry, "service", None) is not self):
+            raise AuthorityDenied("resource.context", "root resource event issuer binding is invalid")
+        self.resource_event_context_issuer = issuer
+
+    def issue_resource_job_context(self, request: Any) -> tuple[HostContext, EffectAuthorization]:
+        """Root-only in-process issuance for one registered source event and DAG node.
+
+        This method is intentionally absent from the worker RPC operation table.
+        The concrete issuer consumes the controller registry's instance-scoped
+        request capability and independently revalidates the source, selected
+        node, controller, current consent, and canonical effect bytes.
+        """
+        from .resource_event_issuance import ResourceEventContextIssuer
+        from .resource_source_controllers import RootResourceJobContextRequest
+
+        issuer = self.resource_event_context_issuer
+        if (not isinstance(issuer, ResourceEventContextIssuer)
+                or not isinstance(request, RootResourceJobContextRequest)
+                or issuer.service is not self):
+            raise AuthorityDenied("resource.context", "root resource event context issuer is unavailable")
+        context, authorization = issuer.issue(request)
+        if (not isinstance(context, HostContext)
+                or not isinstance(authorization, EffectAuthorization)):
+            raise AuthorityDenied("resource.context", "root resource event issuer returned invalid authority")
+        binding = self._binding(context.uid)
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, context.uid)
+        self._verify_grant_signature(authorization)
+        self._assert_grant_current(authorization, binding, authorization.uid)
+        rule = self.rules.get(("hermes-resource-runtime", request.operation,
+                               request.node.target))
+        if (context.operation != request.operation
+                or context.final_payload_digest != request.canonical_payload_sha256
+                or context.source_receipts
+                or authorization.operation != request.operation
+                or authorization.capability != "hermes-resource-runtime"
+                or authorization.target != request.node.target
+                or authorization.recipient != request.node.recipient
+                or authorization.request_digest != request.canonical_payload_sha256
+                or authorization.final_payload_digest != request.canonical_payload_sha256
+                or authorization.context_digest != _context_digest(context)
+                or authorization.source_receipts
+                or rule is None or rule.recipient != request.node.recipient):
+            raise AuthorityDenied("resource.context", "issued resource effect does not match its consumed event request")
+        return context, authorization
 
     def launch_resource_profile_task(self, admission_handle: Any, node_id: str) -> Any:
         """Root-private launch; worker RPC never accepts a task admission handle."""
@@ -550,7 +698,9 @@ class AuthorityService:
             raise AuthorityDenied("resource.task_start", "managed process task start is unavailable")
         result = start(
             profile, context, authorization, selection_payload,
-            task_handle=task, exact_stdin=exact_stdin,
+            task_admission=task, admission_handle=admission,
+            node_id=task.node_id, admitted_source=source,
+            exact_stdin=exact_stdin,
             expected_stdin_sha256=task.stdin_sha256,
             peer_pid=controller.pid, peer_pidfd=controller.pidfd,
             timeout=min(float(timeout), max(0.001, expiry - now)), cancelled=cancelled,
@@ -1134,6 +1284,14 @@ class AuthorityService:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
+        if operation == "native.input.take":
+            return self._dispatch_native_input_take(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
+        if operation == "native.turn.finish":
+            return self._dispatch_native_turn_finish(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "native.response.take":
             registry = self.native_invocation_registry
             if registry is None or peer_pidfd is None:
@@ -1163,12 +1321,20 @@ class AuthorityService:
                     "producer_context_handle": result.producer_context_handle,
                     "tool_call_bindings": list(result.tool_call_bindings),
                 }
-            fields = {"producer_context_handle", "tool_call_bindings"}
+            fields = {"producer_context_handle", "tool_call_bindings", "turn_handle",
+                      "final_response_delivery_handle"}
             if (not isinstance(result, Mapping) or set(result) != fields
                     or not isinstance(result["producer_context_handle"], str)
                     or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["producer_context_handle"])
                     or not isinstance(result["tool_call_bindings"], (list, tuple))
-                    or len(result["tool_call_bindings"]) > 128):
+                    or len(result["tool_call_bindings"]) > 128
+                    or result["turn_handle"] is not None
+                       and (not isinstance(result["turn_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))
+                    or result["final_response_delivery_handle"] is not None
+                       and (not isinstance(result["final_response_delivery_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                                result["final_response_delivery_handle"]))):
                 raise AuthorityDenied("native.response.take", "root provider response metadata is invalid")
             from .types import NativeToolCallBinding
             calls = tuple(item if isinstance(item, NativeToolCallBinding)
@@ -1182,7 +1348,11 @@ class AuthorityService:
                                                  "provider_tool_call_id": item.provider_tool_call_id,
                                                  "tool_name": item.tool_name,
                                                  "arguments_sha256": item.arguments_sha256}
-                                           for item in calls]}
+                                           for item in calls],
+                    "turn_handle": result["turn_handle"],
+                    "final_response_delivery_handle": result["final_response_delivery_handle"]}
+        if operation == "native.mcp.dispatch":
+            return self._dispatch_native_mcp(uid, peer_pid, peer_pidfd, payload, cancelled=cancelled)
         if operation == "source.receipt.take":
             delivery = self.source_receipt_delivery
             if delivery is None or peer_pidfd is None:
@@ -1267,6 +1437,125 @@ class AuthorityService:
                 or len(result["source_receipt_handles"]) > 128):
             raise AuthorityDenied("native.invocation", "root invocation registry returned invalid ancestry")
         return {**dict(result), "source_receipt_handles": list(result["source_receipt_handles"])}
+
+    def _dispatch_native_mcp(self, peer_uid: int, peer_pid: int,
+                             peer_pidfd: int | None, payload: Any,
+                             *, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Dispatch one lexical native MCP call through the root-selected handler."""
+        import base64
+
+        dispatcher = self.native_mcp_dispatcher
+        if dispatcher is None or peer_pidfd is None:
+            raise AuthorityDenied("native.mcp", "root native MCP dispatcher is unavailable")
+        fields = {"schema", "invocation_handle", "canonical_arguments_b64"}
+        if (not isinstance(payload, dict) or set(payload) != fields
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("invocation_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])
+                or not isinstance(payload.get("canonical_arguments_b64"), str)
+                or len(payload["canonical_arguments_b64"]) > 2_800_000):
+            raise AuthorityDenied("native.mcp", "native MCP request fields are malformed")
+        try:
+            arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+        except (ValueError, TypeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are malformed") from None
+        if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+            raise AuthorityDenied("native.mcp", "native MCP arguments exceed their bound")
+        try:
+            value = strict_json_loads(arguments.decode("utf-8"))
+            if not isinstance(value, dict) or canonical_bytes(value) != arguments:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are not canonical JSON") from None
+        if cancelled():
+            raise AuthorityDenied("native.mcp", "native MCP request was cancelled")
+        try:
+            response = dispatcher.dispatch_native_mcp(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                invocation_handle=payload["invocation_handle"],
+                canonical_arguments=arguments, cancelled=cancelled,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.mcp", "root native MCP dispatch failed") from None
+        if isinstance(response, BrokeredEffectResponse):
+            status, body, headers, receipt_id = (
+                response.status, response.body, response.headers, response.receipt_id,
+            )
+            source_handle = response.source_receipt_handle
+            if response.producer_context_handle is not None or response.tool_call_bindings:
+                raise AuthorityDenied("native.mcp", "native MCP response contains unrelated provider metadata")
+        elif isinstance(response, Mapping):
+            allowed = {"status", "body", "headers", "receipt_id"}
+            if set(response) not in (allowed, allowed | {"source_receipt_handle"}):
+                raise AuthorityDenied("native.mcp", "root native MCP response fields are malformed")
+            status, body, headers, receipt_id = (response["status"], response["body"],
+                                                 response["headers"], response["receipt_id"])
+            source_handle = response.get("source_receipt_handle")
+        else:
+            raise AuthorityDenied("native.mcp", "root native MCP response type is invalid")
+        if (type(status) is not int or not 0 <= status <= 599
+                or not isinstance(body, bytes) or len(body) > 4 * 1024 * 1024
+                or not isinstance(headers, Mapping) or len(headers) > 32
+                or any(not isinstance(key, str) or not isinstance(item, str)
+                       or any(char in key + item for char in "\r\n\x00")
+                       for key, item in headers.items())
+                or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256
+                or source_handle is not None and (not isinstance(source_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle))):
+            raise AuthorityDenied("native.mcp", "root native MCP response exceeds its bound")
+        return {"status": status, "body": base64.b64encode(body).decode("ascii"),
+                "headers": dict(headers), "receipt_id": receipt_id,
+                **({"source_receipt_handle": source_handle} if source_handle is not None else {})}
+
+    def _dispatch_native_input_take(self, peer_uid: int, peer_pid: int,
+                                   peer_pidfd: int | None, payload: Any, *,
+                                   cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Take only the queued input selected for this live authenticated peer."""
+        from .source_observers import NativeInitialInputDelivery
+
+        registry = self.native_input_delivery_registry
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != {"schema"}
+                or type(payload.get("schema")) is not int or payload["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "selected native input delivery is unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.input.take", "selected native input request was cancelled")
+        try:
+            delivery = registry.take_selected_native_input(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.input.take", "selected native input lookup failed") from None
+        if delivery is None:
+            return {"schema": 1, "state": "pending"}
+        if type(delivery) is not NativeInitialInputDelivery:
+            raise AuthorityDenied("native.input.take", "root input registry returned an invalid delivery")
+        result = delivery.to_wire()
+        expected = {"schema", "source_receipt_handle", "selected_execution_handle",
+                    "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if (not isinstance(result, Mapping) or set(result) not in (expected, expected | {"turn_handle"})
+                or type(result.get("schema")) is not int or result["schema"] != 1
+                or not isinstance(result.get("source_receipt_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["source_receipt_handle"])
+                or not isinstance(result.get("selected_execution_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["selected_execution_handle"])
+                or not isinstance(result.get("input_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", result["input_sha256"])
+                or type(result.get("input_size_bytes")) is not int
+                or not 1 <= result["input_size_bytes"] <= 1_048_576
+                or isinstance(result.get("expires_monotonic"), bool)
+                or type(result.get("expires_monotonic")) not in (int, float)
+                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0
+                or result.get("turn_handle") is not None and (
+                    not isinstance(result.get("turn_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))):
+            raise AuthorityDenied("native.input.take", "root input delivery fields exceed their bounds")
+        return dict(result)
 
     def _dispatch_process_control(self, uid: int, peer_pid: int,
                                   peer_pidfd: int | None, payload: Any, *,
@@ -1950,6 +2239,40 @@ class AuthorityService:
             # live peer before the opaque reference enters the response.
             result["source_receipt_handle"] = handle
         return result
+
+    def _dispatch_native_turn_finish(self, peer_uid: int, peer_pid: int,
+                                     peer_pidfd: int | None, payload: Any, *,
+                                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Return only the opaque presentation from the authenticated turn registry."""
+        from .types import RootCompletedNativeTurnPresentation
+
+        registry = self.native_turn_observation_registry
+        fields = {"schema", "turn_handle", "final_response_delivery_handle"}
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != fields
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("turn_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["turn_handle"])
+                or not isinstance(payload.get("final_response_delivery_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["final_response_delivery_handle"])):
+            raise AuthorityDenied("native.turn.finish", "native turn finish request is malformed or unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.turn.finish", "native turn finish request was cancelled")
+        try:
+            presentation = registry.finish_selected_native_turn(
+                peer_uid, peer_pid, peer_pidfd, payload["turn_handle"],
+                payload["final_response_delivery_handle"],
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.turn.finish", "root native turn verification failed") from None
+        if (type(presentation) is not RootCompletedNativeTurnPresentation
+                or presentation.turn_handle != payload["turn_handle"]
+                or presentation.state != "completed"
+                or presentation.expires_monotonic <= self.monotonic()):
+            raise AuthorityDenied("native.turn.finish", "root native turn presentation is invalid or expired")
+        return presentation.to_wire()
 
     def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
                               ) -> tuple[EffectAuthorization, HostContext, EffectRule]:
