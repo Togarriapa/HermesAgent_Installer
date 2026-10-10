@@ -34,6 +34,7 @@ LOCK_BYTES = 33804
 UV_ID = "hermes-pm-uv-linux-arm64"
 UV_SHA256 = "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2"
 UV_BYTES = 20423730
+UV_EXECUTABLE_SHA256 = "20d0be6a6bd33f55e4ceb0e52ac2f733722b1a7959498e6401ecf84bc05e48a8"
 PYTHON_ID = "hermes-pm-python314-linux-arm64"
 PYTHON_SHA256 = "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f"
 PYTHON_BYTES = 95628137
@@ -119,6 +120,31 @@ class VerifiedPMRuntimeProjection:
                 pass
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedPMUVToolProjection:
+    """Current root-receipt-backed uv executable held read-only by descriptor."""
+    receipt_handle: str
+    source_receipt_handle: str
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    device: int
+    inode: int
+    uid: int
+    gid: int
+    mode: int
+    transaction_handle: str
+    prepared_generation_id: str
+    fd: int
+
+    def close(self) -> None:
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+
 class NativePMRuntimeResolver(Protocol):
     def resolve_python(self, *, pm_runtime_handle: str, enrollment_id: str,
                        service_generation: str, source_artifact_id: str) -> Path: ...
@@ -200,6 +226,18 @@ class RootPMRuntimeProvisioner:
             py_artifact = self._resolve_artifact(python_handle, proof, PYTHON_ID, PYTHON_SHA256, PYTHON_BYTES)
             uv_tree = self.catalog.materialize_tree(UV_ID, UV_SHA256, self.artifact_root, expected_uid=0)
             py_tree = self.catalog.materialize_tree(PYTHON_ID, PYTHON_SHA256, self.artifact_root, expected_uid=0)
+            uv_tree_closure_sha256 = _tree_sha256(uv_tree.path)
+            uv_tree_relative = uv_tree.path.relative_to(self.artifact_root).as_posix()
+            if not _safe_relative(uv_tree_relative):
+                raise BootstrapEnrollmentError("official PM uv tree is outside its protected artifact root")
+            uv_spec = self.catalog.artifacts[UV_ID]
+            uv_executable_row = next((row for row in uv_spec.tree_files if row.path == "uv"), None)
+            if (uv_executable_row is None or uv_executable_row.kind != "file"
+                    or not uv_executable_row.executable
+                    or uv_executable_row.sha256 != UV_EXECUTABLE_SHA256):
+                raise BootstrapEnrollmentError("official PM uv executable differs from the reviewed source pin")
+            _verify_catalog_runtime_root(uv_tree.path, uv_spec.tree_files,
+                                         expected_closure_sha256=uv_tree_closure_sha256)
             base_python_closure_sha256 = _tree_sha256(py_tree.path)
             base_python_tree_relative = py_tree.path.relative_to(self.artifact_root).as_posix()
             if not _safe_relative(base_python_tree_relative):
@@ -267,6 +305,8 @@ class RootPMRuntimeProvisioner:
                 source_handle=source_receipt_handle, executable=executable,
                 identity=identity, sync_receipt=pm_receipt, feature_list=sync_features,
                 artifact_handles=(uv_handle, python_handle),
+                uv_tree_relative=uv_tree_relative,
+                uv_tree_closure_sha256=uv_tree_closure_sha256,
                 base_python_tree_relative=base_python_tree_relative,
                 base_python_closure_sha256=base_python_closure_sha256,
             )
@@ -321,6 +361,8 @@ class RootPMRuntimeProvisioner:
                          proof: Any, source_handle: str, executable: Path,
                          identity: dict[str, Any], sync_receipt: bytes, feature_list: list[str],
                          artifact_handles: tuple[str, str],
+                         uv_tree_relative: str,
+                         uv_tree_closure_sha256: str,
                          base_python_tree_relative: str,
                          base_python_closure_sha256: str) -> str:
         info = executable.stat()
@@ -340,6 +382,11 @@ class RootPMRuntimeProvisioner:
             "source_commit": SOURCE_COMMIT, "source_receipt_handle": source_handle,
             "pm_lock_artifact_id": lock_artifact.artifact_id, "pm_lock_sha256": lock_sha,
             "uv_artifact_id": uv_spec.artifact_id, "uv_sha256": uv_spec.sha256,
+            "uv_source_receipt_handle": artifact_handles[0],
+            "uv_tree_relative": uv_tree_relative,
+            "uv_tree_closure_sha256": uv_tree_closure_sha256,
+            "uv_executable_relative": "uv",
+            "uv_executable_sha256": UV_EXECUTABLE_SHA256,
             "base_python_artifact_id": py_spec.artifact_id, "base_python_sha256": py_spec.sha256,
             "platform": "linux-aarch64-glibc", "generation": generation,
             "runtime_relative": executable.relative_to(base).as_posix(),
@@ -377,11 +424,16 @@ class RootPMRuntimeReceiptRegistry:
     def __init__(self, *, runtime_root: Path, setup_session: Any,
                  current_guard: Callable[[str, str], bool] | None = None,
                  catalog: Any = None, artifact_root: Path | None = None,
+                 artifact_receipts: Any = None,
                  monotonic: Callable[[], float] = time.monotonic,
                  authority_uid: int = 0):
         if (authority_uid != 0 or not runtime_root.is_absolute()
                 or not callable(getattr(setup_session, "_check_live", None))
-                or (artifact_root is not None and not artifact_root.is_absolute())):
+                or (artifact_root is not None and not artifact_root.is_absolute())
+                or (artifact_receipts is not None
+                    and (catalog is None or artifact_root is None
+                         or getattr(artifact_receipts, "catalog", None) is not catalog
+                         or getattr(artifact_receipts, "artifact_root", None) != artifact_root))):
             raise ValueError("PM runtime registry is not bound to root setup authority")
         self.runtime_root = runtime_root
         self.setup_session = setup_session
@@ -391,6 +443,7 @@ class RootPMRuntimeReceiptRegistry:
         self.current_guard = current_guard
         self.catalog = catalog
         self.artifact_root = artifact_root
+        self.artifact_receipts = artifact_receipts
         self.monotonic = monotonic
 
     def resolve_runtime(self, runtime_receipt_handle: str, transaction_handle: str,
@@ -470,6 +523,134 @@ class RootPMRuntimeReceiptRegistry:
             raise BootstrapEnrollmentError(
                 "official PM base Python closure is absent, changed, or outside its receipt") from None
 
+    def resolve_uv_tool(self, runtime_receipt_handle: str,
+                        transaction_handle: str,
+                        prepared_generation_id: str) -> VerifiedPMUVToolProjection:
+        """Resolve the exact fetched/catalogued uv tool held by this current PM receipt."""
+        _require_root_linux()
+        if (self.catalog is None or self.artifact_root is None
+                or self.artifact_receipts is None
+                or not callable(getattr(self.catalog, "materialize_tree", None))
+                or not callable(getattr(self.artifact_receipts, "lookup", None))):
+            raise BootstrapEnrollmentPending("official PM uv source receipt is not attached to root custody")
+        self.resolve_runtime(runtime_receipt_handle, transaction_handle, prepared_generation_id)
+        record = self._record(runtime_receipt_handle)
+        self._verify_uv_source_receipt(record, transaction_handle)
+        root_fd: int | None = None
+        members: tuple[VerifiedPMRuntimeProjectionMember, ...] = ()
+        result_fd: int | None = None
+        try:
+            tree = self.catalog.materialize_tree(UV_ID, UV_SHA256, self.artifact_root, expected_uid=0)
+            relative = tree.path.relative_to(self.artifact_root).as_posix()
+            spec = self.catalog.artifacts[UV_ID]
+            if (relative != record.get("uv_tree_relative")
+                    or spec.artifact_id != record.get("uv_artifact_id")
+                    or spec.sha256 != record.get("uv_sha256")):
+                raise ValueError
+            root_fd, members, closure_sha = _open_catalog_runtime_tree(
+                tree.path, spec.tree_files,
+                expected_closure_sha256=record.get("uv_tree_closure_sha256"))
+            if closure_sha != record.get("uv_tree_closure_sha256"):
+                raise ValueError
+            executable = next((member for member in members
+                               if member.relative_path == "uv"), None)
+            if (executable is None or executable.kind != "file" or not executable.executable
+                    or executable.fd is None or executable.sha256 != UV_EXECUTABLE_SHA256):
+                raise ValueError
+            info = os.fstat(executable.fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or stat.S_IMODE(info.st_mode) != executable.mode
+                    or info.st_mode & 0o222):
+                raise ValueError
+            result_fd = os.dup(executable.fd)
+            result_info = os.fstat(result_fd)
+            if (result_info.st_dev != info.st_dev or result_info.st_ino != info.st_ino
+                    or _hash_fd(result_fd) != UV_EXECUTABLE_SHA256):
+                raise ValueError
+            projection = VerifiedPMUVToolProjection(
+                receipt_handle=runtime_receipt_handle,
+                source_receipt_handle=record["uv_source_receipt_handle"],
+                artifact_id=UV_ID, relative_path="uv", sha256=UV_EXECUTABLE_SHA256,
+                size_bytes=info.st_size, device=info.st_dev, inode=info.st_ino,
+                uid=info.st_uid, gid=info.st_gid, mode=stat.S_IMODE(info.st_mode),
+                transaction_handle=transaction_handle,
+                prepared_generation_id=prepared_generation_id, fd=result_fd)
+            result_fd = None
+            return projection
+        except BootstrapEnrollmentPending:
+            raise
+        except Exception:
+            raise BootstrapEnrollmentError(
+                "official PM uv tool is absent, changed, or outside its source receipt") from None
+        finally:
+            if result_fd is not None:
+                try:
+                    os.close(result_fd)
+                except OSError:
+                    pass
+            descriptors = {member.fd for member in members if member.fd is not None}
+            if root_fd is not None:
+                descriptors.add(root_fd)
+            for descriptor in descriptors:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+    def verify_current_uv_tool(self, selected: VerifiedPMUVToolProjection) -> None:
+        """Revalidate receipt joins and held bytes before a caller duplicates uv."""
+        _require_root_linux()
+        if type(selected) is not VerifiedPMUVToolProjection:
+            raise BootstrapEnrollmentError("PM uv tool projection is not a root-selected descriptor")
+        if (selected.artifact_id != UV_ID or selected.relative_path != "uv"
+                or selected.sha256 != UV_EXECUTABLE_SHA256
+                or selected.size_bytes <= 0 or selected.mode & 0o222):
+            raise BootstrapEnrollmentError("PM uv tool projection does not match the official selected executable")
+        record = self._record(selected.receipt_handle)
+        if (record["uv_source_receipt_handle"] != selected.source_receipt_handle
+                or record["transaction_handle"] != selected.transaction_handle
+                or record["prepared_generation_id"] != selected.prepared_generation_id
+                or not self.current_guard(selected.transaction_handle, selected.prepared_generation_id)
+                or self.monotonic() >= record["expires_monotonic"]):
+            raise BootstrapEnrollmentError("PM uv tool projection is stale or belongs to another setup")
+        self.resolve_runtime(selected.receipt_handle, selected.transaction_handle,
+                             selected.prepared_generation_id)
+        self._verify_uv_source_receipt(record, selected.transaction_handle)
+        try:
+            info = os.fstat(selected.fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_dev != selected.device
+                    or info.st_ino != selected.inode or info.st_uid != selected.uid
+                    or info.st_gid != selected.gid or stat.S_IMODE(info.st_mode) != selected.mode
+                    or info.st_size != selected.size_bytes or info.st_mode & 0o222
+                    or _hash_fd(selected.fd) != UV_EXECUTABLE_SHA256):
+                raise ValueError
+        except Exception:
+            raise BootstrapEnrollmentError("held PM uv executable changed after projection") from None
+        current = self.resolve_uv_tool(selected.receipt_handle, selected.transaction_handle,
+                                       selected.prepared_generation_id)
+        try:
+            if (current.device != selected.device or current.inode != selected.inode
+                    or current.sha256 != selected.sha256 or current.size_bytes != selected.size_bytes
+                    or current.mode != selected.mode or current.uid != selected.uid
+                    or current.gid != selected.gid):
+                raise BootstrapEnrollmentError("current PM uv catalog member differs from the held projection")
+        finally:
+            current.close()
+
+    def _verify_uv_source_receipt(self, record: dict[str, Any],
+                                  transaction_handle: str) -> None:
+        if (not _opaque(record.get("uv_source_receipt_handle"))
+                or record.get("transaction_handle") != transaction_handle):
+            raise BootstrapEnrollmentError("PM uv source receipt binding is malformed")
+        self.setup_session._check_live()
+        self.setup_session._refresh_authorization()
+        proof = self.setup_session._authorization
+        if proof.transaction_handle != transaction_handle:
+            raise BootstrapEnrollmentError("PM uv source receipt belongs to another current setup")
+        artifact, digest = self.artifact_receipts.lookup(record["uv_source_receipt_handle"], proof)
+        if artifact != UV_ID or digest != UV_SHA256:
+            raise BootstrapEnrollmentError("PM uv source receipt differs from the official selected uv catalog artifact")
+
     def resolve_python(self, *, pm_runtime_handle: str, enrollment_id: str,
                        service_generation: str, source_artifact_id: str) -> Path:
         """Adapt the authorized native selection to the setup receipt registry."""
@@ -530,6 +711,12 @@ class RootPMRuntimeReceiptRegistry:
                 or not _safe_relative(record.get("runtime_relative"))
                 or not _safe_relative(record.get("runtime_venv_relative"))
                 or not _safe_relative(record.get("base_python_tree_relative"))
+                or not _safe_relative(record.get("uv_tree_relative"))
+                or not _safe_relative(record.get("uv_executable_relative"))
+                or record.get("uv_executable_relative") != "uv"
+                or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("uv_tree_closure_sha256", "")))
+                or record.get("uv_executable_sha256") != UV_EXECUTABLE_SHA256
+                or not _opaque(record.get("uv_source_receipt_handle"))
                 or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("base_python_closure_sha256", "")))):
             raise BootstrapEnrollmentError("PM runtime receipt no longer matches official source/tool pins")
         return record
@@ -851,6 +1038,17 @@ def _hash(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def _hash_fd(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    offset = 0
+    while True:
+        block = os.pread(descriptor, 1024 * 1024, offset)
+        if not block:
+            return digest.hexdigest()
+        digest.update(block)
+        offset += len(block)
 
 
 def _path_inside(path: Path, root: Path) -> bool:
