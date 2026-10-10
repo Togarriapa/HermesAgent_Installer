@@ -141,3 +141,6 @@ Existing HI173/178/197 actual fixture-subject NSS producer and unprivileged obse
 Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md; HI-T207.1/VD-T207.2 exact Raspberry Pi libc6 dependency observation only, original HI-T09/HI-T13. Source/installed/kernel states separate; AC01..18 OPEN.
 
 Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md extends MC-R0101/MC-F01 with MC-R0101.5/.6 actual WS metadata and genuine whole-context functional read; no HA exposure mutation, source/runtime/account evidence separate, all AC OPEN.

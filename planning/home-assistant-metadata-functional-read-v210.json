@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md",
+  "extends": [
+    "home-assistant-root-enrollment-mc-r0101",
+    "home-assistant-assist-scope"
+  ],
+  "requirements": [
+    "R0101",
+    "MC-R0101",
+    "MC-F01"
+  ],
+  "tasks": [
+    "MC-R0101.5",
+    "MC-R0101.6"
+  ],
+  "owner": "luna_home_assistant_join",
+  "protocol_descriptor": {
+    "artifact_id": "installer-home-assistant-assist-protocol-v210",
+    "source_path": "plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210/ha-assist-protocol-source-v1.json",
+    "installed_member_path": "templates/ha-assist-protocol-source-v1.json",
+    "role": "template",
+    "mode": "0444",
+    "sha256": "0445534a28dc08a658c7bc90cb1ea65de8e92fd3eed17594e54b5d0afbbd6abb",
+    "size_bytes": 2973
+  },
+  "upstream_reference": {
+    "schema": 1,
+    "source_repository": "https://github.com/home-assistant/core",
+    "version": "2026.10.0",
+    "commit": "6a811d3359c7b2076dc9e1cf900843a129c044af",
+    "files": [
+      {
+        "path": "homeassistant/components/config/entity_registry.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/components/config/entity_registry.py",
+        "sha256": "b932ed29ee9a4d8ec0cf6f52b7862e809acb92deecfdbcfbe92ca231194e293e",
+        "size_bytes": 13917
+      },
+      {
+        "path": "homeassistant/components/config/device_registry.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/components/config/device_registry.py",
+        "sha256": "ff60b215d936a0d3e719806633aca2c48fcf35089e8a100a8f84682313ae930b",
+        "size_bytes": 10475
+      },
+      {
+        "path": "homeassistant/components/config/area_registry.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/components/config/area_registry.py",
+        "sha256": "e2e930fb7217868c7065ddafc7f5acd607aa6c79cfcc98097120e050282db1cd",
+        "size_bytes": 5555
+      },
+      {
+        "path": "homeassistant/components/homeassistant/exposed_entities.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/components/homeassistant/exposed_entities.py",
+        "sha256": "e4b3bed3d8541eb7a16042c7ac637e598498ea6e52840e64eb8a7c2fcf93a994",
+        "size_bytes": 18369
+      },
+      {
+        "path": "homeassistant/components/homeassistant/llm.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/components/homeassistant/llm.py",
+        "sha256": "279fa14fa2ec0f668dfe47d02c76dde400ba497f53ffacfb49b6af510a638b03",
+        "size_bytes": 12716
+      },
+      {
+        "path": "homeassistant/helpers/entity_registry.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/helpers/entity_registry.py",
+        "sha256": "f77b7ae946a0902136faadb3cfe45d17aca24fa639c43189295e101f5e47f425",
+        "size_bytes": 115504
+      },
+      {
+        "path": "homeassistant/helpers/intent.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/helpers/intent.py",
+        "sha256": "8f58b59847adbda746d435bd04979f5a20d263c09ab3ce66ef2e8700242b02e0",
+        "size_bytes": 51639
+      },
+      {
+        "path": "homeassistant/helpers/device_registry.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/helpers/device_registry.py",
+        "sha256": "a7121fe607eae7e0b9128ba23517072925890eab8904dca9e4554ed71f62ac20",
+        "size_bytes": 216019
+      },
+      {
+        "path": "homeassistant/components/mcp_server/server.py",
+        "url": "https://raw.githubusercontent.com/home-assistant/core/6a811d3359c7b2076dc9e1cf900843a129c044af/homeassistant/components/mcp_server/server.py",
+        "sha256": "e6def3e6326d6a3347b3d246573d3ff0fd278310d065291aaa7a5fb72947f676",
+        "size_bytes": 7213
+      }
+    ],
+    "status": "reviewed immutable upstream reference; UI/server version is not deployed source-byte proof"
+  },
+  "target_version_evidence": {
+    "Core": "2026.10.0",
+    "Supervisor": "2026.09.3",
+    "HAOS": "18.3",
+    "Frontend": "20260930.2",
+    "source": "root authenticated About UI read-only report; not source-byte or MCP/runtime proof"
+  },
+  "websockets_artifact": {
+    "url": "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl",
+    "sha256": "f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f",
+    "size_bytes": 169743,
+    "filename": "websockets-15.0.1-py3-none-any.whl",
+    "artifact_id": "websockets-installer-runtime-15.0.1",
+    "version": "15.0.1",
+    "role": "installer-runtime-wheel",
+    "requirement_id": "MC-R0101",
+    "max_bytes": 169743,
+    "dependency_records": [],
+    "compatibility": "purelib py3-none-any; Requires-Python>=3.9; actual installer Python3.14 installed member/runtime receipt pending"
+  },
+  "metadata_sequence": [
+    "config/entity_registry/list",
+    "config/device_registry/list",
+    "config/area_registry/list",
+    "homeassistant/expose_entity/list",
+    "homeassistant/expose_new_entities/get:assistant=conversation",
+    "config/entity_registry/get_entries:entity_ids=source-derived64batches"
+  ],
+  "metadata_limits": {
+    "max_registry_rows": 4096,
+    "max_entries_per_batch": 64,
+    "max_batches": 64,
+    "max_json_response_bytes": 1048576,
+    "max_total_json_bytes": 8388608,
+    "max_seconds": 30,
+    "max_exposed_records": 256
+  },
+  "whole_context_intent_fields": [
+    "schema",
+    "intent_handle",
+    "instance_selection_handle",
+    "setup_session_handle",
+    "transaction_handle",
+    "principal_selection_handle",
+    "namespace_selection_handle",
+    "profile_id",
+    "profile_generation",
+    "endpoint_sha256",
+    "credential_reference",
+    "protocol_selection_handle",
+    "scope_mode",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "whole_context_observation_fields": [
+    "schema",
+    "observation_handle",
+    "intent_handle",
+    "instance_selection_handle",
+    "endpoint_sha256",
+    "protocol_selection_handle",
+    "discovered_tool_schema_receipt_handle",
+    "request_source_receipt_handle",
+    "response_source_receipt_handle",
+    "arguments_sha256",
+    "raw_response_sha256",
+    "validated_result_sha256",
+    "scope_membership_sha256",
+    "scope_record_count",
+    "observed_monotonic",
+    "expires_monotonic"
+  ],
+  "choice_extension_fields": [
+    "scope_evidence_kind",
+    "scope_membership_sha256",
+    "protocol_selection_handle"
+  ],
+  "scope_tags": {
+    "selected-filter": "complete-explicit-metadata",
+    "whole-exposed-set": "source-approved-live-context"
+  },
+  "acceptance": "all AC01..AC18 OPEN; source/dependency/metadata/auth/functional/enablement separate; no live HA mutation or source pin batch"
+}
