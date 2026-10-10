@@ -133,3 +133,6 @@ Typed bootstrap RuntimeError boundary diagnostics v203: `plans/amendments/2026-1
 Typed diagnostic source review v204: plans/amendments/2026-10-10-typed-bootstrap-diagnostic-source-review-v204.md; exact fd09b11d two-leaf replacement, BD-T203.1 / VD-T203.2 open, no DD00 diagnosis/all AC open.
 
 Jarvis sole user-facing profile v205: plans/amendments/2026-10-10-jarvis-sole-user-profile-v205.md; RB-T205.1/.2, VD-T205.3 OPEN; default/Jarvis +207 isolated native delegates, all208 source profiles preserved, no Desktop filter fiction/all AC OPEN.
+
+
+Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`; RT-T209.1..4 → VD-T209.5, all OPEN. Actual npm/Electron/Xpra/gateway acquisition, managed build and materialized current runtime are distinct; all AC OPEN.

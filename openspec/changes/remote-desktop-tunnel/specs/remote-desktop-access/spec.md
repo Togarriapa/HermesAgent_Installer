@@ -323,3 +323,15 @@ The installer SHALL apply only the exact finite reviewed source/member/role mapp
 #### Scenario: Missing or unsupported producer
 - **WHEN** a source/member/role/schema/loaded proof is missing or kernel enforcement permits a forbidden bind
 - **THEN** startup/effect remains unavailable, no network lease or acceptance is issued, and owned cleanup SHALL be verified without weakening negative expectations
+
+
+### Requirement: Concrete current remote runtime substrate v209
+The installer SHALL use the exact finite acquisition, retained receipt, managed build/CAS/materialization and source-to-v202-role contracts in `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`, preserving private14500/8765, Desktop AF_UNIX, Electron sandbox and TLS verification.
+
+#### Scenario: Package declaration substituted for runtime
+- **WHEN** npm lock integrity is supplied as Electron binary proof, transformed Xpra overlay as runnable Xpra, or gateway source/lock as installed runtime
+- **THEN** admission and role issuance SHALL deny until actual acquired dependencies, managed build terminal, independently inspected package and current materialized executable receipts exist
+
+#### Scenario: Current managed runtime issued
+- **WHEN** the concrete registry revalidates original selected setup/choice, held source/toolchain/dependency/builder/schema, managed terminal/CAS and materialized executable/package joins
+- **THEN** it SHALL project only the exact v202 role receipt, keep target acceptance separate, and revoke or deny stale/copied/replayed/unsupported inputs without lazy acquisition or sandbox weakening

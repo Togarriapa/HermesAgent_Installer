@@ -87,3 +87,16 @@ Loopback inert kernel templates v122: `plans/amendments/2026-10-10-loopback-iner
 - [ ] `HI-T180.4` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
 
 - [ ] `HI-T180.5` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+
+Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md` and `planning/concrete-remote-runtime-substrate-v209.json`; source acquisition/build/materialized runtime are distinct; v202 outer schemas, namespace ports and sandbox/TLS remain unchanged. All implementation/target gates OPEN.
+
+- [ ] `RT-T209.1` Implement retained three-role runtime registry/current source-to-role projection and root factory join under v209; source pins and target acceptance remain pending.
+
+- [ ] `RT-T209.2` Implement actual locked Xpra native acquisition and fixed runnable managed builder under v209; source pins and target acceptance remain pending.
+
+- [ ] `RT-T209.3` Implement lock-derived npm acquisition, separate Electron ARM64 payload and upstream prepared AppDir builder under v209; source pins and target acceptance remain pending.
+
+- [ ] `RT-T209.4` Implement gateway locked component runtime/fixed driver builder and finite custody execution lane under v209; source pins and target acceptance remain pending.
+
+- [ ] `VD-T209.5` Verify actual source/build/CAS/materialization/role joins and specified substitution/expiry/cancel/sandbox failures under v209; source pins and target acceptance remain pending.

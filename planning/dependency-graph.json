@@ -3082,5 +3082,31 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "concrete_remote_runtime_substrate_v209": {
+    "contract": "planning/concrete-remote-runtime-substrate-v209.json",
+    "amendment": "plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md",
+    "tasks": {
+      "RT-T209.1": [
+        "HI-T160.1",
+        "HI-T197.2"
+      ],
+      "RT-T209.2": [
+        "RT-T209.1"
+      ],
+      "RT-T209.3": [
+        "RT-T209.1"
+      ],
+      "RT-T209.4": [
+        "RT-T209.1"
+      ],
+      "VD-T209.5": [
+        "RT-T209.1",
+        "RT-T209.2",
+        "RT-T209.3",
+        "RT-T209.4"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }
