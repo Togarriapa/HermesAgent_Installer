@@ -3019,6 +3019,15 @@
         "VD-T197.4"
       ],
       "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md",
+      "tasks": [
+        "HI-T160.1",
+        "HI-T197.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
     }
   ],
   "home_assistant_root_enrollment_mc_r0101": {

@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md",
+  "extends": [
+    "v199",
+    "v201"
+  ],
+  "tasks": [
+    "HI-T160.1",
+    "HI-T197.2",
+    "VD-T197.4"
+  ],
+  "workflow_id": "owned-native-desktop-remote-v1",
+  "choice_fields": [
+    "schema",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "plan_sha256",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "workflow_id",
+    "decision",
+    "remote_configuration_selection_handle",
+    "principal_selection_handle",
+    "principal_binding_sha256",
+    "namespace_selection_handle",
+    "namespace_binding_sha256",
+    "choice_observation_id",
+    "revocation_epoch",
+    "issued_monotonic",
+    "expires_monotonic",
+    "signature"
+  ],
+  "role_receipt_fields": [
+    "schema",
+    "role_receipt_handle",
+    "choice_handle",
+    "role",
+    "service_identity_receipt_handle",
+    "service_enrollment_id",
+    "profile_id",
+    "generation",
+    "principal_selection_handle",
+    "principal_binding_sha256",
+    "namespace_selection_handle",
+    "namespace_binding_sha256",
+    "operation_id",
+    "recipe_id",
+    "recipe_sha256",
+    "source_artifact_id",
+    "source_revision",
+    "source_receipt_handle",
+    "source_closure_sha256",
+    "toolchain_receipt_handle",
+    "toolchain_closure_sha256",
+    "runtime_receipt_handle",
+    "runtime_closure_sha256",
+    "executable_artifact_id",
+    "executable_sha256",
+    "package_receipt_handle",
+    "package_closure_sha256",
+    "build_attestation_handle",
+    "build_attestation_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "inputs_fields": [
+    "schema",
+    "inputs_handle",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "plan_sha256",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "principal_selection_handle",
+    "principal_binding_sha256",
+    "namespace_selection_handle",
+    "namespace_binding_sha256",
+    "remote_configuration_selection_handle",
+    "role_receipts",
+    "network_selection_handle",
+    "network_rows_sha256",
+    "remote_rows_sha256",
+    "source_receipt_handles",
+    "source_closure_sha256",
+    "xpra_transform_proof_handle",
+    "xpra_transform_proof_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "roles": {
+    "display": {
+      "operation": "native-display-start-v1",
+      "recipe": "root-selected-xpra-seamless-v1",
+      "listener_port": 14500
+    },
+    "gateway": {
+      "operation": "native-remote-gateway-start-v1",
+      "recipe": "root-selected-access-gateway-v1",
+      "listener_port": 8765
+    },
+    "desktop": {
+      "operation": "native-desktop-app-start-v1",
+      "recipe": "root-selected-official-hermes-desktop-v1",
+      "network": "AF_UNIX selected display only"
+    }
+  },
+  "source_audit": {
+    "hermes_revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "xpra_revision": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+    "desktop_main": "dist/electron-main.mjs",
+    "locked_electron": "40.10.2"
+  },
+  "new_driver_runtime_pins": "pending actual acquisition/build/committed source review",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}
