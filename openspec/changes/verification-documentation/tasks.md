@@ -97,3 +97,8 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 ## v183 exact active effect producers
 
 - [ ] `VD-T183.5` Exercise real source/generated/loaded/current effects and failure evidence; exact committed source review. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+
+
+## v184 exact wire clarification
+
+- [ ] `VD-T184.3` Verify exact parser/roundtrip/hash/FK failures and pre-READY bind vs later effect-proof ordering. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.

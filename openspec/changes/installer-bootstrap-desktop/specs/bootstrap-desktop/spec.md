@@ -731,3 +731,15 @@ The installer SHALL implement the exact source/type/method/output producer joins
 #### Scenario: Missing source or stale active authority
 - **WHEN** recipe/source/member/view/NSS/current choice/loaded peer proof is absent or mismatched, revoked, late-adopted or replaced
 - **THEN** app/effect SHALL deny before execution, preserve independent source readiness and never derive host/AuthentiK authority or network permission from static metadata/choice presence
+
+
+### Requirement: Acyclic finite network rows v184
+The installer SHALL use the exact closed versioned field sets, full-row canonical hashes and producer/currentness/FK rules in `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`.
+
+#### Scenario: Exact generated source rows
+- **WHEN** real signed recipe/source and held runtime/identity roots produce the finite schema2 AF_UNIX rows
+- **THEN** current runtime MAY attach the separately verified enclosing generation digest and reach its worker barrier without feeding that digest back into generated rows
+
+#### Scenario: Wire or phase proof invalid
+- **WHEN** fields/FKs/digests/versions/current source differ or only pre-READY mount custody exists for an effect
+- **THEN** startup/effect SHALL deny without inventing TCP/source/loaded authority or successful acceptance
