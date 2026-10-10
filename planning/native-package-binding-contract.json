@@ -1109,5 +1109,17 @@
       "HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.",
       "HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open."
     ]
+  },
+  "financial_alias_source_bound_v121": {
+    "schema": 1,
+    "id": "financial-alias-source-bound-v1",
+    "supersedes": "v120 financial account_alias maxLength96 only; immutable v120 retained",
+    "why": "Actual plugin_finance._ID accepts up to128 characters; preserve the entire source-reviewed alias domain, not an unintentional narrower guessed ceiling.",
+    "schema_id": "installer-native-result-financial_data_read-v1",
+    "artifact_id": "installer-native-result-financial_data_read-v1",
+    "path": "plans/amendments/2026-10-10-financial-alias-source-bound-v121/financial_data_read.result.schema.json",
+    "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
+    "size_bytes": 984,
+    "rule": "Exact actual root selected account alias, source regex/max128; all other v120 fields/bounds/proof/task obligations unchanged. Current selected schema artifact pin must resolve this v121 source member, not stale v120 bytes."
   }
 }

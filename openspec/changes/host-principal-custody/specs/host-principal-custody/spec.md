@@ -522,3 +522,12 @@ The installer SHALL validate source-derived financial observations and web resul
 
 - **WHEN** a web result supplies a structurally valid receipt that does not resolve current root artifact/source membership
 - **THEN** result promotion is denied and no provenance or authority is inferred from the returned dictionary
+
+### Requirement: Source exact financial account alias domain
+
+The installer SHALL preserve v121 actual source account alias regex and128-character bound when validating selected financial observations.
+
+#### Scenario: Valid selected alias exceeds96 characters
+
+- **WHEN** the actual selected alias satisfies the source128-character domain
+- **THEN** it is not rejected solely by the superseded v120 max96 ceiling; all other proof and output checks remain required
