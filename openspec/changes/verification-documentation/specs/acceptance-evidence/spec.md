@@ -683,8 +683,6 @@ The executable verifier SHALL bind actual selected installer target/current cand
 
 #### Scenario: Fixture or candidate drift
 - **WHEN** a result is fixture-only, incomplete or differs from current enrolled target/candidate
-<<<<<<< HEAD
- - **THEN** acceptance remains pending and no claimed success is exported.
-=======
 - **THEN** acceptance remains pending and no claimed success is exported.
->>>>>>> 46aa4ae11bebcbb67ce8199cacfa8294c73b6fe5
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.

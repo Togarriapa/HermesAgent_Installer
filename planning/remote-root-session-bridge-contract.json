@@ -501,7 +501,54 @@
         "issued_monotonic",
         "expires_monotonic"
       ],
-      "receipt": "RootPrivateLoopbackNetworkReceipt actual registry/kernel netns+port/role enforcement and actual current enrolled listener/process/positive-negative probes. Static fields/port-open checks cannot mint success. Root-private handles no caller netns path/PID/port selectors; retained namespaceFD/cgroup/process proof resolved current before connects and revoked on member exit/generation/session change."
+      "receipt": "RootPrivateLoopbackNetworkReceipt actual registry/kernel netns+port/role enforcement and actual current enrolled listener/process/positive-negative probes. Static fields/port-open checks cannot mint success. Root-private handles no caller netns path/PID/port selectors; retained namespaceFD/cgroup/process proof resolved current before connects and revoked on member exit/generation/session change.",
+      "selected_kernel_policy": {
+        "artifact_id": "installer-private-loopback-nft-v1",
+        "source_path": "plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97/private-loopback-policy-v1.json",
+        "installed_path": "templates/private-loopback-policy-v1.json",
+        "sha256": "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc",
+        "size_bytes": 1482,
+        "mechanism": "isolated-netns-nft-uid-ports-systemd-bind-v1",
+        "namespace_path": "Root derivation /run/hermes-installer/netns/<SHA256(UTF8(network_id+NUL+generation))>; held root namespace fd/dev/inode verified before each unit launch. No caller namespace path; inode cannot equal host. PrivateNetwork=no only when exact NetworkNamespacePath overrides ordinary private creation; actual isolated kernel namespace receipt is mandatory, never host network fallback.",
+        "rules_API": "Root private network owner compiles exact nft inet table hermes_installer_private only inside retained selected netns from listener/client row foreign keys and actual NSS exclusive role UIDs. Atomic nft transaction default drop input/output/forward plus only exact mapped UID/address/TCPport/conntrack direction rules above. Readback ruleset digest and actual netns interface/routes/manager bind BPF properties included in existing network receipt. Missing kernel/nft/manager support denies, no broad allow fallback.",
+        "roles": "Remote group: gateway TCP client\u2192xpra display listener127.0.0.1:14500; Desktop uses selected Xauthority/X11 AF_UNIX and receives no TCP allow by default. Public cloudflared origin is only selected protected gateway AF_UNIX HTTP socket, outside isolated Xpra namespace; official cloudflared unix origin transport supports this. Provider group separate: native producer TCP client\u2192protected provider gateway listener port selected enrollment, gateway root RPC\u2192root broker upstream, no internet in pair netns. No other endpoints or ephemeral listener ports.",
+        "runtime_evidence": "Actual installed systemd/nft/kernel tool artifact identities+SHA/versions/root-owned origin resolved from protected host tool catalog before rule application; no fabricated preknown host hash or global package replacement. Linux probes must prove allowed connect/reply, wrong UID/port/address/bind, sibling/host/external/DNS/IPv6 deny, changed netns/rules/cgroup/member UID invalidation. Source documentation supports mechanism; it does not prove actual target support."
+      },
+      "host_tool_variants": {
+        "artifact_id": "installer-private-loopback-nft-tool-variants-v1",
+        "source_path": "plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103/nft-tool-variants-v1.json",
+        "installed_path": "templates/nft-tool-variants-v1.json",
+        "roles": [
+          "template"
+        ],
+        "sha256": "38737df6f1b2b15746646ceb57d14f80a92e70f001da320cffcd7694381a4e54",
+        "size_bytes": 3436,
+        "variant_ids": [
+          "nft-ubuntu24.04-arm64-1.0.9-1ubuntu0.1",
+          "nft-ubuntu24.04-amd64-1.0.9-1ubuntu0.1",
+          "nft-debian13-arm64-1.1.3-1"
+        ],
+        "root_call": "Private loopback network owner resolves_selected_nft_tool(current_verified_host_package_set_receipt,selected_network_binding)->RootSelectedNftTool. Actual receipt is root held readonly distribution package observation, exact installed package/current distro/architecture/executable and dependency closure, never Coral build/task receipt or caller version string. If no such actual package evidence adapter is implemented, deny with exact prerequisite rather than manufacture RootPackageSetReceipt.",
+        "tool_fields": [
+          "variant_id",
+          "package_name",
+          "version",
+          "distribution",
+          "release",
+          "architecture",
+          "package_sha256",
+          "executable_artifact_id",
+          "executable_sha256",
+          "dependency_closure_sha256",
+          "package_set_receipt_handle",
+          "executable_device",
+          "executable_inode",
+          "expires_monotonic"
+        ],
+        "checks": "Exact actual installed /usr/sbin/nft member re-open nofollow/root-owned executable/nonwritable; actual executable hash matches measured variant and package member, exact libnftables1 + current verified runtime dependency closure. Debian executable null is nonoperational pending actual source-backed executable measurement, not wildcard. Root retains fd/dev/inode/package-set lookup; recheck before apply/readback. OS/kernel/systemd actual held current host tool receipts remain distinct, never package hash as executable hash. Existing policy selected nft variant remains private root compiled host selection; no worker selector/catalog authority.",
+        "recipe": "Only fixed root nft check/apply/readback recipes inside exact retained namespace: check/apply root compiled nft transaction via bounded stdin (-c -f - / -f -), readback -j list ruleset; never worker script/file/argv. Receipt binds actual rules bytes digest, namespace inode/member UIDs/policy/manager/kernel observation; actual positive and denial probes required. All namespace mutation confined root-owned selected netns, no host firewall table/global package replacement.",
+        "measurement": "Owner measured signed apt-get update indexes plus apt-get download and isolated extraction; no target install. Ubuntu InRelease noble SHA cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0 and noble-updates33628844ee026b3c2563454ba83358b662721ed053d00ec3977a18653b10d6dd as evidence of the recorded extraction, not long-lived unverified index acceptance. Actual each acquisition revalidates current trusted distribution signatures/exact pinned package fields. These fixtures do not qualify physical Pi support."
+      }
     },
     "root_launch_admission": {
       "owner": "hermes_installer.authority.native_display_startup.RootSelectedDisplayLaunchAuthority",
@@ -565,6 +612,96 @@
       "consumer": "resolve_selected_patch(patch_receipt_handle,selected_startup)->RootXpraOverlayPatchReceipt; root starter re-resolves actual held transformed artifact/tree/catalog, exact selected enrollment/process/service generation and original lease before fresh selected display start. Custody verifies resulting executable/child artifact closure; cookie/origin registries do not mint this patch proof.",
       "digests": "source_tree_digest and transformed_tree_sha256 are SHA256 of canonical sorted full regular source member rows {path,sha256,size_bytes,executable}; output_artifact_sha256 is exact deterministic output archive bytes SHA256, not tree digest. Overlay source module artifact hash is distinct. No secret cookie in receipt/evidence.",
       "lease": "lease <=600 seconds and <= admitted startup transaction/selection original deadline; renew only by actual root revalidation, no worker prolongation. Actual immutable artifact pin persists after lease, effect proof does not."
+    },
+    "xpra_verified_source_pin": {
+      "schema": 1,
+      "artifact_id": "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea",
+      "source_identity": "Xpra-org/xpra",
+      "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+      "git_tree_sha1": "7d31d0d2f9394d47815cafd4791db3310840781d",
+      "url": "https://codeload.github.com/Xpra-org/xpra/tar.gz/521b0d2e762c770b2641d258b93d23575fa9cbea",
+      "sha256": "20b55586457df5aed8453b0d1b446e4dd954f2027d814f1eb7c0a96227ef1c80",
+      "size_bytes": 13962693,
+      "archive_kind": "tar.gz",
+      "root_prefix": "xpra-521b0d2e762c770b2641d258b93d23575fa9cbea/",
+      "license": "GPL-2.0-or-later source setup.py; COPYING GPL-2.0 text",
+      "source_manifest": {
+        "artifact_id": "xpra-source-manifest-521b0d2e762c770b2641d258b93d23575fa9cbea",
+        "path": "plans/amendments/2026-10-10-xpra-verified-source-pin-v101/source-tree-manifest.json",
+        "sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+        "size_bytes": 427551,
+        "regular_file_count": 2469,
+        "symlink_count": 5,
+        "directory_count": 345,
+        "archive_member_count": 2819,
+        "regular_file_bytes": 28215070,
+        "link_target_bytes": 59,
+        "regular_tree_sha256": "f52b4ce760b86c24a4d6d930f47e58357442a984d9ff2478d7abf338ff48e467"
+      },
+      "limits": {
+        "download_maximum_bytes": 16777216,
+        "expanded_source_maximum_bytes": 67108864,
+        "archive_maximum_members": 4096,
+        "regular_member_maximum_bytes": 8388608,
+        "manifest_maximum_bytes": 1048576
+      },
+      "proof": "Root verifies actual TLS archive bytes/hash/size and every path/mode/content against full committed Git tree manifest; exact measured source excludes .git/untracked/ignored files. ArchiveSHA, Git treeSHA1, full source manifestSHA and regular-only treeSHA are separate domains. Previous10f91b... checkout traversal digest invalid and never accepted. Source manifest is evidence/artifact data, not imported governance.",
+      "allowed_source_links": [
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "packaging/debian/xpra",
+          "path": "debian",
+          "sha256": "a1aef4be57bc54eefaab320b3728f3c0e0f463bc3c7307b1ac4528e2b3f00d4b",
+          "size_bytes": 21
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "sysconfig",
+          "path": "fs/etc/default",
+          "sha256": "ed85312a196268e2240f401f7d8711c4edaad4d43bcfd76ec5f4e19ec8916ee0",
+          "size_bytes": 9
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "xdg-open",
+          "path": "fs/libexec/xpra/gnome-open",
+          "sha256": "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29",
+          "size_bytes": 8
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "xdg-open",
+          "path": "fs/libexec/xpra/gvfs-open",
+          "sha256": "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29",
+          "size_bytes": 8
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "../../../docs",
+          "path": "fs/share/doc/xpra",
+          "sha256": "bdc7f46fbdfe68781df25dec18962c3ac2aa93d35c3e04185ecc9ac201c73b35",
+          "size_bytes": 13
+        }
+      ],
+      "link_rules": "Only these exact five original Git mode120000/literal target bytes/hash/size are permitted. Root normalizes target relative to link parent, verifies it stays in exact source root and resolves to verified target file/subtree, no absolute/escaping/cycle/unknown link/hardlink/special inode. Preserve original virtual source manifest/Git proof including links. Before any actual filesystem materialization, compile each selected alias as a regular file or full verified regular target subtree using held verified bytes/modes; no writable filesystem symlink. Compiled alias map and full resulting tree digest are separate source-to-compiled evidence, bounded by expanded limit. An archived source object may preserve exact literal link members as data, but cannot be extracted into a runtime mount using arbitrary tar link semantics. Every execution/mount uses independently verified regular closure. Directory aliases retain all verified target members, no source scope loss.",
+      "transform_profile": {
+        "profile_id": "xpra-root-xauthority-transform-v1",
+        "kind": "fixed-source-transformation",
+        "source_artifact_id": "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea",
+        "source_manifest_artifact_id": "xpra-source-manifest-521b0d2e762c770b2641d258b93d23575fa9cbea",
+        "builder_artifact_id": "installer-module:hermes_installer.remote.xpra_root_xauthority",
+        "builder_pin": "actual current verified installed module SHA and full imported deterministic transform/archive/receipt closure from selected installer release, never pre-registry sample module hash",
+        "recipe_id": "xpra-root-xauthority-overlay-v1",
+        "inputs": "exact existing v69 three patch anchors + full source manifest + selected builder origin; no caller patch/code/argv",
+        "outputs": "root observed actual transformed tree/patch manifest/deterministic non-executable tar, exact required role paths from existing overlay registry. Actual SHA/size observed after successful finite transform; no pre-known output hash. Existing output ID build-output:<actual tarSHA>:file:d comes ONLY from typed held ContentAddressedBuildStore output observation; root derived catalog publication before selected startup.",
+        "limits": "same source/member limits; deterministic output tar<=134217728 bytes; no network/model/optional package install in transformation"
+      },
+      "runtime_boundary": "This source transformation receipt does not prove a compiled Linux ARM64 Xpra executable, dependencies, Xvfb/Xauth sandbox, namespace/network, startup or native Desktop function. Exact actual selected runtime/build/package-set and process/kernel/overlay receipt proof still required before launch; do not use source tar/module version as executable SHA or mark acceptance. Broker owns exact static source catalog row and held derived output publication; remote owner produces actual reviewed transformation receipts."
     }
   },
   "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only."
