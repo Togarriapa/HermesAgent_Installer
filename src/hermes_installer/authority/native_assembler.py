@@ -247,6 +247,7 @@ class RootNativePackageAssembler:
             )
             receipts = tuple(self._outputs.publish_selected(
                 artifact_role=role, output_kind=kind, payload=payload, members=members,
+                assembly_selection_handle=selection.selection_handle,
             ) for role, kind, payload, members in values)
             if self._binding.resolve_current_native_bootstrap_assembly(selection.selection_handle) != selection:
                 raise NativeAssemblyDenied("native selection changed while outputs were published")

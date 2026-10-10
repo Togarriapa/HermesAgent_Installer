@@ -89,6 +89,7 @@ class NativeOutputSelection:
     output_size_bytes: int
     compiled_closure_sha256: str | None
     expires_monotonic: float
+    assembly_selection_handle: str | None = None
 
 
 class RootNativeOutputBinding(Protocol):
@@ -97,7 +98,7 @@ class RootNativeOutputBinding(Protocol):
     def authorize_native_output(
         self, *, artifact_role: str, output_kind: str,
         member_tree_sha256: str, output_sha256: str,
-        output_size_bytes: int,
+        output_size_bytes: int, assembly_selection_handle: str | None = None,
     ) -> NativeOutputSelection: ...
 
     def revalidate_native_output(self, selection: NativeOutputSelection) -> bool: ...
@@ -131,6 +132,7 @@ class RuntimeArtifactReceipt:
     output_kind: str
     issued_monotonic: float
     expires_monotonic: float
+    assembly_selection_handle: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,11 +181,16 @@ class RootMaterializationReceiptRegistry:
 
     def publish_selected(self, *, artifact_role: str, output_kind: str,
                          payload: bytes,
-                         members: Sequence[NativeOutputMember]) -> RuntimeArtifactReceipt:
+                         members: Sequence[NativeOutputMember],
+                         assembly_selection_handle: str | None = None) -> RuntimeArtifactReceipt:
         """Store a fixed native output and mint its path-free one-use receipt."""
         self._require_root()
         if _ROLE_KINDS.get(artifact_role) != output_kind:
             raise NativeOutputReceiptDenied("native output role and output kind are incompatible")
+        if ((artifact_role == "resources-source-bundle" and assembly_selection_handle is not None)
+                or (artifact_role != "resources-source-bundle"
+                    and not _valid_handle(assembly_selection_handle))):
+            raise NativeOutputReceiptDenied("generated outputs require the exact root assembly selection handle")
         if not isinstance(payload, bytes) or not payload:
             raise NativeOutputReceiptDenied("native output payload is empty or not immutable bytes")
         if len(payload) > _MAX_OUTPUT_BYTES[artifact_role]:
@@ -199,7 +206,7 @@ class RootMaterializationReceiptRegistry:
         selection = self._binding.authorize_native_output(
             artifact_role=artifact_role, output_kind=output_kind,
             member_tree_sha256=member_digest, output_sha256=payload_digest,
-            output_size_bytes=len(payload),
+            output_size_bytes=len(payload), assembly_selection_handle=assembly_selection_handle,
         )
         self._validate_selection(selection, artifact_role, output_kind,
                                  member_digest, payload_digest, len(payload))
@@ -218,6 +225,7 @@ class RootMaterializationReceiptRegistry:
             selection.compiler_sha256, selection.producer_artifact_id,
             selection.producer_sha256, selection.source_receipt_handles,
             selection.output_kind, now, selection.expires_monotonic,
+            selection.assembly_selection_handle,
         )
         receipt_id = self._begin_record(receipt, member_digest, selection)
         self._publish_cas(payload, payload_digest)
@@ -274,6 +282,7 @@ class RootMaterializationReceiptRegistry:
             artifact_role=record["artifact_role"], output_kind=record["output_kind"],
             member_tree_sha256=record["member_tree_sha256"],
             output_sha256=record["sha256"], output_size_bytes=record["size_bytes"],
+            assembly_selection_handle=record.get("assembly_selection_handle"),
         )
         self._validate_selection(
             selection, record["artifact_role"], record["output_kind"],
@@ -553,6 +562,7 @@ class RootMaterializationReceiptRegistry:
             artifact_role=record["artifact_role"], output_kind=record["output_kind"],
             member_tree_sha256=record["member_tree_sha256"],
             output_sha256=record["sha256"], output_size_bytes=record["size_bytes"],
+            assembly_selection_handle=record.get("assembly_selection_handle"),
         )
         self._validate_selection(selection, record["artifact_role"], record["output_kind"],
                                  record["member_tree_sha256"], record["sha256"],
@@ -638,6 +648,9 @@ class RootMaterializationReceiptRegistry:
                 or selection.member_tree_sha256 != member_digest
                 or selection.output_sha256 != output_digest
                 or selection.output_size_bytes != output_size
+                or (selection.assembly_selection_handle is None and role != "resources-source-bundle")
+                or (selection.assembly_selection_handle is not None
+                    and not _valid_handle(selection.assembly_selection_handle))
                 or type(selection.expires_monotonic) not in (int, float)
                 or selection.expires_monotonic <= self._monotonic()):
             raise NativeOutputReceiptDenied("sealed setup binding rejected or malformed the fixed output selection")
@@ -676,7 +689,7 @@ class RootMaterializationReceiptRegistry:
                     member_tree_sha256 TEXT NOT NULL,
                     compiled_closure_sha256 TEXT,
                     issued_monotonic REAL NOT NULL, expires_monotonic REAL NOT NULL,
-                    state TEXT NOT NULL,
+                    state TEXT NOT NULL, assembly_selection_handle TEXT,
                     UNIQUE(transaction_handle, artifact_role));
                 CREATE TABLE IF NOT EXISTS reservations(
                     reservation_handle TEXT PRIMARY KEY,
@@ -690,13 +703,24 @@ class RootMaterializationReceiptRegistry:
             """)
             columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(outputs)"))
             reservation_columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(reservations)"))
+            prior_columns = (
+                "receipt_id", "artifact_id", "artifact_role", "sha256", "size_bytes",
+                "store_id", "setup_session_id", "transaction_handle", "plan_digest",
+                "prepared_generation_id", "compiler_artifact_id", "compiler_sha256",
+                "producer_artifact_id", "producer_sha256", "source_receipt_handles",
+                "output_kind", "member_tree_sha256", "compiled_closure_sha256", "issued_monotonic",
+                "expires_monotonic", "state",
+            )
+            if columns == prior_columns:
+                db.execute("ALTER TABLE outputs ADD COLUMN assembly_selection_handle TEXT")
+                columns = tuple(row["name"] for row in db.execute("PRAGMA table_info(outputs)"))
         expected_columns = (
             "receipt_id", "artifact_id", "artifact_role", "sha256", "size_bytes",
             "store_id", "setup_session_id", "transaction_handle", "plan_digest",
             "prepared_generation_id", "compiler_artifact_id", "compiler_sha256",
             "producer_artifact_id", "producer_sha256", "source_receipt_handles",
             "output_kind", "member_tree_sha256", "compiled_closure_sha256", "issued_monotonic",
-            "expires_monotonic", "state",
+            "expires_monotonic", "state", "assembly_selection_handle",
         )
         if columns != expected_columns:
             raise NativeOutputReceiptDenied("native output journal schema is not the reviewed version")
@@ -776,6 +800,7 @@ class RootMaterializationReceiptRegistry:
                         and row["source_receipt_handles"] == json.dumps(receipt.source_receipt_handles)
                         and row["output_kind"] == receipt.output_kind
                         and row["compiled_closure_sha256"] == selection.compiled_closure_sha256)
+                same = same and row["assembly_selection_handle"] == receipt.assembly_selection_handle
                 if not same:
                     raise NativeOutputReceiptDenied("a fixed output role already has a receipt in this transaction")
                 if row["state"] != "pending":
@@ -792,7 +817,7 @@ class RootMaterializationReceiptRegistry:
                     return receipt.receipt_id
                 return row["receipt_id"]
             try:
-                db.execute("""INSERT INTO outputs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                db.execute("""INSERT INTO outputs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (receipt.receipt_id, receipt.artifact_id, receipt.artifact_role,
                      receipt.sha256, receipt.size_bytes, receipt.store_id,
                      receipt.setup_session_id, receipt.transaction_handle,
@@ -801,7 +826,7 @@ class RootMaterializationReceiptRegistry:
                      receipt.producer_artifact_id, receipt.producer_sha256,
                      json.dumps(receipt.source_receipt_handles), receipt.output_kind,
                      manifest_digest, selection.compiled_closure_sha256, receipt.issued_monotonic,
-                     receipt.expires_monotonic, "pending"))
+                     receipt.expires_monotonic, "pending", receipt.assembly_selection_handle))
             except sqlite3.IntegrityError:
                 raise NativeOutputReceiptDenied("a fixed output role already has a receipt in this transaction") from None
         return receipt.receipt_id
@@ -844,6 +869,7 @@ class RootMaterializationReceiptRegistry:
                 and record["producer_sha256"] == selection.producer_sha256
                 and record["compiled_closure_sha256"] == selection.compiled_closure_sha256
                 and record["source_receipt_handles"] == json.dumps(selection.source_receipt_handles)
+                and record["assembly_selection_handle"] == selection.assembly_selection_handle
                 and record["artifact_id"] == _expected_artifact_id(
                     other_role, selection.package_id, selection.generation)
             )
@@ -1476,6 +1502,7 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RuntimeArtifactReceipt:
         record["producer_artifact_id"], record["producer_sha256"],
         tuple(record["source_receipt_handles"]), record["output_kind"],
         record["issued_monotonic"], record["expires_monotonic"],
+        record.get("assembly_selection_handle"),
     )
 
 
