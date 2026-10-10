@@ -338,6 +338,9 @@ def verify_installed_launcher() -> bool:
     """
     from .authority.installer_release import InstalledRootReleaseVerifier
 
+    pointer = InstalledRootReleaseVerifier.verify_installed_release()
+    pointer.close()
+    _import_v180_native_support_closure()
     release, actor = InstalledRootReleaseVerifier.from_current_root_process()
     try:
         actor.verify_current(release)
@@ -345,6 +348,24 @@ def verify_installed_launcher() -> bool:
     finally:
         actor.close()
         release.close()
+
+
+def _import_v180_native_support_closure() -> None:
+    """Load the exact native support modules before the actor origin snapshot."""
+    from .components import native_plugins, public_registries
+    from .authority import (
+        local_resource_effects,
+        native_assembler,
+        native_definition_composition,
+        native_policy_preparation,
+        native_registration_projection,
+        native_source_definitions,
+    )
+
+    # Keep explicit references so this remains a finite, intentional import set.
+    _ = (native_assembler, native_registration_projection, native_plugins, public_registries,
+         native_definition_composition, native_policy_preparation,
+         native_source_definitions, local_resource_effects)
 
 
 def run_root_setup_action(
@@ -423,6 +444,9 @@ def run_root_setup_action(
     # module load, including legitimate fixed modules; importing arbitrary
     # modules here would weaken that boundary, so keep this finite import at
     # the installed-release handoff only.
+    from .authority.installer_release import InstalledRootReleaseVerifier
+    # The predecessor probe above already verified the installed pointer.
+    _import_v180_native_support_closure()
     from .authority.bootstrap_runtime_factory import (
         RootBootstrapRuntimeFactory,
         RootInitialSetupAggregate,
@@ -459,13 +483,36 @@ def run_root_setup_action(
             account = _read_target_account_name()
             initial = initial_aggregate.begin_install(account)
             if not (sys.stdin.isatty() and sys.stderr.isatty()):
-                raise RuntimeError("Authentik setup choices require the root controlling terminal")
-            origin = input("Authentik HTTPS origin: ").strip()
-            system_group_id = input("Authentik system group ID: ").strip()
-            recipient_group_id = input("Authentik recipient group ID: ").strip()
-            initial_aggregate.select_initial_identity(
-                initial.compilation_session_handle, https_origin=origin,
-                system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+                raise RuntimeError("Initial capability and identity-domain choices require the root controlling terminal")
+            print("Choose the initial principal domain before entering any credentials.")
+            print("  local: owner-scoped Resources overlay operations; no host or Authentik authority")
+            print("  authentik: selected homelab administration through the protected System-membership path")
+            identity_lane = input("Initial principal [local/authentik]: ").strip().casefold()
+            if identity_lane == "local":
+                print("Select local overlay operations: read, history, write, delete (blank selects none).")
+                operation_text = input("Local operations: ").strip().casefold()
+                operations = tuple(item.strip() for item in operation_text.split(",") if item.strip())
+                operation_ids = {
+                    "read": "resource-overlay-store:tool:resource_overlay_read",
+                    "history": "resource-overlay-store:tool:resource_overlay_history",
+                    "write": "resource-overlay-store:tool:resource_overlay_write",
+                    "delete": "resource-overlay-store:tool:resource_overlay_delete",
+                }
+                if (len(set(operations)) != len(operations)
+                        or any(item not in operation_ids for item in operations)):
+                    raise RuntimeError("Local capability choice must use read, history, write, and/or delete")
+                initial_aggregate.select_initial_local_owner(
+                    initial.compilation_session_handle,
+                    selected_registration_ids=tuple(operation_ids[item] for item in operations))
+            elif identity_lane == "authentik":
+                origin = input("Authentik HTTPS origin: ").strip()
+                system_group_id = input("Authentik system group ID: ").strip()
+                recipient_group_id = input("Authentik recipient group ID: ").strip()
+                initial_aggregate.select_initial_identity(
+                    initial.compilation_session_handle, https_origin=origin,
+                    system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+            else:
+                raise RuntimeError("Initial principal domain must be local or authentik")
             handoff = initial_aggregate.publish_prepared_selection(
                 initial.compilation_session_handle)
             factory, session = initial_aggregate.adopt_prepared_selection(handoff.handoff_handle)

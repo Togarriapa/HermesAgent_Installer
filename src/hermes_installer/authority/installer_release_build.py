@@ -130,7 +130,45 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.authority.native_source_definitions",
      "src/hermes_installer/authority/native_source_definitions.py",
      "lib/python/hermes_installer/authority/native_source_definitions.py",
-     "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
+     "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c", 23_672, "module"),
+    ("hermes_installer.authority.bootstrap_runtime_factory", "src/hermes_installer/authority/bootstrap_runtime_factory.py",
+     "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
+     "1156ea17992ddfd0b04819dc5afbc9426611cc2a745ebfb61800df86b08a0c14", 579_669, "module"),
+    ("hermes_installer.authority.local_resource_effects", "src/hermes_installer/authority/local_resource_effects.py",
+     "lib/python/hermes_installer/authority/local_resource_effects.py",
+     "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6", 47_854, "module"),
+    ("hermes_installer.authority.native_assembler", "src/hermes_installer/authority/native_assembler.py",
+     "lib/python/hermes_installer/authority/native_assembler.py",
+     "311e07fb52ae001e44d4be17cf4ed8a09277118e0aca34b6ff45c22b9b6e2055", 21_265, "module"),
+    ("hermes_installer.authority.native_output_receipts", "src/hermes_installer/authority/native_output_receipts.py",
+     "lib/python/hermes_installer/authority/native_output_receipts.py",
+     "37f18a0d9c2e7082955f82bb27221dae3ae4781c6278b5e0c1a254233fbf7b5f", 109_864, "module"),
+    ("hermes_installer.authority.native_policy_preparation", "src/hermes_installer/authority/native_policy_preparation.py",
+     "lib/python/hermes_installer/authority/native_policy_preparation.py",
+     "93695570e20218ea1e40a0707ef7d6f51e1646e74e5c5338ba1fd83fef737752", 60_196, "module"),
+    ("hermes_installer.authority.native_registration_projection", "src/hermes_installer/authority/native_registration_projection.py",
+     "lib/python/hermes_installer/authority/native_registration_projection.py",
+     "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b", 82_047, "module"),
+    ("hermes_installer.authority.native_definition_composition", "src/hermes_installer/authority/native_definition_composition.py",
+     "lib/python/hermes_installer/authority/native_definition_composition.py",
+     "a60e3b2dadb8e1733767035209f988c2fcbb9feb0ff15e5fd0539da9877d16aa", 8_355, "module"),
+    ("hermes_installer.authority.application_runtime_archive", "src/hermes_installer/authority/application_runtime_archive.py",
+     "lib/python/hermes_installer/authority/application_runtime_archive.py",
+     "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197", 31_457, "module"),
+    ("hermes_installer.authority.application_runtime_relocation", "src/hermes_installer/authority/application_runtime_relocation.py",
+     "lib/python/hermes_installer/authority/application_runtime_relocation.py",
+     "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc", 12_120, "module"),
+    ("hermes_installer.authority.remote_observations", "src/hermes_installer/authority/remote_observations.py",
+     "lib/python/hermes_installer/authority/remote_observations.py",
+     "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31", 93_746, "module"),
+)
+APPLICATION_BUILD_DRIVER = (
+    "installer-application-environment-builder-v1",
+    "src/hermes_installer/authority/application_environment_builder.py",
+    "lib/python/hermes_installer/authority/application_environment_builder.py",
+    "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",
+    45_807,
+    "application-build-driver",
 )
 REVIEWED_HEALTH_FIXTURES = (
     ("src/hermes_installer/native_health_fixture/request.txt", "fixtures/native-health/request.txt",
@@ -2716,6 +2754,16 @@ class RootInstalledReleaseBuilder:
                 self._copy_source(source, output_fd, source_rel, target, ("native-health-fixture",))
                 staged.append(self._last_output_row)
                 staged_paths.add(target)
+        driver_id, driver_source, driver_target, driver_digest, driver_size, driver_role = APPLICATION_BUILD_DRIVER
+        driver_source_row = source_files.get(driver_source)
+        if (driver_source_row is None or driver_source_row.sha256 != driver_digest
+                or driver_source_row.size_bytes != driver_size or driver_source_row.mode & 0o111):
+            raise InstallerReleaseBuildError("application build driver source differs from its execution-only pin")
+        if driver_target in staged_paths:
+            raise InstallerReleaseBuildError("application build driver path was already staged under another role")
+        self._copy_source(source, output_fd, driver_source, driver_target, (driver_role,))
+        staged.append(self._last_output_row)
+        staged_paths.add(driver_target)
         self._stage_application_effect_sources(source, output_fd, staged, staged_paths)
         return staged
 

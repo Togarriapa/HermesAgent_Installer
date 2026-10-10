@@ -662,6 +662,9 @@ class RootSetupSessionStore:
         initial = handoff._initial_session
         if (initial.phase != "initial-compilation"
                 or handoff.expires_monotonic <= time.monotonic()
+                or handoff.principal_identity_kind
+                   != initial._choices.selected_principal_identity_kind
+                or handoff.principal_identity_kind not in {"authentik-subject-v1", "linux-local-owner-v1"}
                 or not re.fullmatch(r"[0-9a-f]{64}", handoff.plan_sha256)):
             raise BootstrapEnrollmentPending("initial publication handoff is stale or malformed")
         verify_initial = getattr(registry, "verify_initial_session", None)
@@ -689,6 +692,7 @@ class RootSetupSessionStore:
             "compilation_transaction_handle": handoff.compilation_transaction_handle,
             "choices_sha256": handoff.choices_sha256,
             "principal_selection_receipt_handle": handoff.principal_selection_receipt_handle,
+            "principal_identity_kind": handoff.principal_identity_kind,
             "artifact_receipt_handles": list(handoff.artifact_receipt_handles),
             "adoption_state": "pending",
         }
