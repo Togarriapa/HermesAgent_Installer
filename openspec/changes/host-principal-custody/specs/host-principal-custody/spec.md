@@ -531,3 +531,12 @@ The installer SHALL preserve v121 actual source account alias regex and128-chara
 
 - **WHEN** the actual selected alias satisfies the source128-character domain
 - **THEN** it is not rejected solely by the superseded v120 max96 ceiling; all other proof and output checks remain required
+
+### Requirement: Independent selected native process role association
+
+The installer SHALL join observer process identity to explicit v123 protected process-role module/source/current loaded proofs, independently of action adapters.
+
+#### Scenario: Action adapter is supplied as a process role
+
+- **WHEN** an observer role has no exact protected process-role member/current loaded module proof
+- **THEN** source capture is denied even if a selected action adapter exists with the same name or artifact digest

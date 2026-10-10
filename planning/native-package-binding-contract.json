@@ -1121,5 +1121,47 @@
     "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
     "size_bytes": 984,
     "rule": "Exact actual root selected account alias, source regex/max128; all other v120 fields/bounds/proof/task obligations unchanged. Current selected schema artifact pin must resolve this v121 source member, not stale v120 bytes."
+  },
+  "process_role_association_v123": {
+    "schema": 1,
+    "id": "native-process-role-association-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "Actual v113 package parser has multiple action/registration/workflow rows while observer resolver still equates process role with one legacy adapter artifact. Process roles and effects have independent provenance.",
+    "active_key": "native_packages[*].process_role_records",
+    "type": "NativeProcessRoleRecord",
+    "fields": [
+      "role_id",
+      "package_id",
+      "native_package_generation",
+      "profile_id",
+      "profile_generation",
+      "role_artifact_id",
+      "role_sha256",
+      "role_source_receipt_handle",
+      "module_name",
+      "closure_member_path",
+      "role_source_revision",
+      "role_source_tree_sha256",
+      "observer_enrollment_ids",
+      "registration_ids",
+      "action_binding_ids",
+      "workflow_ids"
+    ],
+    "field_rules": "IDs explicit root selected and finite; tuple IDs unique and all foreign keys exact. module_name actual qualified module identity, closure_member_path normalized relative regular-file member of verified compiled closure, no ambient search/import fallback. role_artifact_id/SHA identify actual role module artifact bytes; never action adapter automatically. profile_generation is process generation; native_package_generation independent. No embedding enclosing generation digest in row.",
+    "producer": "Root selected preactive native assembly definitions include process_role_records alongside v113 action/registration/workflow/source-issuer/schema records. Factory/projection owner derives actual role module receipt from RootReleaseModuleReceipt and reviewed pinned native loader/boundary/source role definition; joins exact staged loaded-module member/source/observer/effect selections before assembly. Prepared worker catalogs can remain empty; sealed RootNativeBootstrapAssemblySelection owns these staged definitions. Do not require existing active rows to compile their initial records.",
+    "factory_api": "RootSelectedInstallationBinding.resolve_native_bootstrap_assembly(selection_handle) returns the sealed selected process-role/action/registration/workflow/source-issuer/schema definition closure; actual source/effect/schema receipt registries validate each member. No caller JSON/path or action label derives role identity. Active compiler publishes same validated records with actual output receipt closure.",
+    "observer_join": "SourceObserverEnrollment.role_id resolves package.process_role_records[role_id]. Exact package/profile/process generation/native generation/source role artifact/hash; observer ID belongs to role.observer_enrollment_ids and selected source issuer same observer/package/profile/process generation. observer source_action_id joins exact external registration or reviewed standalone source action, not every action in a family. Target/recipient/action/schema comes from exact observer/source-issuer and selected registration/action effect binding, never process role itself. Legacy adapter_records never used as role resolver.",
+    "current_proof": "Root loaded package proof requires actual current producer PIDFD/start identity/executable/profile generation, held managed mount/source closure, actual loaded module_name/member origin SHA corresponding to this selected role record and fresh authenticated loader event. Root proof receiver retains immutable proof identity. Module receipt/source digest alone does not prove live loading; package process proof alone does not prove imported role.",
+    "runtime_api": "RootRuntimeBindings.resolve_selected_native_process_role(package_id,native_package_generation,role_id)->NativeProcessRoleRecord. SourceObserverRegistry._resolve_package_role returns exact package plus process role; independent effect/action lookup uses role FK sets and observer-specific exact action, not role adapter lookup.",
+    "migration": "Required process_role_records array on new v123 package records. Reject missing/conflicting role artifact/module/profile/observer joins. Old legacy-only packages unavailable for source capture until actual role definition/proof migrated; no invented role IDs or inferred action artifact association.",
+    "tasks": [
+      "HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.",
+      "HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.",
+      "HI-T123.3: source/custody owner independently join actual loaded role/source proof to producer and exact selected action; test wrong role module/adapter/observer and two generations; actual native runtime acceptance open."
+    ]
   }
 }
