@@ -730,3 +730,12 @@ The installer SHALL resolve v128 exact protected endpoint/model selection record
 
 - **WHEN** a selection object or directory FD is not the exact retained current root selection
 - **THEN** source/model observation is denied even if its fields appear structurally valid
+
+### Requirement: Prepared qualification admission from actual runtime preparation
+
+The installer SHALL admit v130 finite prepared qualification from actual source/lock/environment/discriminated ABI probe/choice/consent/ownedfixture receipts without fabricating an active runtime row.
+
+#### Scenario: Node source has only Python runtime proof
+
+- **WHEN** Hyperframes lacks actual selected Node/Bun environment and Node ABI/import-origin probe evidence
+- **THEN** qualification remains unavailable with the missing prerequisite and cannot pass through a Python probe or RuntimeReview
