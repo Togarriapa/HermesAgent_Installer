@@ -369,6 +369,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("application workflow choice is not owned by this setup session")
         return self._session.resolve_application_setup_choice(selection_handle)
 
+    def resolve_application_source_preparation(self, choice_handle: str, application_id: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application source selection is not owned by this setup session")
+        return self._session.resolve_application_source_preparation(choice_handle, application_id)
+
     def resolve_application_qualification_consent(
         self, choice_handle: str, phase_id: str,
     ) -> "RootApplicationQualificationConsent":
@@ -3518,6 +3523,8 @@ class RootBootstrapSession:
         self._resource_profiles: dict[str, RootSelectedResourceProfile] = {}
         self._resource_profile_tty_proofs: dict[str, Any] = {}
         self._application_setup_choices: dict[str, RootSelectedApplicationQualificationChoice] = {}
+        self._application_source_preparations: dict[str, Any] = {}
+        self._application_source_preparation_handles: dict[tuple[str, str], str] = {}
         self._application_choice_tty_proofs: dict[str, Any] = {}
         self._application_controller_tty_proofs: dict[str, Any] = {}
         self._application_controller_bindings: dict[str, RootApplicationSetupControllerBinding] = {}
@@ -4050,7 +4057,7 @@ class RootBootstrapSession:
             return False
 
     def verify_application_controller_binding(
-        self, binding: RootApplicationSetupControllerBinding,
+            self, binding: RootApplicationSetupControllerBinding,
     ) -> bool:
         if not isinstance(binding, RootApplicationSetupControllerBinding):
             return False
@@ -4064,6 +4071,90 @@ class RootBootstrapSession:
                     and current.expires_monotonic > time.monotonic())
         except (BootstrapEnrollmentError, BootstrapEnrollmentPending, OSError, ValueError):
             return False
+
+    def resolve_application_source_preparation(self, choice_handle: str, application_id: str) -> Any:
+        """Mint a finite v117 source/lock selection from the current root TTY choice."""
+        self._check_live()
+        from .application_source_preparation import (
+            RootApplicationSourcePreparationSelection,
+            reviewed_application_source_profile,
+        )
+        choice = self.resolve_application_setup_choice(choice_handle)
+        profile = reviewed_application_source_profile(application_id)
+        if (choice.application_id != application_id
+                or choice.workflow_id != profile.workflow_id
+                or choice.target_profile_id != "hermes-agent-native-v1"):
+            raise BootstrapEnrollmentPending("application choice differs from the reviewed source profile")
+        prepared = self._last_receipt
+        if prepared is None or prepared.state != "prepared" or prepared.enrollment_ids:
+            raise BootstrapEnrollmentPending("source preparation requires the current empty prepared generation")
+        # Re-resolve the durable base consent and its short phase snapshot. The
+        # selection retains the durable handle; the source producer must obtain
+        # a fresh phase snapshot immediately before each bounded operation.
+        base_consent = self._application_qualification_consents.get(choice_handle)
+        phase = self.resolve_application_qualification_consent(
+            choice_handle, "stage-pinned-source-locks")
+        if (not isinstance(base_consent, RootApplicationQualificationConsent)
+                or phase.qualification_choice_handle != choice_handle
+                or phase.application_id != application_id
+                or phase.workflow_id != profile.workflow_id
+                or base_consent.receipt_handle != choice.qualification_consent_receipt_handle):
+            raise BootstrapEnrollmentPending("application source staging has no current scoped consent")
+        controller = self.resolve_application_controller_binding(choice_handle)
+        namespace = self.resolve_adopted_namespace_selection()
+        principal = self.resolve_adopted_principal_selection()
+        if (namespace.receipt_handle != choice.namespace_selection_receipt_handle
+                or namespace.prepared_generation_id != prepared.generation_id
+                or namespace.prepared_generation_digest != prepared.generation_digest
+                or namespace.target_profile_id != choice.target_profile_id
+                or principal.receipt_id != choice.principal_selection_receipt_handle
+                or controller.handle != choice.controller_binding_handle):
+            raise BootstrapEnrollmentPending("application source selection lost its current setup joins")
+        now = time.monotonic()
+        expiry = min(prepared.expires_monotonic, base_consent.expires_monotonic,
+                     self._factory.session_store.current_deadline(self._handle),
+                     choice.expires_monotonic)
+        if expiry <= now:
+            raise BootstrapEnrollmentPending("application source selection lease expired")
+        selection_key = (choice_handle, application_id)
+        selection_handle = self._application_source_preparation_handles.get(selection_key)
+        if selection_handle is None:
+            selection_handle = secrets.token_urlsafe(36)
+        selection = RootApplicationSourcePreparationSelection._mint(
+            schema=1,
+            selection_handle=selection_handle,
+            setup_session_id=self._handle.session_id,
+            transaction_handle=self._authorization.transaction_handle,
+            plan_sha256=self._authorization.plan_digest,
+            prepared_generation_id=prepared.generation_id,
+            prepared_generation_digest=prepared.generation_digest,
+            qualification_choice_handle=choice_handle,
+            qualification_consent_receipt_handle=base_consent.receipt_handle,
+            application_id=profile.application_id,
+            workflow_id=profile.workflow_id,
+            source_identity=profile.source_identity,
+            source_revision=profile.source_revision,
+            source_catalog_artifact_id=profile.source_catalog_artifact_id,
+            source_catalog_sha256=profile.source_catalog_sha256,
+            manifest_paths=profile.manifest_paths,
+            lock_paths=profile.lock_paths,
+            target_profile_id=choice.target_profile_id,
+            namespace_selection_receipt_handle=namespace.receipt_handle,
+            principal_selection_receipt_handle=principal.receipt_id,
+            controller_binding_handle=controller.handle,
+            expires_monotonic=expiry,
+        )
+        self._check_live()
+        if (self._last_receipt is not prepared
+                or self._application_setup_choices.get(choice_handle) is not choice
+                or not self.verify_application_controller_binding(controller)):
+            raise BootstrapEnrollmentPending("application source selection changed while being issued")
+        prior = self._application_source_preparations.get(selection_handle)
+        if prior is not None and prior != selection:
+            raise BootstrapEnrollmentPending("retained application source selection changed")
+        self._application_source_preparations[selection_handle] = selection
+        self._application_source_preparation_handles[selection_key] = selection_handle
+        return selection
 
     def observe_selected_resource_profile(self) -> str:
         """Mint a current resource-profile choice from the verified bundle and root TTY.
@@ -5475,6 +5566,8 @@ class RootBootstrapSession:
         self._application_choice_tty_proofs.clear()
         self._application_controller_tty_proofs.clear()
         self._application_controller_bindings.clear()
+        self._application_source_preparations.clear()
+        self._application_source_preparation_handles.clear()
         self._application_qualification_consents.clear()
         self._factory.session_store.close_session(self._handle)
         self._factory._sessions.pop(self._handle.session_id, None)
