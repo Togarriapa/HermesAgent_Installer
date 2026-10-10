@@ -321,7 +321,8 @@ class _RootSetupChoiceSigner:
     def sign_choice(self, purpose: str, canonical_record_bytes: bytes) -> str:
         service = self.__service
         service._assert_root_setup_choice_signer_current(self)
-        payload = _validate_setup_choice_record_bytes(purpose, canonical_record_bytes)
+        payload = _validate_setup_choice_record_bytes(
+            purpose, canonical_record_bytes, expected_key_id=service.key_id)
         message = _ROOT_SETUP_CHOICE_DOMAIN + purpose.encode("ascii") + b"\0" + payload
         return hmac.new(service._key, message, hashlib.sha256).hexdigest()
 
@@ -349,6 +350,10 @@ class _RootChoiceRevocationSigner:
         service = self.__service
         service._assert_root_setup_choice_signer_current(self)
         payload = service._root_choice_revocation_claims(observed_request)
+        registry = service._root_setup_choice_registry
+        if (registry is None
+                or registry.verify_revocation_transition_request(observed_request) is not True):
+            raise AuthorityDenied("setup.choice.revocation", "root-observed revocation transition is not current")
         message = _ROOT_SETUP_CHOICE_REVOCATION_DOMAIN + payload
         return hmac.new(service._key, message, hashlib.sha256).hexdigest()
 
@@ -357,6 +362,10 @@ class _RootChoiceRevocationSigner:
         try:
             service._assert_root_setup_choice_signer_current(self)
             payload = service._root_choice_revocation_claims(receipt)
+            registry = service._root_setup_choice_registry
+            if (registry is None
+                    or registry.verify_revocation_receipt_membership(receipt) is not True):
+                return False
             signature = getattr(receipt, "signature", None)
             if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
                 return False
@@ -367,7 +376,8 @@ class _RootChoiceRevocationSigner:
             return False
 
 
-def _validate_setup_choice_record_bytes(purpose: str, payload: bytes) -> bytes:
+def _validate_setup_choice_record_bytes(
+        purpose: str, payload: bytes, *, expected_key_id: str | None = None) -> bytes:
     if (purpose not in _ROOT_SETUP_CHOICE_PURPOSES or type(payload) is not bytes
             or not payload or len(payload) > 1_048_576):
         raise AuthorityDenied("setup.choice", "setup choice purpose or canonical record is invalid")
@@ -377,7 +387,37 @@ def _validate_setup_choice_record_bytes(purpose: str, payload: bytes) -> bytes:
                                ensure_ascii=False, allow_nan=False).encode("utf-8")
     except Exception:
         raise AuthorityDenied("setup.choice", "setup choice record is not canonical JSON") from None
-    if type(decoded) is not dict or canonical != payload:
+    from .root_setup_choices import _RECORD_FIELDS
+    if (type(decoded) is not dict or canonical != payload
+            or set(decoded) != _RECORD_FIELDS - {"signature"}
+            or decoded.get("schema") != 1 or decoded.get("purpose") != purpose
+            or (expected_key_id is not None and decoded.get("key_id") != expected_key_id)
+            or not isinstance(decoded.get("choice_payload"), dict)
+            or decoded.get("choice_payload_sha256") != hashlib.sha256(json.dumps(
+                decoded.get("choice_payload"), sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+            or not isinstance(decoded.get("release_deployment_receipt_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", decoded["release_deployment_receipt_sha256"])
+            or type(decoded.get("choice_epoch")) is not int or decoded["choice_epoch"] < 1
+            or type(decoded.get("revocation_epoch")) is not int or decoded["revocation_epoch"] < 1
+            or not isinstance(decoded.get("source_member_receipt_handles"), list)
+            or any(not isinstance(handle, str) or not handle
+                   for handle in decoded["source_member_receipt_handles"])
+            or decoded["source_member_receipt_handles"] != sorted(set(decoded["source_member_receipt_handles"]))
+            or any(not isinstance(decoded.get(name), str) or not decoded[name]
+                   for name in ("selection_handle", "key_id", "release_deployment_receipt_sha256",
+                                "setup_session_handle", "transaction_handle", "plan_id",
+                                "prepared_generation", "principal_selection_handle",
+                                "namespace_selection_handle", "choice_payload_sha256"))
+            or decoded.get("private_profile_selection_handle") is not None
+               and (not isinstance(decoded.get("private_profile_selection_handle"), str)
+                    or not decoded["private_profile_selection_handle"])
+            or decoded.get("adoption_publication_receipt_handle") is not None
+            or type(decoded.get("issued_at_unix")) not in (int, float)
+            or type(decoded.get("setup_deadline_unix")) not in (int, float)
+            or not math.isfinite(decoded["issued_at_unix"])
+            or not math.isfinite(decoded["setup_deadline_unix"])
+            or decoded["setup_deadline_unix"] <= decoded["issued_at_unix"]):
         raise AuthorityDenied("setup.choice", "setup choice record is not canonical JSON")
     return payload
 
@@ -466,6 +506,7 @@ class AuthorityService:
         self._public_input_permission_signer = None
         self._root_setup_choice_signer: _RootSetupChoiceSigner | None = None
         self._root_choice_revocation_signer: _RootChoiceRevocationSigner | None = None
+        self._root_setup_choice_registry: Any | None = None
         self.web_content_artifact_registry = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -535,6 +576,14 @@ class AuthorityService:
             self._root_choice_revocation_signer = _RootChoiceRevocationSigner(self)
         return self._root_choice_revocation_signer
 
+    def attach_root_setup_choice_registry(self, registry: Any) -> None:
+        from .root_setup_choices import RootSetupChoiceRegistry
+        if (type(registry) is not RootSetupChoiceRegistry or registry.service is not self
+                or self._root_setup_choice_registry is not None):
+            raise AuthorityDenied("setup.choice", "root setup choice registry attachment is invalid or repeated")
+        self._assert_root_setup_choice_signer_current(self._root_setup_choice_signer)
+        self._root_setup_choice_registry = registry
+
     def _assert_root_setup_choice_signer_current(self, signer: Any) -> None:
         from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
         from .runtime_composition import RootAuthorityRuntime
@@ -600,10 +649,33 @@ class AuthorityService:
             raise AuthorityDenied("setup.choice", "selected authority key custody changed") from None
 
     def _root_choice_revocation_claims(self, observed_request: Any) -> bytes:
-        # The source owner has not yet landed the v156 consumed TTY request
-        # type/currentness resolver. Do not turn this cryptographic facade into
-        # an arbitrary-claims signing service while that source is absent.
-        raise AuthorityDenied("setup.choice.revocation", "root-observed revocation source is unavailable")
+        from .root_setup_choices import RootSetupChoiceRevocationReceipt
+        if type(observed_request) is not RootSetupChoiceRevocationReceipt:
+            raise AuthorityDenied("setup.choice.revocation", "revocation receipt has the wrong exact type")
+        claims_fn = getattr(observed_request, "claims", None)
+        claims = claims_fn() if callable(claims_fn) else None
+        expected = {
+            "schema", "revocation_receipt_handle", "selection_handle", "purpose", "consent_id",
+            "previous_choice_epoch", "previous_revocation_epoch", "revocation_epoch",
+            "source_choice_row_sha256", "revocation_observation_handle", "displayed_payload_sha256",
+            "key_id", "release_deployment_receipt_sha256", "service_generation_digest", "revoked_at_unix",
+        }
+        if (type(claims) is not dict or set(claims) != expected
+                or claims.get("key_id") != self.key_id
+                or claims.get("service_generation_digest") != self.service_generation_digest
+                or type(claims.get("schema")) is not int or claims["schema"] != 1
+                or type(claims.get("previous_choice_epoch")) is not int
+                or type(claims.get("previous_revocation_epoch")) is not int
+                or type(claims.get("revocation_epoch")) is not int
+                or claims["revocation_epoch"] != claims["previous_revocation_epoch"] + 1
+                or type(claims.get("revoked_at_unix")) not in (int, float)
+                or not math.isfinite(claims["revoked_at_unix"])):
+            raise AuthorityDenied("setup.choice.revocation", "revocation transition claims are invalid")
+        try:
+            return json.dumps(claims, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError):
+            raise AuthorityDenied("setup.choice.revocation", "revocation transition claims are not canonical") from None
 
     def attach_root_runtime_bindings(self, bindings: Any) -> None:
         """Attach the exact typed root composition used to resolve active rows."""
