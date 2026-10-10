@@ -114,6 +114,33 @@ def test_eight_local_result_schemas_match_exact_artifacts_and_actual_source_pins
     assert all(row.handler_kind in {"public-registry-read", "owner-overlay"} for row in rows)
 
 
+def test_all_packaged_registration_result_schemas_are_in_protected_artifact_catalog():
+    from hermes_installer.authority.native_registration_projection import (
+        reviewed_packaged_registration_result_schemas,
+    )
+
+    rows = reviewed_packaged_registration_result_schemas()
+    assert len(rows) == 10
+    assert {row.native_tool_name for row in rows} == {
+        "agent37_discover_skills", "agent37_inspect_skill", "financial_data_read",
+        "mcp_registry_discover", "mcp_registry_inspect", "resource_overlay_read",
+        "resource_overlay_write", "resource_overlay_history", "resource_overlay_delete",
+        "web_retrieve",
+    }
+    catalog = json.loads((ROOT / "src/hermes_installer/authority/artifact-catalog.json").read_text())
+    artifacts = {row["artifact_id"]: row for row in catalog["artifacts"]}
+    source_commit = "2b406be0bf48991a9d7943bf46deb975a9f0049b"
+    for row in rows:
+        artifact = artifacts[row.artifact_id]
+        assert artifact["sha256"] == row.sha256
+        assert artifact["size_bytes"] == row.size_bytes
+        assert artifact["max_bytes"] == row.size_bytes
+        assert artifact["source_url"] == (
+            f"https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/"
+            f"{source_commit}/{row.relative_path}"
+        )
+
+
 def test_local_result_schema_rejects_changed_artifact_bytes(monkeypatch, tmp_path):
     from hermes_installer.authority import native_registration_projection as projection
 
@@ -191,3 +218,17 @@ def test_native_registration_projection_rows_are_root_issued_only():
         assert "issued by the root resolver" in str(exc)
     else:
         raise AssertionError("caller-created projection row was accepted")
+
+
+def test_projection_builder_requires_the_sealed_factory_selection_and_definitions():
+    from hermes_installer.authority.native_registration_projection import (
+        NativeRegistrationProjectionDenied,
+        build_root_native_registration_projection,
+    )
+
+    try:
+        build_root_native_registration_projection(None, None)
+    except NativeRegistrationProjectionDenied as exc:
+        assert "root selected native assembly definitions" in str(exc)
+    else:
+        raise AssertionError("projection builder accepted caller-supplied authority inputs")

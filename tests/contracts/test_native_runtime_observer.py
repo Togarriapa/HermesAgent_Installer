@@ -140,7 +140,7 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             "registration_id": registration_id,
             "native_tool_name": "selected_tool", "native_server_name": "hermes-installer",
             "toolset": "hermes-installer", "family": "adapter-a", "adapter_id": "adapter-a",
-            "argument_schema": argument_schema, "result_schema": result_schema,
+            "argument_schema_id": "schema.adapter-a.args", "result_schema_id": "schema.adapter-a.result",
             "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
             "registration_source_artifact_id": "artifact-adapter-a-source",
             "registration_source_sha256": digest,
@@ -148,10 +148,11 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             "handler_kind": "effect-action", "handler_id": "handler-selected-tool",
             "selector_fields": [],
             "action_bindings": [{
-                "selector_values": {}, "action_id": "action-a",
+                "selector_values": {}, "action_binding_id": "adapter-a:action:action-a",
                 "argument_projection": [], "workflow_id": None,
             }],
             "observer_enrollment_ids": ["observer-a"],
+            "generation": "generation-a",
         }
         registrations = [registration]
         index = {
@@ -174,7 +175,10 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             _canonical(index), selected=selection,
             manifest=MappingProxyType({
                 "adapters": [{"adapter_id": "adapter-a", "action_ids": ["action-a"]}],
-                "closure_files": [{"sha256": digest}],
+                "closure_files": [{
+                    "relative_path": "adapter-a.py", "sha256": digest,
+                    "size_bytes": 1, "mode": 0o444,
+                }],
             }),
         )
         module = ModuleType("fixture_selected_adapter")

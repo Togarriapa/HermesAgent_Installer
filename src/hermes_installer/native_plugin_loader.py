@@ -47,6 +47,18 @@ _MAX_CLOSURE_BYTES = 4 * 1024 * 1024 * 1024
 _MAX_PLUGIN_RESULT_BYTES = 2 * 1024 * 1024
 _MAX_PLUGIN_RESULT_NODES = 50_000
 _MAX_PLUGIN_RESULT_DEPTH = 64
+_MAX_BACKEND_RESULT_NODES = 65_536
+_MAX_BACKEND_RESULT_DEPTH = 32
+_MAX_BACKEND_RESULT_BYTES = 2 * 1024 * 1024
+_BOUNDED_BACKEND_RESULT_SCHEMA_ID = "installer-native-bounded-backend-result-v1"
+_BOUNDED_BACKEND_RESULT_SCHEMA_SHA256 = "8ef1ffe2ca1c26f2bb82fd9178b4cd223bbee4b3b7c1a8d784f850e289026cb4"
+_BOUNDED_BACKEND_RESULT_SCHEMA_SIZE = 235
+_BOUNDED_BACKEND_REGISTRATIONS = frozenset({
+    ("financial-execution-gateway:tool:financial_execute_one_order",
+     "financial_execute_one_order"),
+    ("agent-live-wallet:tool:agent_live_wallet_action", "agent_live_wallet_action"),
+    ("agent-sandbox-wallet:tool:agent_sandbox_wallet_action", "agent_sandbox_wallet_action"),
+})
 _UNSAFE_PLUGIN_RESULT = (
     '{"error":"Native plugin result could not be represented safely.",'
     '"error_type":"native_plugin_result_contract"}'
@@ -58,6 +70,8 @@ _LOADER_PROGRESS_PHASES = (
     "entrypoint-imported", "actions-registered", "ready",
 )
 _LOADER_NONCE = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
+_MAX_LOADER_PROCESS_ROLES = 256
+_MAX_LOADER_REGISTRATIONS = 256
 _NATIVE_MCP_ADAPTER_ID = "hermes-installer.native-mcp-dispatch.v1"
 _NATIVE_CANDIDATE_INDEX_PATH = "catalog/native-candidates.json"
 _MAX_NATIVE_CANDIDATE_INDEX_BYTES = 2 * 1024 * 1024
@@ -69,6 +83,36 @@ _NATIVE_MCP_PRE_DISCOVERY = threading.local()
 
 class NativePluginLoadUnavailable(PermissionError):
     """Selected package mount, manifest, or adapter source is unavailable."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedProcessRoleOrigin:
+    """Observed origin of one imported, root-selected process-role module."""
+
+    role_id: str
+    module_name: str
+    closure_member_path: str
+    module_file_sha256: str
+    module_file_device: int
+    module_file_inode: int
+    module_file_size_bytes: int
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "role_id": self.role_id,
+            "module_name": self.module_name,
+            "closure_member_path": self.closure_member_path,
+            "module_file_sha256": self.module_file_sha256,
+            "module_file_device": self.module_file_device,
+            "module_file_inode": self.module_file_inode,
+            "module_file_size_bytes": self.module_file_size_bytes,
+        }
+
+
+def _process_role_field(role: object, name: str) -> Any:
+    if isinstance(role, Mapping):
+        return role.get(name)
+    return getattr(role, name, None)
 
 
 def _freeze_json(value: Any) -> Any:
@@ -92,6 +136,13 @@ class SelectedNativeCandidate:
     observer_enrollment_ids: tuple[str, ...]
     native_server_name: str
     description: str
+    registration_id: str = ""
+    toolset: str = ""
+    family: str = ""
+    handler_kind: str = ""
+    result_schema_id: str | None = None
+    selector_fields: tuple[str, ...] = ()
+    action_bindings: tuple[MappingProxyType, ...] = ()
 
     @property
     def is_native_mcp(self) -> bool:
@@ -101,14 +152,16 @@ class SelectedNativeCandidate:
 class _NativeLoaderProgressWriter:
     """Root-challenged sender for systemd's named native-loader activation FD."""
 
-    __slots__ = ("_channel", "_selection", "_nonce", "_sequence", "_actions", "_closed")
+    __slots__ = ("_channel", "_selection", "_nonce", "_sequence", "_registrations",
+                 "_roles", "_closed")
 
     def __init__(self, channel: socket.socket, selection: object, nonce: str) -> None:
         self._channel = channel
         self._selection = selection
         self._nonce = nonce
         self._sequence = 0
-        self._actions: tuple[str, ...] = ()
+        self._registrations: tuple[str, ...] = ()
+        self._roles: tuple[dict[str, Any], ...] = ()
         self._closed = False
 
     @classmethod
@@ -189,30 +242,39 @@ class _NativeLoaderProgressWriter:
             raise OSError("root native loader challenge is not ASCII") from None
 
     def emit(self, *, sequence: int, phase: str,
-             registered_action_ids: tuple[str, ...] | list[str]) -> None:
+             registered_registration_ids: tuple[str, ...] | list[str],
+             loaded_process_roles: tuple[_LoadedProcessRoleOrigin, ...] | list[_LoadedProcessRoleOrigin]) -> None:
         if self._closed or sequence != self._sequence or sequence >= len(_LOADER_PROGRESS_PHASES):
             raise NativePluginLoadUnavailable("native loader progress sequence is unavailable")
         if phase != _LOADER_PROGRESS_PHASES[sequence]:
             self.close()
             raise NativePluginLoadUnavailable("native loader progress phase is invalid")
+        expected_roles = self._expected_roles()
+        wire_roles = self._validate_role_origins(loaded_process_roles, expected_roles)
         if sequence == 0:
-            if registered_action_ids != () and registered_action_ids != []:
+            if registered_registration_ids != () and registered_registration_ids != []:
                 self.close()
-                raise NativePluginLoadUnavailable("native loader import event has unexpected actions")
-            actions: tuple[str, ...] = ()
+                raise NativePluginLoadUnavailable("native loader import event has unexpected registrations")
+            registrations: tuple[str, ...] = ()
+            self._roles = wire_roles
         else:
-            actions = tuple(registered_action_ids)
-            if (not actions or len(actions) > 256
-                    or tuple(sorted(set(actions))) != actions
-                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in actions)
-                    or (sequence == 2 and actions != self._actions)):
+            registrations = tuple(registered_registration_ids)
+            if (not registrations or len(registrations) > _MAX_LOADER_REGISTRATIONS
+                    or tuple(sorted(set(registrations))) != registrations
+                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in registrations)
+                    or registrations != self._expected_registration_ids()
+                    or (sequence == 2 and registrations != self._registrations)
+                    or wire_roles != self._roles):
                 self.close()
-                raise NativePluginLoadUnavailable("native loader action event does not match its selected closure")
+                raise NativePluginLoadUnavailable("native loader registrations or role origins changed")
+            if sequence == 1:
+                self._registrations = registrations
 
         binding = getattr(self._selection, "_binding", None)
         required = {
             "package_id": getattr(self._selection, "package_id", None),
-            "generation": getattr(self._selection, "generation", None),
+            "generation": self._profile_generation(),
+            "package_generation": getattr(self._selection, "generation", None),
             "entrypoint_sha256": getattr(binding, "entrypoint_sha256", None),
             "resolver_sha256": getattr(binding, "resolver_digest", None),
         }
@@ -222,9 +284,10 @@ class _NativeLoaderProgressWriter:
             self.close()
             raise NativePluginLoadUnavailable("native loader selection is incomplete")
         record = {
-            "schema": 1, "launch_nonce": self._nonce,
+            "schema": 2, "launch_nonce": self._nonce,
             "sequence": sequence, "phase": phase, **required,
-            "registered_action_ids": list(actions),
+            "registered_registration_ids": list(registrations),
+            "loaded_process_roles": wire_roles,
         }
         try:
             payload = json.dumps(record, ensure_ascii=False, sort_keys=True,
@@ -236,10 +299,86 @@ class _NativeLoaderProgressWriter:
             self.close()
             raise NativePluginLoadUnavailable("root native loader progress could not be recorded") from None
         self._sequence += 1
-        if sequence == 1:
-            self._actions = actions
         if sequence == 2:
             self.close()
+
+    def _profile_generation(self) -> str:
+        roles = getattr(self._selection, "process_roles", ())
+        generations = {_process_role_field(role, "profile_generation") for role in roles}
+        if (len(generations) != 1 or not all(isinstance(value, str) and _ID.fullmatch(value)
+                                             for value in generations)):
+            self.close()
+            raise NativePluginLoadUnavailable("native process-role profile generation is ambiguous")
+        return next(iter(generations))
+
+    def _expected_roles(self) -> tuple[tuple[str, str, str, str], ...]:
+        selected = getattr(self._selection, "process_roles", None)
+        if (not isinstance(selected, tuple) or not 1 <= len(selected) <= _MAX_LOADER_PROCESS_ROLES):
+            self.close()
+            raise NativePluginLoadUnavailable("root selected no exact native process-role modules")
+        rows: list[tuple[str, str, str, str]] = []
+        for role in selected:
+            role_id = _process_role_field(role, "role_id")
+            module_name = _process_role_field(role, "module_name")
+            member_path = _process_role_field(role, "closure_member_path")
+            digest = _process_role_field(role, "role_sha256")
+            try:
+                normalized_path = _relative_path(member_path)
+            except NativePluginLoadUnavailable:
+                self.close()
+                raise NativePluginLoadUnavailable("root selected an invalid native process-role module") from None
+            if (not isinstance(role_id, str) or not _ID.fullmatch(role_id)
+                    or not isinstance(module_name, str) or not _MODULE.fullmatch(module_name)
+                    or not isinstance(digest, str) or not _SHA256.fullmatch(digest)
+                    or normalized_path != member_path):
+                self.close()
+                raise NativePluginLoadUnavailable("root selected an invalid native process-role module")
+            rows.append((role_id, module_name, normalized_path, digest))
+        if tuple(sorted(rows)) != tuple(rows) or len({row[0] for row in rows}) != len(rows):
+            self.close()
+            raise NativePluginLoadUnavailable("root selected ambiguous native process-role modules")
+        return tuple(rows)
+
+    def _expected_registration_ids(self) -> tuple[str, ...]:
+        rows: list[str] = []
+        for role in getattr(self._selection, "process_roles", ()):
+            values = _process_role_field(role, "registration_ids")
+            if (not isinstance(values, (tuple, list)) or len(values) > _MAX_LOADER_REGISTRATIONS
+                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in values)
+                    or tuple(sorted(set(values))) != tuple(values)):
+                self.close()
+                raise NativePluginLoadUnavailable("root selected invalid process-role registrations")
+            rows.extend(values)
+        expected = tuple(sorted(set(rows)))
+        if (not expected or len(rows) != len(expected)
+                or len(expected) > _MAX_LOADER_REGISTRATIONS):
+            self.close()
+            raise NativePluginLoadUnavailable("root selected ambiguous process-role registrations")
+        return expected
+
+    def _validate_role_origins(
+        self, origins: tuple[_LoadedProcessRoleOrigin, ...] | list[_LoadedProcessRoleOrigin],
+        expected: tuple[tuple[str, str, str, str], ...],
+    ) -> tuple[dict[str, Any], ...]:
+        if not isinstance(origins, (tuple, list)) or len(origins) != len(expected):
+            self.close()
+            raise NativePluginLoadUnavailable("loaded process-role module set is incomplete")
+        rows: list[dict[str, Any]] = []
+        for origin, selected in zip(origins, expected, strict=True):
+            if not isinstance(origin, _LoadedProcessRoleOrigin):
+                self.close()
+                raise NativePluginLoadUnavailable("loaded process-role origin is not loader-observed")
+            role_id, module_name, member_path, digest = selected
+            if (origin.role_id != role_id or origin.module_name != module_name
+                    or origin.closure_member_path != member_path or origin.module_file_sha256 != digest
+                    or type(origin.module_file_device) is not int or origin.module_file_device < 0
+                    or type(origin.module_file_inode) is not int or origin.module_file_inode <= 0
+                    or type(origin.module_file_size_bytes) is not int
+                    or origin.module_file_size_bytes <= 0):
+                self.close()
+                raise NativePluginLoadUnavailable("loaded process-role origin differs from root selection")
+            rows.append(origin.to_wire())
+        return tuple(rows)
 
     def close(self) -> None:
         if self._closed:
@@ -363,6 +502,106 @@ def _plugin_tool_result(value: Any) -> Any:
         return _UNSAFE_PLUGIN_RESULT
 
 
+def _validate_backend_result_tree(value: Any) -> None:
+    """Validate one raw backend object without trusting its fields.
+
+    This intentionally accepts only already-decoded JSON objects or arrays.
+    It never parses a backend string as JSON, so duplicate-key source text and
+    scalar coercions cannot be hidden by this boundary.
+    """
+    if type(value) not in {dict, list}:
+        raise ValueError("backend result must be a JSON object or array")
+    pending: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    active: set[int] = set()
+    nodes = 0
+    estimated_serialized_bytes = 0
+
+    def add_size(size: int) -> None:
+        nonlocal estimated_serialized_bytes
+        estimated_serialized_bytes += size
+        if estimated_serialized_bytes > _MAX_BACKEND_RESULT_BYTES:
+            raise ValueError("backend result exceeds its serialized byte bound")
+
+    def validate_string(text: str) -> None:
+        raw = text.encode("utf-8", errors="strict")
+        if len(raw) > _MAX_BACKEND_RESULT_BYTES:
+            raise ValueError("backend result string exceeds its byte bound")
+        # Account for JSON quoting and escaping before the final whole-value
+        # serialization, so a large tree cannot allocate an oversized buffer.
+        add_size(len(json.dumps(text, ensure_ascii=False, separators=(",", ":"))
+                    .encode("utf-8")))
+
+    while pending:
+        item, depth, exiting = pending.pop()
+        if exiting:
+            active.remove(id(item))
+            continue
+        nodes += 1
+        if nodes > _MAX_BACKEND_RESULT_NODES or depth > _MAX_BACKEND_RESULT_DEPTH:
+            raise ValueError("backend result exceeds its structural bound")
+        kind = type(item)
+        if item is None or kind in {bool, int}:
+            if kind is int and item.bit_length() > _MAX_BACKEND_RESULT_BYTES * 4:
+                raise ValueError("backend result integer exceeds its byte bound")
+            add_size(5 if item is None else 6 if kind is bool else max(1, item.bit_length() // 3))
+            continue
+        if kind is float:
+            if not math.isfinite(item):
+                raise ValueError("backend result contains a nonfinite number")
+            add_size(32)
+            continue
+        if kind is str:
+            validate_string(item)
+            continue
+        if kind in {dict, list}:
+            if len(item) + nodes > _MAX_BACKEND_RESULT_NODES:
+                raise ValueError("backend result exceeds its node bound")
+            identity = id(item)
+            if identity in active:
+                raise ValueError("backend result contains a cycle")
+            active.add(identity)
+            pending.append((item, depth, True))
+            add_size(2 + max(0, len(item) - 1)
+                     + (len(item) if kind is dict else 0))
+            children = list(item.items()) if kind is dict else [(None, child) for child in item]
+            for key, child in reversed(children):
+                if kind is dict:
+                    if type(key) is not str:
+                        raise ValueError("backend result object key is not text")
+                    validate_string(key)
+                pending.append((child, depth + 1, False))
+            continue
+        raise ValueError("backend result contains a non-JSON value")
+
+
+def _bounded_backend_tool_result(value: Any, candidate: SelectedNativeCandidate) -> Any:
+    """Serialize one selected backend result under the exact v113 envelope."""
+    expected_schema = {
+        "additionalProperties": False,
+        "properties": {
+            "result": {"oneOf": [{"type": "object"}, {"type": "array"}]},
+            "result_trust": {"const": "untrusted-backend-data"},
+            "schema": {"const": 1},
+        },
+        "required": ["schema", "result_trust", "result"],
+        "type": "object",
+    }
+    if ((candidate.registration_id, candidate.native_tool_name) not in _BOUNDED_BACKEND_REGISTRATIONS
+            or candidate.result_schema_id != _BOUNDED_BACKEND_RESULT_SCHEMA_ID
+            or _canonical(_thaw_frozen_json(candidate.result_schema)) != _canonical(expected_schema)):
+        return _UNSAFE_PLUGIN_RESULT
+    try:
+        _validate_backend_result_tree(value)
+        wrapped = {"schema": 1, "result_trust": "untrusted-backend-data", "result": value}
+        encoded = json.dumps(wrapped, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(encoded) > _MAX_BACKEND_RESULT_BYTES:
+            return _UNSAFE_PLUGIN_RESULT
+        return encoded.decode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return _UNSAFE_PLUGIN_RESULT
+
+
 class _NativePluginContextResultAdapter:
     """Preserve PluginContext APIs while enforcing Hermes' supported tool result types."""
 
@@ -397,10 +636,13 @@ class _NativePluginContextResultAdapter:
                 or not isinstance(schema, dict)
                 or _canonical(schema) != _canonical(_thaw_frozen_json(candidate.argument_schema))):
             raise NativePluginLoadUnavailable("native PluginContext tool differs from the selected candidate index")
+        is_bounded_backend = (candidate.registration_id, candidate.native_tool_name) in _BOUNDED_BACKEND_REGISTRATIONS
         if is_async:
             @functools.wraps(handler)
             async def bounded_handler(*args: Any, **kwargs: Any) -> Any:
-                return _plugin_tool_result(await handler(*args, **kwargs))
+                result = await handler(*args, **kwargs)
+                return (_bounded_backend_tool_result(result, candidate) if is_bounded_backend
+                        else _plugin_tool_result(result))
         else:
             @functools.wraps(handler)
             def bounded_handler(*args: Any, **kwargs: Any) -> Any:
@@ -410,7 +652,8 @@ class _NativePluginContextResultAdapter:
                     if callable(close):
                         close()
                     return _UNSAFE_PLUGIN_RESULT
-                return _plugin_tool_result(result)
+                return (_bounded_backend_tool_result(result, candidate) if is_bounded_backend
+                        else _plugin_tool_result(result))
 
         context = object.__getattribute__(self, "_NativePluginContextResultAdapter__context")
         registration = context.register_tool(
@@ -420,7 +663,7 @@ class _NativePluginContextResultAdapter:
         )
         if registration is not None:
             object.__getattribute__(self, "_NativePluginContextResultAdapter__registered_tool_names").append(name)
-            package._mark_candidate_registered(candidate.adapter_id, candidate.action_id)
+            package._mark_candidate_registered(candidate.adapter_id, candidate.registration_id)
         return registration
 
 
@@ -531,7 +774,10 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
                                   manifest: MappingProxyType) -> tuple[SelectedNativeCandidate, ...]:
     doc = _json_document(raw, maximum=_MAX_NATIVE_CANDIDATE_INDEX_BYTES,
                          label="root-selected native candidate index")
-    expected_doc_fields = {"schema", "package_id", "profile_id", "generation", "resolver_sha256", "candidates"}
+    expected_doc_fields = {
+        "schema", "package_id", "profile_id", "generation", "resolver_sha256",
+        "candidates", "registration_projection_sha256", "registrations",
+    }
     if set(doc) != expected_doc_fields or _canonical(doc) != raw:
         raise NativePluginLoadUnavailable("root-selected native candidate index is not canonical or strict")
     if (type(doc["schema"]) is not int or doc["schema"] != 1
@@ -540,38 +786,125 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
             or doc["generation"] != selected.generation
             or doc["resolver_sha256"] != selected.resolver_digest):
         raise NativePluginLoadUnavailable("native candidate index differs from the selected package")
-    rows = doc["candidates"]
+    rows, registrations = doc["candidates"], doc["registrations"]
+    if (not isinstance(rows, list) or not 1 <= len(rows) <= _MAX_NATIVE_CANDIDATES
+            or not isinstance(registrations, list) or len(registrations) != len(rows)
+            or not 1 <= len(registrations) <= _MAX_NATIVE_CANDIDATES):
+        raise NativePluginLoadUnavailable("native registration projection exceeds its row bound")
+    projection_digest = doc["registration_projection_sha256"]
+    if (not isinstance(projection_digest, str) or not _SHA256.fullmatch(projection_digest)
+            or hashlib.sha256(_canonical(registrations)).hexdigest() != projection_digest):
+        raise NativePluginLoadUnavailable("native registration projection digest differs")
+
+    registration_fields = {
+        "registration_id", "native_tool_name", "native_server_name", "toolset", "family",
+        "adapter_id", "argument_schema_id", "result_schema_id", "native_schema_sha256",
+        "registration_source_artifact_id", "registration_source_sha256",
+        "registration_source_receipt_handle", "handler_kind", "handler_id",
+        "selector_fields", "action_bindings", "observer_enrollment_ids", "generation",
+    }
+    binding_fields = {"selector_values", "action_binding_id", "argument_projection", "workflow_id"}
     expected_row_fields = {
         "native_tool_name", "adapter_id", "action_id", "argument_schema", "result_schema",
         "native_schema_sha256", "observer_enrollment_ids", "native_server_name", "description",
+        "registration_id", "toolset", "family", "handler_kind",
     }
-    if not isinstance(rows, list) or not 1 <= len(rows) <= _MAX_NATIVE_CANDIDATES:
-        raise NativePluginLoadUnavailable("native candidate index exceeds its row bound")
-    result: list[SelectedNativeCandidate] = []
+    registrations_by_id: dict[str, Mapping[str, Any]] = {}
     names: set[str] = set()
-    actions: set[tuple[str, str]] = set()
     manifest_adapters = {row["adapter_id"]: set(row["action_ids"]) for row in manifest["adapters"]}
+    closure_files = {row["relative_path"]: row for row in manifest["closure_files"]}
+    for registration in registrations:
+        if not isinstance(registration, dict) or set(registration) != registration_fields:
+            raise NativePluginLoadUnavailable("native registration row has unknown or missing fields")
+        reg_id, name, adapter_id = (registration["registration_id"], registration["native_tool_name"],
+                                    registration["adapter_id"])
+        if (not isinstance(reg_id, str) or not _ID.fullmatch(reg_id)
+                or not isinstance(name, str) or not _ID.fullmatch(name) or name in names
+                or not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id)
+                or reg_id != f"{adapter_id}:tool:{name}" or reg_id in registrations_by_id):
+            raise NativePluginLoadUnavailable("native registration identity is malformed or duplicated")
+        for key in ("native_server_name", "toolset", "family", "handler_id",
+                    "argument_schema_id", "result_schema_id", "registration_source_artifact_id",
+                    "registration_source_receipt_handle"):
+            if not isinstance(registration[key], str) or not _ID.fullmatch(registration[key]):
+                raise NativePluginLoadUnavailable("native registration metadata or schema identity is malformed")
+        for key in ("native_schema_sha256", "registration_source_sha256"):
+            if not isinstance(registration[key], str) or not _SHA256.fullmatch(registration[key]):
+                raise NativePluginLoadUnavailable("native registration source digest is malformed")
+        if registration["generation"] != selected.generation:
+            raise NativePluginLoadUnavailable("native registration generation differs from the selected package")
+        if (reg_id, name) in _BOUNDED_BACKEND_REGISTRATIONS:
+            schema_member = closure_files.get(
+                f"catalog/schemas/{_BOUNDED_BACKEND_RESULT_SCHEMA_ID}.json")
+            if (registration["result_schema_id"] != _BOUNDED_BACKEND_RESULT_SCHEMA_ID
+                    or schema_member is None
+                    or schema_member["sha256"] != _BOUNDED_BACKEND_RESULT_SCHEMA_SHA256
+                    or schema_member["size_bytes"] != _BOUNDED_BACKEND_RESULT_SCHEMA_SIZE):
+                raise NativePluginLoadUnavailable("backend result schema is not the exact pinned v113 artifact")
+        if registration["registration_source_sha256"] not in {
+                row["sha256"] for row in manifest["closure_files"]}:
+            raise NativePluginLoadUnavailable("native registration source is not pinned by the selected closure")
+        kind = registration["handler_kind"]
+        if kind not in {"effect-action", "finite-selector", "finite-workflow",
+                        "public-registry-read", "owner-overlay", "mcp-dispatch"}:
+            raise NativePluginLoadUnavailable("native registration handler kind is unsupported")
+        if ((kind == "mcp-dispatch") != (adapter_id == _NATIVE_MCP_ADAPTER_ID)
+                or (adapter_id == _NATIVE_MCP_ADAPTER_ID and registration["native_server_name"] == "hermes-installer")
+                or (adapter_id != _NATIVE_MCP_ADAPTER_ID and registration["native_server_name"] != "hermes-installer")):
+            raise NativePluginLoadUnavailable("native registration owner differs from its handler family")
+        selector_fields = registration["selector_fields"]
+        bindings = registration["action_bindings"]
+        if (not isinstance(selector_fields, list) or len(selector_fields) > 128
+                or len(set(selector_fields)) != len(selector_fields)
+                or any(not isinstance(field, str) or not _ID.fullmatch(field) for field in selector_fields)
+                or not isinstance(bindings, list) or not 1 <= len(bindings) <= 128):
+            raise NativePluginLoadUnavailable("native registration selector projection is malformed")
+        for binding in bindings:
+            if not isinstance(binding, dict) or set(binding) != binding_fields:
+                raise NativePluginLoadUnavailable("native registration action binding is malformed")
+            action_binding_id = binding["action_binding_id"]
+            if action_binding_id is not None:
+                if (not isinstance(action_binding_id, str) or not action_binding_id.startswith(f"{adapter_id}:action:")):
+                    raise NativePluginLoadUnavailable("native registration action binding identity is malformed")
+                child_action = action_binding_id.split(":action:", 1)[1]
+                if (not _ID.fullmatch(child_action) or child_action not in manifest_adapters.get(adapter_id, set())
+                        or selected.resolve(adapter_id, child_action) is None):
+                    raise NativePluginLoadUnavailable("native registration child action is not selected")
+            selector_values = binding["selector_values"]
+            projection = binding["argument_projection"]
+            workflow_id = binding["workflow_id"]
+            if (not isinstance(selector_values, dict) or set(selector_values) != set(selector_fields)
+                    or any(not isinstance(key, str) or not isinstance(value, str)
+                           for key, value in selector_values.items())
+                    or not isinstance(projection, list) or len(projection) > 128
+                    or (workflow_id is not None and
+                        (not isinstance(workflow_id, str) or not _ID.fullmatch(workflow_id)))):
+                raise NativePluginLoadUnavailable("native registration binding fields are malformed")
+            for item in projection:
+                if (not isinstance(item, dict) or set(item) != {"name", "source_field"}
+                        or not isinstance(item["name"], str) or not _ID.fullmatch(item["name"])
+                        or not isinstance(item["source_field"], str) or not _ID.fullmatch(item["source_field"])):
+                    raise NativePluginLoadUnavailable("native registration argument projection is malformed")
+        names.add(name)
+        registrations_by_id[reg_id] = registration
+
+    result: list[SelectedNativeCandidate] = []
+    candidate_registration_ids: set[str] = set()
     for row in rows:
         if not isinstance(row, dict) or set(row) != expected_row_fields:
             raise NativePluginLoadUnavailable("native candidate row has unknown or missing fields")
         name, adapter_id, action_id = row["native_tool_name"], row["adapter_id"], row["action_id"]
-        if (not isinstance(name, str) or not _ID.fullmatch(name) or name in names
+        reg_id = row["registration_id"]
+        registration = registrations_by_id.get(reg_id) if isinstance(reg_id, str) else None
+        if (registration is None or reg_id in candidate_registration_ids
+                or not isinstance(name, str) or not _ID.fullmatch(name)
                 or not isinstance(adapter_id, str) or not _ID.fullmatch(adapter_id)
-                or not isinstance(action_id, str) or not _ID.fullmatch(action_id)
-                or (adapter_id, action_id) in actions):
+                or not isinstance(action_id, str) or not _ID.fullmatch(action_id)):
             raise NativePluginLoadUnavailable("native candidate identity is malformed or duplicated")
-        effect = selected.resolve(adapter_id, action_id)
-        if adapter_id == _NATIVE_MCP_ADAPTER_ID:
-            # MCP rows are selected by the root-compiled candidate index and
-            # current protected MCP enrollment. They are deliberately not
-            # NativePluginBinding resolver rows or package entrypoint modules;
-            # the root dispatch RPC re-resolves the action before effect.
-            if effect is not None:
-                raise NativePluginLoadUnavailable("fixed native MCP dispatch cannot be a plugin effect row")
-        elif effect is None:
-            raise NativePluginLoadUnavailable("native candidate is not selected by the root resolver")
-        elif action_id not in manifest_adapters.get(adapter_id, set()):
-            raise NativePluginLoadUnavailable("native candidate action is absent from its pinned adapter")
+        common_fields = ("native_tool_name", "native_server_name", "toolset", "family", "adapter_id",
+                         "native_schema_sha256", "observer_enrollment_ids", "handler_kind")
+        if any(_canonical(row[field]) != _canonical(registration[field]) for field in common_fields):
+            raise NativePluginLoadUnavailable("native candidate differs from its registration projection")
         argument_schema, result_schema = row["argument_schema"], row["result_schema"]
         if not isinstance(argument_schema, dict) or not isinstance(result_schema, dict):
             raise NativePluginLoadUnavailable("native candidate schemas must be JSON objects")
@@ -583,6 +916,20 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
         if (not isinstance(schema_digest, str) or not _SHA256.fullmatch(schema_digest)
                 or hashlib.sha256(_canonical(argument_schema)).hexdigest() != schema_digest):
             raise NativePluginLoadUnavailable("native candidate argument schema digest differs")
+        if schema_digest != registration["native_schema_sha256"]:
+            raise NativePluginLoadUnavailable("native candidate schema differs from its selected registration")
+        handler_kind = registration["handler_kind"]
+        action_bindings = registration["action_bindings"]
+        if handler_kind == "effect-action":
+            binding_id = action_bindings[0]["action_binding_id"] if len(action_bindings) == 1 else None
+            expected_action = (binding_id.split(":action:", 1)[1]
+                               if isinstance(binding_id, str) else None)
+        elif handler_kind == "mcp-dispatch":
+            expected_action = registration["handler_id"]
+        else:
+            expected_action = reg_id
+        if action_id != expected_action:
+            raise NativePluginLoadUnavailable("native candidate action differs from the registration projection")
         observers = row["observer_enrollment_ids"]
         if (not isinstance(observers, list) or not 1 <= len(observers) <= 64
                 or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in observers)
@@ -598,16 +945,29 @@ def _parse_native_candidate_index(raw: bytes, *, selected: RootSelectedPluginEff
             raise NativePluginLoadUnavailable("native MCP candidate has the installer action owner")
         if adapter_id != _NATIVE_MCP_ADAPTER_ID and server != "hermes-installer":
             raise NativePluginLoadUnavailable("compiled installer action has an unapproved toolset owner")
-        names.add(name)
-        actions.add((adapter_id, action_id))
+        result_schema_id = registration["result_schema_id"]
+        if ((reg_id, name) in _BOUNDED_BACKEND_REGISTRATIONS
+                and (result_schema_id != _BOUNDED_BACKEND_RESULT_SCHEMA_ID
+                     or _canonical(result_schema) != _canonical({
+                         "additionalProperties": False,
+                         "properties": {
+                             "result": {"oneOf": [{"type": "object"}, {"type": "array"}]},
+                             "result_trust": {"const": "untrusted-backend-data"},
+                             "schema": {"const": 1},
+                         },
+                         "required": ["schema", "result_trust", "result"],
+                         "type": "object",
+                     }))):
+            raise NativePluginLoadUnavailable("backend result schema is not the exact v113 bounded envelope")
+        candidate_registration_ids.add(reg_id)
         result.append(SelectedNativeCandidate(
             name, adapter_id, action_id, _freeze_json(argument_schema), _freeze_json(result_schema),
-            schema_digest, tuple(observers), server, description,
+            schema_digest, tuple(observers), server, description, reg_id, row["toolset"], row["family"],
+            handler_kind, result_schema_id, tuple(registration["selector_fields"]),
+            tuple(_freeze_json(item) for item in action_bindings),
         ))
-    selected_pairs = {(effect.adapter_id, effect.action_id) for effect in selected.adapter_rows}
-    candidate_pairs = {pair for pair in actions if pair[0] != _NATIVE_MCP_ADAPTER_ID}
-    if candidate_pairs != selected_pairs:
-        raise NativePluginLoadUnavailable("native candidate index does not cover the exact root-selected actions")
+    if candidate_registration_ids != set(registrations_by_id):
+        raise NativePluginLoadUnavailable("native candidate set does not cover the exact registration projection")
     return tuple(result)
 
 
@@ -630,7 +990,26 @@ def _read_native_candidate_index_from_verified_mount(root: Path, manifest: Mappi
     raw = _read_regular_nofollow(member, maximum=_MAX_NATIVE_CANDIDATE_INDEX_BYTES)
     if len(raw) != pin["size_bytes"] or hashlib.sha256(raw).hexdigest() != pin["sha256"]:
         raise NativePluginLoadUnavailable("mounted native candidate index differs from its manifest pin")
-    return _parse_native_candidate_index(raw, selected=selected, manifest=manifest)
+    candidates = _parse_native_candidate_index(raw, selected=selected, manifest=manifest)
+    registrations = {candidate.registration_id for candidate in candidates}
+    action_bindings = {
+        binding["action_binding_id"]
+        for candidate in candidates for binding in candidate.action_bindings
+        if isinstance(binding, Mapping) and isinstance(binding.get("action_binding_id"), str)
+    }
+    workflows = {
+        binding["workflow_id"]
+        for candidate in candidates for binding in candidate.action_bindings
+        if isinstance(binding, Mapping) and isinstance(binding.get("workflow_id"), str)
+    }
+    observers = {observer for candidate in candidates for observer in candidate.observer_enrollment_ids}
+    for role in selected.process_role_records:
+        if (not set(role["registration_ids"]).issubset(registrations)
+                or not set(role["action_binding_ids"]).issubset(action_bindings)
+                or not set(role["workflow_ids"]).issubset(workflows)
+                or not set(role["observer_enrollment_ids"]).issubset(observers)):
+            raise NativePluginLoadUnavailable("native process role references an unselected registration or observer")
+    return candidates
 
 
 def read_native_candidate_index(binding: RootSelectedPluginEffects) -> tuple[SelectedNativeCandidate, ...]:
@@ -727,7 +1106,8 @@ def _require_protected_import_environment() -> None:
 def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, Any]:
     value = _json_document(raw, maximum=_MAX_ENTRYPOINT_BYTES, label="native entrypoint manifest")
     if set(value) != {"schema", "package_id", "profile_id", "generation", "closure_files",
-                      "adapters", "dependencies", "candidate_index"}:
+                      "adapters", "dependencies", "candidate_index",
+                      "process_role_records", "process_role_records_sha256"}:
         raise NativePluginLoadUnavailable("native entrypoint manifest has unknown or missing fields")
     if (type(value["schema"]) is not int or value["schema"] != 1
             or value["package_id"] != selected.package_id
@@ -762,6 +1142,76 @@ def _manifest(raw: bytes, *, selected: RootSelectedPluginEffects) -> dict[str, A
         normalized.append(dict(row))
     if hashlib.sha256(_canonical(normalized)).hexdigest() != selected.compiled_closure_sha256:
         raise NativePluginLoadUnavailable("native compiled closure digest does not match root binding")
+    roles = value["process_role_records"]
+    if not isinstance(roles, list) or not 1 <= len(roles) <= _MAX_LOADER_PROCESS_ROLES:
+        raise NativePluginLoadUnavailable("native process-role selection is missing or exceeds its bound")
+    role_fields = {
+        "role_id", "package_id", "native_package_generation", "profile_id", "profile_generation",
+        "role_artifact_id", "role_sha256", "role_source_receipt_handle", "module_name",
+        "closure_member_path", "role_source_revision", "role_source_tree_sha256",
+        "observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids",
+    }
+    normalized_roles: list[dict[str, Any]] = []
+    seen_role_ids: set[str] = set()
+    seen_role_modules: set[str] = set()
+    role_profile_generations: set[str] = set()
+    previous_role_id = ""
+    closure_by_path = {row["relative_path"]: row for row in normalized}
+    role_list_fields = ("observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids")
+    for row in roles:
+        if not isinstance(row, dict) or set(row) != role_fields:
+            raise NativePluginLoadUnavailable("native process-role row has unknown or missing fields")
+        role_id = row["role_id"]
+        module_name = row["module_name"]
+        member_path = _relative_path(row["closure_member_path"])
+        role_sha = row["role_sha256"]
+        if (not isinstance(role_id, str) or not _ID.fullmatch(role_id) or role_id <= previous_role_id
+                or role_id in seen_role_ids
+                or row["package_id"] != selected.package_id
+                or row["native_package_generation"] != selected.generation
+                or row["profile_id"] != selected.profile_id
+                or not isinstance(row["profile_generation"], str) or not _ID.fullmatch(row["profile_generation"])
+                or not isinstance(row["role_artifact_id"], str) or not _ID.fullmatch(row["role_artifact_id"])
+                or not isinstance(role_sha, str) or not _SHA256.fullmatch(role_sha)
+                or not isinstance(row["role_source_receipt_handle"], str)
+                or not _ID.fullmatch(row["role_source_receipt_handle"])
+                or not isinstance(module_name, str) or not _MODULE.fullmatch(module_name)
+                or module_name in seen_role_modules
+                or not isinstance(row["role_source_revision"], str)
+                or not 1 <= len(row["role_source_revision"]) <= 256
+                or any(ord(char) < 0x20 for char in row["role_source_revision"])
+                or not isinstance(row["role_source_tree_sha256"], str)
+                or not _SHA256.fullmatch(row["role_source_tree_sha256"])):
+            raise NativePluginLoadUnavailable("native process-role identity or package join is invalid")
+        closure_member = closure_by_path.get(member_path)
+        if closure_member is None or closure_member["sha256"] != role_sha:
+            raise NativePluginLoadUnavailable("native process-role module differs from its closure pin")
+        for key in role_list_fields:
+            values = row[key]
+            if (not isinstance(values, list) or len(values) > 512
+                    or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in values)
+                    or values != sorted(set(values))):
+                raise NativePluginLoadUnavailable("native process-role foreign-key list is malformed")
+        if not row["observer_enrollment_ids"]:
+            raise NativePluginLoadUnavailable("native process role has no selected observer")
+        previous_role_id = role_id
+        seen_role_ids.add(role_id)
+        seen_role_modules.add(module_name)
+        role_profile_generations.add(row["profile_generation"])
+        normalized_roles.append(dict(row))
+    if len(role_profile_generations) != 1:
+        raise NativePluginLoadUnavailable("native process roles disagree on process generation")
+    role_digest = value["process_role_records_sha256"]
+    if (not isinstance(role_digest, str) or not _SHA256.fullmatch(role_digest)
+            or hashlib.sha256(_canonical(normalized_roles)).hexdigest() != role_digest
+            or role_digest != selected.process_role_records_sha256):
+        raise NativePluginLoadUnavailable("native process-role digest differs from its root resolver cross-pin")
+    try:
+        selected._accept_verified_process_role_records(
+            tuple(MappingProxyType(row) for row in normalized_roles), role_digest,
+        )
+    except NativePluginBindingUnavailable:
+        raise NativePluginLoadUnavailable("native process-role selection is unavailable") from None
     candidate_ref = value["candidate_index"]
     if not isinstance(candidate_ref, dict) or set(candidate_ref) != {
             "artifact_id", "relative_path", "sha256", "size_bytes"}:
@@ -903,6 +1353,111 @@ def _verify_closure(root: Path, manifest: dict[str, Any]) -> MappingProxyType:
         raise NativePluginLoadUnavailable("root native closure could not be inspected") from None
 
 
+def _read_module_origin(source: Path, *, expected_sha256: str) -> tuple[int, int, int, str]:
+    """Read an imported role member without following links and retain its inode identity."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(source, flags)
+    except OSError:
+        raise NativePluginLoadUnavailable("selected process-role source is unavailable") from None
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_size <= 0 or before.st_size > _MAX_ENTRYPOINT_BYTES):
+            raise NativePluginLoadUnavailable("selected process-role source is not a bounded regular file")
+        digest = hashlib.sha256()
+        read_size = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            read_size += len(chunk)
+            if read_size > before.st_size:
+                raise NativePluginLoadUnavailable("selected process-role source changed during observation")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                or read_size != before.st_size or digest.hexdigest() != expected_sha256):
+            raise NativePluginLoadUnavailable("selected process-role source differs from its protected pin")
+        return before.st_dev, before.st_ino, before.st_size, digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def _load_selected_process_roles(
+    root: Path, closure_modules: MappingProxyType, selection: object,
+    imported_modules: list[str],
+) -> tuple[_LoadedProcessRoleOrigin, ...]:
+    """Import only root-selected role modules and capture their actual closure origins."""
+    roles = getattr(selection, "process_roles", None)
+    if (not isinstance(roles, tuple) or not 1 <= len(roles) <= _MAX_LOADER_PROCESS_ROLES):
+        raise NativePluginLoadUnavailable("root selected no exact native process-role modules")
+    closure_root = root / "closure"
+    observed: list[_LoadedProcessRoleOrigin] = []
+    seen_ids: set[str] = set()
+    seen_modules: set[str] = set()
+    seen_members: set[str] = set()
+    for role in roles:
+        role_id = _process_role_field(role, "role_id")
+        module_name = _process_role_field(role, "module_name")
+        member_path = _process_role_field(role, "closure_member_path")
+        expected_digest = _process_role_field(role, "role_sha256")
+        try:
+            member_path = _relative_path(member_path)
+        except NativePluginLoadUnavailable:
+            raise NativePluginLoadUnavailable("root selected an invalid native process-role module") from None
+        if (not isinstance(role_id, str) or not _ID.fullmatch(role_id)
+                or not isinstance(module_name, str) or not _MODULE.fullmatch(module_name)
+                or not isinstance(expected_digest, str) or not _SHA256.fullmatch(expected_digest)
+                or role_id in seen_ids or module_name in seen_modules or member_path in seen_members):
+            raise NativePluginLoadUnavailable("root selected an ambiguous native process-role module")
+        seen_ids.add(role_id)
+        seen_modules.add(module_name)
+        seen_members.add(member_path)
+        source = closure_modules.get(member_path)
+        if not isinstance(source, Path):
+            raise NativePluginLoadUnavailable("selected process-role member is absent from the verified closure")
+        source = closure_root / member_path
+        resolved_source = source.resolve(strict=True)
+        if (resolved_source != source or source.is_symlink()
+                or module_name in sys.modules):
+            raise NativePluginLoadUnavailable("selected process-role module was preloaded outside this binding")
+        package_paths = [str(source.parent)] if source.name == "__init__.py" else None
+        spec = importlib.util.spec_from_file_location(
+            module_name, source, submodule_search_locations=package_paths,
+        )
+        if (spec is None or spec.loader is None or spec.origin is None
+                or Path(spec.origin).resolve(strict=True) != resolved_source):
+            raise NativePluginLoadUnavailable("selected process-role module cannot load from its pinned member")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        imported_modules.append(module_name)
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise NativePluginLoadUnavailable("selected process-role module import failed") from None
+        module_file = getattr(module, "__file__", None)
+        module_spec = getattr(module, "__spec__", None)
+        spec_origin = getattr(module_spec, "origin", None)
+        if (sys.modules.get(module_name) is not module or not isinstance(module_file, str)
+                or Path(module_file).resolve(strict=True) != resolved_source
+                or not isinstance(spec_origin, str)
+                or Path(spec_origin).resolve(strict=True) != resolved_source):
+            raise NativePluginLoadUnavailable("selected process-role module origin changed during import")
+        actual_device, actual_inode, actual_size, actual_digest = _read_module_origin(
+            source, expected_sha256=expected_digest,
+        )
+        observed.append(_LoadedProcessRoleOrigin(
+            role_id, module_name, member_path, actual_digest, actual_device, actual_inode, actual_size,
+        ))
+    if tuple((row.role_id, row.module_name, row.closure_member_path) for row in observed) != tuple(
+            sorted((row.role_id, row.module_name, row.closure_member_path) for row in observed)):
+        raise NativePluginLoadUnavailable("selected process-role modules are not canonically ordered")
+    return tuple(observed)
+
+
 class SelectedNativeAdapter:
     """One verified selected module and its fixed entrypoint symbol."""
 
@@ -935,12 +1490,14 @@ class SelectedNativePackage:
     """Verified read-only mount plus the exact currently selected adapter modules."""
 
     __slots__ = ("_selection", "mount_target", "entrypoint_sha256", "_adapters", "_progress_writer",
-                 "candidate_rows", "_authority", "_registered_candidate_actions", "_loader_ready")
+                 "candidate_rows", "_authority", "_registered_candidate_registrations", "_loader_ready",
+                 "_loaded_process_role_origins")
 
     def __init__(self, selection: RootSelectedPluginEffects, mount_target: Path,
                  entrypoint_sha256: str, adapters: MappingProxyType,
                  progress_writer: _NativeLoaderProgressWriter | None = None,
-                 candidate_rows: tuple[SelectedNativeCandidate, ...] = (), authority: object | None = None) -> None:
+                 candidate_rows: tuple[SelectedNativeCandidate, ...] = (), authority: object | None = None,
+                 loaded_process_role_origins: tuple[_LoadedProcessRoleOrigin, ...] = ()) -> None:
         self._selection = selection
         self.mount_target = mount_target
         self.entrypoint_sha256 = entrypoint_sha256
@@ -948,7 +1505,8 @@ class SelectedNativePackage:
         self._progress_writer = progress_writer
         self.candidate_rows = candidate_rows
         self._authority = authority
-        self._registered_candidate_actions: set[tuple[str, str]] = set()
+        self._registered_candidate_registrations: set[tuple[str, str]] = set()
+        self._loaded_process_role_origins = loaded_process_role_origins
         self._loader_ready = False
 
     @property
@@ -992,13 +1550,16 @@ class SelectedNativePackage:
         return tuple(self._adapters)
 
     @property
-    def registered_action_ids(self) -> tuple[str, ...]:
+    def registered_registration_ids(self) -> tuple[str, ...]:
         self._selection._require_live()
-        return tuple(sorted(action_id for _adapter_id, action_id in self._registered_candidate_actions))
+        return tuple(sorted(registration_id for _adapter_id, registration_id
+                            in self._registered_candidate_registrations))
 
-    def _mark_candidate_registered(self, adapter_id: str, action_id: str) -> None:
+    def _mark_candidate_registered(self, adapter_id: str, registration_id: str) -> None:
         self._selection._require_live()
-        self._registered_candidate_actions.add((adapter_id, action_id))
+        if not isinstance(registration_id, str) or not _ID.fullmatch(registration_id):
+            raise NativePluginLoadUnavailable("selected tool registration identity is malformed")
+        self._registered_candidate_registrations.add((adapter_id, registration_id))
 
     def candidate(self, name: str) -> SelectedNativeCandidate | None:
         self._selection._require_live()
@@ -1179,7 +1740,7 @@ def install_native_candidate_index(package: SelectedNativePackage, authority: ob
                     handler = selected_handlers[(row.native_server_name, row.native_tool_name)]
                     if (entry is None or entry.toolset != expected_toolset or entry.handler is not handler):
                         raise NativePluginLoadUnavailable("Hermes changed a selected native MCP registration")
-                    package._mark_candidate_registered(row.adapter_id, row.action_id)
+                    package._mark_candidate_registered(row.adapter_id, row.registration_id)
             except Exception:
                 for (server_name, name), handler in selected_handlers.items():
                     entry = registry.get_entry(name, scope=scope)
@@ -1244,8 +1805,9 @@ def finish_selected_native_plugin_discovery(plugin_manager: object) -> bool:
         if package._authority is None or not package.candidate_rows:
             raise NativePluginLoadUnavailable("root-selected native candidate index is unavailable")
         install_native_candidate_index(package, package._authority)
-        expected_actions = {(row.adapter_id, row.action_id) for row in package.candidate_rows}
-        if package._registered_candidate_actions != expected_actions:
+        expected_registrations = {(row.adapter_id, row.registration_id)
+                                  for row in package.candidate_rows}
+        if package._registered_candidate_registrations != expected_registrations:
             raise NativePluginLoadUnavailable("selected candidate registration sweep was incomplete")
         plugins = getattr(plugin_manager, "_plugins", None)
         if not isinstance(plugins, dict):
@@ -1258,9 +1820,11 @@ def finish_selected_native_plugin_discovery(plugin_manager: object) -> bool:
                     or not getattr(plugin, "tools_registered", ())):
                 raise NativePluginLoadUnavailable("selected Hermes plugin did not finish registration")
         writer.emit(sequence=1, phase="actions-registered",
-                    registered_action_ids=package.registered_action_ids)
+                    registered_registration_ids=package.registered_registration_ids,
+                    loaded_process_roles=package._loaded_process_role_origins)
         writer.emit(sequence=2, phase="ready",
-                    registered_action_ids=package.registered_action_ids)
+                    registered_registration_ids=package.registered_registration_ids,
+                    loaded_process_roles=package._loaded_process_role_origins)
         package._loader_ready = True
         return True
     except NativePluginLoadUnavailable:
@@ -1441,6 +2005,9 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
         # systemd OpenFile. Resolve it before importing selected code so the
         # package remains unavailable if loaded-code proof cannot be reported.
         progress_writer = _NativeLoaderProgressWriter.from_systemd_activation(selection)
+        process_role_origins = _load_selected_process_roles(
+            root, modules, selection, imported_modules,
+        )
         loaded: dict[str, SelectedNativeAdapter] = {}
         for row in manifest["adapters"]:
             adapter_id = row["adapter_id"]
@@ -1473,10 +2040,14 @@ def bind_current_native_plugin_package(authority: object) -> SelectedNativePacka
                 adapter_id, module, row["entrypoint_symbol"], tuple(row["action_ids"]),
                 selection.manifest_digest_for_adapter(adapter_id) or "", entrypoint,
             )
-        progress_writer.emit(sequence=0, phase="entrypoint-imported", registered_action_ids=())
+        progress_writer.emit(
+            sequence=0, phase="entrypoint-imported", registered_registration_ids=(),
+            loaded_process_roles=process_role_origins,
+        )
         return SelectedNativePackage(selection, target, selection.entrypoint_sha256,
                                      MappingProxyType(loaded), progress_writer,
-                                     candidate_rows=candidate_rows, authority=authority)
+                                     candidate_rows=candidate_rows, authority=authority,
+                                     loaded_process_role_origins=process_role_origins)
     except NativePluginBindingUnavailable as exc:
         if progress_writer is not None:
             progress_writer.close()

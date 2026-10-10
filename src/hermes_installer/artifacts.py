@@ -403,6 +403,94 @@ class ArtifactCatalog:
         return spec
 
 
+def stage_verified_release_artifact(catalog: ArtifactCatalog, artifact_root: Path,
+                                   release: Any, actor: Any, *, artifact_id: str,
+                                   relative_path: str, expected_uid: int = 0) -> ResolvedArtifact:
+    """Stage a cataloged file from the held installer release into protected CAS.
+
+    This is used for small, source-pinned artifacts that are already members of
+    the verified immutable release. It never accepts caller bytes or a digest
+    as authority: catalog metadata, the held release manifest, actor currentness,
+    and the reopened release file must all agree before CAS publication.
+    """
+    from .authority.installer_release import (
+        RootActorObservation, VerifiedInstallerReleaseReceipt,
+    )
+
+    if (type(catalog) is not ArtifactCatalog or type(release) is not VerifiedInstallerReleaseReceipt
+            or type(actor) is not RootActorObservation or not isinstance(relative_path, str)
+            or not relative_path or ".." in Path(relative_path).parts
+            or os.geteuid() != expected_uid or expected_uid != 0):
+        raise AuthorityDenied("artifact.release-source", "held release staging requires exact root receipts")
+    part: Path | None = None
+    try:
+        _secure_directory(artifact_root, expected_uid)
+        spec = catalog.artifacts[artifact_id]
+        matches = [row for row in release.files if row.relative_path == relative_path
+                   and row.sha256 == spec.sha256 and row.size_bytes == spec.size_bytes]
+        if (len(matches) != 1 or "amendment" not in matches[0].roles
+                or not spec.size_bytes or spec.size_bytes > min(spec.max_bytes, 256 * 1024)
+                or spec.tree_files or spec.archive_format is not None):
+            raise ValueError
+        member = matches[0]
+        release.verify_current()
+        actor.verify_current(release)
+        final = artifact_root / "objects" / spec.artifact_id / spec.sha256 / spec.filename
+        if final.exists() or final.is_symlink():
+            resolved = catalog.resolve(spec.artifact_id, spec.sha256, artifact_root, expected_uid=expected_uid)
+            if (resolved.size_bytes != spec.size_bytes or resolved.sha256 != member.sha256):
+                raise ValueError
+            return resolved
+        directory = _mkdir_chain(final.parent, expected_uid)
+        part = directory / (spec.filename + ".release-part")
+        if part.exists() or part.is_symlink():
+            raise ValueError
+        source_fd = release.open_file(member.artifact_id)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        output_fd = os.open(part, flags, 0o600)
+        digest = hashlib.sha256()
+        total = 0
+        try:
+            while True:
+                block = os.read(source_fd, min(_CHUNK, spec.size_bytes + 1 - total))
+                if not block:
+                    break
+                total += len(block)
+                if total > spec.size_bytes:
+                    raise ValueError
+                digest.update(block)
+                view = memoryview(block)
+                while view:
+                    written = os.write(output_fd, view)
+                    view = view[written:]
+            os.fsync(output_fd)
+            os.fchmod(output_fd, 0o444)
+        finally:
+            os.close(source_fd)
+            os.close(output_fd)
+        if total != spec.size_bytes or digest.hexdigest() != spec.sha256:
+            part.unlink(missing_ok=True)
+            raise ValueError
+        release.verify_current()
+        actor.verify_current(release)
+        try:
+            os.link(part, final, follow_symlinks=False)
+        except FileExistsError:
+            part.unlink(missing_ok=True)
+            return catalog.resolve(spec.artifact_id, spec.sha256, artifact_root, expected_uid=expected_uid)
+        part.unlink()
+        _fsync_dir(directory)
+        return catalog.resolve(spec.artifact_id, spec.sha256, artifact_root, expected_uid=expected_uid)
+    except AuthorityDenied:
+        if part is not None:
+            part.unlink(missing_ok=True)
+        raise
+    except Exception:
+        if part is not None:
+            part.unlink(missing_ok=True)
+        raise AuthorityDenied("artifact.release-source", "held release member did not match the protected catalog") from None
+
+
 def load_protected_catalog(path: Path | str, *, expected_uid: int = 0) -> ArtifactCatalog:
     """Load a strict catalog from a root-owned, non-writable JSON file."""
     file_path = Path(path)
