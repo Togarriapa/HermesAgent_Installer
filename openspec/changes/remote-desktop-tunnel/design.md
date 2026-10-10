@@ -141,3 +141,10 @@ Exact contract: `planning/preactive-native-build-manager-composition-v237.json`;
 Use v238 exact closed schema, immutable observed source tuples and current signed acquisition/grant/CAS checks. Explicit dependency groups preserve signed versions/Provides/Multi-Arch; finite doc-link license references are checked against complete held graph. Candidate recipe/CP314 build/HTML5/session remain independently pending.
 
 Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.
+
+
+## v240 Measured Desktop headers and managed interface
+
+The v240 exact mount/driver/output contract and canonical member/recipe digest split bind genuine current selected inputs. Null resource/output caps deny; exported upstream commit-build stamp uses exact source receipt revision without fake CI/Git. Header closure and fixture native sandbox observations remain separate from AppDir/current receipts.
+
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.

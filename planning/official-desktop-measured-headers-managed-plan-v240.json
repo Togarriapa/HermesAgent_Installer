@@ -1,0 +1,196 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md",
+  "extends": [
+    "v218",
+    "v226",
+    "v227",
+    "v229",
+    "v234",
+    "v237"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "owner": "luna_official_desktop_runtime",
+  "upstream_source_revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+  "header_observations": [
+    {
+      "filename": "SHASUMS256.txt",
+      "sha256": "2c75d2024e7e235b27007aa48b22e205542ab78708fdebae3f0834f34e878445",
+      "size_bytes": 1101,
+      "request_url": "https://electronjs.org/headers/v40.10.2/SHASUMS256.txt",
+      "final_url": "https://artifacts.electronjs.org/headers/dist/v40.10.2/SHASUMS256.txt",
+      "max_download_bytes": 1101,
+      "observed_local_path": "/private/tmp/hermes-desktop-runtime-v218-inputs/electron-40.10.2-headers-SHASUMS256.txt"
+    },
+    {
+      "filename": "node-v40.10.2-headers.tar.gz",
+      "sha256": "de1d91f029485ac5bb3eb542c2e57348dfd4d1714cf9caa940c49dba66306563",
+      "size_bytes": 340614,
+      "request_url": "https://electronjs.org/headers/v40.10.2/node-v40.10.2-headers.tar.gz",
+      "final_url": "https://artifacts.electronjs.org/headers/dist/v40.10.2/node-v40.10.2-headers.tar.gz",
+      "max_download_bytes": 340614,
+      "observed_local_path": "/private/tmp/hermes-desktop-runtime-v218-inputs/node-v40.10.2-headers.tar.gz"
+    }
+  ],
+  "header_extraction": {
+    "member_observation": "plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240/electron-headers-member-observation.json",
+    "regular_member_count": 124,
+    "max_regular_members": 124,
+    "max_expanded_bytes": 1542817,
+    "root": "node_headers/",
+    "kinds": [
+      "directory",
+      "regular"
+    ],
+    "required_members": [
+      "node_headers/include/node/config.gypi",
+      "node_headers/include/node/node_version.h"
+    ],
+    "rules": "Independently recheck archive digest/size, unique exact SHASUMS row and closed member manifest before sealed held FD receipt. Preserve ordinary TLS; permit only the single exact observed HTTPS redirect per requested file. Reject extra entries, links, special files, absolute/traversal paths, duplicate paths and unsafe extraction modes; archive source modes are facts, not permission to stage writable build inputs. License/source closure remains required."
+  },
+  "source_identity": {
+    "api": "Pinned upstream buildStampPayload(stamp, env, platform, payload) and writeDesktopStamp(outDir, built)",
+    "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "env_key": "HERMES_BUILD_COMMIT",
+    "result_source": "commit-build",
+    "rules": "Fixed reviewed source-owned wrapper constructs stamp only from genuine sealed current source archive receipt and independently matching whole member closure; dirty=false only for this verified source projection. Exact HERMES_BUILD_COMMIT joins that revision; pinned helper emits commit-build. No GITHUB_SHA/fromCI or invented Git checkout; all-zero/fallback/default-branch stamp denies. Payload/launcher source members and stamp bytes remain measured build inputs/outputs; wrapper implementation and qualification pending."
+  },
+  "managed_plan": {
+    "adapter_api": "OfficialDesktopRuntimeComponentAdapter.resolve_managed_build_plan(selection, inputs) -> RootRemoteRoleBuildPlan",
+    "driver_source_path": "src/hermes_installer/remote/official_desktop_runtime_builder.py",
+    "driver_member_relative_path": "src/hermes_installer/remote/official_desktop_runtime_builder.py",
+    "driver_member_sha256": null,
+    "builder_mount_id": "python-runtime",
+    "builder_relative_path": "bin/python3.14",
+    "argv_recipe": [
+      {
+        "build_path": {
+          "mount_id": "builder",
+          "relative_path": ""
+        }
+      },
+      "-I",
+      {
+        "build_path": {
+          "mount_id": "toolchain",
+          "relative_path": "src/hermes_installer/remote/official_desktop_runtime_builder.py"
+        }
+      }
+    ],
+    "mount_ids": [
+      "source",
+      "toolchain",
+      "packages",
+      "python-runtime",
+      "electron",
+      "electron-headers",
+      "dependencies",
+      "prepared-packaging",
+      "recipe"
+    ],
+    "mount_semantics": {
+      "source": "Whole pinned official source/workspace closure, immutable inputs; private owned writable build copy is output staging only.",
+      "toolchain": "Selected official Node and exact reviewed builder/native rebuild/electron-builder source tools; signed ARM64 compiler executables are held dependency members, never ambient /usr/bin.",
+      "packages": "Exact locked npm SRI/license closure plus separate v229 types-only auxiliary; no install/postinstall network or unreviewed lifecycle.",
+      "python-runtime": "Complete genuine PM314 interpreter, stdlib, shared lib and selected pip closure, isolated from service runtime.",
+      "electron": "Separately verified official Electron40.10.2 linux-arm64 ZIP/binary closure.",
+      "electron-headers": "Exact v240 node_headers member graph.",
+      "dependencies": "Reviewed signed Debian ARM64 compiler/sysroot/license closure, extracted isolated build view; no global install or other Python runtime execution.",
+      "prepared-packaging": "Current prepared.json/tools/icons/archive receipt closures; caller paths and measured hashes alone do not issue receipts.",
+      "recipe": "Manager-staged exact root-generated closed config only."
+    },
+    "output_specs": [
+      {
+        "member_id": "desktop-appdir",
+        "kind": "tree",
+        "max_bytes": null
+      },
+      {
+        "member_id": "HERMES-DESKTOP-RUNTIME-BUILD.json",
+        "kind": "file",
+        "max_bytes": null
+      }
+    ],
+    "max_lifetime_seconds": 1200,
+    "memory_max_bytes": null,
+    "cpu_quota_percent": null,
+    "io_weight": null,
+    "tasks_max": null,
+    "status": "unavailable-pending-measured-bounds-and-tested-driver",
+    "admission": "Any null cap, unreviewed driver/source member, absent native/packaging/symlink policy/current receipt denies plan issuance and execution. 1200 is existing v226 upper lifetime, not an observed performance result. No 16GiB cap inferred from Node heap option; actual cgroup peak and output bounds must be reviewed separately.",
+    "custody": "Existing v227/v237 sealed plan, exact selected actor/release/choice/transaction/generation/PM/NSS/controller PIDFD ownership, offline PrivateNetwork and AF_UNIX-only build unit, original selection/input/custody minimum deadline; one-use grant consumption does not renew setup lease."
+  },
+  "fixed_build_sequence": [
+    "Materialize current reviewed source/workspace/package inputs into private build staging; no raw shell/eval or caller argv/env.",
+    "Generate genuine upstream commit-build stamp through reviewed wrapper above.",
+    "Invoke held selected Node and locked @electron/rebuild for node-pty1.1.0 linux-arm64 with explicit held Electron40.10.2 headers and fixed jobs=2, offline; inspect native ELF/ABI independently.",
+    "Invoke pinned stage-native-deps.mjs with exact owned source/native staging and held native toolchain, linux/arm64; reject degraded native payload.",
+    "Invoke pinned scripts/build/desktop.mjs with held stamp/native/icons and fixed linux platform; exact typecheck remains separately required.",
+    "Generate prepared-packaging inputs using pinned source publishPackagingInputs, target linux-arm64, formats=[dir], separately held Electron ZIP and exact reviewed sevenZip/icons tools.",
+    "Invoke pinned apps/desktop/scripts/run-electron-builder.mjs --prepared <fixed staged prepared.json> --native-deps <fixed native staging> --linux --arm64 --dir --publish never.",
+    "Publish only actual desktop-appdir member tree and closed envelope after independent output/native/ABI/sandbox observer; terminal exit and JSON are not runtime authority."
+  ],
+  "digest_projection": {
+    "config_field": "member_closure_sha256",
+    "output_field": "member_closure_sha256",
+    "final_observer_field": "recipe_bound_input_closure_sha256",
+    "rules": "Use existing v227/v234 canonical member-only projection from exact central retained members with no recipe bytes/self-hash. Central final closure separately binds that member digest and SHA256 of exact recipe bytes. No legacy input_closure_sha256 or config-self-hash substituted for member closure. New source-owned schema hashes require measured committed implementation; none issued here.",
+    "config_fields_rule": "Preserve existing exact official desktop config fields from build_recipe_config; replace only input_closure_sha256 with member_closure_sha256. Native/header/packaging config additions must join v226 genuine sealed closure through fixed driver, not arbitrary caller maps."
+  },
+  "output_policy": "Full native AppDir, executable identity, ARM64 DT_NEEDED/interpreter closure, source/stamp/native/prepared provenance, chrome-sandbox exact root ownership/mode and actual sandbox-enabled main/renderer evidence remain required. Retain only independently reviewed finite within-package symlink targets/member graph under v212; unknown links deny. Source inputs and output manifest are no package/executable/materialization receipts.",
+  "fixture_evidence": {
+    "typecheck": "Owner observed exact full Desktop workspace typecheck exit0, official Node26.7.0 ARM64 network-disabled, exact @types/ws8.18.2 auxiliary only; no original source/lock edits. Writable disposable source for generated tsbuildinfo.",
+    "native": "Owner observed offline Electron40.10.2-header node-pty rebuild exit0, AArch64 module SHA873dce726c4bd00aedc6f7b305f5cba688624d76c788f6b7d2e0637ae13302fa; fixture source member only.",
+    "sandbox_report_path": "/private/tmp/hermes-desktop-runtime-v218-build/smoke-results/report.json",
+    "sandbox_report_sha256": "7d031f3fc3f78b8c5b29354c025309222eeec0978d0c9e7d175f8fccb7882400",
+    "sandbox_report_size_bytes": 148,
+    "sandbox": "Electron40.10.2 Node24.15.0 modules143 NAPI10 renderer Seccomp2 and pty output/exit0. Outer isolated Docker SYS_ADMIN/unconfined seccomp was a fixture requirement; no production permission grant, nobody is no production role identity.",
+    "appdir_status": "pending: named container hermes-desktop-appdir-v218 experiment has no completed AppDir/peak-memory receipt",
+    "future_peak_path": "/private/tmp/hermes-desktop-runtime-v218-build/appdir-output/memory.peak",
+    "packaging_tools_status": "7zip/icons archive hashes observed by owner but official source/size/license/current member receipt review remains pending; no static tuple approval in this amendment."
+  },
+  "tasks": {
+    "RT-T240.1": "Implement exact header acquisition/inspection and truthful upstream commit-build stamp wrapper.",
+    "RT-T240.2": "Implement fixed source-owned native/AppDir driver, measured finite plan and independent output/materialization joins; unavailable until real bounds.",
+    "VD-T240.3": "Test header/redirect/member/stamp/ABI/native/symlink/cap/digest failures and actual offline ARM64 output effects; keep Pi/production acceptance separate."
+  },
+  "acceptance": "All AC OPEN; no code cohort pins, runtime receipts, AppDir success or Pi readiness.",
+  "output_schema": {
+    "id": "root-selected-desktop-runtime-output-v1",
+    "sha256": null,
+    "fields": [
+      "schema",
+      "role",
+      "selection_handle",
+      "member_closure_sha256",
+      "target",
+      "package_members",
+      "executable_member",
+      "dependency_members",
+      "qualification"
+    ],
+    "member_fields": [
+      "path",
+      "kind",
+      "mode",
+      "size_bytes",
+      "sha256",
+      "executable_role",
+      "target",
+      "target_sha256",
+      "target_size_bytes",
+      "owner_uid",
+      "owner_gid"
+    ],
+    "role": "desktop",
+    "target": "linux-arm64",
+    "rules": "Source-owned updated schema bytes/hash await committed reviewed implementation; regular files and only separately reviewed finite AppDir symlink policy. Legacy code schema is not a pin for revised bytes."
+  }
+}

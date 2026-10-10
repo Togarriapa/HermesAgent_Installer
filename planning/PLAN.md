@@ -205,3 +205,6 @@ v237: `plans/amendments/2026-10-10-preactive-native-build-manager-composition-v2
 
 
 v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `planning/xpra-native-source-policy-v238.json`; RT-T238.1/.2 and VD-T238.3 OPEN. Concrete399DEB/8Python bounded signed-source policy+keyring tuples, exact dependency/license edges; acquisition only/no native runtime/Pi acceptance.
+
+
+v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md` / `planning/official-desktop-measured-headers-managed-plan-v240.json`; RT-T240.1/.2 and VD-T240.3 OPEN. Exact observed header/member tuples and fixed Desktop managed interface; AppDir/measured caps/current receipts pending, no runtime/Pi acceptance.

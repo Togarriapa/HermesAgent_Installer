@@ -3490,5 +3490,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_measured_headers_managed_plan_v240": {
+    "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
+    "tasks": {
+      "RT-T240.1": [
+        "RT-T226.1"
+      ],
+      "RT-T240.2": [
+        "RT-T240.1",
+        "RT-T237.1"
+      ],
+      "VD-T240.3": [
+        "RT-T240.1",
+        "RT-T240.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

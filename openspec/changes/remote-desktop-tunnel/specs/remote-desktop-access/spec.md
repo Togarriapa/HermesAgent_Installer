@@ -492,3 +492,17 @@ The implementation SHALL acquire only the exact v238 locked official sources thr
 #### Scenario: Missing or mismatched source fact
 - **WHEN** source hash/version/signature/provider/license reference is changed or Debian CP313 would execute as runtime
 - **THEN** the affected closure SHALL remain unavailable without alias receipts or lazy fallback
+
+
+## ADDED Requirements
+
+### Requirement: Measured official Desktop build inputs and finite managed plan
+The implementation SHALL use the exact v240 official header/member observations and current source-bound upstream commit-build provenance. The managed Desktop build SHALL use only sealed fixed driver/mount/output recipes and independently measured finite bounds; source/native fixture observations SHALL NOT imply AppDir or runtime acceptance.
+
+#### Scenario: Pending measured plan
+- **WHEN** a resource/output cap, actual driver, current native/packaging receipt or reviewed link policy is absent
+- **THEN** plan issuance and execution SHALL deny without an invented cap or lazy fallback
+
+#### Scenario: Header or stamp mismatch
+- **WHEN** redirect/checksum/member/source revision differs or the stamp is zero/fallback/fake CI or Git
+- **THEN** packaging SHALL remain unavailable and preserve genuine source identity

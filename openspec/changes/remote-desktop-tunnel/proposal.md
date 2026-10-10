@@ -133,3 +133,10 @@ Exact contract: `planning/preactive-native-build-manager-composition-v237.json`;
 Supply the previously absent actual held Xpra native source policy/keyring member from bounded verified official sources, with full dependency/license evidence.
 
 Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.
+
+
+## v240 Measured Desktop headers and managed interface
+
+Measured official headers and fixed offline Desktop managed interface are now specified in v240, preserving source provenance and pending AppDir/caps. No runtime acceptance.
+
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.

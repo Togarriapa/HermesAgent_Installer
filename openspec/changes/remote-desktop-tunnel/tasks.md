@@ -190,3 +190,12 @@ Exact contract: `planning/preactive-native-build-manager-composition-v237.json`;
 - [ ] VD-T238.3 Exercise signature/version/provider/qualifier/license/hash/CP313/lazy-path failures.
 
 Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.
+
+
+## v240 Measured Desktop headers and managed interface
+
+- [ ] RT-T240.1 Implement exact held headers and truthful upstream commit-build stamp wrapper.
+- [ ] RT-T240.2 Implement fixed Desktop driver and measured plan/output/current receipts.
+- [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
+
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
