@@ -834,5 +834,292 @@
     "revoke": "revoke_selected_private_input_consent(selection_handle,current_authorized_owner_request)->RootPrivateInputConsentRevocationReceipt {schema,selection_handle,consent_id,revocation_epoch,revoked_monotonic,signature}. Actual current owner request bound root actor/principal/private profile, atomically increments durable epoch/state. Recheck before source issuance and every dispatch/retry/background child. Old receipt ceilings are necessary but not sufficient: current consent epoch checked separately. Previously emitted/committed bytes are not claimed undone.",
     "evidence": "Explicit selected private route choice then authentic initial input and private provider request positive; absent/public/wrong owner/profile/generation/unknown route/stale policy/revoked epoch/parent empty ceiling/replayed lookup/forged choice/worker authorized flag negatives. No public promotion or account/budget readiness inferred. All acceptance pending.",
     "dispatch_revalidation": "revalidate_retained_input_consent(consent_receipt_handle,*,retained_input_selection_handle,expected_consent_id,expected_revocation_epoch)->same retained RootPrivateInputConsent. Root registry non-consumingly resolves actual original input/selection and consent record after ingress consumed, rechecks current owner/profile/namespace/service/policy/routes/revocation and original expiry. Expected fields match independently retained root request closure, not caller dict. No re-consume ingress, extend stale input/source lease, remint permission or strip ancestry. Authority every dispatch/retry/background child calls it; current empty/revoked/expired denies."
+  },
+  "native_local_result_bounds_v110": {
+    "artifact_id": "installer-native-local-registration-results-v1",
+    "path": "plans/amendments/2026-10-10-native-local-result-bounds-v110/native-local-registration-results-v1.json",
+    "sha256": "2bc50e29087e8725159c7cb71000cc06f37e8cda08a67780d3dd00227173863c",
+    "size_bytes": 4889,
+    "source_pins": {
+      "src/hermes_installer/components/native_plugins.py": "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7",
+      "src/hermes_installer/components/public_registries.py": "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f"
+    },
+    "semantics": "These are finite transport output schemas for actual eight local registrations, not new effect permissions/source receipts/operational evidence. Public JSON remains untrusted-public-source authority none, root source ancestry retained; overlay reads require actual selected owner/profile CAS receipt and updates require existing owner consent/grant. Existing v99 actual source/schema/handler/observer/effect join before executable candidate, no audit null promotion.",
+    "unavailable_results": [
+      "financial-execution-gateway.execute",
+      "agent-live-wallet.read",
+      "agent-live-wallet.execute",
+      "agent-sandbox-wallet.read",
+      "agent-sandbox-wallet.execute",
+      "web-retrieve.source_receipt"
+    ]
+  },
+  "native_local_schema_artifacts_v112": {
+    "schema": 1,
+    "artifact_rows": [
+      {
+        "tool_name": "agent37_discover_skills",
+        "schema_id": "installer-native-local-result-agent37_discover_skills-v1",
+        "artifact_id": "installer-native-local-result-agent37_discover_skills-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/agent37_discover_skills.result.schema.json",
+        "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
+        "size_bytes": 247,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "agent37_inspect_skill",
+        "schema_id": "installer-native-local-result-agent37_inspect_skill-v1",
+        "artifact_id": "installer-native-local-result-agent37_inspect_skill-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/agent37_inspect_skill.result.schema.json",
+        "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
+        "size_bytes": 247,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "mcp_registry_discover",
+        "schema_id": "installer-native-local-result-mcp_registry_discover-v1",
+        "artifact_id": "installer-native-local-result-mcp_registry_discover-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/mcp_registry_discover.result.schema.json",
+        "sha256": "50f0ae652265cd9ccba17417179b428cdc8155db491016e1d01fa1cd395277df",
+        "size_bytes": 260,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "mcp_registry_inspect",
+        "schema_id": "installer-native-local-result-mcp_registry_inspect-v1",
+        "artifact_id": "installer-native-local-result-mcp_registry_inspect-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/mcp_registry_inspect.result.schema.json",
+        "sha256": "50f0ae652265cd9ccba17417179b428cdc8155db491016e1d01fa1cd395277df",
+        "size_bytes": 260,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "resource_overlay_delete",
+        "schema_id": "installer-native-local-result-resource_overlay_delete-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_delete-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_delete.result.schema.json",
+        "sha256": "3572956bdc827ed057de0f7253dae2b48a32ea50b406861486796a7f45191912",
+        "size_bytes": 283,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      },
+      {
+        "tool_name": "resource_overlay_history",
+        "schema_id": "installer-native-local-result-resource_overlay_history-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_history-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_history.result.schema.json",
+        "sha256": "5069d7469c89174278f0158cf7b5b3d70e54d53106a07085d4cdda6e5c1154fd",
+        "size_bytes": 309,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      },
+      {
+        "tool_name": "resource_overlay_read",
+        "schema_id": "installer-native-local-result-resource_overlay_read-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_read-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_read.result.schema.json",
+        "sha256": "cd520b2360a36ffc2aa4a6892a63a89cd70b226ff545b927b3e297a8eaf82b19",
+        "size_bytes": 607,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      },
+      {
+        "tool_name": "resource_overlay_write",
+        "schema_id": "installer-native-local-result-resource_overlay_write-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_write-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_write.result.schema.json",
+        "sha256": "c250bdf7f703773c26c21b352af1d8c3560683aa02ad9d11968e1f7394552edb",
+        "size_bytes": 267,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      }
+    ],
+    "publication": "Installed release builder includes these exact source artifact files with native-result-schema role and full installed module source/import closure. Root bootstrap native assembly resolves packaged exact schema bytes through existing RootSourceArtifactReceiptVerifier and actual source artifact receipt; prepared policy may retain staged sealed rows, atomic active publication later installs native_schema_records. This source table is NOT an already active row or receipt. No invented receipt/source handle/null promotion.",
+    "native_schema_record_join": "native_schema_records.id equals schema_id; artifact_id/hash/size exactly child file. role=result, selected package/action/native binding exact actual v99 registration. source_receipt_handle is actual packaged artifact receipt; derivation_receipt_handle null only direct exact packaged file, otherwise actual existing root schema derivation. Keep exact existing v39/v92/v96 row schema and enclosing generation semantics.",
+    "result_constraints": "Eight local schemas exact v110 definitions PLUS mandatory v110 depth/node/string/serialized-public/raw-overlay budgets. Source schema file alone does not assert enforcement: selected installed validator handler full closure and current validation recipe must be pinned. Public trust/source ancestry and owner-overlay CAS grants unchanged. Protected finance/wallet/web backend generic objects remain unavailable; no all18 omission/acceptance.",
+    "catalog_identity_correction_v114": "Exact static ArtifactCatalog grammar [A-Za-z0-9_.-] does not admit colon. These eight literal schema/artifact IDs supersede impossible v112 colon IDs; actual source schema bytes/path/SHA/size unchanged. Do not widen staticcatalog/rootreceipt grammar or mintaliases. Logical registration/action IDs remain protected schema domain, not ArtifactCatalog IDs."
+  },
+  "protected_registration_records_v113": {
+    "schema": 1,
+    "requirements": [
+      "HI08",
+      "HI11",
+      "HI12",
+      "RB08",
+      "MC-F01"
+    ],
+    "tasks": [
+      "HI-T08",
+      "HI-T11",
+      "HI-T12",
+      "RB-T08",
+      "MC-F01"
+    ],
+    "finding": "v99 projection DTO exists but protected NativeAdapterBinding is keyed adapter_id with one action/schema. It cannot store reviewed42 registrations distinct from61 backend action routes. This refinement adds exact protected arrays; no new product capability.",
+    "snapshot_location": "service_generations.native_packages[*] adds profile_generation, action_records, registration_records, workflow_records. Same exact records retained by sealed pre-active RootNativeAssemblyDefinitions.action_registration_records before active publication; root writer splits typed records into these three arrays. NativePackageBinding owns typed action_records/registration_records/workflow_records maps. NativeAdapterBinding legacy single-route map is never inferred to be registrations or expanded authority; migrate exact source-reviewed route records, reject conflicting legacy duplicates.",
+    "action_record_fields": [
+      "action_binding_id",
+      "adapter_id",
+      "action_id",
+      "manifest_sha256",
+      "adapter_artifact_id",
+      "adapter_sha256",
+      "argument_schema_id",
+      "result_schema_id",
+      "effect_enrollment_id",
+      "operation",
+      "capability",
+      "target_id",
+      "recipient",
+      "generation",
+      "observer_enrollment_ids"
+    ],
+    "action_identity": "action_binding_id=adapter_id+:action:+action_id, ASCII<=512; unique per selected package. adapter_id may repeat across actions; pair(adapter_id,action_id) unique. generation is native package generation, profile_generation is separate actual selected HostServiceProfile generation. Exact selected action artifact/schema/effect enrollment operation/capability/target/recipient/current process profile join; do not infer effects from tool schemas. These are source61 effect rows, never one-per-tool. Local/public tools have no fabricated effect row.",
+    "registration_record_fields": [
+      "registration_id",
+      "native_tool_name",
+      "native_server_name",
+      "toolset",
+      "family",
+      "adapter_id",
+      "argument_schema_id",
+      "result_schema_id",
+      "native_schema_sha256",
+      "registration_source_artifact_id",
+      "registration_source_sha256",
+      "registration_source_receipt_handle",
+      "handler_kind",
+      "handler_id",
+      "selector_fields",
+      "action_bindings",
+      "observer_enrollment_ids",
+      "generation"
+    ],
+    "registration_identity": "registration_id=adapter_id+:tool:+actual native_tool_name; source actual42 unique names across18 requiredfamilies. Native server hermes-installer for nonMCP, exact protected server forMCP; actual source toolset preserved. argument_schema_id/result_schema_id resolve actual selected native_schema_records bytes/hash/size/receipt, never caller embedded schema. native_schema_sha256 hashes exact full captured argument_schema. schema bodies enter v99 projection only after these IDs resolve. generation is package generation; enclosing profile generation from package explicit field.",
+    "action_binding_fields": [
+      "selector_values",
+      "action_binding_id",
+      "argument_projection",
+      "workflow_id"
+    ],
+    "binding_types": "selector_values exact finite source field->literal mapping; selector_fields unique actual schema enum field names. argument_projection list exact {name,source_field} root actionargument<-original external field. No expression, dotted path, command or caller schema. Direct exactly1 binding empty selector and actual action_binding_id; selectors finite source provider-operation admissible pairs, not cartesian enums. workflow bindings action_binding_id null, workflow_id exact selected workflow_records.id. public-registry-read/owner-overlay exactly1 binding empty selector, both refs null, existing root selected source handler resolves actual private profile owner/public immutable registry. MCP exactly1 binding action_binding_id null, workflow_id null; handler_id exactly native_mcp_tool_bindings.id and lexical action_id remains that selected MCP ID. Every input exactly1match or deny.",
+    "handler_kind_enum": [
+      "effect-action",
+      "finite-selector",
+      "finite-workflow",
+      "public-registry-read",
+      "owner-overlay",
+      "mcp-dispatch"
+    ],
+    "lexical_action": "Direct lexical action_id is selected action_records.action_id. Selector/workflow/public/overlay external lexical action_id is registration_id. MCP exact native_mcp_tool_bindings.id. Original tool argument bytes/digest preserved before any root projection. Root registration dispatcher derives branch from exact source selector and issues fresh independent child effects or fixed root workflow; no worker relaxed matching.",
+    "workflow_record_fields": [
+      "id",
+      "registration_id",
+      "external_argument_schema_id",
+      "external_result_schema_id",
+      "workflow_artifact_id",
+      "workflow_sha256",
+      "workflow_source_receipt_handle",
+      "step_action_binding_ids",
+      "generation"
+    ],
+    "workflow_joins": "Exact v99/v46 finite voice source workflow: transcribe open_session/capture_audio/voice_transcribe/close_session; speak open_session/voice_speak/close_session. Artifact contains source-reviewed finite ordering, state/cancellation/cleanup/argument/result rules; root stage producer emits canonical reviewed source recipe and observes actual artifact receipt before active publication. step_action_binding_ids ordered actual actionrecords refs; no callercreated workflow or inferred callback. Existing source-verified workflow primitive result schemas and current consent/source closure required at every independently authorized step.",
+    "observer_joins": "registration/action observer_enrollment_ids each FK exactly one source_issuers[*].observer_enrollment_id in same staged/active selection; source issuer profile+process generation/role/package nativegeneration/capture schema/source_action IDs resolve separately. Registration source_action_ids contain exact external lexical action above; primitive child effects inherit actual parent closure and their finite actionproofs, not fabricated external tool calls. Same producer observed source/response receipt closure and peerPIDFD/current loaded package proof remain mandatory. Unknown/missing observer keeps readiness pending, not source omission.",
+    "constraints": {
+      "max_registration_records": 128,
+      "max_action_records": 256,
+      "max_workflow_records": 64,
+      "max_bindings_per_registration": 128,
+      "max_projection_fields": 128,
+      "max_observers_per_record": 128,
+      "max_workflow_steps": 16,
+      "max_id_chars": 512,
+      "max_name_chars": 128
+    },
+    "preactive_producer": "RootSelectedInstallationBinding.resolve_native_registration_projection(selection_handle) independently joins actual RootReleaseModuleReceipt source observations from observe_root_native_registrations, reviewed_native_registration_definitions finite source tables, actual packaged/native result schema receipts, same setup selected effect/observer/workflow/MCP receipts. Staged selections originate actual installed release+prepared transaction+source/PM/materialization and selected installation target, not active adapter_records. Root writer validates exact arrays and computes canonical definitions SHA; nativeassembler consumes same proof-backed projection then activepolicycompiler atomically publishes arrays with output receipts. No pre-existing active registration/effect catalog required merely to compile its own selected rows; effect selections must be genuinely rooted in setup allowed source recipe/account/consent policy, never raw caller JSON.",
+    "actual_source_map": "Use actual source38bda246 observe_root_native_registrations RootReleaseModuleReceipt + reviewed_native_registration_definitions. Six original module pins/source42 inventoryv99, exact local eight schema filesv112, existing61 packaged PluginActionSchemaRegistry source actionschemas for remaining bounded types, actual selected MCP schemas separately. Artifact receipts cannot be replaced by hashes alone. v99 exact GitHub/Composio/Codex/doc/Epic/homelab/finance/wallet selector source maps remain binding.",
+    "bounded_passthrough_wrapper": {
+      "schema_id": "installer-native-bounded-backend-result-v1",
+      "artifact_id": "installer-native-bounded-backend-result-v1",
+      "path": "plans/amendments/2026-10-10-protected-native-registration-records-v113/bounded-native-backend-result-v1.schema.json",
+      "sha256": "8ef1ffe2ca1c26f2bb82fd9178b4cd223bbee4b3b7c1a8d784f850e289026cb4",
+      "size_bytes": 235,
+      "applies_to": [
+        "financial_execute_one_order",
+        "agent_live_wallet_action",
+        "agent_sandbox_wallet_action"
+      ],
+      "implementation": "Root selected registration dispatcher wraps actual source handler/backend returned JSON object|array as exact {schema:1,result_trust:untrusted-backend-data,result:<unchanged validated data>}. Preserve actual raw response digest/source receipt ancestry out-of-band. Backend returned caller-controlled result or model output cannot substitute actual effect dispatch/receipt. Original action argument bytes/grant remain unchanged. Reject scalar/nonJSON/duplicate keys/nonfinite/oversize; no model-provided authority keys consumed.",
+      "limits": {
+        "max_response_bytes": 2097152,
+        "max_serialized_result_bytes": 2097152,
+        "max_json_depth": 32,
+        "max_json_nodes": 65536,
+        "max_string_utf8_bytes": 2097152
+      },
+      "trust": "This bounded source wrapper replaces unbounded generic object at REGISTERED TOOL RESULT boundary only, not selected backend operation validator. Unknown backend fields are data, never authorization/account eligibility/order executed proof or readiness. Functional financial/wallet operation requires actual account/source-specific handler/effect result/readback validation. Private source ancestry and current zero additional budget/consent persist. Missing backend/account proof remains exact pending, not permanently omitted family."
+    },
+    "web_result": "Use actual root retrieval source receipt handle as opaque source_receipt_handle in a closed registered result envelope with untrusted_source=true,authority=none, bounded response data; backend source_receipt object is root resolved and retained privately, never passed as caller authority. Actual retrieval serializer/result fields require source handler owner to wrap current returned fields according to this closed rule and publish canonical schema before executablecandidate. No arbitrary nested source_receipt claims.",
+    "implementation_owners": "Native registration binding owner source facts/result schema observation; factory staged protected arrays and typed source/effect/observer selection writer; host enrollment typed parser; source observer actual selected issuer records; native assembler output; active policy compiler atomic publisher; component owners implement wrapper source branches and actual handler tests. Existing original implementation/acceptance checkbox tasks remain open.",
+    "status": "Source review only, actual complete42/61 source/effect/schema/observer/package assembly and all18 acceptance open. No application fixture native mapping."
+  },
+  "native_schema_catalog_identity_v114": {
+    "map_path": "plans/amendments/2026-10-10-native-schema-catalog-identities-v114/native-local-schema-artifact-map-v2.json",
+    "semantics": "Exact static ArtifactCatalog grammar [A-Za-z0-9_.-] does not admit colon. These eight literal schema/artifact IDs supersede impossible v112 colon IDs; actual source schema bytes/path/SHA/size unchanged. Do not widen staticcatalog/rootreceipt grammar or mintaliases. Logical registration/action IDs remain protected schema domain, not ArtifactCatalog IDs."
+  },
+  "financial_web_results_v120": {
+    "schema": 1,
+    "id": "native-financial-web-results-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T11"
+    ],
+    "schema_artifacts": [
+      {
+        "tool_name": "financial_data_read",
+        "schema_id": "installer-native-result-financial_data_read-v1",
+        "artifact_id": "installer-native-result-financial_data_read-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/financial_data_read.result.schema.json",
+        "sha256": "6902fd82075320bad86cd622d6304ffd248ec236b70ea4a27c44071c843fbf03",
+        "size_bytes": 935
+      },
+      {
+        "tool_name": "web_retrieve",
+        "schema_id": "installer-native-result-web_retrieve-v1",
+        "artifact_id": "installer-native-result-web_retrieve-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/web_retrieve.result.schema.json",
+        "sha256": "dea89695c5206d563b2f0cd199490042af85612981fd504086e16a92ab767e13",
+        "size_bytes": 1315
+      }
+    ],
+    "source_pins": {
+      "plugin_finance.py": "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73",
+      "plugin_local_voice_web.py": "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
+    },
+    "financial": "Exact source-normalized observations, <=1000 rows/64 scalar keys each. Enforce total canonical UTF8 result <=2097152, finite numbers, <=2048 UTF8 bytes per data string/control denial, source provider-operation pair and current selected alias. Strip source credential/account identifiers as existing normalizer; no new effect/account authority. Numeric/time/schema fields do not prove current bank/trade state.",
+    "web": "Closed source-established outer return key set preserved. Existing source only checks receipt object; implementation must now populate/resolve the exact selected root artifact receipt fields, rather than promote backend-provided dictionary. Require current root registry membership, actual captured content artifact SHA/size/media/profile/owner/operation/source ancestry and expiry; response bytes and redirects remain untrusted/authority none. maxItems32 is reviewed bounded result ceiling, never authorization to follow32 redirects: actual stricter fetch policy remains controlling.",
+    "bounds": "Canonical bytes <=2MiB, duplicate keys/nonfinite values denied; string UTF8 byte limits enforced independently of JSON Schema maxLength. New finite receipt field ceilings are validator obligations, not inferred source guarantees. Schemas become operational only after actual source artifact observation, component wrapper implementation and protected selected schema/registration joins.",
+    "registration_schema_foreign_keys": "For external registration argument/result native_schema_artifacts row: adapter_id exactly registration.adapter_id, action_id exactly registration.registration_id, id exactly explicit argument_schema_id/result_schema_id and schema_kind corresponding role. Both exact records/proofs mandatory for executable registration. Backend effect action schemas remain separate; identical bytes may share storage but not erase explicit role joins.",
+    "tasks": [
+      "HI-T120.1: registration/component owner apply exact finite financial/web result validators and genuine root artifact receipt resolver; no generic object schema.",
+      "HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.",
+      "HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open."
+    ]
+  },
+  "financial_alias_source_bound_v121": {
+    "schema": 1,
+    "id": "financial-alias-source-bound-v1",
+    "supersedes": "v120 financial account_alias maxLength96 only; immutable v120 retained",
+    "why": "Actual plugin_finance._ID accepts up to128 characters; preserve the entire source-reviewed alias domain, not an unintentional narrower guessed ceiling.",
+    "schema_id": "installer-native-result-financial_data_read-v1",
+    "artifact_id": "installer-native-result-financial_data_read-v1",
+    "path": "plans/amendments/2026-10-10-financial-alias-source-bound-v121/financial_data_read.result.schema.json",
+    "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
+    "size_bytes": 984,
+    "rule": "Exact actual root selected account alias, source regex/max128; all other v120 fields/bounds/proof/task obligations unchanged. Current selected schema artifact pin must resolve this v121 source member, not stale v120 bytes."
   }
 }
