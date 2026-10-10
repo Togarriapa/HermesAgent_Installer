@@ -1576,12 +1576,26 @@ class RootPrivateMemoryDeploymentRegistry:
                     or process is None
                     or getattr(process, "generation", None) != binding.process_profile_generation):
                 raise PrivateDeploymentDenied("endpoint binding does not join its current service/process identities")
+            resolve_network = getattr(self.bindings, "resolve_private_loopback_network", None)
+            if not callable(resolve_network):
+                raise PrivateDeploymentDenied("protected private-loopback network enrollment is unavailable")
+            network = resolve_network(
+                binding.network_binding_handle,
+                service_generation_digest=binding.service_generation_digest,
+            )
+            if (binding.service_enrollment_id not in network.member_enrollment_ids
+                    or network.namespace_identity != binding.namespace_id):
+                raise PrivateDeploymentDenied("endpoint binding does not join its selected private network")
             from hermes_installer.service_connector import ROUTES
             routes = [ROUTES.get((binding.endpoint_target_id, route_id))
                       for route_id in binding.connector_route_ids]
             if (not routes or any(route is None or route.target_id != binding.endpoint_target_id
                                   for route in routes)):
                 raise PrivateDeploymentDenied("endpoint binding contains an unknown connector route")
+            if (binding.endpoint_target_id != "colibri-main"
+                    or binding.connector_route_ids != ("colibri-openai-v1",)
+                    or routes[0].port != 8000 or routes[0].protocol != "openai-http"):
+                raise PrivateDeploymentDenied("endpoint binding is outside the fixed Colibri inference route")
             return binding
         except PrivateDeploymentDenied:
             raise
