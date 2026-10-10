@@ -76,6 +76,21 @@ class NativeTurnObservationContracts(unittest.TestCase):
             build_root_turn_transcript((RootTurnTranscriptEvent(
                 "worker-claim", _handle("w"), "task-input", b"user bytes"),))
 
+    def test_registry_defaults_to_fixed_root_transcript_builder(self):
+        source = SimpleNamespace(resolve_delivered_source_receipt=lambda *_a, **_k: None)
+        input_observer = SimpleNamespace(resolve_event_for_source_handle=lambda *_a, **_k: None)
+        custody = SimpleNamespace(resolve_managed_task_process_handle=lambda *_a: None)
+        selected = SimpleNamespace(
+            resolve_current_execution=lambda *_a: None,
+            resolve_selection_handle=lambda *_a: None,
+        )
+        registry = RootNativeTurnObservationRegistry(
+            service=object(), selected_execution_registry=selected,
+            input_observer=input_observer, source_observers=source,
+            process_custody=custody, response_resolver=lambda _handle: None,
+        )
+        self.assertIs(registry.transcript_builder, build_root_turn_transcript)
+
     def _registry(self, response, *, pending=()):
         registry = object.__new__(RootNativeTurnObservationRegistry)
         registry.monotonic = lambda: 10.0
