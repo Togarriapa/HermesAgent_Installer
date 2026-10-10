@@ -101,6 +101,7 @@ def test_complete_active_publication_accepts_publishers_deduplicated_input_closu
     # The PM/output handles also occur in the prepared-bundle source list.
     claim = replace(claim, source_receipt_handles=_ordered_unique_receipt_handles(
         ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64), "test"))
+    claim = replace(claim, claim_digest=hashlib.sha256(_canonical(_manifest(claim))).hexdigest())
     input_handles = _receipt_input_handles(claim)
     receipt = RootSetupPublicationReceipt(
         1, "R" * 43, claim.transaction_handle, "installer-bootstrap-policy-generation-v1",
@@ -114,30 +115,45 @@ def test_complete_active_publication_accepts_publishers_deduplicated_input_closu
     monkeypatch.setattr(PolicyPublicationReceiptResolver, "verify_current_active_claim",
                         lambda **_kwargs: receipt)
     registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._seal = claim._seal
     registry._claims = {claim.publication_handle: claim}
     registry._states = {claim.publication_handle: "claimed"}
     registry._locks = {}
     registry._verify_postpublication_claim = lambda _claim: None
-    registry._write_state = lambda *_args: None
+    journal_record = {
+        "state": "claimed", "transaction_handle": claim.transaction_handle,
+        "publication_handle": claim.publication_handle, "claim_digest": claim.claim_digest,
+    }
+    def write_state(_claim, state, receipt_handle):
+        journal_record.update({"state": state, "publication_receipt_handle": receipt_handle})
+    registry._write_state = write_state
     registry._close_lock = lambda *_args: None
     registry._claim_root = tmp_path
-    written = []
-    monkeypatch.setattr(compiler, "_write_json", lambda path, value, **_kwargs:
-                        written.append((path, value)))
-    monkeypatch.setattr(compiler, "_read_json", lambda _path: {
-        "state": "claimed", "transaction_handle": claim.transaction_handle,
-    })
-    completed = []
+    journal_record_written = []
+    def write_journal(_path, value, **_kwargs):
+        journal_record.update(value)
+        journal_record_written.append(value)
+    monkeypatch.setattr(compiler, "_write_json", write_journal)
+    monkeypatch.setattr(compiler, "_read_json", lambda _path: dict(journal_record))
+    registry._verify_claim_bundle = lambda _claim: None
+    attempts = []
+    def complete_outputs(self, *args, **kwargs):
+        attempts.append((args, kwargs))
+        if len(attempts) == 1:
+            raise BootstrapEnrollmentPending("simulated native receipt completion interruption")
     registry.materialization_receipts = type("Outputs", (), {
-        "complete_active_compilation": lambda self, *args, **kwargs: completed.append((args, kwargs)),
+        "complete_active_compilation": complete_outputs,
     })()
 
+    with pytest.raises(BootstrapEnrollmentPending, match="completion interruption"):
+        registry.complete_active_publication(receipt)
+    assert registry._states[claim.publication_handle] == "active-committed"
     registry.complete_active_publication(receipt)
     assert registry._states[claim.publication_handle] == "active-committed"
     assert receipt.input_receipt_handles == (
         claim.observed_root_receipt_handle, *claim.source_receipt_handles)
-    assert len(completed) == 1
-    assert written and written[0][1]["publication_sha256"] == receipt.publication_sha256
+    assert len(attempts) == 2
+    assert journal_record_written[0]["publication_sha256"] == receipt.publication_sha256
 
 
 def test_caller_constructed_choice_projection_fails_compiler_seal_check():
