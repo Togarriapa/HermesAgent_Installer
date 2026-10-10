@@ -345,6 +345,21 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             self.assertEqual(len(contexts_wire["source_receipt_handles"]), 1)
             self.assertIn(contexts_wire["source_receipt_handles"][0], service._source_receipt_handles)
 
+            # The resolver is pre-effect app evidence only when the response
+            # has joined a current root turn. This fixture intentionally has
+            # no selected input/request observation, so it must not manufacture
+            # a workload invocation from the retained provider tool binding.
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_selected_application_invocation(
+                    begin_wire["invocation_handle"], arguments,
+                    peer_uid=producer_uid, peer_pid=producer_pid, peer_pidfd=producer_fd,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_selected_application_invocation(
+                    begin_wire["invocation_handle"], b'{"x":2}',
+                    peer_uid=producer_uid, peer_pid=producer_pid, peer_pidfd=producer_fd,
+                )
+
             handle = contexts_wire["source_receipt_handles"][0]
             capsule = source_observers._payload_capsules[handle][2]
             self.assertEqual(bytes(capsule), response_bytes)
