@@ -233,3 +233,5 @@ v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-
 
 v242 genuine source-update bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md`; BD-T242.1 → VD-T242.2 OPEN, retaining v235 tasks/source approval separately. Actual old predecessor/rootTTY/fixedoriginFD3/source actor required; all AC OPEN.
 v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md` / `planning/official-desktop-measured-headers-managed-plan-v240.json`; RT-T240.1/.2 and VD-T240.3 OPEN. Exact observed header/member tuples and fixed Desktop managed interface; AppDir/measured caps/current receipts pending, no runtime/Pi acceptance.
+
+Remote source active digest v246: plans/amendments/2026-10-10-remote-source-active-digest-acyclic-v246.md; RT-T246.1/.2/VD-T246.3 OPEN, exact source schema2 omits self-dependent field; actual full active receipt/core/adoption joins retain independent prepared lineage. All AC OPEN.

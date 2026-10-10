@@ -530,3 +530,16 @@ The implementation SHALL use the exact v240 official header/member observations 
 #### Scenario: Header or stamp mismatch
 - **WHEN** redirect/checksum/member/source revision differs or the stamp is zero/fallback/fake CI or Git
 - **THEN** packaging SHALL remain unavailable and preserve genuine source identity
+
+## ADDED Requirements
+
+### Requirement: Acyclic remote source and complete active generation binding
+The installer SHALL apply planning/remote-source-active-digest-acyclic-v246.json: immutable remote source schema2 omits service_generation_digest, while post-publication adoption and current runtime proof bind actual active_service_generation_id/digest to the complete authority core generation. Prepared lineage SHALL remain separately checked.
+
+#### Scenario: Source publication precedes full active hash
+- **WHEN** complete retained role/network/source receipts produce immutable remote source bytes
+- **THEN** the compiler includes their SHA selector before computing the full unchanged generation hash, and adoption verifies current actual active receipt/core/claim/member joins before activation
+
+#### Scenario: Component or prepared digest cannot authorize active runtime
+- **WHEN** a subset hash, prepared digest, unexpected source digest field or altered selector is supplied under the active domain
+- **THEN** publication or adoption rejects it without omitting selector rows, rewriting hashed source bytes or weakening current source validation

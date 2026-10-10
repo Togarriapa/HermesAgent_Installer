@@ -143,3 +143,5 @@ Measured official headers and fixed offline Desktop managed interface are now sp
 
 The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+Remote source digest v246: planning/remote-source-active-digest-acyclic-v246.json removes impossible source self-dependency through exact source schema2, preserves prepared lineage and full active generation algorithm, and requires post-publication receipt/core/claim/adoption joins via actual active_service_generation fields. All AC OPEN.

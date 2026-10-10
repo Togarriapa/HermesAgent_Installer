@@ -3694,5 +3694,28 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "remote_source_active_digest_acyclic_v246": {
+    "contract": "planning/remote-source-active-digest-acyclic-v246.json",
+    "tasks": [
+      "RT-T246.1",
+      "RT-T246.2",
+      "VD-T246.3"
+    ],
+    "dependencies": [
+      "RT-T225.1",
+      "RT-T225.2",
+      "RT-T239.2",
+      "RT-T239.3",
+      "HI-T231.1"
+    ],
+    "ordering": [
+      "immutable source2",
+      "complete generation selector/full hash",
+      "active claim/publication",
+      "current signed adoption",
+      "runtime activation"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }

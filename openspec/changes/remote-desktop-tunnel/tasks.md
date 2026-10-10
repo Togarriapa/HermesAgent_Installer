@@ -204,3 +204,7 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 - [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
 
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+- [ ] RT-T246.1: Emit exact remote source schema2 without misleading generation component hash and bind adoption to actual active_service_generation_id/digest; preserve current genuine aggregate and prepared lineage.
+- [ ] RT-T246.2: Validate immutable schema2 published member and strict current source/core/claim/receipt/adoption full active generation joins, preserving v225 absent remote and schema3/schema4.
+- [ ] VD-T246.3: Verify genuine acyclic source-to-full-generation-to-adoption pipeline, prepared/component confusion, unrelated-row fullhash changes, tamper/restart/disabled failures; target acceptance OPEN.
