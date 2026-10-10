@@ -7021,6 +7021,107 @@ class ManagedBuildJobRunner:
                 os.close(fd)
 
     @staticmethod
+    def _stage_application_held_members(members: Any, destination: Path) -> tuple[Any, ...]:
+        """Copy a bounded regular-file closure from root-held FDs into a fresh tree.
+
+        Entries are internal resolved observations with ``relative_path``,
+        ``fd``, ``sha256``, ``size_bytes`` and ``executable`` members. No path
+        from an entry is opened; every byte comes from its already-held
+        descriptor and is rehashed while copied. This is used only by the
+        finite application build adapter before it binds app-only trees RO.
+        """
+        from hermes_installer.authority.build_execution import _BuildInputTreeFile
+
+        if (os.geteuid() != 0 or not isinstance(members, (tuple, list))
+                or not members or len(members) > 20_000):
+            raise AuthorityDenied("build.application_input", "held application input closure is unavailable")
+        try:
+            destination.mkdir(mode=0o700)
+        except OSError:
+            raise AuthorityDenied("build.application_input", "application input staging root is not fresh") from None
+        root_info = destination.lstat()
+        if (not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode)
+                or root_info.st_uid != 0 or stat.S_IMODE(root_info.st_mode) != 0o700):
+            raise AuthorityDenied("build.application_input", "application input staging root is unsafe")
+
+        rows: list[_BuildInputTreeFile] = []
+        seen: set[str] = set()
+        total = 0
+        for entry in members:
+            relative = getattr(entry, "relative_path", None)
+            fd = getattr(entry, "fd", None)
+            digest = getattr(entry, "sha256", None)
+            size = getattr(entry, "size_bytes", None)
+            executable = getattr(entry, "executable", None)
+            if (not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative
+                    or Path(relative).is_absolute()
+                    or any(part in {"", ".", ".."} for part in relative.split("/"))
+                    or PurePosixPath(relative).as_posix() != relative or relative in seen
+                    or type(fd) is not int or fd < 0
+                    or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or type(size) is not int or not 0 <= size <= 512 * 1024 * 1024
+                    or type(executable) is not bool):
+                raise AuthorityDenied("build.application_input", "held application member is malformed")
+            seen.add(relative)
+            total += size
+            if total > 2 * 1024**3:
+                raise AuthorityDenied("build.application_input", "held application input closure exceeds its byte bound")
+            try:
+                source_info = os.fstat(fd)
+            except OSError:
+                raise AuthorityDenied("build.application_input", "held application member FD is stale") from None
+            if (not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
+                    or source_info.st_mode & 0o222 or source_info.st_nlink != 1
+                    or source_info.st_size != size):
+                raise AuthorityDenied("build.application_input", "held application member is not immutable root data")
+
+            target = destination
+            parts = relative.split("/")
+            for part in parts[:-1]:
+                target = target / part
+                try:
+                    target.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
+                info = target.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                        or info.st_uid != 0 or info.st_mode & 0o022):
+                    raise AuthorityDenied("build.application_input", "held application member has unsafe parent path")
+            target = target / parts[-1]
+            out = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                          | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+            hasher = hashlib.sha256()
+            count = 0
+            try:
+                while count < size:
+                    chunk = os.pread(fd, min(128 * 1024, size - count), count)
+                    if not chunk:
+                        raise AuthorityDenied("build.application_input", "held application member ended early")
+                    hasher.update(chunk)
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(out, view)
+                        if written <= 0:
+                            raise AuthorityDenied("build.application_input", "application member staging write stalled")
+                        view = view[written:]
+                    count += len(chunk)
+                if os.pread(fd, 1, size) or hasher.hexdigest() != digest:
+                    raise AuthorityDenied("build.application_input", "held application member bytes changed")
+                mode = 0o555 if executable else 0o444
+                os.fchown(out, 0, 0)
+                os.fchmod(out, mode)
+            finally:
+                os.close(out)
+            rows.append(_BuildInputTreeFile(relative, digest, size, executable))
+        # Reject file/directory aliasing (for example a member named `a` plus
+        # another member `a/b`) before the staged tree can be mounted.
+        for name in seen:
+            parts = name.split("/")
+            if any("/".join(parts[:index]) in seen for index in range(1, len(parts))):
+                raise AuthorityDenied("build.application_input", "application member tree has a path collision")
+        return tuple(rows)
+
+    @staticmethod
     def _protect_build_mount(path: Path, *, readonly: bool) -> None:
         flags_bind, flags_rec = 4096, 16384
         flags_private = 1 << 18

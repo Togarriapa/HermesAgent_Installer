@@ -21,6 +21,7 @@ from hermes_installer.authority.build_execution import (
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
+from hermes_installer.managed_process_custodian import ManagedBuildJobRunner
 
 
 def test_application_only_mount_ids_do_not_expand_generic_build_grammar():
@@ -33,6 +34,33 @@ def test_application_only_mount_ids_do_not_expand_generic_build_grammar():
     assert _resolve_argv_recipe(recipe, additional_mount_ids=("packages",)) == recipe
     with pytest.raises(AuthorityDenied):
         _resolve_argv_recipe(recipe, additional_mount_ids=("caller-path",))
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="root-owned held descriptor staging is required")
+def test_application_held_member_staging_rehashes_and_rejects_mutated_bytes(tmp_path):
+    source = tmp_path / "held.whl"
+    payload = b"root-held application wheel fixture"
+    source.write_bytes(payload)
+    source.chmod(0o444)
+    fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != 0:
+            pytest.skip("root-owned descriptor fixture is unavailable")
+        member = SimpleNamespace(relative_path="wheels/example.whl", fd=fd,
+            sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload), executable=False)
+        destination = tmp_path / "staged"
+        rows = ManagedBuildJobRunner._stage_application_held_members((member,), destination)
+        assert rows[0].path == "wheels/example.whl"
+        assert (destination / "wheels/example.whl").read_bytes() == payload
+        assert (destination / "wheels/example.whl").stat().st_mode & 0o222 == 0
+
+        changed = SimpleNamespace(relative_path="changed.whl", fd=fd,
+            sha256="0" * 64, size_bytes=len(payload), executable=False)
+        with pytest.raises(AuthorityDenied):
+            ManagedBuildJobRunner._stage_application_held_members((changed,), tmp_path / "denied")
+    finally:
+        os.close(fd)
 
 
 def _test_temp_parent() -> str:
