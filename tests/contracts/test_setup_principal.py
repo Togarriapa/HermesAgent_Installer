@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -159,7 +159,7 @@ class _LiveStore:
         self.handle = RootSetupSessionHandle("setup-fixture-1", "s" * 64)
         self.record = {
             "setup_session_id": "setup-fixture-1", "target_id": "target-fixture-1",
-            "plan_digest": "p" * 64, "operator_uid": 0,
+            "plan_digest": "b" * 64, "operator_uid": 0,
             "transaction_handle": "transaction-fixture-1", "target_uid": 1000,
             "target_gid": 1000, "mode": "install",
             "plan_artifact_id": "installer-root-setup-plan-v1",
@@ -351,6 +351,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
         import time
         import hermes_installer.authority.enrollment as enrollment_module
         import hermes_installer.authority.setup_principal as principal_module
+        from hermes_installer.authority.bootstrap_enrollment import EnrollmentPolicy, _generation
         from hermes_installer.authority.bootstrap_enrollment import InstalledRootSetupActorVerifier
 
         with tempfile.TemporaryDirectory(prefix="setup-principal-stage0-") as temp:
@@ -362,6 +363,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
             session_handle = secrets.token_hex(32)
             transaction_handle = secrets.token_hex(32)
             plan_digest = "a" * 64
+            clock = {"now": time.monotonic()}
 
             class InitialSession:
                 phase = "initial-compilation"
@@ -442,8 +444,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                     vault = RootCredentialVault(vault_root)
                     intake = RootSetupIdentityIntake.from_initial_compilation(
                         registry, actor, vault, journal,
-                        masked_secret_reader=lambda _prompt: "fixture-only-token",
-                    )
+                        masked_secret_reader=lambda _prompt: "fixture-only-token")
                     policy_handle = intake.select_authentik_policy(
                         session_handle, https_origin=fixture.origin,
                         system_group_id="system", recipient_group_id="operators",
@@ -454,6 +455,7 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                     self.assertTrue(reference.startswith("setup-authentik-"))
                     observer = RootSetupAuthentikIdentityObserver.from_initial_compilation(
                         registry, intake, vault, journal,
+                        monotonic=lambda: clock["now"],
                     )
                     # Trust the fixture certificate while retaining normal HTTPS verification.
                     default_context = ssl.create_default_context
@@ -485,6 +487,15 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                         handoff.expires_monotonic = time.monotonic() + 240
                         handoff.normal_session_handle = normal_store.handle
                         registry.handoff = handoff
+                        selected_generation = _generation(EnrollmentPolicy(
+                            "hermes-agent-native-v1", selected.principal_id,
+                            "generation-fixture-1", "hermes-source-fixture", (), (), (), (),
+                        ))
+                        normal_store.record["expected_previous_generation_digest"] = selected_generation[
+                            "generation_digest"]
+                        normal_store.authority_loader_for_session = lambda: {
+                            "service_generations": selected_generation,
+                        }
                         factory_module.RootInitialPublicationHandoff = Handoff
                         with (patch.object(principal_module, "RootSetupSessionStore", _LiveStore),
                               patch.object(principal_module.os, "geteuid", return_value=0),
@@ -501,20 +512,86 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                                 authenticated_identity_receipt_handle=normal_identity_handle,
                                 normal_identity_resolver=normal_observer,
                             )
-                            adopted = normal_registry.resolve_adopted_initial_principal(
+                            principal_selector = normal_registry.resolve_adopted_principal_selector(
                                 normal_store, normal_store.handle)
+                            namespace_selector = normal_registry.resolve_adopted_namespace_selector(
+                                normal_store, normal_store.handle)
+                            current_pair = normal_registry.resolve_current_setup_identity(
+                                principal_selector.selection_handle,
+                                namespace_selector.selection_handle, normal_store.handle)
+                            first_current_principal = current_pair.principal.receipt_id
+                            first_current_namespace = current_pair.namespace.receipt_handle
+                            clock["now"] += 31.0
+                            refreshed_pair = normal_registry.resolve_current_setup_identity(
+                                principal_selector.selection_handle,
+                                namespace_selector.selection_handle, normal_store.handle)
+                            self.assertNotEqual(refreshed_pair.principal.receipt_id,
+                                                first_current_principal)
+                            self.assertNotEqual(refreshed_pair.namespace.receipt_handle,
+                                                first_current_namespace)
+                            self.assertEqual(refreshed_pair.principal_selection_handle,
+                                             principal_selector.selection_handle)
+                            self.assertEqual(refreshed_pair.namespace_selection_handle,
+                                             namespace_selector.selection_handle)
+                            self.assertLessEqual(refreshed_pair.expires_monotonic -
+                                                 refreshed_pair.issued_monotonic, 30.0)
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    "0" * 64, namespace_selector.selection_handle, normal_store.handle)
+                            fixture.current_user["pk"] = "subject-revoked"
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            fixture.current_user["pk"] = "subject-17"
+                            fixture.groups["members"]["parents"] = []
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            fixture.groups["members"]["parents"] = ["system"]
+                            original_policy = normal_observer.policy_resolver.policy
+                            normal_observer.policy_resolver.policy = replace(
+                                original_policy, policy_revision="revoked-policy")
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            normal_observer.policy_resolver.policy = original_policy
+                            normal_store.record["expected_previous_generation_digest"] = "e" * 64
+                            with self.assertRaises(BootstrapEnrollmentPending):
+                                normal_registry.resolve_current_setup_identity(
+                                    principal_selector.selection_handle,
+                                    namespace_selector.selection_handle, normal_store.handle)
+                            normal_store.record["expected_previous_generation_digest"] = selected_generation[
+                                "generation_digest"]
+                            clock["now"] += 31.0
+                            final_pair = normal_registry.resolve_current_setup_identity(
+                                principal_selector.selection_handle,
+                                namespace_selector.selection_handle, normal_store.handle)
+                            self.assertEqual(final_pair.principal_selection_handle,
+                                             principal_selector.selection_handle)
+                            self.assertNotEqual(final_pair.principal.receipt_id,
+                                                refreshed_pair.principal.receipt_id)
+                            self.assertNotEqual(final_pair.namespace.receipt_handle,
+                                                refreshed_pair.namespace.receipt_handle)
                     self.assertEqual(identity.authentik_subject_id, "subject-17")
                     self.assertTrue(identity.system_member)
                     self.assertEqual(selected.principal_id,
                                      "authentik:" + __import__("hashlib").sha256(b"subject-17").hexdigest())
                     self.assertEqual(selected.principal_binding.bind(23001).uid, 23001)
-                    self.assertEqual(adopted.receipt_id, normal_selection_handle)
-                    self.assertEqual(adopted.authentik_subject_id, "subject-17")
+                    self.assertEqual(final_pair.principal.authentik_subject_id, "subject-17")
+                    self.assertNotEqual(final_pair.principal.receipt_id, normal_selection_handle)
                     self.assertEqual(normal_observer._read_identity_receipt(
                         normal_identity_handle).setup_session_id, normal_store.record["setup_session_id"])
                     self.assertEqual((vault_root / reference).stat().st_mode & 0o777, 0o600)
                     self.assertNotIn("fixture-only-token",
                                      (journal / "setup-principal-receipts" / f"{identity_handle}.json").read_text())
+                    (vault_root / reference).unlink()
+                    with self.assertRaises(BootstrapEnrollmentPending):
+                        normal_registry.resolve_current_setup_identity(
+                            principal_selector.selection_handle,
+                            namespace_selector.selection_handle, normal_store.handle)
             finally:
                 fixture.close()
 
