@@ -615,3 +615,24 @@ The installer SHALL isolate fixture publication/session/key authority under the 
 #### Scenario: Fixture handle is presented to production consumer
 - **WHEN** a qualification session or signed fixture receipt targets production authority
 - **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted
+
+### Requirement: Health input source delivery v163
+The installer SHALL bind selected health fixture input to the actual started native peer, PRIVATE source context and distinct actual capture/write/EOF/take receipts.
+
+#### Scenario: Captured health source has no completed stdin delivery
+- **WHEN** native input take lacks exact successful write and EOF receipts for the current health peer
+- **THEN** delivery denies and no health success is recorded
+
+### Requirement: Qualification envelope v164
+The installer SHALL verify the exact fixture-only canonical authority/catalog envelope and current owned namespace before parsing enrollment.
+
+#### Scenario: Fixture catalog is swapped
+- **WHEN** catalog bytes disagree with the signed envelope or current fixture pointer
+- **THEN** the dedicated loader denies before creating any authority service
+
+### Requirement: Runtime role publication join v165
+The installer SHALL activate from the same genuine PM and native CAS receipt closure used by strict active compilation and SHALL freshly verify current committed enrollment for runtime health.
+
+#### Scenario: Generated native receipt is presented as static source receipt
+- **WHEN** activation receives a generated output through unrelated static artifact lookup
+- **THEN** it denies until the exact typed producer/CAS/source role projection is resolved
