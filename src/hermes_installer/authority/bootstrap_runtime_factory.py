@@ -1608,6 +1608,18 @@ _RUNNABLE_TYPED_FIELDS = {
 } | {("native-compiled-closure", "child_artifact_refs")}
 
 
+def _service_requires_package_runtime(operation_targets: Any) -> bool:
+    """Recognize the protected operation/target shape for package installation."""
+    if not isinstance(operation_targets, Mapping):
+        return True
+    return any(
+        operation == "package.install"
+        or target == "package.install"
+        or (isinstance(target, str) and target.startswith("package-set:"))
+        for operation, target in operation_targets.items()
+    )
+
+
 class RootRunnableRoleProjectionRegistry:
     """Join the current PM observation and reserved native CAS outputs."""
 
@@ -1816,7 +1828,8 @@ class RootRunnableRoleProjectionRegistry:
                 ("official-pm-runtime", "executable_artifact_id",
                  record["runtime_executable_artifact_id"]),
                 ("official-pm-runtime", "executable_sha256", pm.selection.runtime_sha256),
-                ("official-pm-runtime", "runtime_artifact_ids", (PYTHON_ID,)),
+                ("official-pm-runtime", "runtime_artifact_ids",
+                 tuple(sorted({PYTHON_ID, record["runtime_executable_artifact_id"]}))),
                 ("official-pm-runtime", "package_runtime_records", MappingProxyType({})),
                 ("native-compiled-closure", "child_artifact_refs",
                  MappingProxyType(dict(sorted(child_refs.items())))),
@@ -4115,8 +4128,7 @@ class RootSetupPolicyFactory:
                         _fail(f"typed runnable-role receipt for {role} differs from the compiled role pin")
                     if (role == "official-pm-runtime"
                             and binding["receipt_field"] == "package_runtime_records"
-                            and any(target == "package.install" or target.startswith("package-set:")
-                                    for target in record["operation_targets"].values())):
+                            and _service_requires_package_runtime(record.get("operation_targets"))):
                         _fail("empty PM package runtime projection cannot back a package-install target")
                     value = runnable_role_receipts.resolve_field(role, binding["receipt_field"])
                     self._set_template_field(record, binding["field_path"], value)

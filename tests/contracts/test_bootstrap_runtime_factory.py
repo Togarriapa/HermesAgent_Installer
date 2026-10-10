@@ -22,6 +22,7 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootBootstrapSession,
     RootRunnableRoleReceiptProjection,
     RootRunnableRoleRow,
+    _service_requires_package_runtime,
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
 )
@@ -47,6 +48,18 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             projection.resolve_field("native-compiled-closure", "child_artifact_refs"), child_refs)
         with self.assertRaises(BootstrapEnrollmentPending):
             projection.resolve_field("native-compiled-closure", "catalog_executable_path")
+
+    def test_package_runtime_guard_reads_operation_key_and_package_set_target_shapes(self):
+        self.assertTrue(_service_requires_package_runtime({
+            "package.install": "coral-cp39-runtime-v1",
+        }))
+        self.assertTrue(_service_requires_package_runtime({
+            "process.start": "package-set:coral-cp39-runtime-v1:" + "a" * 64,
+        }))
+        self.assertFalse(_service_requires_package_runtime({
+            "process.start": "hermes-agent-health:start",
+        }))
+        self.assertTrue(_service_requires_package_runtime(None))
 
     def test_policy_identity_tags_reject_cross_domain_principal_substitution(self):
         from hermes_installer.authority.bootstrap_runtime_factory import (
