@@ -1143,6 +1143,7 @@ class ManagedProcessEffectHandler:
                 lease.close()
         except BaseException:
             if process_id is not None:
+                failed_observations: list[str] = []
                 with self._lock:
                     handle = self._handles.get(process_id)
                     for key, value in tuple(self._health_controls.items()):
@@ -1150,10 +1151,12 @@ class ManagedProcessEffectHandler:
                             self._health_controls.pop(key, None)
                             observation = self._health_observation_handles.pop(key, None)
                             if observation is not None:
-                                try:
-                                    self.native_health_start_authority.health_observer.cancel_selected_health(observation)
-                                except Exception:
-                                    pass
+                                failed_observations.append(observation)
+                for observation in failed_observations:
+                    try:
+                        self.native_health_start_authority.health_observer.cancel_selected_health(observation)
+                    except Exception:
+                        pass
                 if handle is not None and not handle.stopped:
                     self._stop(handle, timeout=5.0)
             raise
@@ -5443,6 +5446,7 @@ class ManagedProcessEffectHandler:
             if not main_gone:
                 raise AuthorityDenied("process.cleanup", "main process pidfd remained live after cgroup cleanup")
             handle.stopped = True
+            health_observations: list[str] = []
             with self._lock:
                 self._handles.pop(handle.process_id, None)
                 for control_handle, retained in tuple(self._health_controls.items()):
@@ -5450,10 +5454,13 @@ class ManagedProcessEffectHandler:
                         self._health_controls.pop(control_handle, None)
                         observation = self._health_observation_handles.pop(control_handle, None)
                         if observation is not None:
-                            try:
-                                self.native_health_start_authority.health_observer.cancel_selected_health(observation)
-                            except Exception:
-                                pass
+                            health_observations.append(observation)
+            if self.native_health_start_authority is not None:
+                for observation in health_observations:
+                    try:
+                        self.native_health_start_authority.health_observer.cancel_selected_health(observation)
+                    except Exception:
+                        pass
             for stream in (handle.launcher.stdin, handle.launcher.stdout, handle.launcher.stderr):
                 if stream:
                     stream.close()
