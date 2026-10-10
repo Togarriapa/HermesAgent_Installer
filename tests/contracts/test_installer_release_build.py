@@ -211,11 +211,122 @@ def test_first_source_actor_preloads_exact_installed_launcher_module_closure():
         "hermes_installer.root_setup",
         "hermes_installer.authority.installer_release",
         "hermes_installer.authority.bootstrap_runtime_factory",
+        "hermes_installer.registry.resources_runtime",
     ):
         module = sys.modules[name]
         origin = Path(module.__spec__.origin)
         assert origin.is_file()
         assert origin == origin.resolve(strict=True)
+
+
+def test_transitive_setup_module_actor_row_is_staged_as_installed_support(tmp_path):
+    release_build._load_installed_setup_module_closure()
+    module = sys.modules["hermes_installer.registry.resources_runtime"]
+    origin = Path(module.__spec__.origin).resolve(strict=True)
+    body = origin.read_bytes()
+    digest = hashlib.sha256(body).hexdigest()
+    source_root = tmp_path / "source"
+    source_path = source_root / "src/hermes_installer/registry/resources_runtime.py"
+    source_path.parent.mkdir(parents=True, mode=0o700)
+    source_path.write_bytes(body)
+    source_path.chmod(0o600)
+    source_fd = os.open(source_root, os.O_RDONLY | os.O_DIRECTORY)
+    file_fd = os.open(source_path, os.O_RDONLY)
+    try:
+        info = os.fstat(file_fd)
+    finally:
+        os.close(file_fd)
+    source = release_build.VerifiedInstallerDistributionReceipt(
+        release_build._SEAL,
+        candidate_git_sha="a" * 40,
+        git_tree_sha1="b" * 40,
+        source_tree_sha256="c" * 64,
+        baseline_tree_sha256="d" * 64,
+        amendment_manifest_sha256="e" * 64,
+        source_catalog_sha256="f" * 64,
+        files=(release_build.DistributionFile(
+            "src/hermes_installer/registry/resources_runtime.py", digest, len(body),
+            0o600, info.st_dev, info.st_ino, info.st_ctime_ns),),
+        root_fd=source_fd,
+        expected_uid=os.geteuid(),
+        handle="h" * 43,
+    )
+    output = tmp_path / "published"
+    output.mkdir(mode=0o700)
+    output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    builder = object.__new__(release_build.RootInstalledReleaseBuilder)
+    try:
+        staged = builder._stage_actor_module_rows(
+            source, output_fd,
+            (("hermes_installer.registry.resources_runtime", str(origin), digest,
+              info.st_dev, info.st_ino),),
+        )
+        installed = output / "lib/python/hermes_installer/registry/resources_runtime.py"
+        assert len(staged) == 1
+        assert staged[0] == (
+            "lib/python/hermes_installer/registry/resources_runtime.py", digest,
+            len(body), 0o444, ("module",),
+        )
+        assert installed.read_bytes() == body
+        from hermes_installer.authority.installer_release import _artifact_id_for
+        assert _artifact_id_for(staged[0][0], ["module"]) == (
+            "installer-module:hermes_installer.registry.resources_runtime")
+    finally:
+        os.close(output_fd)
+        source.close()
+
+
+def test_published_setup_support_closure_imports_without_checkout_fallback(tmp_path):
+    repo = Path(__file__).parents[2]
+    source_root = repo / "src"
+    installed_python = tmp_path / "release/lib/python"
+    installed_python.mkdir(parents=True)
+    preload_and_stage = r"""
+import importlib, pathlib, shutil, sys
+source_root = pathlib.Path(sys.argv[1]).resolve(strict=True)
+installed_root = pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(source_root))
+from hermes_installer.authority.installer_release_build import _load_installed_setup_module_closure
+_load_installed_setup_module_closure()
+captured = set()
+for name, module in tuple(sys.modules.items()):
+    if name != 'hermes_installer' and not name.startswith('hermes_installer.'):
+        continue
+    origin = getattr(getattr(module, '__spec__', None), 'origin', None)
+    if not isinstance(origin, str):
+        continue
+    path = pathlib.Path(origin).resolve(strict=True)
+    try:
+        relative = path.relative_to(source_root)
+    except ValueError:
+        continue
+    target = installed_root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, target)
+    captured.add(name)
+assert 'hermes_installer.registry.resources_runtime' in captured
+"""
+    subprocess.run(
+        [sys.executable, "-I", "-c", preload_and_stage, str(source_root), str(installed_python)],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    verify_installed = r"""
+import pathlib, sys
+installed_root = pathlib.Path(sys.argv[1]).resolve(strict=True)
+sys.path.insert(0, str(installed_root))
+from hermes_installer.root_setup import (
+    _import_v180_native_support_closure, _import_v187_listener_activation_closure,
+)
+_import_v180_native_support_closure()
+_import_v187_listener_activation_closure()
+from hermes_installer.registry import resources_runtime
+origin = pathlib.Path(resources_runtime.__spec__.origin).resolve(strict=True)
+assert origin.is_relative_to(installed_root)
+"""
+    subprocess.run(
+        [sys.executable, "-I", "-c", verify_installed, str(installed_python)],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
 
 
 def test_release_builder_stages_only_the_exact_native_health_fixture_members():

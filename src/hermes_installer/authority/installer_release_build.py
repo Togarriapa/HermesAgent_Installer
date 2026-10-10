@@ -2770,24 +2770,7 @@ class RootInstalledReleaseBuilder:
                 target = "plans/" + row.relative_path.removeprefix("plans/")
                 self._copy_source(source, output_fd, row.relative_path, target, ("amendment",))
                 staged.append(self._last_output_row)
-        # Map only the actual loaded installer-module closure to canonical installed module paths.
-        for name, _, digest, _, _ in actor.module_rows:
-            if not (name == "hermes_installer" or name.startswith("hermes_installer.")):
-                continue
-            parts = name.split(".")
-            source_path = "src/" + "/".join(parts) + ".py"
-            package_init = "src/" + "/".join(parts) + "/__init__.py"
-            if source_path in source_files:
-                source_rel, target = source_path, "lib/python/" + "/".join(parts) + ".py"
-            elif package_init in source_files:
-                source_rel, target = package_init, "lib/python/" + "/".join(parts) + "/__init__.py"
-            else:
-                raise InstallerReleaseBuildError("loaded installer module has no fixed source module path")
-            source_row = source_files[source_rel]
-            if source_row.sha256 != digest:
-                raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
-            self._copy_source(source, output_fd, source_rel, target, ("module",))
-            staged.append(self._last_output_row)
+        staged.extend(self._stage_actor_module_rows(source, output_fd, actor.module_rows))
         staged_paths = {row[0] for row in staged}
         for _name, source_rel, target, expected_digest, expected_size, role in REVIEWED_SOURCE_MODULES:
             source_row = source_files.get(source_rel)
@@ -2798,6 +2781,7 @@ class RootInstalledReleaseBuilder:
                 self._copy_source(source, output_fd, source_rel, target, (role,))
                 staged.append(self._last_output_row)
                 staged_paths.add(target)
+
         for source_rel, target, expected_digest, expected_size in REVIEWED_HEALTH_FIXTURES:
             source_row = source_files.get(source_rel)
             if (source_row is None or source_row.sha256 != expected_digest
@@ -2818,6 +2802,31 @@ class RootInstalledReleaseBuilder:
         staged.append(self._last_output_row)
         staged_paths.add(driver_target)
         self._stage_application_effect_sources(source, output_fd, staged, staged_paths)
+        return staged
+
+    def _stage_actor_module_rows(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
+                                 module_rows: tuple[tuple[str, str, str, int, int], ...]) \
+        -> list[tuple[str, str, int, int, tuple[str, ...]]]:
+        """Stage only modules captured in the verified root source actor."""
+        source_files = {row.relative_path: row for row in source.files}
+        staged: list[tuple[str, str, int, int, tuple[str, ...]]] = []
+        for name, _, digest, _, _ in module_rows:
+            if not (name == "hermes_installer" or name.startswith("hermes_installer.")):
+                continue
+            parts = name.split(".")
+            source_path = "src/" + "/".join(parts) + ".py"
+            package_init = "src/" + "/".join(parts) + "/__init__.py"
+            if source_path in source_files:
+                source_rel, target = source_path, "lib/python/" + "/".join(parts) + ".py"
+            elif package_init in source_files:
+                source_rel, target = package_init, "lib/python/" + "/".join(parts) + "/__init__.py"
+            else:
+                raise InstallerReleaseBuildError("loaded installer module has no fixed source module path")
+            source_row = source_files[source_rel]
+            if source_row.sha256 != digest:
+                raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
+            self._copy_source(source, output_fd, source_rel, target, ("module",))
+            staged.append(self._last_output_row)
         return staged
 
     def _stage_application_effect_sources(
@@ -3046,16 +3055,20 @@ def _load_installed_setup_module_closure() -> None:
     """
     import importlib
 
-    for name in (
-        "hermes_installer.root_setup",
-        "hermes_installer.authority.installer_release",
-        "hermes_installer.authority.bootstrap_runtime_factory",
-    ):
-        try:
-            importlib.import_module(name)
-        except ImportError:
-            raise BootstrapEnrollmentPending(
-                "installed root setup module closure is unavailable from selected source") from None
+    try:
+        root_setup = importlib.import_module("hermes_installer.root_setup")
+        importlib.import_module("hermes_installer.authority.installer_release")
+        importlib.import_module("hermes_installer.authority.bootstrap_runtime_factory")
+        # These two fixed import-only entry points are the authoritative setup
+        # and listener closures used by the published root launcher. Loading
+        # them before actor verification makes every actually selected
+        # transitive module (including registry.resources_runtime) part of the
+        # observed SourceCAS module rows that the release builder stages.
+        root_setup._import_v180_native_support_closure()
+        root_setup._import_v187_listener_activation_closure()
+    except ImportError:
+        raise BootstrapEnrollmentPending(
+            "installed root setup module closure is unavailable from selected source") from None
 
 
 def _verify_frozen_baseline(root_fd: int, rows: tuple[DistributionFile, ...]) -> str:
