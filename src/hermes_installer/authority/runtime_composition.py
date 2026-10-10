@@ -1735,6 +1735,9 @@ def compose_root_authority_runtime(
             build_execution_service = candidate_build_execution_service
 
     job_authority = None
+    # The home registry is composed after resource-event controllers below,
+    # so keep the adapter collection defined even when there are no jobs.
+    profile_task_adapters: Mapping[tuple[str, str], Any] = MappingProxyType({})
     resource_task_unavailable_reason: str | None = None
     if jobs:
         if source_observers is None:
@@ -1759,7 +1762,6 @@ def compose_root_authority_runtime(
                 raise AuthorityDenied("resource.unavailable", "resource is not selected in the active generation")
             return generation
 
-        profile_task_adapters: Mapping[tuple[str, str], Any] = MappingProxyType({})
         if any(backend.execution_binding is not None
                for enrollment_row in jobs.values()
                for backend in enrollment_row.backends.values()):

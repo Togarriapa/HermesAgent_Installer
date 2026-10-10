@@ -137,6 +137,7 @@ def test_service_rejects_changed_parent_closure_before_any_process_start():
         resource_backend_id=task.backend_enrollment_id, resource_id="resource-1",
         resource_generation=task.resource_generation, profile_id="profile-1",
         principal_id=source.principal_id, profile_generation=admission.profile_generation,
+        source_profile_id="source-profile-1", home_binding_id="home-binding-1",
         process_enrollment_id=task.process_enrollment_id,
         process_generation=task.process_generation, operation_id=task.operation_id,
         process_start_target=admission.child_target_id, native_package_id=task.native_package_id,
@@ -158,12 +159,17 @@ def test_service_rejects_changed_parent_closure_before_any_process_start():
     )
     service.resource_task_runner = object()
     service.resource_job_authority = object()
+    service.native_profile_task_home_registry = object()
     service.monotonic = lambda: 1.0
 
     with pytest.raises(AuthorityDenied, match="source or controller binding changed"):
         service.perform_admitted_resource_process_start(
             admission, task, source, controller, selection,
             exact_stdin=_strict_prompt(task), timeout=5.0, cancelled=lambda: False,
+            # The mismatched parent closure must be rejected before the home
+            # proof is consulted; this deliberately unusable sentinel catches
+            # any regression that reaches a later stage.
+            selected_home_binding=object(),
         )
     assert starts == []
 
@@ -214,6 +220,7 @@ def test_root_event_controller_binding_is_typed_separately_from_worker_peer():
         resource_backend_id=task.backend_enrollment_id, resource_id="resource-1",
         resource_generation=task.resource_generation, profile_id="profile-1",
         principal_id=source.principal_id, profile_generation=admission.profile_generation,
+        source_profile_id="source-profile-1", home_binding_id="home-binding-1",
         process_enrollment_id=task.process_enrollment_id,
         process_generation=task.process_generation, operation_id=task.operation_id,
         process_start_target=admission.child_target_id, native_package_id=task.native_package_id,
