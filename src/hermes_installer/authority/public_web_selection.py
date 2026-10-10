@@ -109,7 +109,7 @@ def collect_root_tty_public_web_scope_configuration(
     root_session._check_live()
     required_target = (
         "candidate_handle", "native_policy_selection_handle", "component_id",
-        "target_id", "profile_id", "profile_generation", "recipient",
+        "enrollment_id", "target_id", "profile_id", "profile_generation", "recipient",
         "principal_selection_handle", "namespace_selection_handle",
     )
     if (any(not isinstance(getattr(target, name, None), str)
@@ -146,7 +146,7 @@ def collect_root_tty_public_web_scope_configuration(
                 or identity.namespace.selection_handle != target.namespace_selection_handle):
             raise PublicWebSelectionDenied("target no longer belongs to the current principal and namespace")
         value = {
-            "enrollment_id": "scope-" + secrets.token_hex(16),
+            "enrollment_id": target.enrollment_id,
             "target_id": target.target_id,
             "generation": target.profile_generation,
             "principal_id": identity.principal.principal_id,
@@ -637,10 +637,7 @@ class RootPublicWebSelectionRegistry:
                 if len(profile_ids) != 1 or not next(iter(profile_ids)):
                     raise PublicWebSelectionDenied(
                         "blank public choice cannot revoke without one exact candidate profile")
-                revoke = getattr(binding, "revoke_durable_setup_choice_purpose", None)
-                if not callable(revoke):
-                    raise PublicWebSelectionDenied("durable public-choice revocation is unavailable")
-                revoke("public-free-web-read", next(iter(profile_ids)))
+                _revoke_public_choice(binding, next(iter(profile_ids)))
                 return None
             try:
                 selected_ids = tuple(item.strip() for item in raw.decode("utf-8").split(","))
@@ -659,8 +656,15 @@ class RootPublicWebSelectionRegistry:
         targets = []
         for candidate_handle in selected_ids:
             candidate = available[candidate_handle]
-            config = collect_root_tty_public_web_scope_configuration(
-                session, candidate, native_policy_selection_handle)
+            try:
+                config = collect_root_tty_public_web_scope_configuration(
+                    session, candidate, native_policy_selection_handle)
+            except PublicWebSelectionDenied as error:
+                if str(error) in {
+                        "blank public scope selection means no public-web configuration",
+                        "public web scope was not explicitly confirmed"}:
+                    _revoke_public_choice(binding, candidate.profile_id)
+                raise
             try:
                 target = self._targets.observe_configured_public_web_scope(
                     native_policy_selection_handle, candidate_handle, config)
@@ -815,6 +819,16 @@ def _tty_controller_digest(proof: Any) -> str:
         "device": proof.tty_device, "inode": proof.tty_inode,
         "rdevice": proof.tty_rdevice,
     })).hexdigest()
+
+
+def _revoke_public_choice(binding: Any, profile_id: str) -> None:
+    revoke = getattr(binding, "revoke_durable_setup_choice_purpose", None)
+    if not isinstance(profile_id, str) or not profile_id or not callable(revoke):
+        raise PublicWebSelectionDenied("durable public-choice revocation is unavailable")
+    try:
+        revoke("public-free-web-read", profile_id)
+    except Exception:
+        raise PublicWebSelectionDenied("prior public-web permission could not be revoked") from None
 
 
 def _render_exact_input_for_public_review(raw: bytes, digest: str) -> None:
