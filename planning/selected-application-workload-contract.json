@@ -1242,5 +1242,79 @@
       }
     ],
     "acceptance": "No toolchain install/runtime compatibility or app acceptance from source observer; baseline/allAC unchanged."
+  },
+  "pep517_backend_source_closure_v152": {
+    "schema": 1,
+    "requirements": [
+      "SK-T132",
+      "SK-T136",
+      "SK-T147"
+    ],
+    "why": "Project source wheel needs a separate exact PEP517 backend closure; missing backend packages are not in project runtime locks and cannot get honest lock-derived receipts.",
+    "source_table": {
+      "artifact_id": "installer-application-pep517-backend-sources-v1",
+      "path": "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
+      "sha256": "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623",
+      "size_bytes": 15907,
+      "release_role": "amendment"
+    },
+    "source_eligibility": "Exact held source table plus actual selected source pyproject build-system.requires/build-backend must match selected profile. This separate reviewed backend table is authority for absent backend sources, not runtime lock membership. Original project lock/source stays unchanged; tool package versions are exact independently reviewed picks, no resolver latest/update/defaultextras. Graphifysetuptools84 matches lockdev but remains separate buildonly source.",
+    "registry": {
+      "owner_module": "hermes_installer.authority.application_runtime_preparation",
+      "class": "RootApplicationBuildBackendClosureRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,source_preparation_registry,toolchain_source_observer,root_journal,setup_choice_registry)",
+      "prepare": "prepare_selected_backend(preparation_input_selection_handle)->RootApplicationBuildBackendClosureReceipt",
+      "resolve": "resolve_selected_backend(receipt_handle,preparation_input_selection_handle)->current held closure",
+      "source_receipt": "RootApplicationBuildBackendArtifactReceipt, separate RootApplicationLockedPackageArtifactReceipt. Fields schema,receipt_handle,artifact_id,package_name,package_version,filename,sha256,size_bytes,source_url_sha256,metadata_sha256,license_observation_handle,backend_manifest_artifact_id,backend_manifest_sha256,backend_manifest_receipt_handle,pyproject_receipt_handle,source_preparation_selection_handle,qualification_choice_handle,target_platform,python_abi,issued_monotonic,expires_monotonic. Genuine held CAS membership/current source+choice/signature linkage; not fake runtime-lock row.",
+      "closure_fields": [
+        "schema",
+        "receipt_handle",
+        "application_id",
+        "build_backend",
+        "backend_requirement_sha256",
+        "backend_manifest_artifact_id",
+        "backend_manifest_sha256",
+        "backend_manifest_receipt_handle",
+        "pyproject_receipt_handle",
+        "source_preparation_selection_handle",
+        "qualification_choice_handle",
+        "package_artifact_receipt_handles",
+        "license_observation_handles",
+        "backend_closure_sha256",
+        "target_platform",
+        "python_abi",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "closure_hash": "SHA256 canonical sorted exact selected package records artifactID/name/version/sourceSHA/size/licenseevidence + actual pyproject backend requirement and reviewed manifest hash; no future output hash."
+    },
+    "acquisition_license": "Explicit existing acquire-locked-runtime-packages choice covers separately disclosed finite reviewed backend packages; registry verifies fresh actual phase/controller/source selection each TLS GET. Exact files.pythonhosted.org selected URLs no redirects/auth/proxy/downgrade; size/hash/type/RECORD/archive member safety and actual license member hashes source table. Retain MIT/Apache/BSD notices and setuptools vendored LGPLv3 autocommand LICENSE/source. Eligibility here is local offline unmodified build-tool use only, no public redistribution/relicensing verdict; preserve all actual vendor notices/source and do not include backend environment in application runtime archive. Missing/changed notice/source review denies corresponding closure; no main SPDX label substitutes vendor evidence. v136 source lease/current grant distinction remains.",
+    "frontend_recipe": "Existing held official PM uv0.12.3 is build frontend, selected PM Python3.14 executable. Separate isolated backend environment populated ONLY exact backend hashed wheels via uv pip sync --require-hashes --offline --no-index --find-links; no inheritedsite/cache/network/extras. Actual source-selected backend then fixed uv build --wheel --offline --no-build-isolation --python <backendenv selected executable> --out-dir <fixed projectwheel output> <fixed exact source mount>. Tagged paths/literals and actual selecteduv CLI capability verified before enablement; no backend-path or dynamic undeclared build hooks, no extra get_requires_for_build_wheel dependency silently fetched. Unexpected extra requirement explicit source refinement prerequisite. Actual complete source-owned hook/code review and no-network managedunit required.",
+    "project_output": "Exactly one noneditable wheel observed after real managed build terminal, SHA/size/full safe wheel member/RECORD/source+backend/recipe receipt; hash-constrained no-deps offline install into separate v147 runtime dependency environment. Backend artifacts never count as runtime package closure or ABI/probe result. Original source/lockunchanged, actual isolated installed distribution/import-origin probe mandatory.",
+    "selection_extension": "Final v132 Python RootApplicationRuntimePreparationSelection adds build_backend_closure_receipt_handle; runtime package_closure_receipt_handle remains distinct. Early input handle/source choice exists before package/toolchain/backend acquisition; final prebuild selection requires actual held backend closure not a future source-wheel/output receipt.",
+    "tasks": [
+      {
+        "id": "SK-T152.1",
+        "owner": "app build/source broker",
+        "work": "Actual separate reviewed backend table source/member observation, finite artifact/license/CAS receipt and complete current backend closure."
+      },
+      {
+        "id": "SK-T152.2",
+        "owner": "factory/application selection/build/probe",
+        "work": "Final backend handle join, isolated actual project wheel frontend/backend/no-network source hook execution and genuine wheel output/install/probe; extra build requirements/source/license/currentness failures deny."
+      }
+    ],
+    "primary_sources": [
+      "https://pypi.org/pypi/setuptools/84.0.0/json",
+      "https://pypi.org/pypi/hatchling/1.32.0/json",
+      "https://pypi.org/pypi/hatchling/1.26.3/json",
+      "https://pypi.org/pypi/tomlkit/0.15.1/json",
+      "https://pypi.org/pypi/trove-classifiers/2026.9.21.13/json",
+      "https://pypi.org/pypi/packaging/26.3/json",
+      "https://pypi.org/pypi/pathspec/1.1.1/json",
+      "https://pypi.org/pypi/pluggy/1.6.0/json",
+      "https://docs.astral.sh/uv/reference/cli/"
+    ],
+    "acceptance": "Small wheels TLS/hash/license source inspection only, no execution/full environment/ARM application qualification. All original AC/baseline unchanged."
   }
 }

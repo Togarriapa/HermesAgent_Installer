@@ -823,3 +823,10 @@ The installer SHALL select private endpoint/model binding IDs before startup and
 #### Scenario: Configured private endpoint has no live process
 - **WHEN** only the protected endpoint binding exists
 - **THEN** no runtime route or deployment receipt is fabricated from that configured identity
+
+### Requirement: Separate finite PEP517 backend closure v152
+The installer SHALL bind project wheel builds to exact separately reviewed backend source/license/CAS receipts rather than claiming absent backend packages belong to the runtime lock.
+
+#### Scenario: Backend adds an undeclared build requirement
+- **WHEN** a backend requests a package outside the selected reviewed offline closure
+- **THEN** the build denies without fetching network packages or widening the original lock and backend table

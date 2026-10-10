@@ -130,3 +130,5 @@ Offline probe provenance v148: `plans/amendments/2026-10-10-offline-probe-enviro
 Selected toolchain source observer v150: `plans/amendments/2026-10-10-selected-toolchain-source-observer-v150.md`; actual finite plan-bound source observer FD feeds toolchain extraction, no disconnected CAS/global cap widening. All AC open.
 
 Stable private endpoint/model binding v151: `plans/amendments/2026-10-10-stable-private-endpoint-binding-v151.md`; source-selected IDs before process observation, genuine runtime receipt proofs after startup. All AC open.
+
+Separate PEP517 backend source closure v152: `plans/amendments/2026-10-10-pep517-backend-source-closure-v152.md`; held reviewed finite backend table/CAS/license receipts, isolated frontend/project wheel separate runtime lock and probe. All AC open.
