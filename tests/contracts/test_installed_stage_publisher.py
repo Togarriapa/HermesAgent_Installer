@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
 from hermes_installer.authority.installed_stage_publisher import (
-    _canonical, _publish_retained_build, _recover_staging_journals, _sha,
+    _build_rows, _canonical, _publish_retained_build, _recover_staging_journals, _sha,
 )
 
 
@@ -106,6 +106,21 @@ class InstalledStagePublicationTests(unittest.TestCase):
                            "roles": ["baseline"]}]}))
             self.assertEqual(os.stat(release).st_mode & 0o777, 0o555)
             self.assertEqual(os.stat(record_path).st_mode & 0o777, 0o600)
+
+    def test_build_rows_accept_runtime_member_and_reject_unknown_role(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.write_bytes(b"retained runtime member")
+            info = os.stat(source)
+            member = FileRow("runtime/lib/python3.14/os.py", _sha(source.read_bytes()),
+                             source.stat().st_size, 0o444, ("runtime-member",), info.st_dev, info.st_ino)
+            receipt = BuildReceipt(source, (member,), root)
+            self.assertEqual(_build_rows(receipt)[0].roles, ("runtime-member",))
+            malformed = FileRow(member.relative_path, member.sha256, member.size_bytes, member.mode,
+                                ("invented-runtime-role",), member.device, member.inode)
+            with self.assertRaises(BootstrapEnrollmentError):
+                _build_rows(BuildReceipt(source, (malformed,), root))
 
     def test_stale_predecessor_denies_before_release_or_pointer_mutation(self):
         with tempfile.TemporaryDirectory() as temp:

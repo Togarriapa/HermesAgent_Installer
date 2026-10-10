@@ -141,6 +141,7 @@ class RootMemoryCaptureConsentRegistry:
         choice = resolver(current_explicit_choice_receipt_handle, profile_selection_handle)
         if (getattr(choice, "_registry_seal", None) is not getattr(self.choices, "_registry_seal", object())
                 or getattr(choice, "choice_receipt_handle", None) != current_explicit_choice_receipt_handle
+                or getattr(choice, "profile_selection_handle", None) != profile_selection_handle
                 or getattr(choice, "principal_id", None) != enrollment.principal_id
                 or getattr(choice, "profile_id", None) != enrollment.profile_id
                 or getattr(choice, "namespace_id", None) != enrollment.namespace_identity
@@ -149,6 +150,9 @@ class RootMemoryCaptureConsentRegistry:
                 or getattr(choice, "service_generation", None) != enrollment.service_generation
                 or getattr(choice, "provider", None) != enrollment.provider):
             raise AuthorityDenied("memory.consent", "memory TTY choice is stale or belongs to another owner/engine")
+        current_choice = getattr(self.choices, "is_current_memory_capture_choice", None)
+        if not callable(current_choice) or current_choice(choice) is not True:
+            raise AuthorityDenied("memory.consent", "root TTY memory capture choice is no longer current")
         routes = _ids(getattr(choice, "route_ids", None), "memory route IDs")
         recipients = _ids(getattr(choice, "private_recipient_ids", None), "memory private recipient IDs")
         if not set(routes).issubset(enrollment.fixed_route_map):

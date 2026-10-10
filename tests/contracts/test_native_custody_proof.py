@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import socket
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from hermes_installer.authority.native_custody_proof import (
     LivePeerProcess,
     LiveNativeInputTarget,
     LoadedPackageClosureProof,
+    LoadedProcessRoleObservation,
+    NativeProcessRoleSelection,
     _LaunchObservation,
     NativeLoaderSelection,
     RootNativeInputTargetResolver,
@@ -37,7 +40,8 @@ from hermes_installer.managed_process_custodian import (
 _ENTRY = "d" * 64
 _RESOLVER = "e" * 64
 _CLOSURE = "a" * 64
-_ROLE = "b" * 64
+_ROLE_BYTES = b"# fixture native process role module\n"
+_ROLE = hashlib.sha256(_ROLE_BYTES).hexdigest()
 _GENERATION_DIGEST = "c" * 64
 
 
@@ -140,6 +144,14 @@ def _observer(**changes):
         role_id="hermes-main",
         role_artifact_id="loader-role",
         role_sha256=_ROLE,
+        native_package_generation="package-generation-1",
+        source_action_binding_id="binding.input",
+        source_registration_ids=("registration.input",),
+        role_source_receipt_handle="source-receipt-role",
+        role_module_name="hermes.plugins.runtime",
+        role_closure_member_path="hermes/plugins/runtime.py",
+        role_source_revision="rev-role-1",
+        role_source_tree_sha256="f" * 64,
         channel_id="chat.request",
         capture_schema_id="capture.request",
         source_action_id="action.input",
@@ -182,6 +194,7 @@ def _selection(process_id="owned-process"):
         package_id="package-1",
         profile_id="producer-profile",
         generation="generation-1",
+        package_generation="package-generation-1",
         compiled_closure_sha256=_CLOSURE,
         entrypoint_sha256=_ENTRY,
         resolver_sha256=_RESOLVER,
@@ -189,7 +202,17 @@ def _selection(process_id="owned-process"):
         loader_role_artifact_id="loader-role",
         loader_role_sha256=_ROLE,
         registered_action_ids=("action.input", "tool.invoke"),
-        observer_role_action_bindings=(("loader-role", _ROLE, "action.input"),),
+        registered_registration_ids=("registration.input", "registration.tool"),
+        observer_role_action_bindings=(("hermes-main", "loader-role", _ROLE, "action.input"),),
+        process_roles=(NativeProcessRoleSelection(
+            role_id="hermes-main", role_artifact_id="loader-role", role_sha256=_ROLE,
+            profile_generation="generation-1", native_package_generation="package-generation-1",
+            role_source_receipt_handle="source-receipt-role", module_name="hermes.plugins.runtime",
+            closure_member_path="hermes/plugins/runtime.py", role_source_revision="rev-role-1",
+            role_source_tree_sha256="f" * 64,
+            registration_ids=("registration.input", "registration.tool"),
+            action_binding_ids=("binding.input", "binding.tool"),
+        ),),
     )
 
 
@@ -212,8 +235,13 @@ class ProgressWireContracts(unittest.TestCase):
         return encode_loader_progress(
             launch_nonce="N" * 43, sequence=sequence, phase=phase,
             package_id="package-1", generation="generation-1",
+            package_generation="package-generation-1",
             entrypoint_sha256=_ENTRY, resolver_sha256=_RESOLVER,
-            registered_action_ids=actions,
+            registered_registration_ids=(
+                ("registration.input", "registration.tool") if sequence > 0 else ()),
+            loaded_process_roles=(LoadedProcessRoleObservation(
+                "hermes-main", "hermes.plugins.runtime", "hermes/plugins/runtime.py",
+                _ROLE, 8, 99, len(_ROLE_BYTES)),),
         )[4:]
 
     def test_canonical_progress_record_parses_and_rejects_duplicate_or_unknown_fields(self):
@@ -222,6 +250,22 @@ class ProgressWireContracts(unittest.TestCase):
         self.assertEqual(record.phase, "entrypoint-imported")
         with self.assertRaises(AuthorityDenied):
             _parse_progress(b'{"schema":1,"schema":1}')
+
+    def test_progress_parser_requires_bounded_loaded_process_role_origin(self):
+        frame = encode_loader_progress(
+            launch_nonce="N" * 43, sequence=0, phase="entrypoint-imported",
+            package_id="package-1", generation="generation-1",
+            package_generation="package-generation-1",
+            entrypoint_sha256=_ENTRY, resolver_sha256=_RESOLVER,
+            registered_registration_ids=(),
+            loaded_process_roles=(LoadedProcessRoleObservation(
+                "hermes-main", "hermes.plugins.runtime", "hermes/plugins/runtime.py",
+                _ROLE, 8, 99, len(_ROLE_BYTES)),),
+        )[4:]
+        self.assertEqual(_parse_progress(frame).loaded_process_roles[0].role_id, "hermes-main")
+        malformed = frame.replace(b'"module_file_inode":99', b'"module_file_inode":0')
+        with self.assertRaises(AuthorityDenied):
+            _parse_progress(malformed)
 
     def test_revoked_launch_cleanup_closes_fd_and_unlinks_private_socket(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -335,18 +379,46 @@ class ProgressWireContracts(unittest.TestCase):
                 source_target_selector=lambda _observer, _context: None,
             )
 
-    def test_active_catalog_resolver_joins_observer_role_to_selected_manifest_action(self):
+    def test_active_catalog_resolver_joins_process_role_independently_of_adapter_action(self):
         observer = _observer(producer_uid=os.getuid() or 1)
         package = type("Package", (), {
             "package_id": "package-1", "profile_id": observer.profile_id,
-            "generation": observer.generation, "compiled_closure_sha256": _CLOSURE,
+            "generation": observer.native_package_generation, "compiled_closure_sha256": _CLOSURE,
+            "profile_generation": observer.generation,
             "entrypoint_sha256": _ENTRY, "resolver_sha256": _RESOLVER,
             "entrypoint_artifact_id": "loader-role",
-            "adapter_records": {
-                "adapter": type("Adapter", (), {
-                    "action_id": "action.input", "adapter_artifact_id": "loader-role",
-                    "adapter_sha256": _ROLE,
+            "action_records": {
+                "binding.input": type("Action", (), {
+                    "action_binding_id": "binding.input", "action_id": "action.input",
+                    "generation": "package-generation-1", "target_id": observer.target_id,
+                    "recipient": observer.recipient,
                     "observer_enrollment_ids": (observer.observer_enrollment_id,),
+                })(),
+            },
+            "registration_records": {
+                "registration.input": type("Registration", (), {
+                    "registration_id": "registration.input",
+                    "action_bindings": (type("ActionRef", (), {
+                        "action_binding_id": "binding.input",
+                    })(),),
+                })(),
+            },
+            # Deliberately empty: adapter metadata must never be promoted to a process role.
+            "adapter_records": {},
+            "process_role_records": {
+                observer.role_id: type("ProcessRole", (), {
+                    "role_id": observer.role_id, "package_id": "package-1",
+                    "native_package_generation": "package-generation-1",
+                    "profile_id": observer.profile_id, "profile_generation": observer.generation,
+                    "role_artifact_id": observer.role_artifact_id, "role_sha256": observer.role_sha256,
+                    "role_source_receipt_handle": observer.role_source_receipt_handle,
+                    "module_name": observer.role_module_name,
+                    "closure_member_path": observer.role_closure_member_path,
+                    "role_source_revision": observer.role_source_revision,
+                    "role_source_tree_sha256": observer.role_source_tree_sha256,
+                    "observer_enrollment_ids": (observer.observer_enrollment_id,),
+                    "registration_ids": ("registration.input",),
+                    "action_binding_ids": ("binding.input",), "workflow_ids": (),
                 })(),
             },
         })()
@@ -356,7 +428,7 @@ class ProgressWireContracts(unittest.TestCase):
 
             @staticmethod
             def resolve_native_package(package_id, generation):
-                if (package_id, generation) != ("package-1", "generation-1"):
+                if (package_id, generation) != ("package-1", "package-generation-1"):
                     return None
                 return package
 
@@ -371,7 +443,99 @@ class ProgressWireContracts(unittest.TestCase):
         self.assertEqual(selected.package_id, "package-1")
         self.assertEqual(selected.registered_action_ids, ("action.input",))
         self.assertEqual(selected.observer_role_action_bindings,
-                         (("loader-role", _ROLE, "action.input"),))
+                         ((observer.role_id, "loader-role", _ROLE, "action.input"),))
+        self.assertEqual(selected.registered_registration_ids, ("registration.input",))
+
+    def test_active_catalog_resolver_rejects_adapter_only_role_fallback(self):
+        observer = _observer(producer_uid=os.getuid() or 1)
+        package = type("Package", (), {
+            "package_id": "package-1", "profile_id": observer.profile_id,
+            "generation": observer.native_package_generation,
+            "profile_generation": observer.generation,
+            "compiled_closure_sha256": _CLOSURE, "entrypoint_sha256": _ENTRY,
+            "resolver_sha256": _RESOLVER, "entrypoint_artifact_id": "loader-role",
+            "adapter_records": {"adapter": object()}, "action_records": {},
+            "registration_records": {}, "process_role_records": {},
+        })()
+
+        class _Bindings:
+            source_observer_enrollments = {observer.observer_enrollment_id: observer}
+
+            @staticmethod
+            def resolve_native_package(_package_id, _generation):
+                return package
+
+        resolver = active_native_catalog_resolver(
+            _Bindings(), service_generation_digest=_GENERATION_DIGEST,
+        )
+        handle = _OwnedHandle("owned-process", 2, 3, 4, "cgroup", "mnt:5;net:6",
+                              _Profile(1, 1, _ROLE), 100.0)
+        with self.assertRaises(AuthorityDenied):
+            resolver(handle)
+
+    def test_active_catalog_resolver_rejects_ambiguous_action_binding_and_stale_process_generation(self):
+        observer = _observer(producer_uid=os.getuid() or 1, source_action_binding_id=None)
+        role = type("ProcessRole", (), {
+            "role_id": observer.role_id, "package_id": observer.package_id,
+            "native_package_generation": observer.native_package_generation,
+            "profile_id": observer.profile_id, "profile_generation": observer.generation,
+            "role_artifact_id": observer.role_artifact_id, "role_sha256": observer.role_sha256,
+            "role_source_receipt_handle": observer.role_source_receipt_handle,
+            "module_name": observer.role_module_name,
+            "closure_member_path": observer.role_closure_member_path,
+            "role_source_revision": observer.role_source_revision,
+            "role_source_tree_sha256": observer.role_source_tree_sha256,
+            "observer_enrollment_ids": (observer.observer_enrollment_id,),
+            "registration_ids": ("registration.input",),
+            "action_binding_ids": ("binding.input", "binding.duplicate"), "workflow_ids": (),
+        })()
+        action = type("Action", (), {
+            "action_id": "action.input", "generation": observer.native_package_generation,
+            "target_id": observer.target_id, "recipient": observer.recipient,
+            "observer_enrollment_ids": (observer.observer_enrollment_id,),
+        })
+        package = type("Package", (), {
+            "package_id": observer.package_id, "profile_id": observer.profile_id,
+            "generation": observer.native_package_generation,
+            "profile_generation": observer.generation,
+            "compiled_closure_sha256": observer.package_sha256,
+            "entrypoint_sha256": _ENTRY, "resolver_sha256": _RESOLVER,
+            "entrypoint_artifact_id": "loader-role",
+            "process_role_records": {observer.role_id: role},
+            "action_records": {
+                "binding.input": type("ActionRecord", (action,), {"action_binding_id": "binding.input"})(),
+                "binding.duplicate": type("ActionRecord", (action,), {"action_binding_id": "binding.duplicate"})(),
+            },
+            "registration_records": {"registration.input": type("Registration", (), {
+                "registration_id": "registration.input",
+                "action_bindings": (type("ActionRef", (), {
+                    "action_binding_id": "binding.input",
+                })(), type("ActionRef", (), {"action_binding_id": "binding.duplicate"})()),
+            })()},
+            "adapter_records": {},
+        })()
+
+        class _Bindings:
+            source_observer_enrollments = {observer.observer_enrollment_id: observer}
+
+            @staticmethod
+            def resolve_native_package(*_args):
+                return package
+
+        resolver = active_native_catalog_resolver(
+            _Bindings(), service_generation_digest=_GENERATION_DIGEST,
+        )
+        handle = _OwnedHandle("owned-process", 2, 3, 4, "cgroup", "mnt:5;net:6",
+                              _Profile(1, 1, _ROLE), 100.0)
+        with self.assertRaises(AuthorityDenied):
+            resolver(handle)
+        stale = replace(observer, generation="generation-stale")
+        _Bindings.source_observer_enrollments = {stale.observer_enrollment_id: stale}
+        resolver = active_native_catalog_resolver(
+            _Bindings(), service_generation_digest=_GENERATION_DIGEST,
+        )
+        with self.assertRaises(AuthorityDenied):
+            resolver(handle)
 
 
 @unittest.skipUnless(sys.platform.startswith("linux")
@@ -380,18 +544,39 @@ class ProgressWireContracts(unittest.TestCase):
 class RootLoaderObservationContracts(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory(prefix="h", dir="/tmp")
-        self.channel = create_native_loader_channel(Path(self.tempdir.name))
+        self.runtime_root = Path(self.tempdir.name)
+        self.runtime_root.chmod(0o755)
+        self.loader_runtime = self.runtime_root / "loader"
+        self.loader_runtime.mkdir(mode=0o700)
+        self.mount_root = self.runtime_root / "native" / "package-1"
+        closure_root = self.mount_root / "closure"
+        role_file = closure_root / "hermes" / "plugins" / "runtime.py"
+        self.role_file = role_file
+        role_file.parent.mkdir(parents=True, mode=0o755)
+        (role_file.parent.parent / "__init__.py").write_text("", encoding="utf-8")
+        (role_file.parent / "__init__.py").write_text("", encoding="utf-8")
+        role_file.write_bytes(_ROLE_BYTES)
+        role_file.chmod(0o444)
+        for directory in (role_file.parent.parent, role_file.parent,
+                          role_file.parent.parent.parent, closure_root, self.mount_root,
+                          self.mount_root.parent):
+            directory.chmod(0o755)
+        role_stat = role_file.stat()
+        self.channel = create_native_loader_channel(self.loader_runtime)
         self.nonce = self.channel.launch_nonce
         self.ack_read, self.ack_write = os.pipe()
-        actions = ["action.input", "tool.invoke"]
+        registrations = ["registration.input", "registration.tool"]
         script = (
-            "import os,socket,sys; from hermes_installer.authority.native_custody_proof import encode_loader_progress; "
+            "import os,socket,sys,importlib; from hermes_installer.authority.native_custody_proof import encode_loader_progress,LoadedProcessRoleObservation; "
             "path=sys.argv[1]; ack=int(sys.argv[2]); s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); "
             "s.connect(path); nonce=s.recv(43).decode('ascii'); "
-            f"actions={actions!r}; "
-            "frames=[(0,'entrypoint-imported',[]),(1,'actions-registered',actions),(2,'ready',actions)]; "
-            "[s.sendall(encode_loader_progress(launch_nonce=nonce,sequence=i,phase=p,package_id='package-1',generation='generation-1',entrypoint_sha256='"
-            + _ENTRY + "',resolver_sha256='" + _RESOLVER + "',registered_action_ids=a)) for i,p,a in frames]; "
+            f"sys.path.insert(0,{str(closure_root)!r}); "
+            "module=importlib.import_module('hermes.plugins.runtime'); info=os.stat(module.__file__); "
+            "roles=[LoadedProcessRoleObservation('hermes-main','hermes.plugins.runtime','hermes/plugins/runtime.py','" + _ROLE + "',info.st_dev,info.st_ino,info.st_size)]; "
+            f"registrations={registrations!r}; "
+            "frames=[(0,'entrypoint-imported',[]),(1,'actions-registered',registrations),(2,'ready',registrations)]; "
+            "[s.sendall(encode_loader_progress(launch_nonce=nonce,sequence=i,phase=p,package_id='package-1',generation='generation-1',package_generation='package-generation-1',entrypoint_sha256='"
+            + _ENTRY + "',resolver_sha256='" + _RESOLVER + "',registered_registration_ids=a,loaded_process_roles=roles)) for i,p,a in frames]; "
             "s.close(); os.read(ack,1)"
         )
         self.uid = os.getuid() if os.getuid() > 0 else 2001
@@ -405,7 +590,7 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.child = subprocess.Popen(
             [sys.executable, "-c", script, str(self.channel.socket_path), str(self.ack_read)],
             pass_fds=(self.ack_read,),
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             close_fds=True, preexec_fn=preexec_fn,
         )
         self.child_pidfd = os.pidfd_open(self.child.pid)
@@ -417,8 +602,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
             package_id="package-1", profile_id="producer-profile", generation="generation-1",
             service_mount_id="mount-1", compiled_closure_sha256=_CLOSURE,
             entrypoint_sha256=_ENTRY, resolver_sha256=_RESOLVER,
-            mount_path="/hermes/native/package-1", mount_source_device=8,
-            mount_source_inode=99, manifest_sha256=_ENTRY,
+            mount_path=str(self.mount_root), mount_source_device=role_stat.st_dev,
+            mount_source_inode=self.mount_root.stat().st_ino, manifest_sha256=_ENTRY,
         )
         self.mount_proof = _MountProof(
             "owned-process", "producer-profile", "generation-1", self.uid, 123,
@@ -445,6 +630,31 @@ class RootLoaderObservationContracts(unittest.TestCase):
             time.monotonic() + 20,
         )
 
+    def _controlled_root_module_stat(self):
+        """Model the root-owned fstat result while preserving all real file facts.
+
+        This contract suite runs as a nonroot user. The fixture imports the
+        actual module from its temporary package tree, and the production
+        verifier still opens/hashes that exact file. Only uid/gid returned by
+        fstat are controlled here; this is not production custody evidence.
+        """
+        expected = self.role_file.stat()
+        real_fstat = os.fstat
+
+        def controlled_fstat(fd):
+            actual = real_fstat(fd)
+            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                return actual
+            fields = list(actual)
+            fields[4] = 0
+            fields[5] = 0
+            return os.stat_result(fields)
+
+        return mock.patch(
+            "hermes_installer.authority.native_custody_proof.os.fstat",
+            side_effect=controlled_fstat,
+        )
+
     def tearDown(self):
         self.store.close()
         try:
@@ -456,6 +666,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
         except subprocess.TimeoutExpired:
             self.child.kill()
             self.child.wait(timeout=2)
+        if self.child.returncode and self.child.stderr is not None:
+            print("native loader fixture stderr:", self.child.stderr.read().decode("utf-8", "replace"))
         for fd in (self.child_pidfd, self.ack_read, self.ack_write):
             try:
                 os.close(fd)
@@ -467,11 +679,13 @@ class RootLoaderObservationContracts(unittest.TestCase):
         event_id = self.store.receive_loader_progress(self.launch_handle, lambda: False)
         observer = _observer(producer_uid=self.uid)
         peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
-        first = self.store.resolve_loaded_package_closure(peer, observer)
-        second = self.store.resolve_loaded_package_closure(peer, observer)
+        with self._controlled_root_module_stat():
+            first = self.store.resolve_loaded_package_closure(peer, observer)
+            second = self.store.resolve_loaded_package_closure(peer, observer)
         self.assertEqual(first.schema, 1)
         self.assertEqual(first.loader_ready_event_id, event_id)
-        self.assertEqual(first.observed_entrypoint_action_ids, ("action.input", "tool.invoke"))
+        self.assertEqual(first.observed_registration_ids, ("registration.input", "registration.tool"))
+        self.assertEqual(first.observed_entrypoint_action_ids, ())
         self.assertEqual(first, second)
         with self.assertRaises(AuthorityDenied):
             self.store.receive_loader_progress(self.launch_handle, lambda: False)
@@ -484,7 +698,7 @@ class RootLoaderObservationContracts(unittest.TestCase):
             schema=1, selection_handle="selection-handle", kind="resource-task",
             execution_handle=object(), process_handle=process_handle,
             profile_id="producer-profile", generation="generation-1",
-            native_package_id="package-1", native_package_generation="generation-1",
+            native_package_id="package-1", native_package_generation="package-generation-1",
             observer_enrollment_id=observer.observer_enrollment_id,
             source_action_id=observer.source_action_id,
             service_generation_digest=_GENERATION_DIGEST,
@@ -539,7 +753,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
             observer_enrollments={observer.observer_enrollment_id: observer},
             loader_observations=self.store,
         )
-        target = resolver.resolve_selected_native_input_target(execution)
+        with self._controlled_root_module_stat():
+            target = resolver.resolve_selected_native_input_target(execution)
         try:
             self.assertIsInstance(target, LiveNativeInputTarget)
             self.assertEqual(target.schema, 1)
@@ -566,7 +781,7 @@ class RootLoaderObservationContracts(unittest.TestCase):
             schema=1, selection_handle="selection-handle", kind="resource-task",
             execution_handle=object(), process_handle=process_handle,
             profile_id="producer-profile", generation="generation-1",
-            native_package_id="package-1", native_package_generation="generation-1",
+            native_package_id="package-1", native_package_generation="package-generation-1",
             observer_enrollment_id=observer.observer_enrollment_id,
             source_action_id=observer.source_action_id,
             service_generation_digest=_GENERATION_DIGEST,
@@ -623,18 +838,38 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.store.receive_loader_progress(self.launch_handle, lambda: False)
         observer = _observer(producer_uid=self.uid)
         peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
-        self.store.resolve_loaded_package_closure(peer, observer)
-        self.custody.mount_proof = _MountProof(
-            "owned-process", "producer-profile", "generation-1", self.uid, 123,
-            "cgroup-test", "mnt:234;net:345", _ROLE,
-            replace(self.mount_receipt, service_mount_id="mount-replaced"),
-        )
-        with self.assertRaises(AuthorityDenied):
+        with self._controlled_root_module_stat():
             self.store.resolve_loaded_package_closure(peer, observer)
-        self.custody.identity = LivePeerIdentity(
-            "other-profile", "generation-1", self.uid, 123, _ROLE,
-            "cgroup-test", "mnt:234;net:345",
-        )
+            self.custody.mount_proof = _MountProof(
+                "owned-process", "producer-profile", "generation-1", self.uid, 123,
+                "cgroup-test", "mnt:234;net:345", _ROLE,
+                replace(self.mount_receipt, service_mount_id="mount-replaced"),
+            )
+            with self.assertRaises(AuthorityDenied):
+                self.store.resolve_loaded_package_closure(peer, observer)
+            self.custody.identity = LivePeerIdentity(
+                "other-profile", "generation-1", self.uid, 123, _ROLE,
+                "cgroup-test", "mnt:234;net:345",
+            )
+            with self.assertRaises(AuthorityDenied):
+                self.store.resolve_loaded_package_closure(peer, observer)
+
+    def test_changed_loaded_role_bytes_after_authenticated_import_deny_proof(self):
+        self.store.receive_loader_progress(self.launch_handle, lambda: False)
+        observer = _observer(producer_uid=self.uid)
+        peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
+        self.role_file.chmod(0o644)
+        self.role_file.write_bytes(b"# different role bytes after import\n")
+        self.role_file.chmod(0o444)
+        with self._controlled_root_module_stat():
+            with self.assertRaises(AuthorityDenied):
+                self.store.resolve_loaded_package_closure(peer, observer)
+
+    def test_unowned_loaded_role_module_denies_proof(self):
+        self.store.receive_loader_progress(self.launch_handle, lambda: False)
+        observer = _observer(producer_uid=self.uid)
+        peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
+        os.chown(self.role_file, self.uid, self.gid)
         with self.assertRaises(AuthorityDenied):
             self.store.resolve_loaded_package_closure(peer, observer)
 
@@ -744,7 +979,7 @@ class NativeInputTargetResolverContracts(unittest.TestCase):
             schema=1, selection_handle="root-selection", kind=kind,
             execution_handle=object(), process_handle=process_handle,
             profile_id=profile_id, generation=generation,
-            native_package_id="package-1", native_package_generation=generation,
+            native_package_id="package-1", native_package_generation="package-generation-1",
             observer_enrollment_id=observer.observer_enrollment_id,
             source_action_id="action.input", service_generation_digest=_GENERATION_DIGEST,
             expires_monotonic=time.monotonic() + 15,
@@ -761,6 +996,12 @@ class NativeInputTargetResolverContracts(unittest.TestCase):
             loader_ready_event_id="ready-id", observed_entrypoint_action_ids=("action.input",),
             issued_monotonic=time.monotonic(), expires_monotonic=time.monotonic() + 12,
             service_generation_digest=_GENERATION_DIGEST,
+            role_id="hermes-main", role_source_receipt_handle="source-receipt-role",
+            role_module_name="hermes.plugins.runtime", role_closure_member_path="hermes/plugins/runtime.py",
+            role_source_revision="rev-role-1", role_source_tree_sha256="f" * 64,
+            role_module_device=1, role_module_inode=3, role_module_sha256=_ROLE,
+            role_module_size_bytes=len(_ROLE_BYTES),
+            observed_registration_ids=("registration.input",),
         )
         store = object.__new__(RootNativeLoaderObservationStore)
         store.clock = time.monotonic

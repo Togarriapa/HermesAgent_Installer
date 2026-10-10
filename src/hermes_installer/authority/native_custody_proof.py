@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import select
 import socket
@@ -19,7 +20,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
 from .types import AuthorityDenied, HostContext, canonical_digest
@@ -30,7 +31,9 @@ MAX_LAUNCH_LEASE_SECONDS = 600.0
 _FRAME_HEADER = struct.Struct("!I")
 _PROGRESS_FIELDS = frozenset({
     "schema", "launch_nonce", "sequence", "phase", "package_id", "generation",
-    "entrypoint_sha256", "resolver_sha256", "registered_action_ids",
+    "package_generation",
+    "entrypoint_sha256", "resolver_sha256", "registered_registration_ids",
+    "loaded_process_roles",
 })
 _PHASES = ("entrypoint-imported", "actions-registered", "ready")
 _DIGEST_FIELDS = ("entrypoint_sha256", "resolver_sha256")
@@ -44,6 +47,7 @@ class NativeLoaderSelection:
     package_id: str
     profile_id: str
     generation: str
+    package_generation: str
     compiled_closure_sha256: str
     entrypoint_sha256: str
     resolver_sha256: str
@@ -51,10 +55,12 @@ class NativeLoaderSelection:
     loader_role_artifact_id: str
     loader_role_sha256: str
     registered_action_ids: tuple[str, ...]
-    observer_role_action_bindings: tuple[tuple[str, str, str], ...] = ()
+    registered_registration_ids: tuple[str, ...] = ()
+    observer_role_action_bindings: tuple[tuple[str, str, str, str], ...] = ()
+    process_roles: tuple["NativeProcessRoleSelection", ...] = ()
 
     def __post_init__(self) -> None:
-        for name in ("process_id", "package_id", "profile_id", "generation",
+        for name in ("process_id", "package_id", "profile_id", "generation", "package_generation",
                      "loader_role_artifact_id"):
             _identifier(getattr(self, name), name)
         for name in ("compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256",
@@ -65,16 +71,74 @@ class NativeLoaderSelection:
                 or any(not isinstance(item, str) or not item for item in self.registered_action_ids)
                 or tuple(sorted(set(self.registered_action_ids))) != self.registered_action_ids):
             raise ValueError("selected native actions must be a bounded sorted unique tuple")
+        if (not isinstance(self.registered_registration_ids, tuple)
+                or not 1 <= len(self.registered_registration_ids) <= MAX_ACTIONS
+                or any(not _identifier_value(item) for item in self.registered_registration_ids)
+                or tuple(sorted(set(self.registered_registration_ids)))
+                    != self.registered_registration_ids):
+            raise ValueError("selected native registrations must be a bounded sorted unique tuple")
         bindings = self.observer_role_action_bindings
         if (not isinstance(bindings, tuple) or len(bindings) > MAX_ACTIONS
-                or any(not isinstance(item, tuple) or len(item) != 3
+                or any(not isinstance(item, tuple) or len(item) != 4
                        or not all(isinstance(value, str) and value for value in item)
-                       or not _valid_digest(item[1]) for item in bindings)
+                       or not _valid_digest(item[2]) for item in bindings)
                 or tuple(sorted(set(bindings))) != bindings):
             raise ValueError("selected observer roles must be bounded sorted root catalog bindings")
-        if any(action_id not in self.registered_action_ids
-               for _artifact_id, _sha256, action_id in bindings):
-            raise ValueError("selected observer role action is absent from the loader action table")
+        if (not isinstance(self.process_roles, tuple) or len(self.process_roles) > MAX_ACTIONS
+                or any(not isinstance(item, NativeProcessRoleSelection) for item in self.process_roles)
+                or tuple(sorted(item.role_id for item in self.process_roles))
+                    != tuple(item.role_id for item in self.process_roles)):
+            raise ValueError("selected process roles must be a bounded sorted tuple")
+        if any(item.profile_generation != self.generation
+               or item.native_package_generation != self.package_generation
+               for item in self.process_roles):
+            raise ValueError("selected process role generations differ from the active process/package pair")
+        selected_role_ids = {item.role_id for item in self.process_roles}
+        if any(role_id not in selected_role_ids or action_id not in self.registered_action_ids
+               for role_id, _artifact_id, _sha256, action_id in bindings):
+            raise ValueError("selected observer role action is absent from its independent role/action tables")
+
+
+@dataclass(frozen=True, slots=True)
+class NativeProcessRoleSelection:
+    """Protected process-role catalog identity, separate from adapter actions."""
+
+    role_id: str
+    role_artifact_id: str
+    role_sha256: str
+    profile_generation: str
+    native_package_generation: str
+    role_source_receipt_handle: str
+    module_name: str
+    closure_member_path: str
+    role_source_revision: str
+    role_source_tree_sha256: str
+    registration_ids: tuple[str, ...]
+    action_binding_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in ("role_id", "role_artifact_id", "profile_generation",
+                     "native_package_generation", "role_source_receipt_handle"):
+            _identifier(getattr(self, name), name)
+        for name in ("role_sha256", "role_source_tree_sha256"):
+            _digest(getattr(self, name), name)
+        member = self.closure_member_path
+        parts = PurePosixPath(member).parts if isinstance(member, str) else ()
+        if (not isinstance(self.module_name, str)
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", self.module_name)
+                or not isinstance(member, str) or not member or "\\" in member
+                or PurePosixPath(member).is_absolute() or not parts
+                or any(part in {"", ".", ".."} for part in parts)
+                or PurePosixPath(member).as_posix() != member
+                or not isinstance(self.role_source_revision, str) or not self.role_source_revision
+                or any(ord(char) < 0x20 for char in self.role_source_revision)):
+            raise ValueError("selected process-role module provenance is invalid")
+        for name in ("registration_ids", "action_binding_ids"):
+            values = getattr(self, name)
+            if (not isinstance(values, tuple) or len(values) > MAX_ACTIONS
+                    or any(not _identifier_value(value) for value in values)
+                    or tuple(sorted(set(values))) != values):
+                raise ValueError(f"selected process role {name} must be bounded and unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +176,49 @@ class LoadedPackageClosureProof:
     issued_monotonic: float
     expires_monotonic: float
     service_generation_digest: str
+    role_id: str
+    role_source_receipt_handle: str
+    role_module_name: str
+    role_closure_member_path: str
+    role_source_revision: str
+    role_source_tree_sha256: str
+    role_module_device: int
+    role_module_inode: int
+    role_module_sha256: str
+    role_module_size_bytes: int
+    observed_registration_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedProcessRoleObservation:
+    """Loader-channel observation of an imported protected process-role module."""
+
+    role_id: str
+    module_name: str
+    closure_member_path: str
+    module_file_sha256: str
+    module_file_device: int
+    module_file_inode: int
+    module_file_size_bytes: int
+
+    def __post_init__(self) -> None:
+        if (not _identifier_value(self.role_id)
+                or not isinstance(self.module_name, str)
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", self.module_name)):
+            raise ValueError("observed process-role module identity is invalid")
+        member = self.closure_member_path
+        parts = PurePosixPath(member).parts if isinstance(member, str) else ()
+        if (not isinstance(member, str) or not member or "\\" in member
+                or PurePosixPath(member).is_absolute() or not parts
+                or any(part in {"", ".", ".."} for part in parts)
+                or PurePosixPath(member).as_posix() != member):
+            raise ValueError("observed process-role closure path is invalid")
+        if (type(self.module_file_device) is not int or self.module_file_device < 0
+                or type(self.module_file_inode) is not int or self.module_file_inode <= 0
+                or type(self.module_file_size_bytes) is not int
+                or not 0 <= self.module_file_size_bytes <= 16 * 1024 * 1024):
+            raise ValueError("observed process-role inode identity is invalid")
+        _digest(self.module_file_sha256, "observed process-role module digest")
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,9 +471,9 @@ def active_native_catalog_resolver(bindings: Any, *,
                                    ) -> Callable[[Any], NativeLoaderSelection]:
     """Resolve the unique loader/action role set from active protected bindings.
 
-    Package choice comes from the manager-owned handle's profile/generation and
-    the active typed source-observer joins. No path, package, role, or action
-    selector is accepted from a worker.
+    Package choice comes from the manager-owned process generation plus the
+    observer's protected native-package generation. Process roles, adapters,
+    registrations, and effect actions remain distinct catalog records.
     """
     from .source_observers import SourceObserverEnrollment
 
@@ -388,44 +495,94 @@ def active_native_catalog_resolver(bindings: Any, *,
         observers = [item for item in candidates.values()
                      if isinstance(item, SourceObserverEnrollment)
                      and item.profile_id == profile_id and item.generation == generation]
-        package_ids = {item.package_id for item in observers}
-        if len(package_ids) != 1:
-            raise AuthorityDenied("native.package", "profile generation has no unique active observer package")
-        package_id = next(iter(package_ids))
-        package = catalog_resolver(package_id, generation)
+        package_ids = {(item.package_id, item.native_package_generation)
+                       for item in observers if item.native_package_generation}
+        if len(package_ids) != 1 or any(not item.native_package_generation for item in observers):
+            raise AuthorityDenied("native.package", "process generation has no unique native package generation")
+        package_id, package_generation = next(iter(package_ids))
+        package = catalog_resolver(package_id, package_generation)
+        role_records = getattr(package, "process_role_records", None)
+        action_records = getattr(package, "action_records", None)
+        registration_records = getattr(package, "registration_records", None)
         if (getattr(package, "package_id", None) != package_id
                 or getattr(package, "profile_id", None) != profile_id
-                or getattr(package, "generation", None) != generation
-                or not isinstance(getattr(package, "adapter_records", None), Mapping)):
-            raise AuthorityDenied("native.package", "selected package differs from active protected joins")
+                or getattr(package, "generation", None) != package_generation
+                or getattr(package, "profile_generation", None) != generation
+                or not isinstance(role_records, Mapping)
+                or not isinstance(action_records, Mapping)
+                or not isinstance(registration_records, Mapping)):
+            raise AuthorityDenied("native.package", "selected package differs from active protected role joins")
         observer_by_id = {item.observer_enrollment_id: item for item in observers}
-        role_actions: set[tuple[str, str, str]] = set()
+        role_actions: set[tuple[str, str, str, str]] = set()
+        selected_roles: dict[str, NativeProcessRoleSelection] = {}
         action_ids: set[str] = set()
-        for adapter in package.adapter_records.values():
-            action_id = getattr(adapter, "action_id", None)
-            adapter_id = getattr(adapter, "adapter_artifact_id", None)
-            adapter_sha = getattr(adapter, "adapter_sha256", None)
-            observer_ids = getattr(adapter, "observer_enrollment_ids", None)
-            if (not _identifier_value(action_id) or not _identifier_value(adapter_id)
-                    or not _valid_digest(adapter_sha) or not isinstance(observer_ids, tuple)):
-                raise AuthorityDenied("native.package", "active native adapter role binding is malformed")
-            action_ids.add(action_id)
-            for observer_id in observer_ids:
-                observer = observer_by_id.get(observer_id)
-                if observer is None:
-                    continue
-                if (observer.role_artifact_id != adapter_id
-                        or observer.role_sha256 != adapter_sha
-                        or observer.source_action_id != action_id):
-                    raise AuthorityDenied("native.package", "source observer role does not match selected adapter action")
-                role_actions.add((adapter_id, adapter_sha, action_id))
-        if not action_ids or not role_actions:
-            raise AuthorityDenied("native.package", "selected package has no exact source observer/action role")
+        registration_ids: set[str] = set()
+        for observer in observers:
+            role = role_records.get(observer.role_id)
+            if (role is None or role.package_id != package_id
+                    or role.native_package_generation != package_generation
+                    or role.profile_id != profile_id or role.profile_generation != generation
+                    or observer.observer_enrollment_id not in role.observer_enrollment_ids
+                    or observer.role_artifact_id != role.role_artifact_id
+                    or observer.role_sha256 != role.role_sha256
+                    or observer.role_source_receipt_handle != role.role_source_receipt_handle
+                    or observer.role_module_name != role.module_name
+                    or observer.role_closure_member_path != role.closure_member_path
+                    or observer.role_source_revision != role.role_source_revision
+                    or observer.role_source_tree_sha256 != role.role_source_tree_sha256):
+                raise AuthorityDenied("native.package", "source observer does not match its protected process role")
+            previous_role = selected_roles.get(role.role_id)
+            selected_role = NativeProcessRoleSelection(
+                role_id=role.role_id, role_artifact_id=role.role_artifact_id,
+                role_sha256=role.role_sha256, profile_generation=role.profile_generation,
+                native_package_generation=role.native_package_generation,
+                role_source_receipt_handle=role.role_source_receipt_handle,
+                module_name=role.module_name, closure_member_path=role.closure_member_path,
+                role_source_revision=role.role_source_revision,
+                role_source_tree_sha256=role.role_source_tree_sha256,
+                registration_ids=tuple(sorted(role.registration_ids)),
+                action_binding_ids=tuple(sorted(role.action_binding_ids)),
+            )
+            if previous_role is not None and previous_role != selected_role:
+                raise AuthorityDenied("native.package", "process role assignment is ambiguous")
+            selected_roles[role.role_id] = selected_role
+            matching_actions = [item for item in action_records.values()
+                                if item.action_binding_id in role.action_binding_ids
+                                and item.action_id == observer.source_action_id
+                                and observer.observer_enrollment_id in item.observer_enrollment_ids
+                                and (observer.source_action_binding_id is None
+                                     or item.action_binding_id == observer.source_action_binding_id)]
+            if len(matching_actions) != 1:
+                raise AuthorityDenied("native.package", "source action is absent or ambiguous within its process role")
+            action = matching_actions[0]
+            if (action.generation != package_generation
+                    or action.target_id != observer.target_id or action.recipient != observer.recipient
+                    or any(registration_id not in registration_records
+                           for registration_id in role.registration_ids)):
+                raise AuthorityDenied("native.package", "source role action or registration join is stale")
+            registrations_for_action = tuple(sorted(
+                registration_id for registration_id in role.registration_ids
+                if registration_id in registration_records
+                and any(getattr(binding, "action_binding_id", None) == action.action_binding_id
+                        for binding in getattr(registration_records[registration_id], "action_bindings", ()))
+            ))
+            expected_source_registrations = getattr(observer, "source_registration_ids", ())
+            if (not isinstance(expected_source_registrations, tuple)
+                    or not expected_source_registrations
+                    or tuple(sorted(set(expected_source_registrations))) != expected_source_registrations
+                    or registrations_for_action != expected_source_registrations):
+                raise AuthorityDenied("native.package", "selected source registration/action foreign keys differ")
+            registration_ids.update(role.registration_ids)
+            action_ids.add(action.action_id)
+            role_actions.add((role.role_id, role.role_artifact_id, role.role_sha256, action.action_id))
+        if not action_ids or not role_actions or not selected_roles:
+            raise AuthorityDenied("native.package", "selected package has no exact process-role/source-action join")
         return NativeLoaderSelection(
             process_id=process_id,
             package_id=package.package_id,
             profile_id=profile_id,
             generation=generation,
+            package_generation=package_generation,
             compiled_closure_sha256=package.compiled_closure_sha256,
             entrypoint_sha256=package.entrypoint_sha256,
             resolver_sha256=package.resolver_sha256,
@@ -433,7 +590,9 @@ def active_native_catalog_resolver(bindings: Any, *,
             loader_role_artifact_id=package.entrypoint_artifact_id,
             loader_role_sha256=package.entrypoint_sha256,
             registered_action_ids=tuple(sorted(action_ids)),
+            registered_registration_ids=tuple(sorted(registration_ids)),
             observer_role_action_bindings=tuple(sorted(role_actions)),
+            process_roles=tuple(sorted(selected_roles.values(), key=lambda item: item.role_id)),
         )
 
     return resolve
@@ -530,9 +689,11 @@ class _ProgressRecord:
     phase: str
     package_id: str
     generation: str
+    package_generation: str
     entrypoint_sha256: str
     resolver_sha256: str
-    registered_action_ids: tuple[str, ...]
+    registered_registration_ids: tuple[str, ...]
+    loaded_process_roles: tuple[LoadedProcessRoleObservation, ...]
 
 
 @dataclass(slots=True)
@@ -633,16 +794,27 @@ def create_native_loader_channel(runtime_directory: Path) -> NativeLoaderChannel
 
 
 def encode_loader_progress(*, launch_nonce: str, sequence: int, phase: str,
-                           package_id: str, generation: str,
+                           package_id: str, generation: str, package_generation: str,
                            entrypoint_sha256: str, resolver_sha256: str,
-                           registered_action_ids: tuple[str, ...] | list[str]) -> bytes:
+                           registered_registration_ids: tuple[str, ...] | list[str],
+                           loaded_process_roles: tuple[LoadedProcessRoleObservation, ...] | list[LoadedProcessRoleObservation] = ()) -> bytes:
     """Encode one canonical progress frame for the selected loader hook."""
     record = {
-        "schema": 1, "launch_nonce": launch_nonce, "sequence": sequence,
+        "schema": 2, "launch_nonce": launch_nonce, "sequence": sequence,
         "phase": phase, "package_id": package_id, "generation": generation,
+        "package_generation": package_generation,
         "entrypoint_sha256": entrypoint_sha256,
         "resolver_sha256": resolver_sha256,
-        "registered_action_ids": list(registered_action_ids),
+        "registered_registration_ids": list(registered_registration_ids),
+        "loaded_process_roles": [
+            {"role_id": item.role_id, "module_name": item.module_name,
+             "closure_member_path": item.closure_member_path,
+             "module_file_sha256": item.module_file_sha256,
+             "module_file_device": item.module_file_device,
+             "module_file_inode": item.module_file_inode,
+             "module_file_size_bytes": item.module_file_size_bytes}
+            for item in loaded_process_roles
+        ],
     }
     payload = _canonical_json(record)
     if len(payload) > MAX_PROGRESS_BYTES:
@@ -898,16 +1070,45 @@ class RootNativeLoaderObservationStore:
             self.revoke_launch(entry.handle)
             raise AuthorityDenied("native.mount", "current mount or process identity differs from loaded package selection")
         observer_role_binding = (
+            getattr(observer, "role_id", None),
             getattr(observer, "role_artifact_id", None),
             getattr(observer, "role_sha256", None),
             getattr(observer, "source_action_id", None),
         )
+        role = next((item for item in selection.process_roles
+                     if item.role_id == getattr(observer, "role_id", None)), None)
+        observed_role = (None if not entry.progress else next(
+            (item for item in entry.progress[0].loaded_process_roles
+             if item.role_id == getattr(observer, "role_id", None)), None))
         if (getattr(observer, "profile_id", None) != selection.profile_id
                 or getattr(observer, "generation", None) != selection.generation
                 or getattr(observer, "package_id", None) != selection.package_id
+                or getattr(observer, "native_package_generation", None) != selection.package_generation
+                or role is None
+                or getattr(observer, "role_source_receipt_handle", None) != role.role_source_receipt_handle
+                or getattr(observer, "role_module_name", None) != role.module_name
+                or getattr(observer, "role_closure_member_path", None) != role.closure_member_path
+                or getattr(observer, "role_source_revision", None) != role.role_source_revision
+                or getattr(observer, "role_source_tree_sha256", None) != role.role_source_tree_sha256
                 or observer_role_binding not in selection.observer_role_action_bindings
-                or getattr(observer, "source_action_id", None) not in selection.registered_action_ids):
+                or getattr(observer, "source_action_id", None) not in selection.registered_action_ids
+                or observed_role is None
+                or not set(role.registration_ids).issubset(entry.progress[-1].registered_registration_ids)):
             raise AuthorityDenied("native.observer", "protected observer role or action is outside loaded package closure")
+        verified_module = _verify_mounted_role_module(
+            live_peer.pid, mount.mount_path, role, observed_role)
+        if verified_module is None:
+            self.revoke_launch(entry.handle)
+            raise AuthorityDenied("native.loader", "loaded role module origin differs from the mounted package bytes")
+        module_device, module_inode, module_digest, module_size = verified_module
+        # Recheck both process lease and exact mount after opening the module
+        # origin, so a PID reuse or mount replacement cannot race proof minting.
+        self._assert_current_launch(entry)
+        current_mount = self.custody_resolver.resolve_native_package_for_peer(
+            live_peer.pid, live_peer.pidfd)
+        if current_mount is None or current_mount != mount_proof:
+            self.revoke_launch(entry.handle)
+            raise AuthorityDenied("native.mount", "package mount changed while role module identity was verified")
         now = self.clock()
         with self._lock:
             if (self._closed or entry.revoked
@@ -940,7 +1141,11 @@ class RootNativeLoaderObservationStore:
                         or previous.source_root_device != mount.mount_source_device
                         or previous.source_root_inode != mount.mount_source_inode
                         or previous.loader_ready_event_id != entry.ready_event_id
-                        or previous.observed_entrypoint_action_ids != entry.progress[-1].registered_action_ids):
+                        or previous.observed_registration_ids != entry.progress[-1].registered_registration_ids
+                        or previous.role_module_device != module_device
+                        or previous.role_module_inode != module_inode
+                        or previous.role_module_sha256 != module_digest
+                        or previous.role_module_size_bytes != module_size):
                     self.revoke_launch(entry.handle)
                     raise AuthorityDenied("native.mount", "mounted or loaded package identity changed during its lease")
                 return previous
@@ -968,10 +1173,24 @@ class RootNativeLoaderObservationStore:
                 loader_role_artifact_id=observer_role_binding[0],
                 loader_role_sha256=observer_role_binding[1],
                 loader_ready_event_id=entry.ready_event_id,
-                observed_entrypoint_action_ids=entry.progress[-1].registered_action_ids,
+                # v134 authenticates registration IDs. Action binding remains
+                # a separate selected catalog join; an old action-named field
+                # must never be populated by relabeling registration claims.
+                observed_entrypoint_action_ids=(),
                 issued_monotonic=issued,
                 expires_monotonic=expires,
                 service_generation_digest=selection.service_generation_digest,
+                role_id=role.role_id,
+                role_source_receipt_handle=role.role_source_receipt_handle,
+                role_module_name=role.module_name,
+                role_closure_member_path=role.closure_member_path,
+                role_source_revision=role.role_source_revision,
+                role_source_tree_sha256=role.role_source_tree_sha256,
+                role_module_device=module_device,
+                role_module_inode=module_inode,
+                role_module_sha256=module_digest,
+                role_module_size_bytes=module_size,
+                observed_registration_ids=entry.progress[-1].registered_registration_ids,
             )
             if entry.proofs is None:
                 entry.proofs = {}
@@ -1198,17 +1417,28 @@ class RootNativeLoaderObservationStore:
                 or record.launch_nonce != entry.launch_nonce
                 or record.package_id != selected.package_id
                 or record.generation != selected.generation
+                or record.package_generation != selected.package_generation
                 or record.entrypoint_sha256 != selected.entrypoint_sha256
                 or record.resolver_sha256 != selected.resolver_sha256):
             raise AuthorityDenied("native.loader", "loader progress differs from the selected package sequence")
-        if sequence == 0 and record.registered_action_ids:
-            raise AuthorityDenied("native.loader", "entrypoint import event contains action claims")
-        if sequence == 1 and record.registered_action_ids != selected.registered_action_ids:
-            raise AuthorityDenied("native.loader", "registered action table differs from the protected manifest")
+        role_ids = tuple(role.role_id for role in record.loaded_process_roles)
+        if role_ids != tuple(role.role_id for role in selected.process_roles):
+            raise AuthorityDenied("native.loader", "loaded module origins do not cover the selected process roles")
+        for actual, role in zip(record.loaded_process_roles, selected.process_roles):
+            if (actual.module_name != role.module_name
+                    or actual.closure_member_path != role.closure_member_path
+                    or actual.module_file_sha256 != role.role_sha256):
+                raise AuthorityDenied("native.loader", "loaded module origin differs from the protected process role")
+        if sequence == 0 and record.registered_registration_ids:
+            raise AuthorityDenied("native.loader", "entrypoint import event contains registration claims")
+        if sequence == 1 and record.registered_registration_ids != selected.registered_registration_ids:
+            raise AuthorityDenied("native.loader", "registered tool table differs from the protected manifest")
         if sequence == 2 and (previous is None
-                              or record.registered_action_ids != previous.registered_action_ids
-                              or record.registered_action_ids != selected.registered_action_ids):
-            raise AuthorityDenied("native.loader", "ready event changed the registered action table")
+                              or record.registered_registration_ids != previous.registered_registration_ids
+                              or record.registered_registration_ids != selected.registered_registration_ids):
+            raise AuthorityDenied("native.loader", "ready event changed the registered tool table")
+        if sequence > 0 and (previous is None or record.loaded_process_roles != previous.loaded_process_roles):
+            raise AuthorityDenied("native.loader", "loaded process-role origins changed after import")
 
     def _assert_current_launch(self, entry: _LaunchObservation) -> None:
         if (entry.revoked or self._closed or self.clock() >= entry.deadline
@@ -1278,6 +1508,73 @@ def _pidfd_poll(pidfd: int) -> bool:
     return bool(poller.poll(0))
 
 
+def _verify_mounted_role_module(pid: int, mount_path: str,
+                                role: NativeProcessRoleSelection,
+                                observed: LoadedProcessRoleObservation
+                                ) -> tuple[int, int, str, int] | None:
+    """Open the claimed module beneath the live process root without symlinks.
+
+    The loader channel's module origin is only a claim until the root reopens
+    that exact normalized closure member under the current PID's root and
+    compares filesystem identity and bytes to the protected role artifact.
+    """
+    if (type(pid) is not int or pid <= 0 or not isinstance(mount_path, str)
+            or not mount_path.startswith("/") or "\\" in mount_path):
+        return None
+    mount_parts = PurePosixPath(mount_path).parts[1:]
+    member_parts = PurePosixPath(role.closure_member_path).parts
+    if (not mount_parts or any(part in {"", ".", ".."} for part in mount_parts)
+            or any(part in {"", ".", ".."} for part in member_parts)):
+        return None
+    flags_dir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags_file = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    opened: list[int] = []
+    try:
+        # `/proc/<pid>/root` is a kernel magic link to the task root; follow
+        # that one anchor, then prohibit symlinks for every package component.
+        current_fd = os.open(f"/proc/{pid}/root", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        opened.append(current_fd)
+        # A native package mount contains a fixed package envelope (manifest,
+        # resolver, dependencies) and places the verified compiled closure at
+        # ``closure/``. ``closure_member_path`` is relative to that closure,
+        # as pinned by NativeProcessRoleRecord; resolving it at the package
+        # root would inspect a different path and make valid role proofs
+        # impossible.
+        for component in (*mount_parts, "closure", *member_parts[:-1]):
+            current_fd = os.open(component, flags_dir, dir_fd=current_fd)
+            opened.append(current_fd)
+        file_fd = os.open(member_parts[-1], flags_file, dir_fd=current_fd)
+        opened.append(file_fd)
+        info = os.fstat(file_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o222 or info.st_nlink != 1
+                or info.st_size > 16 * 1024 * 1024):
+            return None
+        digest = hashlib.sha256()
+        remaining = info.st_size
+        while remaining:
+            chunk = os.read(file_fd, min(128 * 1024, remaining))
+            if not chunk:
+                return None
+            digest.update(chunk)
+            remaining -= len(chunk)
+        observed_digest = digest.hexdigest()
+        if ((info.st_dev, info.st_ino) != (observed.module_file_device, observed.module_file_inode)
+                or info.st_size != observed.module_file_size_bytes
+                or observed_digest != observed.module_file_sha256
+                or observed_digest != role.role_sha256):
+            return None
+        return info.st_dev, info.st_ino, observed_digest, info.st_size
+    except OSError:
+        return None
+    finally:
+        for fd in reversed(opened):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def _parse_progress(payload: bytes) -> _ProgressRecord:
     try:
         text = payload.decode("utf-8", "strict")
@@ -1289,21 +1586,42 @@ def _parse_progress(payload: bytes) -> _ProgressRecord:
         raise AuthorityDenied("native.loader", "loader progress JSON is malformed or noncanonical") from None
     if not isinstance(raw, dict) or set(raw) != _PROGRESS_FIELDS:
         raise AuthorityDenied("native.loader", "loader progress fields are unknown or incomplete")
-    if (type(raw["schema"]) is not int or raw["schema"] != 1
+    if (type(raw["schema"]) is not int or raw["schema"] != 2
             or not _nonce(raw["launch_nonce"])
             or type(raw["sequence"]) is not int or raw["sequence"] not in (0, 1, 2)
             or raw["phase"] not in _PHASES
             or any(not isinstance(raw[key], str) or not raw[key]
-                   for key in ("package_id", "generation"))
+                   for key in ("package_id", "generation", "package_generation"))
             or any(not _valid_digest(raw[key]) for key in _DIGEST_FIELDS)
-            or not isinstance(raw["registered_action_ids"], list)
-            or len(raw["registered_action_ids"]) > MAX_ACTIONS
-            or any(not isinstance(item, str) or not item for item in raw["registered_action_ids"])
-            or raw["registered_action_ids"] != sorted(set(raw["registered_action_ids"]))):
+            or not isinstance(raw["registered_registration_ids"], list)
+            or len(raw["registered_registration_ids"]) > MAX_ACTIONS
+            or any(not _identifier_value(item) for item in raw["registered_registration_ids"])
+            or raw["registered_registration_ids"] != sorted(set(raw["registered_registration_ids"]))
+            or not isinstance(raw["loaded_process_roles"], list)
+            or len(raw["loaded_process_roles"]) > MAX_ACTIONS):
         raise AuthorityDenied("native.loader", "loader progress field types or bounds are invalid")
+    roles: list[LoadedProcessRoleObservation] = []
+    try:
+        for item in raw["loaded_process_roles"]:
+            if not isinstance(item, dict) or set(item) != {
+                    "role_id", "module_name", "closure_member_path", "module_file_sha256",
+                    "module_file_device", "module_file_inode", "module_file_size_bytes"}:
+                raise ValueError("invalid loaded role fields")
+            roles.append(LoadedProcessRoleObservation(
+                item["role_id"], item["module_name"], item["closure_member_path"],
+                item["module_file_sha256"], item["module_file_device"],
+                item["module_file_inode"], item["module_file_size_bytes"],
+            ))
+        if tuple(sorted(role.role_id for role in roles)) != tuple(role.role_id for role in roles):
+            raise ValueError("loaded roles are not sorted")
+        if len({role.role_id for role in roles}) != len(roles):
+            raise ValueError("loaded roles are duplicated")
+    except (ValueError, TypeError):
+        raise AuthorityDenied("native.loader", "loaded process-role origins are malformed") from None
     return _ProgressRecord(raw["launch_nonce"], raw["sequence"], raw["phase"], raw["package_id"],
-                           raw["generation"], raw["entrypoint_sha256"],
-                           raw["resolver_sha256"], tuple(raw["registered_action_ids"]))
+                           raw["generation"], raw["package_generation"], raw["entrypoint_sha256"],
+                           raw["resolver_sha256"], tuple(raw["registered_registration_ids"]),
+                           tuple(roles))
 
 
 def _canonical_json(value: Any) -> bytes:

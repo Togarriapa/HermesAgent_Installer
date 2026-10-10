@@ -81,6 +81,31 @@ class RemoteAuthorityRPCContracts(unittest.TestCase):
         self.assertEqual(set(calls[0][1]), {"access_jwt_b64", "request"})
         self.assertEqual(base64.b64decode(calls[0][1]["access_jwt_b64"]), b"jwt-bytes")
 
+    def test_native_channel_context_client_uses_opaque_handle_and_strict_bounded_response(self):
+        now = 10.0
+        result = {
+            "schema": 1,
+            "source_receipt_handle": "R" * 43,
+            "producer_context_delivery_handle": "C" * 43,
+            "payload_sha256": "a" * 64,
+            "payload_size_bytes": 37,
+            "expires_monotonic": 20.0,
+        }
+        calls = []
+        client = AuthorityClient(Path("/run/not-used.sock"), monotonic=lambda: now)
+        client._rpc = lambda operation, payload, **kwargs: calls.append((operation, payload, kwargs)) or result
+
+        delivery = client.take_native_channel_context("C" * 43)
+
+        self.assertEqual(delivery.to_wire(), result)
+        self.assertEqual(calls[0][0], "native.channel.context.take")
+        self.assertEqual(calls[0][1], {"schema": 1, "producer_context_delivery_handle": "C" * 43})
+        self.assertNotIn("source_receipt_handle", calls[0][1])
+
+        client._rpc = lambda *_args, **_kwargs: {**result, "signed_context": {}}
+        with self.assertRaises(AuthorityDenied):
+            client.take_native_channel_context("C" * 43)
+
 
 if __name__ == "__main__":
     unittest.main()

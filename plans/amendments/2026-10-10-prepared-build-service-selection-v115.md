@@ -1,0 +1,3 @@
+# Prepared build service selection v115
+
+HI-T09/HI-T13 genuine firstsetup cycle: prepared active service_records empty, but buildcatalog needed HostServiceProfile. Pin separate source-owned setup-only build service template and actual NSS/root/current setup selection row in VerifiedRootBootstrapPolicy.catalog_selections.prepared_build_service_records; finite Xpra builder adapter consumes sealed subject directly, does notfakeactiveprofile or relabelcontrollerPID. Existing activebuildcatalog unchanged. Exact artifact/fields/API adjacent. No account/host mutation inplanning; actualfactory/Linuxbuild/acceptance open, baseline frozen.

@@ -457,3 +457,221 @@ The system SHALL execute only the v106 selected empty-parameter Xpra build recip
 #### Scenario: Archive hash presented as executable identity
 - **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
 - **THEN** build admission or publication is denied.
+
+### Requirement: Exact regular Xpra build topology
+The system SHALL use the v109 source-verified transform module and exact original regular staging directory topology, mount the PM builder executable as a file and publish the archive as non-executable data.
+
+#### Scenario: Missing source topology
+- **WHEN** staging omits a required original manifest directory or changes the selected source links
+- **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Source bounded local registration results
+The system SHALL use exact v110 local handler result envelopes and recursive public JSON limits while preserving untrusted source classification and actual owner CAS controls. It SHALL NOT replace protected passthrough backend result authority with generic object schemas.
+
+#### Scenario: Protected backend schema missing
+- **WHEN** finance, wallet or source-receipt output lacks its actual bounded typed backend result schema
+- **THEN** that executable candidate remains unavailable without omitting the original family acceptance obligation.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.
+
+### Requirement: Actual local schema artifact receipt join
+The system SHALL bind each v112 local result schema ID to exact packaged bytes and actual root source receipt plus installed bounded validator before executable registration. It SHALL preserve pre-active assembly receipt staging distinct from active generation publication.
+
+#### Scenario: Source table presented as receipt
+- **WHEN** a source-reviewed schema table lacks actual packaged artifact and installed validator proof
+- **THEN** executable registration remains unavailable.
+
+### Requirement: Separate protected native action and registration records
+The system SHALL use v113 exact typed action, registration and workflow arrays to join actual source42 Hermes registrations to source61 backend routes, selected schemas/observers/effects and staged installation receipts before atomic active publication. It SHALL preserve original canonical invocation arguments and independent child authorization.
+
+#### Scenario: Multiple actions share one adapter
+- **WHEN** source registrations select multiple reviewed actions under one adapter
+- **THEN** unique action binding IDs preserve each exact route instead of collapsing or inferring action authority from tool names.
+
+### Requirement: Bounded passthrough result data
+The system SHALL wrap source handler passthrough results in the v113 bounded closed tool-result envelope without treating backend data as authority or execution success. Actual operation/account/receipt validation remains required.
+
+#### Scenario: Backend data claims authorization
+- **WHEN** returned JSON contains authority-like or readiness fields
+- **THEN** those fields remain untrusted data and cannot affect authorization or acceptance.
+
+### Requirement: Exact catalog compatible local schema identities
+The system SHALL use the v114 literal catalog-compatible schema/artifact IDs for eight local result schemas without widening static catalog grammar or minting aliases.
+
+#### Scenario: Earlier impossible identity
+- **WHEN** a source row contains the superseded colon artifact ID
+- **THEN** selection fails until the corrected exact source map is used.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Bounded source-derived native financial and web results
+
+The installer SHALL validate source-derived financial observations and web result artifacts using v120 exact selected schemas and actual root receipt currentness, preserving untrusted result semantics.
+
+#### Scenario: False web artifact receipt
+
+- **WHEN** a web result supplies a structurally valid receipt that does not resolve current root artifact/source membership
+- **THEN** result promotion is denied and no provenance or authority is inferred from the returned dictionary
+
+### Requirement: Source exact financial account alias domain
+
+The installer SHALL preserve v121 actual source account alias regex and128-character bound when validating selected financial observations.
+
+#### Scenario: Valid selected alias exceeds96 characters
+
+- **WHEN** the actual selected alias satisfies the source128-character domain
+- **THEN** it is not rejected solely by the superseded v120 max96 ceiling; all other proof and output checks remain required
+
+### Requirement: Independent selected native process role association
+
+The installer SHALL join observer process identity to explicit v123 protected process-role module/source/current loaded proofs, independently of action adapters.
+
+#### Scenario: Action adapter is supplied as a process role
+
+- **WHEN** an observer role has no exact protected process-role member/current loaded module proof
+- **THEN** source capture is denied even if a selected action adapter exists with the same name or artifact digest
+
+### Requirement: Actual root retained web content provenance
+
+The installer SHALL issue native web result metadata only from v126 genuine root authorized response observation, bounded captured CAS and current profile/effect/native/transport/source ancestry.
+
+#### Scenario: Transport dictionary without root captured receipt
+
+- **WHEN** a transport response provides a hash and receipt dictionary without root registry membership and actual captured content
+- **THEN** native result provenance promotion is denied, while the transport observation remains distinguishable from an artifact receipt
+
+### Requirement: Setup intent selectors and current private profile proof
+The system SHALL distinguish stable root setup principal/namespace/private-purpose intent from current <=30s authenticated authority snapshots, using the v133 exact source/subject/session/generation joins. It SHALL mint a distinct private-purpose selection only from the actual adopted native principal/profile and verified v91 owner-private namespace source within actual root TTY configuration.
+
+#### Scenario: Identity changes during preparation
+- **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
+- **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Authenticated selected process-role delivery
+The system SHALL deliver exact v123 role records through the v134 verified manifest and resolver digest join, and accept loaded-role proof only from actual selected import observations independently checked against held closure/source/current process custody.
+
+#### Scenario: Manifest role has not been imported
+- **WHEN** a catalog role exists but the current loader has no matching actual module origin observation
+- **THEN** the role is unavailable for source issuance and no loaded proof is inferred from an adapter.
+
+### Requirement: Genuine preactive native policy configuration source v137
+The installer SHALL prepare native action, registration, workflow, process-role and observer policy from actual root-selected source and target evidence before initial assembly; prepared empty capability state and static schema inventory SHALL NOT substitute for permission or force an active-before-assembly cycle.
+
+#### Scenario: A selected family lacks target or source proof
+- **WHEN** a required target/account/permission/schema/observer/runtime source is not observed
+- **THEN** all-family coverage retains the registration as configurable pending with exact next step, emits no unproved executable candidate and preserves the original functional obligation
+
+### Requirement: Purpose-bound PUBLIC input web permission v138
+The installer SHALL authorize public web egress only from genuine root-observed PUBLIC input and current exact selected public web permission; PRIVATE or UNKNOWN source ancestry SHALL remain denied even when a public scope is configured.
+
+#### Scenario: Private input requests an enrolled public website
+- **WHEN** any retained parent/input source is PRIVATE or UNKNOWN or the public permission is absent/revoked/expired
+- **THEN** public web dispatch and retries are denied without dropping ancestry, widening private consent or adding budget
+
+### Requirement: Current web registration source receipt cohort v140
+The installer SHALL select all registrations sharing the updated web/voice/epic source module only against its current actual held release module receipt and renewed source capture; old audit inventory SHALL NOT authenticate changed bytes.
+
+#### Scenario: Source receipt identifies historical module bytes
+- **WHEN** current selected module SHA differs from the retained registration/action source receipt
+- **THEN** assembly denies the stale join and requires actual current source observation without editing immutable audit evidence
+
+### Requirement: Current bounded finance registration source cohort v141
+The installer SHALL bind the updated financial source module and all its actual registrations to current held source/schema receipts and bounded selected-alias observations; stale inventory or generic backend output SHALL NOT substitute for source/execution authority.
+
+#### Scenario: Root financial read omits selected account alias
+- **WHEN** the read result lacks the actual root-selected alias or violates the closed scalar/UTF8/byte bounds
+- **THEN** the native result is denied without fabricating an alias or promoting backend claims to account/transaction proof
+
+### Requirement: Protected public web scope source v142
+The installer SHALL publish only source-selected public web scopes with exact target, effect and configuration receipt joins and SHALL require separate current PUBLIC input permission.
+
+#### Scenario: Private input names a configured public URL
+- **WHEN** a request carries PRIVATE or UNKNOWN ancestry despite a configured public scope
+- **THEN** egress is denied without widening the private consent or interpreting scope configuration as input permission
+
+### Requirement: Durable setup source choice signing v143
+The installer SHALL retain purpose-specific setup choices through genuine existing key custody and protected journal records and SHALL adopt them only through actual active publication before issuing fresh runtime permissions.
+
+#### Scenario: Setup process-local choice seal survives no durable adoption
+- **WHEN** runtime permission is requested from a choice without verified durable signature and publication adoption
+- **THEN** permission is denied rather than constructing a parallel authority service or treating old setup evidence as current authority
+
+### Requirement: Completed source choice ordering v146
+The installer SHALL distinguish held root observation from completed signed choice and full source verification, accurately name release identity and authenticate complete public scope payloads from retained configuration.
+
+#### Scenario: Fixed root is observed before child choice
+- **WHEN** only the fixed model store root is held
+- **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Durable adopted public choice currentness v153
+The installer SHALL verify current signed source choice/revocation and active adoption beyond setup closure while requiring separate fresh per-input installed-root TTY disclosure and effect authority.
+
+#### Scenario: Original signed choice is revoked under unchanged active pointer
+- **WHEN** the root journal choice epoch/revocation changes
+- **THEN** the adoption/current permission denies despite an unchanged policy pointer and never extends an expired setup or runtime lease
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Runtime choice revocation source v156
+The installer SHALL consume genuine current installed actor and one-use foreground TTY revocation observation tied to the displayed adopted choice before signing a durable revoked epoch.
+
+#### Scenario: Revocation request carries caller epoch or expired setup proof
+- **WHEN** no genuine current runtime revocation observation exists
+- **THEN** the registry denies without changing the signed choice or restoring an expired lease
+
+### Requirement: Native capture profiles v158
+The installer SHALL validate raw root-observed result bytes against the exact selected protected result schema before source capture and deliver only genuine current peer-bound handles.
+
+#### Scenario: Worker supplies a ToolMessage without a completed root result
+- **WHEN** no matching current root invocation/result/schema observation exists
+- **THEN** source capture denies and no worker message or generic object schema supplies authority
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created
+
+### Requirement: Application build admission v161
+The installer SHALL execute application runtime preparation only through a finite root-selected managed build profile, genuine held input/service/output proofs and one-use setup grant.
+
+#### Scenario: Final selection lacks a reviewed source driver or backend closure
+- **WHEN** an application environment build is requested
+- **THEN** custody denies before start without inventing a driver hash, caller script, future output digest or active runtime row
+
+### Requirement: Qualification root adapter v162
+The installer SHALL isolate fixture publication/session/key authority under the exact observed recipe-owned run root while preserving production constants and source/kernel effect validation.
+
+#### Scenario: Fixture handle is presented to production consumer
+- **WHEN** a qualification session or signed fixture receipt targets production authority
+- **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted

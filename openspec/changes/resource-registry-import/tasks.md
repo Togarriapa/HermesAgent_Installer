@@ -60,3 +60,19 @@ HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-aud
 Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
 
 Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Local audio device/consent v118: `plans/amendments/2026-10-10-local-audio-device-consent-v118.md`; original RG-F03/R0060/HI-T08 obligations remain open.
+
+- [ ] RG-T118.1: audio owner retain exact device/TTY/runtime/controller proof and enforce cancellation/lease during blocking capture.
+
+- [ ] RG-T118.2: source/controller owner join selected audio v94 schema and retained one-use capture/consent artifact into genuine source issuance without fabricated identity.
+
+- [ ] RG-T118.3: test changed enumeration, default fallback, runtime closure mismatch, overflow, revocation/cancel/timeout and byte zeroization; actual device/OS/ARM acceptance remains pending.
+
+Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retained-peer-delivery-v129.md`; genuine reduced source/context issuer/store required, real channel acceptance open.
+
+- [ ] HI-T129.1: channel owner replace placeholder publish with actual retained-event/current native peer proof and atomic reduced issuer/store queue join.
+
+- [ ] HI-T129.2: source/controller/authority/native-input owner implement fixed root delivery derivation and genuine peer-bound handles with distinct source versus target identity.
+
+- [ ] HI-T129.3: test forged syntactic handles, old peer/epoch/generation, source retarget, missing ancestry/consent/store, duplicate publication and partial issuance rollback; actual all-five channel runtime acceptance open.

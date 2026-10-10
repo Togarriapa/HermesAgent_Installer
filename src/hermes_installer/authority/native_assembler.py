@@ -77,6 +77,9 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         issuer_rows = [_thaw(row) for row in definitions.source_issuer_records]
         schema_rows = [_thaw(row) for row in definitions.native_schema_records]
         registrations = [_thaw(row) for row in definitions.action_registration_records]
+        native_registrations = [_thaw(row) for row in definitions.registration_records]
+        candidates = [_thaw(row) for row in definitions.candidate_records]
+        process_roles = [_thaw(row) for row in definitions.process_role_records]
         overlay = definitions.boundary_overlay_bytes
         overlay_source = definitions.boundary_overlay_source_commit
         closure_defs = tuple(definitions.closure_members)
@@ -90,12 +93,15 @@ def assemble_native_package(selection: _Selection, definitions: Any,
             or not isinstance(overlay_source, str) or len(overlay_source) != 40
             or not isinstance(member_bytes, Mapping)):
         raise NativeAssemblyDenied("native package identity or selected overlay is invalid")
-    if set(schema_bytes) != {row.get("schema_id") for row in schema_rows}:
+    # RootNativeAssemblyDefinitions uses the strict projection's canonical
+    # schema key `id`. Do not accept a second alias here: the same row set is
+    # consumed by native_registration_projection before compilation.
+    if (any(not isinstance(row, Mapping) or not isinstance(row.get("id"), str)
+            or "schema_id" in row for row in schema_rows)
+            or set(schema_bytes) != {row["id"] for row in schema_rows}):
         raise NativeAssemblyDenied("native schema documents do not match selected schema records")
-
-    # Candidate rows must be root-projected from exact Hermes tool registrations.
-    # They are validated by the same immutable model used by the native loader.
-    from hermes_installer.mcp.native_schema_catalog import NativeCandidateIndex
+    _validate_process_role_records(selection, process_roles, closure_defs)
+    process_roles_sha256 = hashlib.sha256(_canonical(process_roles)).hexdigest()
 
     resolver = {
         "schema": 1,
@@ -106,15 +112,23 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         "actions": registrations,
         "source_issuers": issuer_rows,
         "native_schemas": schema_rows,
+        "process_role_records_sha256": process_roles_sha256,
         "effect_selection_receipt_handles": list(definitions.effect_selection_receipt_handles),
     }
     resolver_bytes = _canonical(resolver)
     resolver_sha = hashlib.sha256(resolver_bytes).hexdigest()
-    candidates = tuple(definitions.candidate_records)
-    candidate_index = NativeCandidateIndex(
-        package_id, profile_id, generation, resolver_sha, candidates,
-    )
-    candidate_bytes = candidate_index.to_bytes()
+    registration_projection_sha = hashlib.sha256(_canonical(native_registrations)).hexdigest()
+    candidate_index = {
+        "schema": 1,
+        "package_id": package_id,
+        "profile_id": profile_id,
+        "generation": generation,
+        "resolver_sha256": resolver_sha,
+        "registration_projection_sha256": registration_projection_sha,
+        "registrations": native_registrations,
+        "candidates": candidates,
+    }
+    candidate_bytes = _canonical(candidate_index)
 
     closure: dict[str, tuple[bytes, int]] = {}
     for row in closure_defs:
@@ -161,6 +175,9 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         "schema": 1, "package_id": package_id, "profile_id": profile_id,
         "generation": generation, "closure_files": closure_rows,
         "adapters": adapters, "dependencies": dependencies,
+        "process_role_records": process_roles,
+        "process_role_records_sha256": process_roles_sha256,
+        "resolver_sha256": resolver_sha,
         "candidate_index": {
             "artifact_id": f"native-candidate-index:{package_id}:{generation}",
             "relative_path": "catalog/native-candidates.json",
@@ -288,3 +305,73 @@ def _thaw(value: Any) -> Any:
     if isinstance(value, (tuple, list)):
         return [_thaw(item) for item in value]
     return value
+
+
+def _validate_process_role_records(selection: _Selection, rows: list[dict[str, Any]],
+                                   closure_members: Sequence[Any]) -> None:
+    """Require explicit source-backed role/module joins for every new package."""
+    import re
+    fields = {
+        "role_id", "package_id", "native_package_generation", "profile_id",
+        "profile_generation", "role_artifact_id", "role_sha256",
+        "role_source_receipt_handle", "module_name", "closure_member_path",
+        "role_source_revision", "role_source_tree_sha256", "observer_enrollment_ids",
+        "registration_ids", "action_binding_ids", "workflow_ids",
+    }
+    sha = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+    module = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z", re.ASCII)
+    safe_id = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z", re.ASCII)
+    if not isinstance(rows, list) or not rows:
+        raise NativeAssemblyDenied("selected package has no reviewed process-role records")
+    member_by_path = {row.relative_path: row for row in closure_members}
+    identifiers: set[str] = set()
+    modules: set[str] = set()
+    paths: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != fields:
+            raise NativeAssemblyDenied("selected process-role row has unknown or missing fields")
+        role_id = row["role_id"]
+        path = row["closure_member_path"]
+        if (not isinstance(role_id, str) or not safe_id.fullmatch(role_id) or role_id in identifiers
+                or row["package_id"] != selection.package_id
+                or row["native_package_generation"] != selection.native_package_generation
+                or row["profile_id"] != selection.service_profile_id
+                or row["profile_generation"] != selection.service_generation
+                or not isinstance(row["role_artifact_id"], str) or not safe_id.fullmatch(row["role_artifact_id"])
+                or not isinstance(row["role_sha256"], str) or not sha.fullmatch(row["role_sha256"])
+                or not isinstance(row["role_source_receipt_handle"], str)
+                or not safe_id.fullmatch(row["role_source_receipt_handle"])
+                or not isinstance(row["module_name"], str) or not module.fullmatch(row["module_name"])
+                or not isinstance(path, str) or not _safe_closure_path(path)
+                or not isinstance(row["role_source_revision"], str)
+                or not re.fullmatch(r"[0-9a-f]{40,64}", row["role_source_revision"], re.ASCII)
+                or not isinstance(row["role_source_tree_sha256"], str)
+                or not sha.fullmatch(row["role_source_tree_sha256"])):
+            raise NativeAssemblyDenied("selected process-role identity or generation is invalid")
+        member = member_by_path.get(path)
+        if member is None or member.sha256 != row["role_sha256"]:
+            raise NativeAssemblyDenied("process-role module is not its exact source-receipted closure member")
+        if row["module_name"] in modules or path in paths:
+            raise NativeAssemblyDenied("selected process-role module identity collides")
+        for key in ("observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids"):
+            values = row[key]
+            if (not isinstance(values, list) or any(not isinstance(value, str) for value in values)
+                    or len(values) != len(set(values))
+                    or any(not safe_id.fullmatch(value) for value in values)
+                    or values != sorted(values)):
+                raise NativeAssemblyDenied("selected process-role foreign-key list is invalid")
+        if not row["observer_enrollment_ids"]:
+            raise NativeAssemblyDenied("selected process role has no enrolled observers")
+        identifiers.add(role_id)
+        modules.add(row["module_name"])
+        paths.add(path)
+    if rows != sorted(rows, key=lambda row: row["role_id"]):
+        raise NativeAssemblyDenied("process-role rows are not canonically ordered")
+
+
+def _safe_closure_path(value: str) -> bool:
+    from pathlib import PurePosixPath
+    path = PurePosixPath(value)
+    return (not path.is_absolute() and bool(path.parts)
+            and all(part not in {"", ".", ".."} for part in path.parts)
+            and "\\" not in value and "\x00" not in value)

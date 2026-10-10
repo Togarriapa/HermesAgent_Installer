@@ -28,8 +28,9 @@ modes, device/inode identity, and the complete file set.
 `RootInstallerInterpreterRegistry.provision_selected_bootstrap_interpreter()`
 acquires only the reviewed CPython 3.14.7 Linux aarch64/glibc archive and the
 exact PyYAML 6.0.3 CPython 3.14 wheel pinned by the selected
-`requirements-runtime.txt`. It disables ambient proxies and redirects, checks
-TLS response size and payload hashes, rejects unsafe archive members, verifies
+`requirements-runtime.txt`. It disables ambient proxies and permits only the
+reviewed CPython URL's single HTTPS release-asset redirect, checks TLS response
+size and payload hashes, rejects unsafe archive members, verifies
 wheel tags and every RECORD hash/size, then writes only the selected package
 into the dedicated prefix. Its actual interpreter probe checks CPython
 version, cache tag, SOABI, machine, ELF architecture, package version and

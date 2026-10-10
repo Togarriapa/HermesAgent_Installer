@@ -5,6 +5,7 @@ import os
 import secrets
 import time
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -371,7 +372,7 @@ def test_cron_protocol_event_requires_exact_selected_occurrence_replay_key():
     import hermes_installer.authority.resource_event_issuance as module
 
     issuer, _request, _registry, _service, record = _case()
-    event_id = secrets.token_urlsafe(32)
+    event_id = "E" + secrets.token_urlsafe(32)
     data = module.MappingProxyType({
         "schedule_enrollment_id": "schedule-demo",
         "scheduled_time_unix": 100,
@@ -405,6 +406,80 @@ def test_cron_protocol_event_requires_exact_selected_occurrence_replay_key():
     )
     with pytest.raises(AuthorityDenied, match="replay key changed"):
         issuer._validate_protocol_event_data(bad, selected, producer)
+
+
+@pytest.mark.parametrize("schema_id,schema_sha256,event_data,selected", [
+    ("channel-http-observed-event-v1",
+     "7626756c12b9020248423114e0df294fc7c2c5c74def36e535244de81bd4452c",
+     {"text": "hello", "session_id": "s" * 32, "request_id": "r" * 32,
+      "subject_id": "u" * 32, "raw_body_sha256": "a" * 64, "raw_body_size_bytes": 17},
+     SimpleNamespace(backend=SimpleNamespace(resource_id="channel"), resource_generation="g1",
+                    source_issuer=SimpleNamespace(issuer_channel_id="issuer-1"))),
+    ("channel-audio-observed-event-v1",
+     "cfbd9c9a41299293776666201298e4cdf3be388e91ec7c8ff05d2931520965fb",
+     {"session_id": "s" * 32, "capture_id": "c" * 32,
+      "audio_artifact_receipt_handle": "a" * 32, "audio_sha256": "b" * 64,
+      "audio_size_bytes": 32000, "format": "pcm-s16le-mono", "sample_rate_hz": 16000,
+      "duration_milliseconds": 1000},
+     SimpleNamespace(backend=SimpleNamespace(resource_id="channel"), resource_generation="g1",
+                    source_issuer=SimpleNamespace(issuer_channel_id="issuer-1"))),
+])
+def test_v94_native_http_audio_event_schemas_are_exact_and_bounded(
+        schema_id, schema_sha256, event_data, selected):
+    import hermes_installer.authority.resource_event_issuance as module
+
+    issuer, *_ = _case()
+    issuer.selected_protocol_schema = lambda *_args: (schema_id, schema_sha256)
+    replay_fields = ({"session_id": event_data["session_id"],
+                      "request_id": event_data["request_id"],
+                      "body_sha256": event_data["raw_body_sha256"]}
+                     if schema_id == "channel-http-observed-event-v1" else
+                     {"session_id": event_data["session_id"],
+                      "capture_id": event_data["capture_id"],
+                      "audio_sha256": event_data["audio_sha256"]})
+    observation = module.RootValidatedRawObservation._from_issuer(
+        module._RAW_OBSERVATION_SEAL,
+        raw_observation_handle=secrets.token_urlsafe(32), raw_payload=b"bounded source bytes",
+        event_id=secrets.token_urlsafe(32), replay_key_sha256=canonical_digest(replay_fields),
+        observed_monotonic=10.0, event_data=module.ResourceEventContextIssuer._freeze_json(event_data),
+    )
+    producer = SimpleNamespace(source_kind="native-input", protocol_schema_id=schema_id,
+                               protocol_schema_sha256=schema_sha256)
+    issuer._validate_protocol_event_data(observation, selected, producer)
+
+    malformed = dict(event_data)
+    malformed["unexpected"] = "caller data"
+    forged = module.RootValidatedRawObservation._from_issuer(
+        module._RAW_OBSERVATION_SEAL,
+        raw_observation_handle=observation.raw_observation_handle,
+        raw_payload=observation.raw_payload, event_id=observation.event_id,
+        replay_key_sha256=observation.replay_key_sha256,
+        observed_monotonic=observation.observed_monotonic,
+        event_data=module.ResourceEventContextIssuer._freeze_json(malformed),
+    )
+    with pytest.raises(AuthorityDenied, match="differs from its selected schema"):
+        issuer._validate_protocol_event_data(forged, selected, producer)
+    replay_forged = module.RootValidatedRawObservation._from_issuer(
+        module._RAW_OBSERVATION_SEAL,
+        raw_observation_handle=observation.raw_observation_handle,
+        raw_payload=observation.raw_payload, event_id=observation.event_id,
+        replay_key_sha256="d" * 64, observed_monotonic=observation.observed_monotonic,
+        event_data=observation.event_data,
+    )
+    with pytest.raises(AuthorityDenied, match="replay key changed"):
+        issuer._validate_protocol_event_data(replay_forged, selected, producer)
+
+
+def test_v94_schema_catalog_digests_match_committed_schema_artifacts():
+    import hermes_installer.authority.resource_event_issuance as module
+
+    root = Path(__file__).parents[2]
+    schema_dir = root / "plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94"
+    for filename, schema_id in (
+            ("channel-http-observed-event-v1.json", "channel-http-observed-event-v1"),
+            ("channel-audio-observed-event-v1.json", "channel-audio-observed-event-v1")):
+        digest = hashlib.sha256((schema_dir / filename).read_bytes()).hexdigest()
+        assert module._PROTOCOL_SCHEMAS[schema_id] == digest
 
 
 def test_selected_producer_mints_one_use_proof_only_for_retained_live_ingress_custody():
@@ -457,7 +532,7 @@ def test_selected_producer_mints_one_use_proof_only_for_retained_live_ingress_cu
         "schedule_enrollment_id": "schedule-1", "scheduled_time_unix": 100,
     })
     raw_record = object()
-    event_id = secrets.token_urlsafe(32)
+    event_id = "E" + secrets.token_urlsafe(32)
 
     class _Producer:
         def __init__(self):

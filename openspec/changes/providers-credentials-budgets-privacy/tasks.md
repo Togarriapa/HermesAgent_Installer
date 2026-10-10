@@ -53,3 +53,29 @@ Native observer/delivery/composite v9: plans/amendments/2026-10-09-native-observ
 Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
 
 Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+- [ ] PR-T138.1 factory/consent: Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias.
+
+- [ ] HI-T138.2 source input/host authority: Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests.
+
+- [ ] RB-T138.3 web/native integration: Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance.
+
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance.
+
+- [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
+
+- [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.
+
+- [ ] SK-T151.1 host enrollment/factory/active compiler: Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins.
+
+- [ ] SK-T151.2 models/private providers/runtime composer: Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute.
+
+- [ ] HI-T153.1 consent/publisher/enrollment/runtime composer: Genuine durable adoption/current original source row+signature+epoch/revoke resolver beyond setupTTL, truthful postcommit recovery; no pointer-only verification.
+
+- [ ] HI-T153.2 publicTTY/consent/factory/source input: Runtime disclosure constructor with actual installed actor/oneuse rootTTY source adapter, distinctconsentID signedproducer/public-web source literal; no live setup dependency/private relabel.
+
+- [ ] HI-T156.1 Consent/publicTTY/host authority: actual runtime rootTTY revocation observation, finite signer transition and durable current epoch verification.
+
+- [ ] HI-T158.1 source observer/native observer/registration/factory: Publish held capture profile members; actual selected schema/result validator FKs and finite source/action rows; root effect/provider issuer then exact peer presentation delivery. Negative raw worker capture/malformed/stale/private ancestry tests.
+
+- [ ] HI-T158.2 host authority/consent: Exact finite revocation signature domain and closed canonical typed envelope, current row verification; no arbitrary signer.
