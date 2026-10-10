@@ -112,7 +112,7 @@ class RootPrivateMemoryEngine:
                 or routes.expires_monotonic <= self._monotonic()):
             raise PrivateMemoryEngineUnavailable("selected private memory engine route is incomplete or stale")
 
-    def _check(self, context: HostContext, timeout: float,
+    def _check(self, context: HostContext, action: str, timeout: float,
                cancelled: Callable[[], bool]) -> float:
         self._validate_selection()
         # The worker passes the signed stage context through unchanged. Current
@@ -120,6 +120,10 @@ class RootPrivateMemoryEngine:
         # root provider dispatcher at each attempt, not to adapter assertions.
         if type(context) is not HostContext:
             raise PermissionError("root-issued host context is required")
+        expected_purpose = "memory-extraction" if action == "extract" else "memory-embedding"
+        expected_operation = "memory.extract" if action == "extract" else "memory.embed"
+        if context.purpose != expected_purpose or context.operation != expected_operation:
+            raise PermissionError("private memory stage context does not match the selected route action")
         if (context.profile_id != self._routes.profile_id
                 or context.namespace_id != self._routes.namespace_id):
             raise PermissionError("private memory route belongs to another profile or namespace")
@@ -143,7 +147,7 @@ class RootPrivateMemoryEngine:
 
     def extract(self, *, text: str, context: HostContext, timeout: float,
                 cancelled: Callable[[], bool]) -> list[str]:
-        timeout = self._check(context, timeout, cancelled)
+        timeout = self._check(context, "extract", timeout, cancelled)
         if not isinstance(text, str) or not text or len(text.encode("utf-8")) > MAX_INPUT_BYTES:
             raise ValueError("private transcript is empty or exceeds its UTF-8 bound")
         request = {
@@ -200,7 +204,7 @@ class RootPrivateMemoryEngine:
 
     def embed(self, *, facts: list[str], context: HostContext, timeout: float,
               cancelled: Callable[[], bool]) -> list[list[float]]:
-        timeout = self._check(context, timeout, cancelled)
+        timeout = self._check(context, "embed", timeout, cancelled)
         if not isinstance(facts, list) or len(facts) > MAX_FACTS:
             raise ValueError("private embedding input must be a bounded ordered fact list")
         total = 0
