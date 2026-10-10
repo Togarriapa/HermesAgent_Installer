@@ -1054,3 +1054,16 @@ The installer SHALL admit vendor provenance only for the v207 exact libc6/u3/arm
 #### Scenario: Current metadata selects a different libc package
 - **WHEN** only u4, an unsigned u3 package, expired cache, changed trust anchor or mismatched control/installed bytes is available
 - **THEN** selected network capability remains unavailable without version substitution, host package change or acceptance promotion
+
+## ADDED Requirements
+
+### Requirement: Fresh root TTY handoff after acquisition
+The installer SHALL require the independent explicit same-candidate foreground TTY observation in planning/bootstrap-handoff-tty-reconfirmation-v208.json before delayed bootstrap handoff, without extending an expired proof or widening authority.
+
+#### Scenario: Acquisition outlasts initial TTY proof
+- **WHEN** fixed selected source/runtime staging outlasts the initial60s observation
+- **THEN** a new explicit exact-SHA re-entry and same-controller current proof are required before one-use handoff; original expired lineage is not current authorization
+
+#### Scenario: Reconfirmation drifts or repeats
+- **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
+- **THEN** handoff fails closed and preserves owned staged data without acquiring service authority

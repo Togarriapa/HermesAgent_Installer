@@ -356,3 +356,5 @@ Typed diagnostic source review v204: exact fd09b11d leaf replacements are in pla
 
 
 Finite fixture-owned NSS subject v206: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`. Existing HI173/178/197 source session issues genuine actual NSS receipt under its own fixture transaction/controller; no normal session scan/production marker authority. All acceptance OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation after slow acquisition, same original controller/action/source/runtime joins, unchanged60s proof TTL and one-use transition. planning/bootstrap-handoff-tty-reconfirmation-v208.json; BD-T208.1/VD-T208.2 OPEN.

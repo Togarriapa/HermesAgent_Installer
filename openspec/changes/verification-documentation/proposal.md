@@ -136,3 +136,5 @@ Finite fixture-owned NSS subject v206: `plans/amendments/2026-10-10-fixture-subj
 
 
 Raspberry Pi vendor dependency refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md defines only exact libc6/u3/arm64 signed evidence for reviewed Debian nft, per-archive retained trust anchors, bounded live/cache metadata and unchanged installed ELF/kernel proof. No package/key mutation; all acceptance OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation after slow acquisition, same original controller/action/source/runtime joins, unchanged60s proof TTL and one-use transition. planning/bootstrap-handoff-tty-reconfirmation-v208.json; BD-T208.1/VD-T208.2 OPEN.

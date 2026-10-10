@@ -446,3 +446,6 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 
 
 Existing HI-T173.1/HI-T178.2/HI-T197.3/VD-T197.4 include exact fixture subject NSS issuer/custody/cleanup in `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; remain OPEN.
+
+- [ ] BD-T208.1: Implement final-boundary explicit root TTY reconfirmation and one-use fresh proof with unchanged identity/source/runtime joins.
+- [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.

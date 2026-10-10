@@ -3105,5 +3105,17 @@
       ]
     },
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "bootstrap_handoff_tty_reconfirmation_v208": {
+    "contract": "planning/bootstrap-handoff-tty-reconfirmation-v208.json",
+    "tasks": {
+      "BD-T208.1": [
+        "BD-T203.1"
+      ],
+      "VD-T208.2": [
+        "BD-T208.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }
