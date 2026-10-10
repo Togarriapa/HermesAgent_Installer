@@ -375,6 +375,16 @@ def test_active_reservation_recovers_after_registry_restart_and_completes_idempo
         recovered.reservation_handle, publication, prepared_generation_id="generation-1",
         publication_handle=publication_handle, claim_digest=claim_digest)
     assert {row.receipt_id for row in retry} == set(receipt_ids)
+    with reopened._connect() as db:
+        db.execute(
+            "INSERT INTO reservations(reservation_handle,publication_handle,claim_digest,"
+            "prepared_generation_id,receipt_ids,transaction_handle,expires_monotonic,state) "
+            "SELECT ?,publication_handle,claim_digest,prepared_generation_id,receipt_ids,"
+            "transaction_handle,expires_monotonic,state FROM reservations WHERE reservation_handle=?",
+            ("R" * 48, recovered.reservation_handle),
+        )
+    with pytest.raises(NativeOutputReceiptDenied, match="does not resolve one"):
+        reopened.resolve_active_compilation_reservation(publication)
     current_time[0] = expires + 1
     with pytest.raises(NativeOutputReceiptDenied, match="does not resolve"):
         reopened.resolve_active_compilation_reservation(publication)
