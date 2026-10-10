@@ -365,6 +365,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
                 "schema_kind": schema_kind, "native_package_id": "package-a",
                 "native_package_generation": "package-gen-a", "adapter_id": HANDLER_ARTIFACT_ID,
                 "action_id": "action-mcp-read", "source_receipt_handle": "pending",
+                "size_bytes": len(schema_bytes[schema_id]), "derivation_receipt_handle": None,
             })
         stage = Path(tempfile.mkdtemp(prefix="mcp-schema-fixture-"))
         os.chmod(stage, 0o700)
