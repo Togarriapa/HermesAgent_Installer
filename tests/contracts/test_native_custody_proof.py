@@ -660,13 +660,23 @@ class RootLoaderObservationContracts(unittest.TestCase):
         observer = _observer(producer_uid=self.uid)
         context = _context(self.identity)
         pair_holder = []
+        gateway_child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        gateway_pidfd = os.pidfd_open(gateway_child.pid)
+        gateway_identity = LivePeerIdentity(
+            "gateway-profile", "gateway-generation", self.uid, 456,
+            _ROLE, "gateway-cgroup-test", "mnt:456;net:567",
+        )
 
         class _Broker:
             def resolve_pending_pair_for_context(_self, exact_context):
                 if exact_context != context:
                     return None
                 producer_fd = os.dup(self.child_pidfd)
-                gateway_fd = os.dup(self.child_pidfd)
+                gateway_fd = os.dup(gateway_pidfd)
                 pair = _PendingPair(
                     1, "pair-id", "bridge-id", "native-request",
                     canonical_digest(context.to_wire()), context.grant_id,
@@ -675,24 +685,41 @@ class RootLoaderObservationContracts(unittest.TestCase):
                     _PendingPeer("producer", "principal", observer.profile_id,
                                  observer.generation, self.child.pid, producer_fd,
                                  self.uid, self.identity, "loader-role", _ROLE),
-                    _PendingPeer("gateway", "principal", observer.profile_id,
-                                 observer.generation, self.child.pid, gateway_fd,
-                                 self.uid, self.identity, "loader-role", _ROLE),
+                    _PendingPeer("gateway", "principal", gateway_identity.profile_id,
+                                 gateway_identity.generation, gateway_child.pid, gateway_fd,
+                                 self.uid, gateway_identity, "gateway-loader-role", _ROLE),
                     (_DeliveryBinding(observer.observer_enrollment_id, "gateway"),),
                     time.monotonic() + 5,
                 )
                 pair_holder.append(pair)
                 return pair
 
-        selector = native_bridge_source_target_selector(_Broker())
-        selected = selector(observer, context)
-        self.assertEqual(selected.pid, self.child.pid)
-        self.assertEqual(selected.profile_id, observer.profile_id)
-        self.assertNotEqual(selected.pidfd, pair_holder[0].producer.pidfd)
-        with self.assertRaises(OSError):
-            os.fstat(pair_holder[0].producer.pidfd)
-        self.assertGreater(os.fstat(selected.pidfd).st_ino, 0)
-        os.close(selected.pidfd)
+        try:
+            selector = native_bridge_source_target_selector(_Broker())
+            selected = selector(observer, context)
+            self.assertEqual(selected.pid, gateway_child.pid)
+            self.assertNotEqual(selected.pid, pair_holder[0].producer.pid)
+            self.assertEqual(selected.profile_id, gateway_identity.profile_id)
+            self.assertEqual(selected.pidfd, pair_holder[0].gateway.pidfd)
+            with self.assertRaises(OSError):
+                os.fstat(pair_holder[0].producer.pidfd)
+            self.assertGreater(os.fstat(selected.pidfd).st_ino, 0)
+            os.close(selected.pidfd)
+        finally:
+            for peer in (pair_holder[0].gateway,) if pair_holder else ():
+                try:
+                    os.close(peer.pidfd)
+                except OSError:
+                    pass
+            try:
+                os.close(gateway_pidfd)
+            except OSError:
+                pass
+            try:
+                gateway_child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                gateway_child.kill()
+                gateway_child.wait(timeout=2)
 
 
 class NativeInputTargetResolverContracts(unittest.TestCase):
