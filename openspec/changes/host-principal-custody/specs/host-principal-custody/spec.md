@@ -689,3 +689,10 @@ The installer SHALL verify the exact fixture-only canonical authority/catalog en
 #### Scenario: Fixture catalog is swapped
 - **WHEN** catalog bytes disagree with the signed envelope or current fixture pointer
 - **THEN** the dedicated loader denies before creating any authority service
+
+### Requirement: Runtime role publication join v165
+The installer SHALL activate from the same genuine PM and native CAS receipt closure used by strict active compilation and SHALL freshly verify current committed enrollment for runtime health.
+
+#### Scenario: Generated native receipt is presented as static source receipt
+- **WHEN** activation receives a generated output through unrelated static artifact lookup
+- **THEN** it denies until the exact typed producer/CAS/source role projection is resolved
