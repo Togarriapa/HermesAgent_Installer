@@ -731,3 +731,10 @@ The installer SHALL use exact source-established native output roles and output 
 #### Scenario: Unknown overlay role is supplied
 - **WHEN** a receipt uses native-overlay-archive rather than native-boundary-overlay
 - **THEN** reservation and projection deny the unknown literal
+
+### Requirement: MCP discovery capture v171
+The installer SHALL separately validate and retain actual selected MCP discovery responses before deriving schemas, without treating metadata as tool execution.
+
+#### Scenario: Tools call is labelled discovery
+- **WHEN** actual retained request method is tools/call
+- **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it

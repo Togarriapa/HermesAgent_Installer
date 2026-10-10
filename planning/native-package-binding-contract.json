@@ -2281,5 +2281,41 @@
       }
     ],
     "acceptance": "All AC open; baseline unchanged."
+  },
+  "mcp_discovery_capture_v171": {
+    "schema": 1,
+    "requirements": [
+      "HI-T54",
+      "HI-T91",
+      "HI-T158"
+    ],
+    "why": "Actual NativeMCPDispatcher tools/list discovery requires retained raw response source receipt before MCPDiscoveryObservationRegistry derives schemas; selected tools/call result schema cannot validate a discovery envelope.",
+    "profile": {
+      "capture_schema_id": "native-root-mcp-discovery-response-v1",
+      "source_action_id": "root-mcp-tools-list-discovery-v1",
+      "source_kind": "tool-result",
+      "semantic_kind": "mcp-discovery-metadata",
+      "max_payload_bytes": 1048576,
+      "policy": "Source kind remains existing tool-result for retained SourceReceipt protocol compatibility, but event/profile is explicitly discovery metadata, never proof that a selected tool ran. All sensitivity/parent/recipient ceilings inherit actual current request/source context, no metadata-to-authority promotion."
+    },
+    "request": "Root retained actual canonical method tools/list, JSON-RPC ID and selected MCP endpoint/enrollment/schema-discovery request receipt/context/grant identify discovery. Purpose mcp-selected-schema-discovery is corroborating signed context only; worker label/flag cannot classify. Root NativeMCPDispatcher issued request must be retained before dispatch. Exact current peer/package/loaded role/source observer/action joins remain required, but result validator is this fixed discovery profile rather than a selected tool result FK. Unknown method cannot use this exception.",
+    "validation": {
+      "response": "Exact raw bytes <=1MiB, strict UTF8 JSON duplicate keys/nonfinite rejected. JSON-RPC 2.0, id equals actual retained request ID, exactly one success result and no error. Result tools array <=256, each actual tool name/description/inputSchema/outputSchema validated using existing bounded MCP discovery/schema derivation validators; bounded optional nextCursor/_meta/annotations stay untrusted metadata. Unknown envelope fields or unsupported schema fail current explicit validator. No selected tool-call result schema applied.",
+      "schema_source": "Profile policy is this source-owned held amendment; actual bytes validator uses existing MCPDiscoveryObservationRegistry/RootSchemaDerivationReceiptRegistry finite validators, not generic JSON object acceptance. Canonical derived child schema bytes/digest remain existing v92 rules. Raw transport bytes unchanged; canonical requirements only where existing derivation protocol specifies."
+    },
+    "callpoint": {
+      "method": "NativeRuntimeObserver.observe_mcp_discovery_result(actual_discovery_request_handle,response_bytes,context,grant,peer)->retained discovery source handle",
+      "order": "AuthorityService._perform_effect validates actual handler/target/grant and raw response, independently resolves genuine retained tools/list request then calls dedicated discovery observer BEFORE generic selected tools/call result observer. Dedicated observer validates request/response/current enrollment/source role/schema/profile, records root event and actual SourceReceipt with full original parents. _perform_effect returns this actual registered source_receipt_handle. MCPDiscoveryObservationRegistry.capture_tools_list consumes SAME retained witness and root bytes/context/grant, then derives schemas. No synthetic handle or selected tool invocation needed to pretend a call occurred.",
+      "ownership": "native observer/MCP dispatcher/source observer/broker owns actual retained request+witness joins; native policy producer adds this one finite source action/profile to the genuine source role selection. Source role is current loaded actual dispatch producer from existing selected package/proof, never inferred adapter/family label.",
+      "tool_call": "tools/call continues exact selected NativeInvocationRegistry action/result_schema FK validator and v158 native-registered-tool-result profile; no discovery exception for caller-labelled tools/call. Discovery event excluded from health selected-tool semantic success and turn tool-execution count unless transcript explicitly includes separate discovery metadata event."
+    },
+    "tasks": [
+      {
+        "id": "HI-T171.1",
+        "owner": "native observer/MCP dispatcher/source observer/schema broker/native policy",
+        "work": "Implement dedicated genuine tools/list request/result witness capture before schema derivation, exact fixed profile, parent/source/current role joins and wrong method/ID/endpoint/schema negatives; preserve selected-call result gating."
+      }
+    ],
+    "acceptance": "No live MCP or runtime acceptance implied; all AC open; baseline unchanged."
   }
 }
