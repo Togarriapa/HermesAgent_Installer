@@ -52,7 +52,9 @@ class NativeBundleReceipt:
     skill_digests: dict[str, str]
 
 
-def selected_profile_materialization(generation: str | Path, profile_id: str) -> dict[str, str]:
+def selected_profile_materialization(
+    generation: str | Path, profile_id: str, *, native_profile_key: str | None = None,
+) -> dict[str, str]:
     """Map one profile's selected generation closure to Hermes' real profile home.
 
     Pass the result to ``GenerationLifecycle.materialize`` after its verified
@@ -62,8 +64,12 @@ def selected_profile_materialization(generation: str | Path, profile_id: str) ->
     dependency closure, so an all-resources generation cannot be projected by
     accident into every profile.
     """
-    if not isinstance(profile_id, str) or not _PROFILE_ID.fullmatch(profile_id):
+    if (not isinstance(profile_id, str) or not _PROFILE_ID.fullmatch(profile_id)
+            or (native_profile_key is not None
+                and (not isinstance(native_profile_key, str)
+                     or not _PROFILE_ID.fullmatch(native_profile_key)))):
         raise NativeInstallError("selected profile id is malformed")
+    destination_profile_id = native_profile_key or profile_id
     root = Path(generation)
     ledger = root / "installer-registry" / "crosswalk.json"
     if ledger.is_symlink() or not ledger.is_file():
@@ -89,16 +95,20 @@ def selected_profile_materialization(generation: str | Path, profile_id: str) ->
         if not isinstance(staged, str) or not isinstance(target, str) or staged in mapping:
             raise NativeInstallError("native materialization row has invalid paths")
         if staged.startswith(f"homes/profiles/{profile_id}/"):
-            if target != "profiles/" + staged.removeprefix("homes/profiles/"):
+            expected_target = "profiles/" + staged.removeprefix("homes/profiles/")
+            if target != expected_target:
                 raise NativeInstallError("profile materialization target differs from native profile path")
-            mapping[staged] = "profiles/" + staged.removeprefix("homes/profiles/")
+            relative = staged.removeprefix(f"homes/profiles/{profile_id}/")
+            mapping[staged] = (relative if destination_profile_id == "default"
+                               else f"profiles/{destination_profile_id}/{relative}")
         elif staged.startswith("homes/skills/"):
             parts = staged.split("/")
             if len(parts) != 4 or parts[-1] != "SKILL.md":
                 raise NativeInstallError("staged native skill path is malformed")
             if target != f"skills/{parts[2]}/SKILL.md":
                 raise NativeInstallError("skill materialization target differs from native skill path")
-            mapping[staged] = f"profiles/{profile_id}/skills/{parts[2]}/SKILL.md"
+            mapping[staged] = (f"skills/{parts[2]}/SKILL.md" if destination_profile_id == "default"
+                               else f"profiles/{destination_profile_id}/skills/{parts[2]}/SKILL.md")
         # Other profiles/skill closures and non-native artifacts stay in the
         # installer generation and are never copied into this selected home.
     required_profile = f"homes/profiles/{profile_id}/SOUL.md"
@@ -122,6 +132,9 @@ profiles = list_profiles()
 matches = [p for p in profiles if p.name == profile_id]
 if len(matches) != 1:
     raise RuntimeError("selected profile was not uniquely discoverable")
+visible_profiles = sorted({p.name for p in profiles})
+if os.environ.get("HERMES_REQUIRE_SOLE_PROFILE") == "1" and visible_profiles != [profile_id]:
+    raise RuntimeError("selected Desktop home exposes profiles other than its sole user entry")
 profile_home = Path(matches[0].path).resolve()
 
 # This is the function Hermes uses to read the profile identity for prompt slot #1.
@@ -158,6 +171,7 @@ for name in skill_ids:
     digests["skill:" + name] = hashlib.sha256(content.encode()).hexdigest()
 print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_id,
                   "skills": sorted(names), "loaded": loaded,
+                  "visible_profiles": visible_profiles,
                   "digests": digests}, sort_keys=True))
 '''
 
@@ -235,6 +249,52 @@ def _hermes_revision(source: Path) -> str:
     return revision
 
 
+_PROFILE_LIST_PROBE = r'''import json, sys
+from pathlib import Path
+if sys.version_info[:2] != (3, 14):
+    raise RuntimeError("Hermes native probe requires official Python 3.14 runtime")
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root))
+from hermes_cli.profiles import list_profiles
+print(json.dumps(sorted({row.name for row in list_profiles()}), sort_keys=True))
+'''
+
+
+def discover_profile_names(*, hermes_source: str | Path, python: str | Path,
+                           hermes_root: str | Path, timeout: float = 20.0) -> tuple[str, ...]:
+    """Return names from the pinned Hermes API for this exact selected home."""
+    source_input = Path(hermes_source)
+    root_input = Path(hermes_root)
+    interpreter = Path(os.path.abspath(os.fspath(python)))
+    if (source_input.is_symlink() or root_input.is_symlink()
+            or not interpreter.is_file() or not os.access(interpreter, os.X_OK)):
+        raise NativeInstallError("selected Hermes source, home, or Python runtime is unavailable")
+    source = source_input.resolve(strict=True)
+    root = root_input.resolve(strict=True)
+    revision = _hermes_revision(source)
+    if revision != PINNED_HERMES_REVISION:
+        raise NativeInstallError("Hermes source checkout does not match the reviewed pin")
+    env = {
+        "PATH": os.environ.get("PATH", ""), "HOME": str(root),
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"), "HERMES_HOME": str(root),
+        "PYTHONPATH": str(source), "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    try:
+        result = subprocess.run(
+            [str(interpreter), "-c", _PROFILE_LIST_PROBE, str(source)],
+            cwd=source, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, timeout=timeout, check=True,
+        )
+        names = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise NativeInstallError("pinned Hermes profile listing failed") from None
+    if (not isinstance(names, list) or any(not isinstance(name, str) for name in names)
+            or names != sorted(set(names))):
+        raise NativeInstallError("pinned Hermes returned an invalid profile listing")
+    return tuple(names)
+
+
 def discover_and_load_selected(
     *,
     hermes_source: str | Path,
@@ -242,12 +302,14 @@ def discover_and_load_selected(
     hermes_root: str | Path,
     profile_id: str,
     skill_ids: Sequence[str],
+    require_sole_profile: bool = False,
     timeout: float = 20.0,
 ) -> NativeInstallReceipt:
     """Use pinned Hermes APIs to discover a profile and load selected skills.
 
-    ``hermes_root/profiles/<profile_id>`` is the profile home Hermes discovers;
-    its ``skills/`` directory must contain the selected native skill trees.
+    ``default`` resolves to ``hermes_root``; named profiles resolve to
+    ``hermes_root/profiles/<profile_id>``. The selected home contains its
+    native ``skills/`` directory and identity files.
     Only roots supplied by the installer are used. The caller retains lifecycle
     ownership of writing, rollback, overlays, and activation.
     """
@@ -279,7 +341,8 @@ def discover_and_load_selected(
     if root_input.is_symlink():
         raise NativeInstallError("selected Hermes root cannot be a symlink")
     root = root_input.resolve(strict=True)
-    profile_home = (root / "profiles" / profile_id).resolve(strict=False)
+    profile_home = (root if profile_id == "default"
+                    else root / "profiles" / profile_id).resolve(strict=False)
     if root.is_symlink() or not profile_home.is_relative_to(root):
         raise NativeInstallError("selected Hermes roots escape the installer-owned root")
     if not profile_home.is_dir() or profile_home.is_symlink():
@@ -290,6 +353,7 @@ def discover_and_load_selected(
         "HOME": str(root),
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
         "HERMES_HOME": str(root),
+        "HERMES_REQUIRE_SOLE_PROFILE": "1" if require_sole_profile else "0",
         "PYTHONPATH": str(source),
         "PYTHONNOUSERSITE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -307,7 +371,10 @@ def discover_and_load_selected(
         raise NativeInstallError("pinned Hermes profile/skill discovery or content loading failed") from None
     found_skills = set(payload.get("skills", ()))
     loaded_skills = tuple(payload.get("loaded", ()))
-    if payload.get("profile") != profile_id or not set(skill_ids).issubset(found_skills) or set(loaded_skills) != set(skill_ids):
+    if (payload.get("profile") != profile_id
+            or (require_sole_profile and payload.get("visible_profiles") != [profile_id])
+            or not set(skill_ids).issubset(found_skills)
+            or set(loaded_skills) != set(skill_ids)):
         raise NativeInstallError("pinned Hermes returned an incomplete native discovery receipt")
     return NativeInstallReceipt(
         hermes_revision=revision,

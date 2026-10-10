@@ -18,6 +18,7 @@ from hermes_installer.authority.native_materialization import (
     NativeMaterializedItem,
     _retained_resource_definitions,
     RootNativeMaterialization,
+    _deny_legacy_user_profile_identity,
     _atomic_service_write_at,
     _hash_file_at,
     _open_parent,
@@ -57,6 +58,30 @@ def test_root_operation_selects_only_native_profile_and_resolved_skill_closure()
     assert all(path.startswith(f"profiles/{profile_id}/") for path in selected)
     assert all(path.startswith("homes/profiles/") or path.startswith("homes/skills/")
                for path in compiled if path.startswith("homes/"))
+
+
+def test_primary_resources_profile_projects_to_the_only_desktop_identity_jarvis() -> None:
+    registry = _registry()
+    discovery = registry.discover(["profiles/hermes@*"])
+    compiled = registry.materialize(discovery)
+    selected = _selected_files(compiled, "hermes", native_profile_key="default")
+    bindings = {row.resource_id: row for row in registry.crosswalk(discovery)}
+    definitions = _retained_resource_definitions(registry, discovery, compiled)
+    source_profile = next(row for row in definitions
+                          if row.kind == "profiles" and row.resource_id == "hermes")
+
+    assert len([row for row in registry.resolver.raw if row.startswith("profiles/")]) == 208
+    assert bindings["hermes"].native_path == "."
+    assert {path.split("/", 1)[0] for path in selected} <= {"SOUL.md", "profile.yaml", "config.yaml", "skills"}
+    assert b"display_name: Jarvis" in selected["profile.yaml"]
+    assert selected["SOUL.md"].startswith(b"# Jarvis\n")
+    assert b"through Jarvis before delivery" in selected["SOUL.md"]
+    assert b"hermes-response-contract" in selected["SOUL.md"]
+    # Stable source identity and source manifest bytes remain available beside
+    # the explicitly transformed native presentation/instructions.
+    assert source_profile.resource_id == "hermes"
+    assert source_profile.source_path == "profiles/hermes.yaml"
+    assert b"name: hermes" in compiled[source_profile.source_path]
 
 
 def test_all_bundled_profiles_compile_to_their_exact_profile_local_skill_closures() -> None:
@@ -137,6 +162,17 @@ def test_duplicate_hermes_destination_is_rejected() -> None:
 def test_public_materialization_receipt_cannot_contain_filesystem_paths() -> None:
     names = set(NativeMaterializationReceipt.__dataclass_fields__)
     assert not any("path" in name.casefold() or name.endswith("_root") for name in names)
+
+
+def test_legacy_hermes_identity_blocks_before_jarvis_migration_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    legacy = home / "profiles" / "hermes"
+    legacy.mkdir(parents=True)
+    (legacy / "SOUL.md").write_text("keep my existing profile", encoding="utf-8")
+
+    with pytest.raises(NativeMaterializationDenied, match="ownership-journaled Jarvis migration"):
+        _deny_legacy_user_profile_identity(home)
+    assert (legacy / "SOUL.md").read_text(encoding="utf-8") == "keep my existing profile"
 
 
 def test_native_mutation_is_denied_outside_root_authority() -> None:
