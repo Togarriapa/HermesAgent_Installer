@@ -159,6 +159,43 @@ def test_owner_overlay_observer_catalog_is_generation_scoped_when_unselected():
         )
 
 
+def test_native_worker_candidate_projection_uses_only_the_exact_catalog_generation():
+    network = {"id": "network-a"}
+    active = {"network_id": "network-a", "process_profile_id": "profile-a",
+              "service_enrollment_id": "service-a", "service_generation": "generation-a",
+              "process_profile_generation": "generation-a"}
+    runtime = {"id": "runtime-a"}
+    profile = SimpleNamespace(profile_id="profile-a", generation="generation-a",
+                              runtime_artifact_ids=(), operation_recipes={})
+    service = SimpleNamespace(enrollment_id="service-a", generation="generation-a")
+
+    class CandidateCatalog:
+        digest = "a" * 64
+        _native_worker_network_records = {"network-a": network}
+        _active_network_generation_records = {"active-a": active}
+
+        @staticmethod
+        def resolve_native_worker_generation(network_id, profile_id, *, service_generation_digest):
+            assert (network_id, profile_id, service_generation_digest) == (
+                "network-a", "profile-a", "a" * 64)
+            return network, active, runtime
+
+        @staticmethod
+        def resolve(_enrollment_id, _generation):
+            return service
+
+        @staticmethod
+        def resolve_profile_generation(_profile_id, _generation):
+            return profile
+
+    candidates = ProtectedEnrollmentCatalog.resolve_selected_native_worker_generation_candidates(
+        CandidateCatalog(), "a" * 64)
+    assert candidates == ((network, active, runtime, profile, service),)
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        ProtectedEnrollmentCatalog.resolve_selected_native_worker_generation_candidates(
+            CandidateCatalog(), "b" * 64)
+
+
 def _private_endpoint_row(**overrides):
     row = {
         "binding_id": "endpoint-selection-a", "profile_id": "profile-a",
