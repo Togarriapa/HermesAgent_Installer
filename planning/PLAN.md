@@ -146,3 +146,6 @@ Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstr
 
 
 Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`; RT-T209.1..4 → VD-T209.5, all OPEN. Actual npm/Electron/Xpra/gateway acquisition, managed build and materialized current runtime are distinct; all AC OPEN.
+
+
+Production remote NSS/roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md`; RT-T212.1 → RT-T212.2 → VD-T212.3 OPEN, exact production three identities/owned roots/current adoption/verified-dead rollback; v209 AppDir finite targets corrected, all source pins/AC OPEN.

@@ -335,3 +335,22 @@ The installer SHALL use the exact finite acquisition, retained receipt, managed 
 #### Scenario: Current managed runtime issued
 - **WHEN** the concrete registry revalidates original selected setup/choice, held source/toolchain/dependency/builder/schema, managed terminal/CAS and materialized executable/package joins
 - **THEN** it SHALL project only the exact v202 role receipt, keep target acceptance separate, and revoke or deny stale/copied/replayed/unsupported inputs without lazy acquisition or sandbox weakening
+
+
+### Requirement: Genuine production remote role NSS and root custody v212
+The installer SHALL use the exact three-role source-owned account/group/root/current receipt/adoption/cleanup contracts in `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md`, without relabeling the native-worker or fixture subject.
+
+#### Scenario: Foreign identity or caller selection
+- **WHEN** a caller supplies account/UID/path/profile/recipe, or existing NSS/marker/root state is foreign or current issuer ownership cannot be proven
+- **THEN** preparation SHALL deny and preserve that state rather than reuse, overwrite or normalize it
+
+#### Scenario: Adopted identity cleanup requested
+- **WHEN** cleanup lacks exact transaction-created disposition or the current publisher/manager still retains an adopted role or live subject
+- **THEN** deletion SHALL deny; owned rollback requires verified-dead units/PIDFDs and current marker/NSS/root checks and SHALL preserve populated private data
+
+### Requirement: Exact finite official AppDir link target representation
+The installer SHALL implement v212's corrected v209 member schema and independently verify exact reviewed readlink target bytes/size/hash/ownership and bounded package-local immutable nondirectory target closure before CAS/materialization.
+
+#### Scenario: Unknown or escaping AppDir link
+- **WHEN** a link is unknown, absolute, escaping, cyclic, dangling, a directory target or differs from the reviewed literal target/member identity
+- **THEN** package admission SHALL deny without broadening generic symlink authority or disabling Electron sandbox

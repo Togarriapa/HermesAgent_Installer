@@ -3151,5 +3151,27 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "production_remote_role_nss_roots_v212": {
+    "contract": "planning/production-remote-role-nss-roots-v212.json",
+    "amendment": "plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md",
+    "tasks": {
+      "RT-T212.1": [],
+      "RT-T212.2": [
+        "RT-T212.1"
+      ],
+      "VD-T212.3": [
+        "RT-T212.1",
+        "RT-T212.2"
+      ]
+    },
+    "existing_runtime_tasks": [
+      "HI-T160.1",
+      "HI-T197.2",
+      "VD-T197.4",
+      "RT-T209.3",
+      "VD-T209.5"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }
