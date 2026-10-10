@@ -13,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import time
 import base64
 from dataclasses import dataclass, fields
@@ -183,6 +184,161 @@ class ExistingModelArtifactObservation:
 
     def claims(self) -> dict[str, Any]:
         return _canonical_claims(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingModelTreeFacts:
+    """Digest and root identity from an already selected held model directory."""
+
+    tree_manifest_sha256: str
+    member_observation_sha256: str
+    root_device: int
+    root_inode: int
+    root_uid: int
+    root_gid: int
+    root_mode: int
+    member_count: int
+    total_size_bytes: int
+    members: tuple[Mapping[str, Any], ...]
+
+
+def inspect_existing_model_tree(root_fd: int, manifest: Any, *,
+                                expected_uid: int = 0) -> ExistingModelTreeFacts:
+    """Verify a selected model tree by descriptor without accepting a path.
+
+    The expected manifest is the independently source-pinned
+    ``models.artifacts.ArtifactManifest``. Every regular file is opened with
+    ``O_NOFOLLOW`` beneath the held directory FD, checked for exact size and
+    source digest (SHA-256 or Git blob SHA-1), and also assigned an observed
+    SHA-256 plus inode/owner/mode facts. Symlinks, special files, extra files,
+    untrusted-writable roots/members, and mutable observations are rejected.
+    This function can be expensive on a 429 GB model; it performs no download
+    or copy and is called only after an explicit protected existing-tree
+    selection.
+    """
+    if os.geteuid() != expected_uid or expected_uid != 0:
+        raise PrivateDeploymentDenied("existing model tree observation requires the root authority")
+    return _inspect_existing_model_tree_fd(root_fd, manifest, expected_uid=expected_uid)
+
+
+def _inspect_existing_model_tree_fd(root_fd: int, manifest: Any, *,
+                                    expected_uid: int) -> ExistingModelTreeFacts:
+    """Descriptor walker shared with clearly classified unprivileged unit fixtures."""
+    from hermes_installer.models.artifacts import ArtifactManifest
+
+    if (type(root_fd) is not int or root_fd < 0 or type(expected_uid) is not int
+            or expected_uid < 0 or type(manifest) is not ArtifactManifest
+            or not manifest.fully_verifiable):
+        raise PrivateDeploymentDenied("existing model tree needs root and a fully pinned source manifest")
+    root_info = os.fstat(root_fd)
+    if (not stat.S_ISDIR(root_info.st_mode)
+            or root_info.st_uid != expected_uid or root_info.st_mode & 0o022):
+        raise PrivateDeploymentDenied("selected model root is not a protected root-owned directory")
+    expected = {item.name: item for item in manifest.files}
+    if len(expected) != len(manifest.files):
+        raise PrivateDeploymentDenied("pinned model manifest contains duplicate members")
+    seen: set[str] = set()
+    rows: list[dict[str, Any]] = []
+
+    def walk(directory_fd: int, prefix: str) -> None:
+        try:
+            names = sorted(os.listdir(directory_fd))
+        except OSError:
+            raise PrivateDeploymentDenied("selected model tree could not be enumerated") from None
+        for name in names:
+            if name in {".", ".."} or "/" in name or "\\" in name:
+                raise PrivateDeploymentDenied("selected model tree contains an unsafe member name")
+            relative = f"{prefix}/{name}" if prefix else name
+            try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError:
+                raise PrivateDeploymentDenied("selected model tree member changed during inspection") from None
+            if info.st_uid != expected_uid or info.st_mode & 0o022:
+                raise PrivateDeploymentDenied("selected model tree member is writable by an untrusted identity")
+            if stat.S_ISDIR(info.st_mode):
+                if not any(path.startswith(relative + "/") for path in expected):
+                    raise PrivateDeploymentDenied("selected model tree contains an unlisted directory")
+                try:
+                    child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                       dir_fd=directory_fd)
+                except OSError:
+                    raise PrivateDeploymentDenied("selected model tree directory is unsafe") from None
+                try:
+                    after_open = os.fstat(child_fd)
+                    if (after_open.st_dev, after_open.st_ino) != (info.st_dev, info.st_ino):
+                        raise PrivateDeploymentDenied("selected model tree directory changed during open")
+                    walk(child_fd, relative)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(info.st_mode) or relative not in expected:
+                raise PrivateDeploymentDenied("selected model tree contains an extra or special file")
+            item = expected[relative]
+            if info.st_size != item.size:
+                raise PrivateDeploymentDenied("selected model member size differs from source manifest")
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+            except OSError:
+                raise PrivateDeploymentDenied("selected model member could not be opened safely") from None
+            try:
+                before = os.fstat(fd)
+                if (before.st_dev, before.st_ino, before.st_size) != (info.st_dev, info.st_ino, info.st_size):
+                    raise PrivateDeploymentDenied("selected model member changed before hashing")
+                source_hash = hashlib.sha256() if item.digest_algorithm == "sha256" else hashlib.sha1()
+                observed_hash = hashlib.sha256()
+                if item.digest_algorithm == "git-sha1":
+                    source_hash.update(f"blob {item.size}\0".encode("ascii"))
+                total_read = 0
+                while True:
+                    try:
+                        block = os.read(fd, 1024 * 1024)
+                    except InterruptedError:
+                        continue
+                    if not block:
+                        break
+                    total_read += len(block)
+                    source_hash.update(block)
+                    observed_hash.update(block)
+                after = os.fstat(fd)
+                if (total_read != item.size or source_hash.hexdigest() != item.digest
+                        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                           != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+                    raise PrivateDeploymentDenied("selected model member bytes changed or fail source digest")
+                rows.append({
+                    "path": relative, "kind": "file", "source_size_bytes": item.size,
+                    "source_digest_algorithm": item.digest_algorithm,
+                    "source_digest": item.digest, "observed_sha256": observed_hash.hexdigest(),
+                    "device": before.st_dev, "inode": before.st_ino,
+                    "uid": before.st_uid, "gid": before.st_gid,
+                    "mode": stat.S_IMODE(before.st_mode),
+                })
+                seen.add(relative)
+            finally:
+                os.close(fd)
+
+    try:
+        walk(root_fd, "")
+    except PrivateDeploymentDenied:
+        raise
+    except OSError:
+        raise PrivateDeploymentDenied("selected model tree could not be verified") from None
+    if seen != set(expected):
+        raise PrivateDeploymentDenied("selected model tree is missing pinned source members")
+    rows.sort(key=lambda row: row["path"])
+    tree_raw = json.dumps(rows, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False, allow_nan=False).encode("utf-8")
+    tree_digest = hashlib.sha256(tree_raw).hexdigest()
+    member_raw = json.dumps({
+        "root_device": root_info.st_dev, "root_inode": root_info.st_ino,
+        "root_uid": root_info.st_uid, "root_gid": root_info.st_gid,
+        "root_mode": stat.S_IMODE(root_info.st_mode), "members": rows,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return ExistingModelTreeFacts(
+        tree_digest, hashlib.sha256(member_raw).hexdigest(), root_info.st_dev,
+        root_info.st_ino, root_info.st_uid, root_info.st_gid,
+        stat.S_IMODE(root_info.st_mode), len(rows), sum(item.size for item in manifest.files),
+        tuple(rows),
+    )
 
 
 def _read_pid_stat(path: Path) -> tuple[int, int]:
@@ -570,9 +726,9 @@ def _open_private_child(root_journal: Any, name: str) -> int:
 
 
 __all__ = [
-    "ExistingModelArtifactObservation", "LoopbackListenerObservation",
+    "ExistingModelArtifactObservation", "ExistingModelTreeFacts", "LoopbackListenerObservation",
     "PrivateDeploymentDenied", "PrivateEndpointObservation",
     "PrivateModelDeploymentObservation",
     "RootPrivateMemoryDeploymentRegistry", "inspect_enrolled_loopback_listener",
-    "inspect_loopback_listener",
+    "inspect_existing_model_tree", "inspect_loopback_listener",
 ]

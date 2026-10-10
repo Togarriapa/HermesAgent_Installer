@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import stat
 from pathlib import Path
 
 import pytest
 
 from hermes_installer.managed_process_custodian import RemoteOriginKernelProof
 from hermes_installer.models.private_deployment import (
+    _inspect_existing_model_tree_fd,
     PrivateEndpointObservation,
     PrivateDeploymentDenied,
     PrivateModelDeploymentObservation,
     _tcp4_listener_inodes,
     inspect_loopback_listener,
 )
+from hermes_installer.models.artifacts import ArtifactFile, ArtifactManifest
 
 
 def _proof(*, netns: int, pid: int = 4242) -> RemoteOriginKernelProof:
@@ -135,3 +139,42 @@ def test_signed_receipt_claims_are_domain_payload_and_signature_excluded() -> No
         expires_monotonic=20.0, signature=b"sig",
     )
     assert endpoint.claims()["connector_route_ids"] == ["colibri-openai-v1"]
+
+
+def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Path) -> None:
+    """Fixture-only helper tests bytes/identity; this is not root deployment proof."""
+    model_root = tmp_path / "chosen-existing-model"
+    model_root.mkdir(mode=0o700)
+    (model_root / "weights").mkdir(mode=0o700)
+    first = b"pinned tensor bytes"
+    second = b"pinned config bytes"
+    (model_root / "weights/shard.bin").write_bytes(first)
+    (model_root / "config.json").write_bytes(second)
+    os.chmod(model_root / "weights/shard.bin", 0o400)
+    os.chmod(model_root / "config.json", 0o400)
+    git_sha = hashlib.sha1(f"blob {len(second)}\0".encode() + second).hexdigest()
+    manifest = ArtifactManifest(
+        "fixture-model", "a" * 40, "fixture", "none",
+        (
+            ArtifactFile("weights/shard.bin", len(first), hashlib.sha256(first).hexdigest(), "sha256", "fixture://weights"),
+            ArtifactFile("config.json", len(second), git_sha, "git-sha1", "fixture://config"),
+        ),
+        len(first) + len(second),
+    )
+    fd = os.open(model_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        facts = _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
+        assert facts.member_count == 2
+        assert facts.total_size_bytes == len(first) + len(second)
+        assert [row["path"] for row in facts.members] == ["config.json", "weights/shard.bin"]
+        assert len(facts.tree_manifest_sha256) == len(facts.member_observation_sha256) == 64
+    finally:
+        os.close(fd)
+
+    (model_root / "unexpected.txt").write_text("extra")
+    fd = os.open(model_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(PrivateDeploymentDenied):
+            _inspect_existing_model_tree_fd(fd, manifest, expected_uid=os.getuid())
+    finally:
+        os.close(fd)
