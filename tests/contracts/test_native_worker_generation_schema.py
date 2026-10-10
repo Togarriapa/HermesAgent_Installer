@@ -10,10 +10,42 @@ from hermes_installer.authority.native_worker_generation_schema import NETWORK_R
 from hermes_installer.authority.enrollment import _validate_native_worker_generation_rows
 
 
-def test_runtime_row_schema_is_exactly_the_v184_planning_contract():
+def test_runtime_row_schema_adds_only_the_v189_committed_venv_identity():
     root = Path(__file__).resolve().parents[2]
     contract = json.loads((root / "planning/network-row-wire-v184.json").read_text())
-    assert NETWORK_ROW_DEFS == contract["json_schema"]["$defs"]
+    actual = json.loads(json.dumps(NETWORK_ROW_DEFS))
+    runtime = actual["native_worker_runtime_record"]
+    identity = runtime["properties"].pop("committed_venv_identity")
+    runtime["required"].remove("committed_venv_identity")
+    assert runtime["properties"].pop("execution_mode") == {
+        "const": "native-hermes-cli-module-v1", "type": "string"}
+    runtime["required"].remove("execution_mode")
+    assert actual == contract["json_schema"]["$defs"]
+    assert set(identity["properties"]) == {
+        "schema", "identity_kind", "pm_runtime_receipt_handle", "pm_receipt_sha256",
+        "pm_generation", "source_commit", "runtime_relative", "runtime_venv_relative",
+        "runtime_closure_sha256", "executable_identity_id", "executable_sha256",
+        "executable_device", "executable_inode", "executable_uid", "executable_gid",
+        "executable_mode",
+    }
+    assert identity["additionalProperties"] is False
+
+
+def test_committed_venv_identity_is_closed_and_binds_exact_observed_runtime_token():
+    runtime = _sample(NETWORK_ROW_DEFS["native_worker_runtime_record"])
+    identity = runtime["committed_venv_identity"]
+    validate_row(runtime, "native_worker_runtime_record")
+    with pytest.raises(ValueError, match="unknown fields"):
+        validate_row({**runtime, "committed_venv_identity":
+                      {**identity, "catalog_executable_path": "/usr/bin/python"}},
+                     "native_worker_runtime_record")
+    with pytest.raises(ValueError, match="required constant"):
+        validate_row({**runtime, "committed_venv_identity":
+                      {**identity, "executable_identity_id": "arbitrary:python"}},
+                     "native_worker_runtime_record")
+    with pytest.raises(ValueError, match="required constant"):
+        validate_row({**runtime, "execution_mode": "generic-python"},
+                     "native_worker_runtime_record")
 
 
 def test_runtime_row_validator_rejects_open_fields_and_wrong_types():
@@ -88,6 +120,7 @@ def test_v184_full_child_digests_and_cross_catalog_links_are_checked():
         "recipe_id": active["recipe_id"], "recipe_sha256": active["recipe_sha256"],
         "source_choice_selection_handle": active["source_choice_selection_handle"],
     })
+    runtime["committed_venv_identity"]["pm_runtime_receipt_handle"] = runtime["pm_runtime_receipt_handle"]
     active.update({
         "generation_id": "container-a", "service_enrollment_id": "enrollment-a",
         "service_generation": "service-gen-a", "service_row_sha256": _sha(service),

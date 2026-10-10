@@ -1191,5 +1191,28 @@ class SourceObserverContracts(unittest.TestCase):
                 authority_epoch="epoch", issued_monotonic=1.0, expires_monotonic=2.0,
                 proof_nonce="z" * 48, _issuer_token=object())
 
+class OwnerOverlayResultSourceContracts(unittest.TestCase):
+    def test_result_capture_rejects_untyped_effect_observer_and_caller_body(self):
+        registry = object.__new__(SourceObserverRegistry)
+        registry.service = SimpleNamespace(active_owner_overlay_registry=None)
+        registry.observers = {}
+        with self.assertRaises(AuthorityDenied):
+            registry.record_owner_overlay_result(
+                verified_effect=object(), result_observer=object(),
+                canonical_result_bytes=b'{"caller":"supplied"}',
+                observer_enrollment_id="caller-selected-observer",
+            )
+
+    def test_result_capture_has_no_worker_selectable_context_or_parent_arguments(self):
+        import inspect
+        from hermes_installer.authority.local_resource_effects import (
+            RootActiveOwnerOverlayEffectAuthority,
+        )
+        parameters = tuple(inspect.signature(
+            RootActiveOwnerOverlayEffectAuthority.issue_selected_result_capture).parameters)
+        self.assertEqual(parameters, (
+            "self", "verified_effect", "result_observer", "canonical_result_bytes"))
+
+
 if __name__ == "__main__":
     unittest.main()

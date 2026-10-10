@@ -240,6 +240,7 @@ class RootPreparedNativeServiceGenerationProducer:
             "hermes_source_artifact_id": recipe._start_recipe.source_artifact_id,
             "hermes_source_sha256": recipe._start_recipe.source_archive_sha256,
             "pm_runtime_receipt_handle": materialization.pm_runtime_receipt_handle,
+            "committed_venv_identity": _plain(materialization.committed_venv_identity),
             "pm_base_closure_sha256": materialization.pm_base_closure_sha256,
             "pm_executable_relative_path": materialization.pm_executable_relative_path,
             "pm_executable_member_sha256": materialization.pm_executable_member_sha256,

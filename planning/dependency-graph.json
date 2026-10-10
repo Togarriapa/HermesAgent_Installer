@@ -2788,5 +2788,13 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "committed_pm_executable_identity_v189": {
+    "amendment": "plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md",
+    "wire_contract": "planning/committed-pm-executable-identity-v189.json",
+    "order": "HI-T189.1 \u2192 VD-T189.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

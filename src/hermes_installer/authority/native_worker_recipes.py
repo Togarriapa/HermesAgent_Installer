@@ -658,6 +658,27 @@ class RootSetupNativeWorkerRecipeRegistry:
         self._current_runnable_closure = current
         return current
 
+    def resolve_current_runnable_closure(self, selection_handle: str) -> Any:
+        """Resolve the closure retained after the exact signed worker choice."""
+        from .bootstrap_runtime_factory import RootSelectedRunnableRoleClosure
+        from .native_policy_preparation import RootNativePolicyPreparationSelection
+        selection = self.binding.resolve_current_native_policy_selection(selection_handle)
+        closure = self._current_runnable_closure
+        if (type(selection) is not RootNativePolicyPreparationSelection
+                or selection.selection_handle != self._current_selection_handle
+                or len(selection.selected_worker_recipe_handles) != 1
+                or type(closure) is not RootSelectedRunnableRoleClosure):
+            raise NativeWorkerRecipeUnavailable(
+                "selected worker has no retained final runnable-role closure")
+        current = self.runnable_roles.verify_current(closure)
+        if (current is not closure
+                or current.setup_session_id != selection.setup_session_id
+                or current.transaction_handle != selection.transaction_handle
+                or current.prepared_generation_id != selection.prepared_generation_id):
+            raise NativeWorkerRecipeUnavailable(
+                "retained runnable-role closure differs from the current signed worker choice")
+        return closure
+
     def close(self) -> None:
         """Release only root-held duplicate work-root descriptors."""
         for receipt in tuple(self._working_roots.values()):

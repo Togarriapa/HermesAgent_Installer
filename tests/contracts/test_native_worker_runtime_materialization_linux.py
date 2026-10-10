@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import fcntl
+import json
 import os
 import stat
 import tempfile
@@ -16,6 +17,7 @@ from hermes_installer.authority.native_worker_runtime_materialization import (
     RootPreparedNativeWorkerRuntimeMaterializationRegistry,
     _hash_fd,
 )
+from hermes_installer.authority.pm_runtime import _tree_sha256
 
 
 @unittest.skipUnless(os.sys.platform.startswith("linux") and os.geteuid() == 0,
@@ -112,6 +114,64 @@ class NativeWorkerRuntimeMaterializationLinuxTests(unittest.TestCase):
         for descriptor in opened:
             with self.assertRaises(OSError):
                 fcntl.fcntl(descriptor, fcntl.F_GETFD)
+
+    def test_committed_venv_descriptor_hashes_actual_receipt_and_observed_executable(self) -> None:
+        runtime_root = self.parent / "pm-runtime"
+        generation = runtime_root / ("pm-" + "a" * 32)
+        receipts = runtime_root / "receipts"
+        runtime_root.mkdir(mode=0o700)
+        receipts.mkdir(mode=0o700)
+        venv = generation / "venv"
+        (venv / "bin").mkdir(parents=True, mode=0o700)
+        executable = venv / "bin" / "python"
+        executable.write_text(
+            "#!/bin/sh\nprintf '%s\\n' '{\"version_info\":[3,14,7],\"implementation\":\"cpython\","
+            "\"cache_tag\":\"cpython-314\",\"soabi\":\"cpython-314-x86_64-linux-gnu\","
+            "\"machine\":\"x86_64\"}'\n", encoding="utf-8")
+        executable.chmod(0o555)
+        info = executable.stat()
+        from hermes_installer.authority.pm_runtime import _hash
+        record = {
+            "handle": "h" * 40, "generation": "pm-" + "a" * 32,
+            "runtime_relative": "venv/bin/python", "runtime_venv_relative": "venv",
+            "runtime_closure_sha256": _tree_sha256(venv),
+            "runtime_executable_artifact_id": "observed:pm-committed-venv-python",
+            "runtime_executable_sha256": _hash(executable),
+            "runtime_device": info.st_dev, "runtime_inode": info.st_ino,
+            "runtime_uid": info.st_uid, "runtime_gid": info.st_gid,
+            "runtime_mode": stat.S_IMODE(info.st_mode),
+            "version_info": [3, 14, 7], "implementation": "cpython",
+            "cache_tag": "cpython-314", "soabi": "cpython-314-x86_64-linux-gnu",
+            "machine": "x86_64", "source_commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+            "pm_sync_outcome": "succeeded",
+        }
+        raw = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        (receipts / (record["handle"] + ".json")).write_bytes(raw)
+        (receipts / (record["handle"] + ".json")).chmod(0o600)
+        selected = SimpleNamespace(
+            receipt_handle=record["handle"], python_path=executable,
+            runtime_sha256=record["runtime_executable_sha256"],
+            device=info.st_dev, inode=info.st_ino, uid=info.st_uid,
+            gid=info.st_gid, mode=stat.S_IMODE(info.st_mode),
+        )
+        self.registry.runtime_receipts = SimpleNamespace(
+            runtime_root=runtime_root, _record=lambda _handle: dict(record))
+        descriptor = self.registry._committed_venv_identity(SimpleNamespace(selection=selected))
+        self.assertEqual(descriptor["pm_receipt_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(descriptor["pm_runtime_receipt_handle"], record["handle"])
+        self.assertEqual(descriptor["executable_identity_id"], "observed:pm-committed-venv-python")
+        self.assertEqual(descriptor["executable_inode"], info.st_ino)
+        self.assertEqual(descriptor["runtime_closure_sha256"], record["runtime_closure_sha256"])
+        receipt_path = receipts / (record["handle"] + ".json")
+        receipt_path.write_bytes(raw[:-1] + b',"handle":"' + record["handle"].encode("ascii") + b'"}')
+        with self.assertRaises(NativeWorkerRuntimeMaterializationUnavailable):
+            self.registry._committed_venv_identity(SimpleNamespace(selection=selected))
+        receipt_path.write_bytes(raw)
+        changed = dict(record)
+        changed["runtime_executable_sha256"] = "0" * 64
+        self.registry.runtime_receipts._record = lambda _handle: changed
+        with self.assertRaises(NativeWorkerRuntimeMaterializationUnavailable):
+            self.registry._committed_venv_identity(SimpleNamespace(selection=selected))
 
 
 if __name__ == "__main__":
