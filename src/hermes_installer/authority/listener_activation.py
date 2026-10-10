@@ -2178,9 +2178,24 @@ class RootAuthorityListenerActivationSupervisor:
                 raise ListenerActivationUnavailable("daemon did not accept the exact health intent")
             # A health run may take up to the fixed 300-second recipe limit.
             # The 30-second intent is consumed at acceptance, never extended.
-            completed, fds = _recv_packet(self._health_connection,
-                                          expected_peer=expected, expected_fd_count=0,
-                                          timeout=300.0)
+            try:
+                completed, fds = _recv_packet(self._health_connection,
+                                              expected_peer=expected, expected_fd_count=0,
+                                              timeout=300.0)
+            except (TimeoutError, ConnectionError):
+                # The daemon may have durably committed the completion before
+                # its reply was lost. Reopen that exact CAS only while the
+                # same supervised daemon/source selection remains current.
+                self.verify_active_current(receipt)
+                self.verify_current_selection(selection)
+                completion_handle, digest, witness = health.resolve_current_completed_for_intent(
+                    intent.intent_handle)
+                if (witness.get("intent_sha256") != intent.intent_sha256
+                        or _digest(dict(witness)) != digest):
+                    raise ListenerActivationUnavailable(
+                        "recovered health completion differs from the durable intent") from None
+                health.resolve_current_completed_health_proof(intent.intent_handle, completion_handle)
+                return completion_handle, digest
             if (fds or completed.get("operation") != "health-completed"
                     or completed.get("intent_handle") != intent.intent_handle):
                 raise ListenerActivationUnavailable("daemon returned no closed completion reference")
