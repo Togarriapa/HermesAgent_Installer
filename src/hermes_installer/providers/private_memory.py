@@ -425,6 +425,11 @@ class RootPrivateMemoryRouteResolver:
                 if (current_route.route_id != expected_route
                         or current_route.capability != expected_capability
                         or current_route.additional_metered_budget_usd != 0
+                        or current_route.endpoint_receipt_handle != selected.endpoint_selection_receipt_handle
+                        or current_route.provider_id != route.provider_id
+                        or current_route.recipient_id != route.recipient_id
+                        or current_route.credential_reference_id != route.credential_reference_id
+                        or current_deployment.receipt_handle != deployment.receipt_handle
                         or current_deployment.served_model_id != expected_model
                         or current_deployment.capability != expected_capability
                         or (action == "extract" and current_deployment.source_model_id != "zai-org/GLM-5.2")
@@ -486,6 +491,7 @@ class RootPrivateMemoryRouteResolver:
         if match is None:
             raise PrivateMemoryRouteDenied("private memory route or model is outside the root selection")
         _, _, purpose, operation, capability, route, deployment = match
+        original_route, original_deployment = route, deployment
         if context.purpose != purpose or context.operation != operation:
             raise PrivateMemoryRouteDenied("private memory context does not match route capability")
         if context.sensitivity.value not in {"private", "confidential", "unknown"}:
@@ -493,7 +499,8 @@ class RootPrivateMemoryRouteResolver:
         if capability == "text-generation":
             messages = parsed.get("messages")
             if (set(parsed) != {"model", "messages", "stream", "temperature", "max_tokens"}
-                    or parsed.get("stream") is not False or parsed.get("temperature") != 0
+                    or parsed.get("stream") is not False
+                    or type(parsed.get("temperature")) is not int or parsed["temperature"] != 0
                     or type(parsed.get("max_tokens")) is not int or parsed["max_tokens"] != 4096
                     or not isinstance(messages, list) or len(messages) != 2
                     or messages[0] != {"role": "system", "content": _EXTRACTION_SYSTEM}
@@ -503,6 +510,8 @@ class RootPrivateMemoryRouteResolver:
                     or not isinstance(messages[1].get("content"), str)
                     or not messages[1]["content"]):
                 raise PrivateMemoryRouteDenied("private extraction body differs from the fixed protocol")
+            if len(messages[1]["content"].encode("utf-8")) > 1_048_576:
+                raise PrivateMemoryRouteDenied("private extraction transcript exceeds its fixed byte bound")
         else:
             inputs = parsed.get("input")
             if (set(parsed) != {"model", "input", "encoding_format"}
@@ -510,6 +519,9 @@ class RootPrivateMemoryRouteResolver:
                     or not isinstance(inputs, list) or not inputs or len(inputs) > 64
                     or any(not isinstance(value, str) or not value for value in inputs)):
                 raise PrivateMemoryRouteDenied("private embedding body differs from the fixed protocol")
+            if (sum(len(value.encode("utf-8")) for value in inputs) > 65_536
+                    or any(len(value.encode("utf-8")) > 4_096 for value in inputs)):
+                raise PrivateMemoryRouteDenied("private embedding input exceeds its fixed byte bound")
         consent = self._consent.revalidate_private_engine_selection(
             consent, profile_id=selected.profile_id, namespace_id=selected.namespace_id,
             memory_provider=selected.memory_provider, owner_generation=selected.memory_owner_generation,
@@ -524,6 +536,11 @@ class RootPrivateMemoryRouteResolver:
             service_generation_digest=selected.service_generation_digest,
         )
         if (route.capability != capability or route.additional_metered_budget_usd != 0
+                or route.endpoint_receipt_handle != selected.endpoint_selection_receipt_handle
+                or route.provider_id != original_route.provider_id
+                or route.recipient_id != original_route.recipient_id
+                or route.credential_reference_id != original_route.credential_reference_id
+                or deployment.receipt_handle != original_deployment.receipt_handle
                 or deployment.capability != capability
                 or deployment.served_model_id != model_id
                 or (capability == "embedding" and deployment.dimensions != selected.embedding_dimensions)

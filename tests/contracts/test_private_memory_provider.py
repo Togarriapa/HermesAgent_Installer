@@ -221,3 +221,19 @@ def test_selection_joins_separate_model_receipts_and_is_revalidated():
     assert set(effects.calls[0]) == {"job_handle", "payload", "timeout", "cancelled"}
     assert effects.calls[0]["job_handle"] == "j" * 43
     assert effects.calls[0]["payload"] == payload
+    body["temperature"] = False
+    invalid_payload = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False).encode()
+    with pytest.raises(PrivateMemoryRouteDenied, match="fixed protocol"):
+        resolver.dispatch_memory_request(
+            context, job_handle="j" * 43, route_id="extract-private-v1",
+            model_id="glm52-served", payload=invalid_payload,
+            timeout=10.0, cancelled=lambda: False,
+        )
+    assert len(effects.calls) == 1
+
+    route_rows["extract-private-v1"] = VerifiedPrivateProviderRoute(
+        "extract-private-v1", "text-generation", "local-private", "memory:local",
+        endpoint, None, 100.0, 0.01,
+    )
+    assert not resolver.is_current(selected)
