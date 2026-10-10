@@ -427,6 +427,12 @@ class RootAuthorityRuntime:
     resource_event_unavailable_reason: str | None = None
     controller_release_receipt: Any | None = None
     controller_actor_observation: Any | None = None
+    provider_runtime_selection: Any | None = None
+    root_tty_consent_choices: Any | None = None
+    private_input_consent_registry: Any | None = None
+    memory_capture_consent_registry: Any | None = None
+    memory_capture_coordinator: Any | None = None
+    consent_unavailable_reason: str | None = None
 
     @property
     def process_manager(self) -> Any:
@@ -532,6 +538,9 @@ class RootAuthorityRuntime:
             getattr(self.native_bridge_broker, "native_turn_observer", None),
             self.native_mcp_dispatcher,
             self.native_mcp_discovery_registry,
+            self.root_tty_consent_choices,
+            self.private_input_consent_registry,
+            self.memory_capture_consent_registry,
             self.native_runtime_observer,
             self.native_invocation_registry,
             self.native_bridge_broker,
@@ -935,6 +944,7 @@ def compose_root_authority_runtime(
 
     broker_candidate = getattr(service, "native_bridge_broker", None)
     provider_selection = None
+    attached_provider_selection = None
     if (service.source_observer_registry is not None and schema_catalog is None
             and (enrollment.native_bridges or enrollment.native_mcp_tool_binding_records)):
         # A caller may have attached the concrete source registry earlier in
@@ -1143,6 +1153,10 @@ def compose_root_authority_runtime(
                                         raise AuthorityDenied(
                                             "native.provider.result", "installed result observer differs from provider selection",
                                         )
+                                if (getattr(service, "native_invocation_registry", None) is not None
+                                        and getattr(service, "native_bridge_broker", None) is broker_candidate
+                                        and service.native_invocation_registry.source_observers is registry):
+                                    attached_provider_selection = provider_selection
                         except BaseException:
                             try:
                                 registry.close()
@@ -1160,6 +1174,28 @@ def compose_root_authority_runtime(
                             except AttributeError:
                                 pass
                             raise
+
+    # A root service may have attached its source graph before this composer
+    # runs. Rebuild only the immutable provider selection projection from the
+    # same active catalogs; keep it only when it matches the already attached
+    # broker and invocation graph exactly.
+    if (attached_provider_selection is None
+            and getattr(service, "native_bridge_broker", None) is not None
+            and getattr(service, "native_invocation_registry", None) is not None
+            and schema_catalog is not None and enrollment.native_bridges):
+        try:
+            rebuilt_broker, rebuilt_selection = _build_native_bridge_candidate(
+                service=service, enrollment=enrollment, bindings=bindings, vault=vault,
+            )
+            active_broker = service.native_bridge_broker
+            if (dict(rebuilt_broker.bridges) == dict(active_broker.bridges)
+                    and rebuilt_selection.provider_result_observer_ids
+                    and getattr(active_broker, "provider_response_registry", None)
+                    is service.native_invocation_registry):
+                attached_provider_selection = rebuilt_selection
+        except Exception:
+            # Existing attachments are not replaced or inferred from metadata.
+            attached_provider_selection = None
 
     native_mcp_unavailable_reason: str | None = None
     if enrollment.native_mcp_tool_binding_records:
@@ -1336,6 +1372,10 @@ def compose_root_authority_runtime(
             process_manager=bindings.process_manager,
             enrollment_resolver=resolve_memory_enrollment,
         )
+        if not memory_runtime.get("engines"):
+            memory_runtime["private_engine_unavailable_reason"] = (
+                "selected private endpoint, model deployment, consent, and HI12 dispatch registries are unavailable"
+            )
         if memory_runtime.get("state_root_ready") is True:
             step_authority = memory_runtime.get("step_authority")
             # Derive only fixed handlers whose selected route has a complete
@@ -1634,6 +1674,20 @@ def compose_root_authority_runtime(
                     process_manager.set_task_input_coordinator(coordinator)
                     service.attach_resource_task_runtime(task_runner, job_authority)
                     resource_task_unavailable_reason = None
+                    if isinstance(memory_runtime, dict) and memory_runtime.get("state_root_ready") is True:
+                        try:
+                            from hermes_installer.memory.capture import attach_root_memory_capture_coordinator
+
+                            coordinator_capture = attach_root_memory_capture_coordinator(
+                                service=service, targets=memory_runtime["targets"],
+                                queue=memory_runtime["queue"], owner_state=memory_runtime["owner_state"],
+                                expected_active_generation_digest=enrollment.protected_enrollment_digest,
+                            )
+                            memory_runtime["capture_coordinator"] = coordinator_capture
+                        except Exception as exc:
+                            memory_runtime["capture_unavailable_reason"] = (
+                                f"active turn capture coordinator rejected composition ({type(exc).__name__})"
+                            )
             elif profile_task_adapters:
                 resource_task_unavailable_reason = (
                     "active source observers, provider response registry, or native loader proof are unavailable"
@@ -1666,6 +1720,60 @@ def compose_root_authority_runtime(
         if resource_event_unavailable_reason is not None and job_authority is not None:
             resource_task_unavailable_reason = resource_event_unavailable_reason
 
+    root_tty_consent_choices = None
+    private_input_consent_registry = None
+    memory_capture_consent_registry = None
+    consent_unavailable_reason = None
+    if attached_provider_selection is not None:
+        try:
+            journal_resolver = getattr(bindings, "resolve_root_journal", None)
+            if not callable(journal_resolver):
+                raise AuthorityDenied("consent.journal", "active root journal resolver is unavailable")
+            journal = journal_resolver(
+                _AUTHORITY_JOURNAL_ROOT_ID,
+                expected_active_generation_digest=enrollment.protected_enrollment_digest,
+            )
+            if (not isinstance(journal, RootJournalSelection)
+                    or journal.root_id != _AUTHORITY_JOURNAL_ROOT_ID
+                    or journal.service_generation_digest != enrollment.protected_enrollment_digest
+                    or not isinstance(journal.path, Path) or not journal.path.is_absolute()
+                    or journal.inode <= 0 or journal.device < 0 or not journal.generation):
+                raise AuthorityDenied("consent.journal", "active root journal selection is malformed")
+            from .root_consent_choices import RootTTYConsentChoiceRegistry
+            from .root_private_input_consent import RootPrivateInputConsentRegistry
+            from .root_memory_capture_consent import RootMemoryCaptureConsentRegistry
+
+            root_tty_consent_choices = RootTTYConsentChoiceRegistry(
+                service, attached_provider_selection, enrollment, journal.path,
+                monotonic=service.monotonic,
+            )
+            private_input_consent_registry = RootPrivateInputConsentRegistry.from_authority_service(
+                service, root_tty_consent_choices, attached_provider_selection, journal.path,
+            )
+            if enrollment.memory_enrollments:
+                memory_capture_consent_registry = RootMemoryCaptureConsentRegistry.from_authority_service(
+                    service, root_tty_consent_choices, enrollment, journal.path,
+                )
+        except Exception as exc:
+            # A one-time service attachment can only be retried by restarting
+            # this root service. Surface partial attachment as startup failure;
+            # do not continue with a split consent graph.
+            if (getattr(service, "private_input_consent_registry", None) is not None
+                    or getattr(service, "memory_capture_consent_registry", None) is not None):
+                raise AuthorityDenied(
+                    "consent.composition", "root consent registries were only partially attached",
+                ) from None
+            root_tty_consent_choices = None
+            private_input_consent_registry = None
+            memory_capture_consent_registry = None
+            consent_unavailable_reason = (
+                f"active provider selection or protected consent journal rejected composition ({type(exc).__name__})"
+            )
+    else:
+        consent_unavailable_reason = (
+            "a fully attached active provider invocation and bridge graph is required for root TTY choices"
+        )
+
     return RootAuthorityRuntime(
         service=service, enrollment=enrollment, bindings=bindings,
         artifact_catalog=artifact_catalog, vault=vault,
@@ -1690,4 +1798,11 @@ def compose_root_authority_runtime(
         resource_event_unavailable_reason=resource_event_unavailable_reason,
         controller_release_receipt=(controller_receipts[0] if controller_receipts else None),
         controller_actor_observation=(controller_receipts[1] if controller_receipts else None),
+        provider_runtime_selection=attached_provider_selection,
+        root_tty_consent_choices=root_tty_consent_choices,
+        private_input_consent_registry=private_input_consent_registry,
+        memory_capture_consent_registry=memory_capture_consent_registry,
+        memory_capture_coordinator=(memory_runtime.get("capture_coordinator")
+                                    if isinstance(memory_runtime, Mapping) else None),
+        consent_unavailable_reason=consent_unavailable_reason,
     )
