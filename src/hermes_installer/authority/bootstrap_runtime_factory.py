@@ -1231,6 +1231,7 @@ class RootNativeBootstrapAssemblySelection:
     materialization_receipt_handle: str
     hermes_source_receipt_handle: str
     resources_source_receipt_handle: str
+    native_policy_preparation_handle: str
     definitions_handle: str
     definitions_sha256: str
     issued_monotonic: float
@@ -1261,6 +1262,9 @@ class RootNativeAssemblyDefinitions:
     native_schema_bytes: tuple[tuple[str, bytes], ...]
     source_issuer_records: tuple[Mapping[str, Any], ...]
     process_role_records: tuple[Mapping[str, Any], ...]
+    native_policy_preparation_handle: str
+    capture_profile_records: tuple[Any, ...]
+    capture_profile_receipt_handles: tuple[str, ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
     action_records: tuple[Mapping[str, Any], ...]
     workflow_records: tuple[Mapping[str, Any], ...]
@@ -4014,6 +4018,7 @@ class RootBootstrapSession:
         self._native_policy_choices: dict[str, Any] = {}
         self._native_policy_tty_proofs: dict[str, Any] = {}
         self._native_policy_records_by_selection: dict[str, Any] = {}
+        self._current_native_policy_selection_handle: str | None = None
         self._prepared_build_identity: SystemIdentityAdapter | None = None
         self._prepared_build_selections: dict[str, RootPreparedBuildServiceSelection] = {}
         self._prepared_application_build_selections: dict[str, RootPreparedBuildServiceSelection] = {}
@@ -4216,6 +4221,7 @@ class RootBootstrapSession:
             selection = registry.record_configuration(choice)
             records = registry.prepare_selected_policy(selection.selection_handle)
             self._native_policy_records_by_selection[selection.selection_handle] = records
+            self._current_native_policy_selection_handle = selection.selection_handle
             proof = None
             return registry.resolve_selection_current(selection.selection_handle)
         except BootstrapEnrollmentPending:
@@ -5878,6 +5884,19 @@ class RootBootstrapSession:
         prepared = self.resolve_prepared_receipt(prepared_setup_receipt_handle)
         bundle = self.prepare_selected_native_bundle()
         self._resolve_current_prepared_native_bundle(bundle)
+        policy_selection_handle = self._current_native_policy_selection_handle
+        if not isinstance(policy_selection_handle, str) or not policy_selection_handle:
+            raise BootstrapEnrollmentPending(
+                "native assembly requires a current root-TTY native policy configuration choice")
+        policy_selection = self.resolve_current_native_policy_selection(policy_selection_handle)
+        policy_records = self.resolve_current_prepared_native_policy_records(policy_selection_handle)
+        if (policy_selection.setup_session_id != self._handle.session_id
+                or policy_selection.transaction_handle != self._authorization.transaction_handle
+                or policy_selection.prepared_generation_id != prepared.generation_id
+                or policy_selection.prepared_generation_digest != prepared.generation_digest
+                or policy_records.native_policy_selection_handle != policy_selection_handle):
+            raise BootstrapEnrollmentPending(
+                "native policy selection or source records do not match current prepared custody")
         if (bundle.materialization_receipt_handle != native_materialization_receipt_handle
                 or self._native_materialization_receipts.get(native_materialization_receipt_handle)
                    is not bundle.materialization_receipt):
@@ -5974,6 +5993,7 @@ class RootBootstrapSession:
             "materialization_receipt_handle": bundle.materialization_receipt_handle,
             "hermes_source_receipt_handle": bundle.hermes_source_receipt_handle,
             "resources_source_receipt_handle": bundle.resources_source_receipt_handle,
+            "native_policy_preparation_handle": policy_selection_handle,
             "definitions_handle": secrets.token_urlsafe(36),
             "definitions_sha256": hashlib.sha256(_canonical({
                 "registrations": [{"name": row.native_tool_name,
@@ -6003,6 +6023,7 @@ class RootBootstrapSession:
             materialization_receipt_handle=bundle.materialization_receipt_handle,
             hermes_source_receipt_handle=bundle.hermes_source_receipt_handle,
             resources_source_receipt_handle=bundle.resources_source_receipt_handle,
+            native_policy_preparation_handle=policy_selection_handle,
             definitions_handle=seed["definitions_handle"], definitions_sha256=seed["definitions_sha256"],
             issued_monotonic=now, expires_monotonic=expires,
             _registry_seal=self._factory._native_assembly_seal,
@@ -7534,6 +7555,17 @@ class RootBootstrapSession:
                 or selection.package_id != "hermes-agent-native-package-v1"
                 or selection.service_profile_id != "hermes-agent-native-v1"):
             raise BootstrapEnrollmentPending("native assembly selection differs from its retained prepared bundle")
+        policy_selection = self.resolve_current_native_policy_selection(
+            selection.native_policy_preparation_handle)
+        policy_records = self.resolve_current_prepared_native_policy_records(
+            selection.native_policy_preparation_handle)
+        if (self._current_native_policy_selection_handle != selection.native_policy_preparation_handle
+                or policy_selection.setup_session_id != selection.setup_session_id
+                or policy_selection.transaction_handle != selection.transaction_handle
+                or policy_selection.prepared_generation_id != selection.prepared_generation_id
+                or policy_selection.prepared_generation_digest != selection.protected_enrollment_digest
+                or policy_records.native_policy_selection_handle != selection.native_policy_preparation_handle):
+            raise BootstrapEnrollmentPending("native policy selection changed after assembly authorization")
         compiler = self._prepared_release_member_receipts.get(
             selection.compiler_release_receipt_handle)
         if (not isinstance(compiler, RootReleaseModuleReceipt)

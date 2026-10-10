@@ -247,6 +247,17 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
             session._resolve_prepared_native_action_schema_module_receipts()
 
+    def test_native_assembly_requires_retained_root_tty_policy_selection(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session.resolve_prepared_receipt = lambda _handle: object()
+        session.prepare_selected_native_bundle = lambda: object()
+        session._resolve_current_prepared_native_bundle = lambda _bundle: None
+        session._current_native_policy_selection_handle = None
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "root-TTY native policy configuration"):
+            session._resolve_native_bootstrap_assembly("prepared-handle", "materialization-handle")
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 
