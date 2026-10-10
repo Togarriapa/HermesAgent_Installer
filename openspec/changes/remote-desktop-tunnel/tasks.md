@@ -199,3 +199,12 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 - [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
 
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## v245 Xpra source graph and HTML5
+
+- [ ] RT-T245.1 Implement actual signed graph/private sysroot and independent single glibc transform observer.
+- [ ] RT-T245.2 Implement held official HTML5 acquisition/license/source-data install.
+- [ ] VD-T245.3 Test exact graph/hash/license/currentness failures and managed ARM64 HTML5 session; all AC OPEN.
+
+Exact contract: `planning/xpra-sysroot-html5-v245.json`.

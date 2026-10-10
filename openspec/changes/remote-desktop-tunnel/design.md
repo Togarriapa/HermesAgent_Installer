@@ -148,3 +148,10 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 The v240 exact mount/driver/output contract and canonical member/recipe digest split bind genuine current selected inputs. Null resource/output caps deny; exported upstream commit-build stamp uses exact source receipt revision without fake CI/Git. Header closure and fixture native sandbox observations remain separate from AppDir/current receipts.
 
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## v245 Xpra source graph and HTML5
+
+Use exact origin-bound archive links within an owned virtual-root sysroot, independent graph observer and one pinned glibc linker token transformation. Separately held immutable official HTML5 source copies only html5/ into actual output without ambient installer/minifier/assets; full mixed-license/native/session proofs remain required.
+
+Exact contract: `planning/xpra-sysroot-html5-v245.json`.

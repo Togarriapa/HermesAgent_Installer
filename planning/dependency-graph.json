@@ -3507,5 +3507,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "xpra_sysroot_html5_v245": {
+    "contract": "planning/xpra-sysroot-html5-v245.json",
+    "tasks": {
+      "RT-T245.1": [
+        "RT-T238.1"
+      ],
+      "RT-T245.2": [
+        "RT-T238.1"
+      ],
+      "VD-T245.3": [
+        "RT-T245.1",
+        "RT-T245.2",
+        "RT-T238.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

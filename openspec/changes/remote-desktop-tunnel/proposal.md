@@ -140,3 +140,10 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 Measured official headers and fixed offline Desktop managed interface are now specified in v240, preserving source provenance and pending AppDir/caps. No runtime acceptance.
 
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## v245 Xpra source graph and HTML5
+
+v245 supplies exact official HTML5 source observations and signed DEB link/sysroot ABI needed by the real43-extension diagnostic build; positive managed session remains pending.
+
+Exact contract: `planning/xpra-sysroot-html5-v245.json`.

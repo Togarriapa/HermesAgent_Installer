@@ -289,5 +289,73 @@
       }
     ],
     "status": "reviewed source acquisition policy; runtime acceptance not established"
+  },
+  "xpra_sysroot_html5_v245": {
+    "contract": "planning/xpra-sysroot-html5-v245.json",
+    "members": [
+      {
+        "artifact_id": "xpra-html5-source-policy-v1",
+        "relative_path": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/xpra-html5-source-policy-v1.json",
+        "sha256": "8ebdb9c6a0bac16351e9ca49ee0d2197e8f44e5b6a548a03fa72a9cbe1812871",
+        "size_bytes": 1103,
+        "mode": "0444",
+        "roles": [
+          "xpra-html5-source-policy-v1"
+        ]
+      },
+      {
+        "artifact_id": "xpra-html5-v20-source-members-v1",
+        "relative_path": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/html5-source-members.json",
+        "sha256": "489ee5012f72a4e95fa394cb877ffb94122490bfc321a0839d3b51ea17e073fd",
+        "size_bytes": 16359,
+        "mode": "0444",
+        "roles": [
+          "xpra-html5-source-manifest-v1"
+        ]
+      },
+      {
+        "artifact_id": "xpra-html5-v20-license-observations-v1",
+        "relative_path": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/html5-license-observations.json",
+        "sha256": "4a025c092574007c5b44bc598e19c48cef7c36acee2aa0cf15732335a174919b",
+        "size_bytes": 7702,
+        "mode": "0444",
+        "roles": [
+          "xpra-html5-source-license-observations-v1"
+        ]
+      },
+      {
+        "artifact_id": "xpra-native-deb-links-v245",
+        "relative_path": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/deb-link-observations.json",
+        "sha256": "419c6355d2a00d91325f2286cb70973f412b5fd504103fc1d64fb856531860f6",
+        "size_bytes": 618704,
+        "mode": "0444",
+        "roles": [
+          "xpra-native-deb-link-policy-v1"
+        ]
+      }
+    ],
+    "archive_candidate": {
+      "schema": 1,
+      "artifact_id": "xpra-html5-v20-5b8898a-source-v1",
+      "origin_id": "codeload-github-xpra-html5",
+      "source_revision": "5b8898a35ef54aa919cb847b352fe2469e78c5dd",
+      "upstream_release": "v20",
+      "url": "https://codeload.github.com/Xpra-org/xpra-html5/tar.gz/5b8898a35ef54aa919cb847b352fe2469e78c5dd",
+      "sha256": "1c4d3be64ab535aeba8899d0692e8d8d23cef810992dacd7c7af270c8b80ebd2",
+      "size_bytes": 2396584,
+      "max_download_bytes": 2396584,
+      "archive_root": "xpra-html5-5b8898a35ef54aa919cb847b352fe2469e78c5dd",
+      "max_archive_entries": 109,
+      "max_expanded_bytes": 5021584,
+      "member_manifest_sha256": "489ee5012f72a4e95fa394cb877ffb94122490bfc321a0839d3b51ea17e073fd",
+      "license_manifest_sha256": "4a025c092574007c5b44bc598e19c48cef7c36acee2aa0cf15732335a174919b",
+      "member_manifest": "html5-source-members.json",
+      "license_manifest": "html5-license-observations.json",
+      "project_license": "MPL-2.0",
+      "bundled_license_status": "mixed-licenses: whole vendored proof pending",
+      "issuer_member_role": "display-dependency",
+      "issuer_relative_path": "html5/xpra-html5-v20.tar.gz"
+    },
+    "status": "actual reviewed source bytes/observations only; bundled whole-license/build/session current receipts pending"
   }
 }

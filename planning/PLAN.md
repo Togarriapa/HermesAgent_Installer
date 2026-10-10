@@ -208,3 +208,6 @@ v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `plannin
 
 
 v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md` / `planning/official-desktop-measured-headers-managed-plan-v240.json`; RT-T240.1/.2 and VD-T240.3 OPEN. Exact observed header/member tuples and fixed Desktop managed interface; AppDir/measured caps/current receipts pending, no runtime/Pi acceptance.
+
+
+v245: `plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md` / `planning/xpra-sysroot-html5-v245.json`; RT-T245.1/.2 and VD-T245.3 OPEN. Exact signed archive links/private sysroot and immutable official HTML5 source observations; mixed-license/current native/session proof pending, all AC OPEN.
