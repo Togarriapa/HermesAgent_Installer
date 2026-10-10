@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -53,6 +54,52 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
             receipt.verify_current()
     finally:
         receipt.close()
+
+
+@pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
+def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    body = b"candidate source blob\n" * 32
+    blob = subprocess.run(["/usr/bin/git", "-C", str(repository), "hash-object", "-w", "--stdin"],
+                          input=body, stdout=subprocess.PIPE, check=True).stdout.decode("ascii").strip()
+    # Repeated IDs are valid cat-file requests and drive both pipes beyond
+    # their usual capacity while keeping the test's Git object store tiny.
+    result = tuple(release_build.RootInstallerDistributionRegistry._git_batch(repository, [blob] * 2048))
+    assert len(result) == 2048
+    assert all(item == body for item in result)
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="fixed deployment-parent custody requires Linux root")
+def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp_path):
+    parent = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        app = release_build._ensure_owned_directory_child(parent, "hermes-installer")
+        try:
+            deployments = release_build._ensure_owned_directory_child(app, "deployments")
+            try:
+                assert os.stat("hermes-installer", dir_fd=parent, follow_symlinks=False).st_mode & 0o777 == 0o700
+                assert os.stat("deployments", dir_fd=app, follow_symlinks=False).st_mode & 0o777 == 0o700
+            finally:
+                os.close(deployments)
+        finally:
+            os.close(app)
+    finally:
+        os.close(parent)
+
+    conflict_parent = tmp_path / "conflict"
+    conflict_parent.mkdir(mode=0o700)
+    conflict = conflict_parent / "deployments"
+    conflict.mkdir(mode=0o755)
+    conflict_fd = os.open(conflict_parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._ensure_owned_directory_child(conflict_fd, "deployments")
+        assert os.stat(conflict, follow_symlinks=False).st_mode & 0o777 == 0o755
+    finally:
+        os.close(conflict_fd)
 
 
 def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
@@ -251,6 +298,7 @@ def test_runtime_handoff_cannot_be_constructed_without_registry_seal():
 
 def test_deployment_predecessor_absence_is_a_sealed_typed_observation(monkeypatch):
     monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_ensure_fixed_deployment_parent", lambda: None)
     monkeypatch.setattr(release_build, "_read_deployment_predecessor", lambda: release_build.DeploymentPredecessor(
         "absent", 17, 23))
     proof = release_build.observe_deployment_predecessor()
@@ -277,6 +325,7 @@ def test_deployment_predecessor_present_invalid_release_fails_closed(monkeypatch
             raise ValueError("corrupt receipt")
 
     monkeypatch.setattr(release_build, "_require_linux_root", lambda: None)
+    monkeypatch.setattr(release_build, "_ensure_fixed_deployment_parent", lambda: None)
     monkeypatch.setattr(release_build, "_read_deployment_predecessor", lambda: release_build.DeploymentPredecessor(
         "present", 17, 23, "a" * 64, 29, 31, "b" * 40))
     module = types.ModuleType("hermes_installer.authority.installer_release")

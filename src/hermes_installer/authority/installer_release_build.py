@@ -28,7 +28,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, is_dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
 
@@ -555,7 +555,7 @@ class RootInstallerDistributionRegistry:
             raise
 
     @classmethod
-    def _git_batch(cls, repository: Path, object_ids: list[str]) -> tuple[bytes, ...]:
+    def _git_batch(cls, repository: Path, object_ids: list[str]) -> Iterator[bytes]:
         command = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repository),
                    "cat-file", "--batch"]
         environment = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
@@ -566,9 +566,22 @@ class RootInstallerDistributionRegistry:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, env=environment)
             assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(("\n".join(object_ids) + "\n").encode("ascii"))
-            process.stdin.close()
-            bodies: list[bytes] = []
+            writer_errors: list[BaseException] = []
+
+            def write_object_ids() -> None:
+                try:
+                    for object_id in object_ids:
+                        process.stdin.write((object_id + "\n").encode("ascii"))
+                    process.stdin.close()
+                except BaseException as exc:
+                    writer_errors.append(exc)
+
+            # cat-file may block on stdout while the parent fills stdin. Feed
+            # requests concurrently so neither bounded pipe can starve the
+            # other for larger candidate trees.
+            writer = threading.Thread(target=write_object_ids,
+                                      name="installer-git-object-input", daemon=True)
+            writer.start()
             total = 0
             for expected in object_ids:
                 header = process.stdout.readline(256)
@@ -582,12 +595,31 @@ class RootInstallerDistributionRegistry:
                 body = _read_exact(process.stdout, size)
                 if process.stdout.read(1) != b"\n":
                     raise InstallerReleaseBuildError("Git source object framing is invalid")
-                bodies.append(body)
+                yield body
+            writer.join(timeout=30)
+            if writer.is_alive():
+                raise InstallerReleaseBuildError("Git source object input did not finish")
+            if writer_errors:
+                raise InstallerReleaseBuildError("Git source object input failed")
             if process.wait(timeout=30) != 0:
                 raise InstallerReleaseBuildError("Git source object export failed")
-            return tuple(bodies)
         except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired):
+            if process.poll() is None:
+                process.kill()
+            if "writer" in locals():
+                writer.join(timeout=1)
             raise BootstrapEnrollmentPending("candidate Git source object export failed") from None
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            if "writer" in locals():
+                writer.join(timeout=1)
+            raise
+        finally:
+            if process.stdin is not None:
+                process.stdin.close()
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 class RootInstallerDistributionSourceCAS:
@@ -2831,6 +2863,56 @@ def _read_private_json(path: Path, maximum: int) -> dict[str, Any]:
         os.close(fd)
 
 
+def _ensure_fixed_deployment_parent() -> None:
+    """Create only the root-owned fixed state prefix needed on first install."""
+    _require_linux_root()
+    varlib_fd = _open_secure_directory(Path("/var/lib"), expected_uid=0)
+    app_fd = deployments_fd = -1
+    try:
+        app_fd = _ensure_owned_directory_child(varlib_fd, "hermes-installer")
+        deployments_fd = _ensure_owned_directory_child(app_fd, "deployments")
+        for parent_fd, name, held_fd in ((varlib_fd, "hermes-installer", app_fd),
+                                         (app_fd, "deployments", deployments_fd)):
+            current_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=parent_fd)
+            try:
+                held, current = os.fstat(held_fd), os.fstat(current_fd)
+                if (current.st_uid != 0 or stat.S_IMODE(current.st_mode) != 0o700
+                        or current.st_dev != held.st_dev or current.st_ino != held.st_ino):
+                    raise InstallerReleaseBuildError("fixed deployment parent changed during provisioning")
+            finally:
+                os.close(current_fd)
+    finally:
+        if deployments_fd >= 0:
+            os.close(deployments_fd)
+        if app_fd >= 0:
+            os.close(app_fd)
+        os.close(varlib_fd)
+
+
+def _ensure_owned_directory_child(parent_fd: int, name: str) -> int:
+    if name not in {"hermes-installer", "deployments"}:
+        raise InstallerReleaseBuildError("directory target is outside fixed installer state")
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    except OSError:
+        raise InstallerReleaseBuildError("fixed deployment parent cannot be provisioned") from None
+    else:
+        os.fsync(parent_fd)
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=parent_fd)
+    except OSError:
+        raise InstallerReleaseBuildError("fixed deployment parent is not a nofollow directory") from None
+    info = os.fstat(fd)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+        os.close(fd)
+        raise InstallerReleaseBuildError("fixed deployment parent ownership or mode conflicts")
+    return fd
+
+
 def _read_deployment_predecessor() -> DeploymentPredecessor:
     parent_path = Path("/var/lib/hermes-installer/deployments")
     parent_fd = _open_secure_directory(parent_path, expected_uid=0)
@@ -2871,6 +2953,7 @@ def observe_deployment_predecessor() -> VerifiedDeploymentPredecessor:
     no caller path, bool, or parsed mapping is accepted as evidence.
     """
     _require_linux_root()
+    _ensure_fixed_deployment_parent()
     predecessor = _read_deployment_predecessor()
     now = time.monotonic()
     if predecessor.state == "absent":
