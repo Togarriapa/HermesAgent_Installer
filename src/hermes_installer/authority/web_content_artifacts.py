@@ -492,7 +492,8 @@ class RootWebContentArtifactRegistry:
                 raise WebContentArtifactDenied("root effect completion verifier is not assembled")
             try:
                 verify_completion(
-                    completion, observation._context, observation._authorization,
+                    completion, context=observation._context,
+                    authorization=observation._authorization,
                     operation=observation._authorization.operation,
                     target=observation._authorization.target,
                     request_payload=observation._context_payload,
@@ -698,7 +699,8 @@ class RootWebContentArtifactRegistry:
             raise WebContentArtifactDenied("root effect completion verifier is not assembled")
         try:
             verify_completion(
-                entry.completion, obs._context, obs._authorization,
+                entry.completion, context=obs._context,
+                authorization=obs._authorization,
                 operation=obs._authorization.operation, target=obs._authorization.target,
                 request_payload=obs._context_payload,
                 response_status=entry.completion.response_status,
