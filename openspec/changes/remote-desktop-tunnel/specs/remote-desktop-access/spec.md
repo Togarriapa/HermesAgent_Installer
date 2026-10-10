@@ -581,3 +581,13 @@ The installer SHALL prioritize verified official native Jarvis Desktop visibilit
 #### Scenario: Retained diagnostic artifact only
 - **WHEN** official AppDir build or local visibility exists without current installation custody, eligible chat, Access enforcement or durable restart
 - **THEN** preserve it as partial evidence and finish only the concrete missing deployment joins without claiming stage completion or weakening security
+
+
+## ADDED Requirements
+
+### Requirement: Distinct manual stage gateway and current edge admission
+The manual MVP SHALL use the finite v259b stage adapter without fabricated managed authority, enforce JWT and fresh protected edge admission before app bytes/input, and deny expired/revoked or changed owned configuration.
+
+#### Scenario: Existing token is revoked while socket is active
+- **WHEN** the actual protected edge denies the original token or its bounded proof expires
+- **THEN** the stage closes the exact session/socket and denies further app bytes/input, preserving managed authority checks and full AC OPEN

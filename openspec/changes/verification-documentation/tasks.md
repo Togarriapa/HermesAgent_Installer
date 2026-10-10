@@ -266,3 +266,8 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] RT-T259.3: OTP protected domain — Configure only owned account/zone tunnel/DNS/Access app/email OTP allowlist for confirmed hostname through existing scoped secret/reference workflow. Preserve unowned conflicts. Gateway exposes official selected app only on constrained loopback/session network; validate Access JWT before any assets/pixels/input and enforce active WebSocket expiry/revocation. Cloudflare management credential never enters cloudflared/Desktop; runtime uses verified protected tunnel token file. Gateway can use concrete root-owned manual stage config as specified without fabricated installer authority.
 - [ ] LC-T259.4: Owned durable restart — Install/reuse only actual owned sustained manual stage units/connector or genuinely ready managed lifecycle. Preserve existing services/config/credentials/memory and journal backups. Verify owned stop/start plus authorized daemon/Pi restart, OTP domain reconnect and harmless chat. Manual sustained service is separate from unchanged installer finite diagnostic/start grants, with actual current JWT/session/token/boot checks; no indefinite auth lease or foreign restart.
 - [ ] VD-T259.5: Verify correlated actual visible app/chat/OTP domain/durable restart milestones; preserve full baseline/deferred AC OPEN.
+
+
+### v259b implementation detail under existing MVP tasks
+
+RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, production-path JWT/one-use edge probe/current unit connector tests and actual bounded revocation/restart evidence. Existing checkboxes remain OPEN.

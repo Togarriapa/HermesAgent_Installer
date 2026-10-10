@@ -249,3 +249,8 @@ Append-only `plans/amendments/2026-10-10-version-aware-predecessor-verification-
 ## Visible working MVP priority v259
 
 Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v259.json`; native Jarvis app visible, real eligible chat, OTP protected app-only domain and owned durable restart/reconnect first. BD259.1/PR259.2/RT259.3/LC259.4/VD259.5 OPEN. Broad work preserved/deferred; full baseline AC OPEN; no provenance/security/budget shortcut.
+
+
+## Manual stage gateway seam v259b
+
+`planning/jarvis-manual-stage-gateway-seam-v259b.json`; same RT259.3/LC259.4/VD259.5 tasks OPEN. Distinct manual adapter, real JWT + same-app nonce edge proof and owned fixed connector; no counterfeit active rows or copied management credentials. Actual revocation/restart gates MVP.

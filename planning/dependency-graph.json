@@ -3804,5 +3804,16 @@
     },
     "priority": "four actual MVP milestones before unrelated extras; full baseline remains OPEN",
     "acceptance": "MVP and full baseline tracked separately"
+  },
+  "jarvis_manual_stage_gateway_seam_v259b": {
+    "contract": "planning/jarvis-manual-stage-gateway-seam-v259b.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-manual-stage-gateway-seam-v259b.md",
+    "tasks": [
+      "RT-T259.3",
+      "LC-T259.4",
+      "VD-T259.5"
+    ],
+    "extends": "jarvis_visible_desktop_mvp_stage_v259",
+    "acceptance": "actual edge revocation/unit/connector/restart required; all AC OPEN"
   }
 }
