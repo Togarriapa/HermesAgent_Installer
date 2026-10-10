@@ -23,6 +23,7 @@ from .native_worker_start_recipe import (
     RootNativeHermesWorkerStartRecipe,
     RootNativeHermesWorkerStartRecipeSource,
 )
+from .native_health_source import RootPreparedNativeHealthSourceDefinition
 
 _ROOT_JOURNAL = Path("/var/lib/hermes-installer/authority-journal")
 _SOCKET_DIR = Path("/run/hermes-installer/authority")
@@ -184,6 +185,8 @@ class RootPreparedNativeWorkerRecipe:
     working_root_receipt_handle: str
     controller_binding_handle: str
     complete_recipe_sha256: str
+    health_definition: RootPreparedNativeHealthSourceDefinition = field(repr=False, compare=False)
+    health_definition_sha256: str
     issued_monotonic: float
     expires_monotonic: float
     _issuer: object = field(repr=False, compare=False)
@@ -235,6 +238,8 @@ class RootPreparedNativeWorkerRecipe:
             "working_root_receipt_handle": self.working_root_receipt_handle,
             "controller_binding_handle": self.controller_binding_handle,
             "complete_recipe_sha256": self.complete_recipe_sha256,
+            "health_definition": dict(self.health_definition.public_projection()),
+            "health_definition_sha256": self.health_definition_sha256,
         })
 
 
@@ -412,12 +417,24 @@ class RootSetupNativeWorkerRecipeRegistry:
         if definition is None:
             endpoint.close()
             raise NativeWorkerRecipeUnavailable("held native Hermes start source member is unavailable")
-        definition.read_current()
+        try:
+            definition.read_current()
+            health_definition = RootPreparedNativeHealthSourceDefinition.from_held_release_members(
+                self.binding.resolve_prepared_native_health_fixture_receipts())
+        except BaseException:
+            endpoint.close()
+            raise
+        health_projection = dict(health_definition.public_projection())
         source_handles = tuple(sorted({
             prepared_bundle.hermes_source_receipt_handle,
             prepared_bundle.pm_runtime_receipt_handle,
             *start_recipe.installer_member_receipt_handles,
             *start_recipe.worker_member_receipt_handles,
+            health_definition.health_recipe_receipt_handle,
+            health_definition.health_request_receipt_handle,
+            health_definition.health_seed_receipt_handle,
+            health_definition.health_expected_result_receipt_handle,
+            health_definition.health_result_schema_receipt_handle,
         }))
         if any(not isinstance(handle, str) or not handle for handle in source_handles):
             endpoint.close()
@@ -493,6 +510,7 @@ class RootSetupNativeWorkerRecipeRegistry:
                 "boundary_source": [boundary_receipt.receipt_handle, boundary_receipt.sha256],
                 "pm_runtime_sha256": pm.base_closure_sha256,
                 "source_role_definition_closure_sha256": definitions_sha256,
+                "health_definition": health_projection,
                 "argv_token_recipe_sha256": argv_recipe_digest,
                 "sanitized_environment_recipe_sha256": environment_recipe_digest,
             }
@@ -536,6 +554,8 @@ class RootSetupNativeWorkerRecipeRegistry:
                 working_root_receipt_handle=work_root.receipt_handle,
                 controller_binding_handle=prepared_bundle.materialization_receipt_handle,
                 complete_recipe_sha256=_sha(input_source),
+                health_definition=health_definition,
+                health_definition_sha256=health_definition.definition_sha256,
                 issued_monotonic=now, expires_monotonic=expires,
                 _issuer=self._issuer, _start_recipe=start_recipe,
                 _identity=identity, _endpoint=endpoint, _working_root=work_root,
@@ -555,6 +575,9 @@ class RootSetupNativeWorkerRecipeRegistry:
         if (type(recipe) is not RootPreparedNativeWorkerRecipe
                 or recipe._issuer is not self._issuer
                 or self._recipes.get(recipe.receipt_handle) is not recipe
+                or type(recipe.health_definition) is not RootPreparedNativeHealthSourceDefinition
+                or recipe.health_definition_sha256 != recipe.health_definition.definition_sha256
+                or recipe.health_definition.verify_current() is not True
                 or recipe.expires_monotonic <= time.monotonic()):
             raise NativeWorkerRecipeUnavailable("worker recipe is foreign, stale, or expired")
         self.start_recipe_source.verify_current(recipe._start_recipe)
