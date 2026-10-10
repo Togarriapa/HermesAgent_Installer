@@ -528,3 +528,12 @@ Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gatewa
 - [ ] VD-T250.2 Verify independent raw archive facts and preserve currentness/managed runtime gates; all AC OPEN.
 
 Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+## Native plugin backend composition v253
+
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+
+- [ ] RB-T253.1: Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites.
+- [ ] HI-T253.2: Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.
+- [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.

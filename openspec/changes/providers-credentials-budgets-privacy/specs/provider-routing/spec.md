@@ -335,3 +335,15 @@ The installer SHALL require actual fresh foreground input and per-input public d
 #### Scenario: Existing task input is private
 - **WHEN** task stdin already has PRIVATE source ancestry
 - **THEN** the initial public TTY producer SHALL NOT relabel it or issue a public source receipt
+
+
+### Requirement: Source-bound native plugin backend composition v253
+The installer SHALL implement the closed v253 root source/account/target producer, signed active enrollment parser and production broker composition. Only current issuer-owned receipts may establish backend authority. Original full coverage, privacy, budget and grant/replay checks remain required.
+
+#### Scenario: Genuine backend effect and replay denial
+- **WHEN** a selected native tool has a current protected package and fully joined backend enrollment
+- **THEN** the production root factory routes its authorized request to the actual fixed backend, captures its schema-validated effect result and rejects replay or stale/sibling authority
+
+#### Scenario: Missing backend account
+- **WHEN** source discovery exists but the selected account/credential/target or backend producer is unavailable
+- **THEN** keep that action pending with exact prerequisite and resume without claiming functional acceptance or reducing original scope

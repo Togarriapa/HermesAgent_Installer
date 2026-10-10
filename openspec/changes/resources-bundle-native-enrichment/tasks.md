@@ -174,3 +174,12 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b): Implement exact retained health primaryhome binding, current runtime epoch/policy revision, prepared-vs-published declaration getter/restart source custody and schema4; verify all genuine positive/currentness/legacy failures.
 
 - [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b cold custody): Implement independent read-only signed adopted-choice/current key/member issuer, strict cold parser declaration bridge, and ordinary exact runtime revalidation before activation; test restart/races/deny-before-effects.
+
+
+## Native plugin backend composition v253
+
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+
+- [ ] RB-T253.1: Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites.
+- [ ] HI-T253.2: Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.
+- [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.

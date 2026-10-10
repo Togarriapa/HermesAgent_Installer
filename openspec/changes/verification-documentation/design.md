@@ -237,3 +237,9 @@ Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed histori
 Append-only v250 corrects only v245 cohort count: original399 signed-policy archives contain3093 symlinks and zero hardlinks; original graph file/hash remain correct. Preserve all source/currentness/private-root/transform/runtime gates.
 
 Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+## Native plugin backend composition v253
+
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+Root-owned sealed source/account/target observations feed the v231 active aggregate and strict protected catalog. Production runtime composes the existing fixed broker factories; arbitrary caller rows/provider callbacks and FixtureEffects cannot establish this path.

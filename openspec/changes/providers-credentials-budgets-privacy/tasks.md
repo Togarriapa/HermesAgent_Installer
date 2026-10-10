@@ -83,3 +83,12 @@ Private input recipient consent v100: `plans/amendments/2026-10-10-private-input
 - [ ] HI-T171.1 Native/MCP/source/broker/policy: actual tools/list request/result witness capture before derivation, current source/peer/schema and wrong-method negatives.
 
 - [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.
+
+
+## Native plugin backend composition v253
+
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+
+- [ ] RB-T253.1: Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites.
+- [ ] HI-T253.2: Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.
+- [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.

@@ -261,3 +261,8 @@ Append-only `plans/amendments/2026-10-10-version-aware-predecessor-verification-
 
 
 v250: `plans/amendments/2026-10-10-xpra-link-count-correction-v250.md` / `planning/xpra-link-count-correction-v250.json`; RT-T250.1 and VD-T250.2 OPEN. Direct399-archive raw-header audit corrects counts to3093 symlinks/0 hardlinks; immutable v245 graph hash remains unchanged, all AC OPEN.
+
+
+## Native plugin backend composition v253
+
+`plans/amendments/2026-10-11-native-plugin-backend-composition-v253.md` / `planning/native-plugin-backend-composition-v253.json`; RB-T253.1, HI-T253.2, VD-T253.3 OPEN. Actual source/account/target producer, signed strict active catalog and real root broker composition required; all original coverage and AC OPEN.

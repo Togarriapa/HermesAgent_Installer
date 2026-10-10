@@ -1354,3 +1354,15 @@ The implementation SHALL interpret the v238/v245 cohort as3093 original archive 
 #### Scenario: Inferred or changed hardlink
 - **WHEN** a hardlink is inferred from the earlier count summary or original kind/origin changes
 - **THEN** materializer admission SHALL deny rather than reinterpret the immutable source graph
+
+
+### Requirement: Source-bound native plugin backend composition v253
+The installer SHALL implement the closed v253 root source/account/target producer, signed active enrollment parser and production broker composition. Only current issuer-owned receipts may establish backend authority. Original full coverage, privacy, budget and grant/replay checks remain required.
+
+#### Scenario: Genuine backend effect and replay denial
+- **WHEN** a selected native tool has a current protected package and fully joined backend enrollment
+- **THEN** the production root factory routes its authorized request to the actual fixed backend, captures its schema-validated effect result and rejects replay or stale/sibling authority
+
+#### Scenario: Missing backend account
+- **WHEN** source discovery exists but the selected account/credential/target or backend producer is unavailable
+- **THEN** keep that action pending with exact prerequisite and resume without claiming functional acceptance or reducing original scope

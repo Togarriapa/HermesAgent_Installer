@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "EV-RB-T253-source-audit-20261011",
+  "candidate": "62c238e83a1b057880e5f01fab6cde7e6e8d6f55",
+  "method": "read-only source and AST fieldset audit; no source execution or external account effects",
+  "observations": {
+    "candidate": "62c238e83a1b057880e5f01fab6cde7e6e8d6f55",
+    "observed_gap": "Existing mediated worker dispatch reaches AuthorityService, but protected enrollment has no selected plugin backend account/action/target projection and production root runtime composition never invokes the two existing broker factories. FixtureEffects does not prove this path.",
+    "source_files": [
+      "plugin_accounts_broker.py",
+      "plugin_homelab_broker.py",
+      "authority/native_policy_preparation.py",
+      "authority/native_component_targets.py",
+      "authority/enrollment.py",
+      "authority/runtime_bindings.py"
+    ]
+  },
+  "files": [
+    {
+      "path": "src/hermes_installer/plugin_accounts_broker.py",
+      "sha256": "db6c3fffb7e8181c1c8cffdecee39ed9595ae58eb415ab9cdc955410cb6557b9",
+      "size_bytes": 59129,
+      "role": "audit-only; not reviewed release pin"
+    },
+    {
+      "path": "src/hermes_installer/plugin_homelab_broker.py",
+      "sha256": "5e053bf2574b04064b33b8ed48afc1be3ad557d4c480cb315fc240e3513f1c7d",
+      "size_bytes": 49187,
+      "role": "audit-only; not reviewed release pin"
+    },
+    {
+      "path": "src/hermes_installer/authority/native_policy_preparation.py",
+      "sha256": "a50873d21823201ece7e39e894b2d2e80f0f042801c2b719cfd4dfffe4234a06",
+      "size_bytes": 65052,
+      "role": "audit-only; not reviewed release pin"
+    },
+    {
+      "path": "src/hermes_installer/authority/native_component_targets.py",
+      "sha256": "9454e31f00b9e40148989fa6a01fdad6c8ab992c934ae7a745be2dfb67ba4994",
+      "size_bytes": 60243,
+      "role": "audit-only; not reviewed release pin"
+    },
+    {
+      "path": "src/hermes_installer/authority/enrollment.py",
+      "sha256": "0a7fb38cb887589f2d62d2ac259f8985dc9c221aeb07731bc8a247694f6a79b9",
+      "size_bytes": 216894,
+      "role": "audit-only; not reviewed release pin"
+    },
+    {
+      "path": "src/hermes_installer/authority/runtime_bindings.py",
+      "sha256": "487416d9cb5a7f609cf6b865457250cebb64265dd11748e8b0978d62040ad30d",
+      "size_bytes": 128014,
+      "role": "audit-only; not reviewed release pin"
+    }
+  ],
+  "result": "root backend projection/composition missing; existing worker mediation and broker source retained; implementation/account/Pi acceptance OPEN"
+}
