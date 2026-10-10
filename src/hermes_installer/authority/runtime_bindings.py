@@ -175,10 +175,17 @@ class RootRuntimeBindings:
     def retain_private_loopback_network_lease(self, binding_id: str, lease: Any) -> None:
         """Attach an actual root network lease to the exact protected endpoint row."""
         selected = self.resolve_private_memory_endpoint_binding(binding_id)
+        network = self.resolve_private_loopback_network(
+            selected.network_binding_handle,
+            service_generation_digest=selected.service_generation_digest,
+        )
+        if (selected.service_enrollment_id not in network.member_enrollment_ids
+                or selected.namespace_id != network.namespace_identity):
+            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
         retain = getattr(self.process_manager, "retain_private_loopback_network_lease", None)
         if not callable(retain):
             raise EnrollmentDenied("root process custody has no private network lease registry")
-        retain(selected, lease)
+        retain(selected, network, lease)
 
     def resolve_private_loopback_network_lease(self, network_binding_handle: str) -> Any:
         """Resolve a retained lease only through one current protected endpoint binding."""
@@ -188,6 +195,13 @@ class RootRuntimeBindings:
             network_binding_handle,
         )
         endpoint = self.resolve_private_memory_endpoint_binding(endpoint.binding_id)
+        network = self.resolve_private_loopback_network(
+            endpoint.network_binding_handle,
+            service_generation_digest=endpoint.service_generation_digest,
+        )
+        if (endpoint.service_enrollment_id not in network.member_enrollment_ids
+                or endpoint.namespace_id != network.namespace_identity):
+            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
         resolve = getattr(self.process_manager, "resolve_private_loopback_network_lease", None)
         if not callable(resolve):
             raise EnrollmentDenied("root process custody has no private network lease resolver")
@@ -1279,6 +1293,7 @@ def build_root_runtime_bindings(
         process_profiles[profile.profile_id] = profile.as_managed_profile(
             artifact_root=enrollment.artifact_staging_directory,
             child_artifact_refs=child_refs,
+            service_generation_digest=digest,
             parameter_schemas=service_catalog.parameter_schemas,
         )
     if set(process_profiles) != set(profile_to_principal):

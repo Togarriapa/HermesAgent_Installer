@@ -305,6 +305,7 @@ class HostServiceProfile:
     io_weight: int
 
     def as_managed_profile(self, *, artifact_root: Path, child_artifact_refs: Mapping[str, str],
+                           service_generation_digest: str | None = None,
                            parameter_schemas: Mapping[str, OperationParameterSchema] | None = None):
         """Create the process-custodian record using only root-resolved fields."""
         from hermes_installer.managed_process_custodian import ManagedProfileCustody
@@ -320,6 +321,7 @@ class HostServiceProfile:
             home_root=self.roots.home, work_root=self.roots.work,
             generation=self.generation, memory_max_bytes=self.memory_max_bytes,
             cpu_quota_percent=self.cpu_quota_percent, io_weight=self.io_weight,
+            service_generation_digest=service_generation_digest,
             max_lifetime_seconds=self.max_lifetime_seconds,
             child_artifact_refs=dict(child_artifact_refs), argv_recipe=self.argv_recipe,
             operation_targets=dict(self.operation_targets),
@@ -393,12 +395,15 @@ class ProtectedEnrollmentCatalog:
         self._source_observer_joins = MappingProxyType(observer_joins)
         self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
         endpoints: dict[str, RootSelectedPrivateMemoryEndpointBinding] = {}
+        network_handles: set[str] = set()
         for raw in private_memory_endpoint_selections or ():
             endpoint = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
                 raw, service_generation_digest=digest,
             )
             if endpoint.binding_id in endpoints:
                 raise EnrollmentDenied("private memory endpoint binding ID is duplicated")
+            if endpoint.network_binding_handle in network_handles:
+                raise EnrollmentDenied("private memory network binding handle is duplicated")
             try:
                 service = self.resolve(endpoint.service_enrollment_id, endpoint.service_generation)
                 memory = self._memory_enrollments.get((endpoint.service_enrollment_id,
@@ -429,6 +434,7 @@ class ProtectedEnrollmentCatalog:
             except (KeyError, AttributeError, TypeError, ValueError, PermissionError):
                 raise EnrollmentDenied("private memory endpoint selection is stale or incomplete") from None
             endpoints[endpoint.binding_id] = endpoint
+            network_handles.add(endpoint.network_binding_handle)
         self._private_memory_endpoint_selections = MappingProxyType(endpoints)
         models: dict[str, RootSelectedPrivateMemoryModelBinding] = {}
         for raw in private_memory_model_selections or ():
