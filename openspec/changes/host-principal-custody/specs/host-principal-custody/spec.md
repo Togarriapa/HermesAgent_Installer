@@ -591,3 +591,10 @@ The installer SHALL bind the updated financial source module and all its actual 
 #### Scenario: Root financial read omits selected account alias
 - **WHEN** the read result lacks the actual root-selected alias or violates the closed scalar/UTF8/byte bounds
 - **THEN** the native result is denied without fabricating an alias or promoting backend claims to account/transaction proof
+
+### Requirement: Protected public web scope source v142
+The installer SHALL publish only source-selected public web scopes with exact target, effect and configuration receipt joins and SHALL require separate current PUBLIC input permission.
+
+#### Scenario: Private input names a configured public URL
+- **WHEN** a request carries PRIVATE or UNKNOWN ancestry despite a configured public scope
+- **THEN** egress is denied without widening the private consent or interpreting scope configuration as input permission

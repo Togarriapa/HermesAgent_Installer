@@ -225,3 +225,5 @@ Public input/web permission v138: `plans/amendments/2026-10-10-public-input-web-
 Web registration source cohort v140: `plans/amendments/2026-10-10-web-registration-source-pin-v140.md`; actual current module pins/receipts and renewed register-call capture, historical source inventory unchanged, all AC open.
 
 Finance registration source cohort v141: `plans/amendments/2026-10-10-finance-registration-source-pin-v141.md`; actual held current module and refreshed finite registration/schema source joins, bounded data distinct account/execution authority; all AC open.
+
+Protected public web scope source v142: `plans/amendments/2026-10-10-protected-public-web-scopes-v142.md`; actual root configuration/source selection projects into nonrecursive active scopes independently of per-input PUBLIC egress permission. All AC open.
