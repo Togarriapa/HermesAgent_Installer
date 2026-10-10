@@ -199,3 +199,6 @@ Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-des
 
 
 v234: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` / `planning/gateway-digests-owned-network-cleanup-v234.json`; RT-T234.1 → RT-T234.2 → VD-T234.3 OPEN. Gateway acyclic field correction and original-owned journaled cleanup after expiry/revocation; no new pins/all AC OPEN.
+
+
+v237: `plans/amendments/2026-10-10-preactive-native-build-manager-composition-v237.md` / `planning/preactive-native-build-manager-composition-v237.json`; RT-T237.1/.2 and VD-T237.3 OPEN. Genuine preactive native manager chain breaks active-profile cycle; exact root controller sequence and owned partial-creation clarification; no pins/all AC OPEN.

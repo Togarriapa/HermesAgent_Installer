@@ -3455,5 +3455,23 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "preactive_native_build_manager_composition_v237": {
+    "contract": "planning/preactive-native-build-manager-composition-v237.json",
+    "tasks": {
+      "RT-T237.1": [
+        "RT-T227.3"
+      ],
+      "RT-T237.2": [
+        "RT-T237.1",
+        "RT-T225.1"
+      ],
+      "VD-T237.3": [
+        "RT-T237.1",
+        "RT-T237.2",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

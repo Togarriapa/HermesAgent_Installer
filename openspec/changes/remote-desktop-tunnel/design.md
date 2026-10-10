@@ -127,3 +127,10 @@ Use exact `planning/official-desktop-ws-types-repair-v229.json` source artifact/
 Use the closed Gateway field sets and canonical acyclic projections in the v234 JSON. Reserve cleanup journal intent before namespace creation; retain creator placeholder/mount/namespace facts. Cleanup uses original sealed custody, fresh signed nft readback and zero owned members without active verification or renewal. Partial mismatches remain journaled recovery-pending.
 
 Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` and `planning/gateway-digests-owned-network-cleanup-v234.json`; all AC OPEN.
+
+
+## v237 Preactive native manager composition
+
+Use ManagedProcessEffectHandler.from_current_root_setup(binding,registry) and ManagedBuildJobRunner.from_current_root_setup(handler,binding,registry). The existing remote executor derives its own current _RootPreparedBuildRuntime; generic active profiles/effects deny. Preserve original actor/source/PM/NSS/controller custody and drain verified-owned job lifecycle before registry FD closure.
+
+Exact contract: `planning/preactive-native-build-manager-composition-v237.json`; all AC OPEN.
