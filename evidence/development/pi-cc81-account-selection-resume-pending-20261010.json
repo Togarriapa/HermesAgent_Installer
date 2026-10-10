@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_installer_attempt_and_read_only_inspection",
+  "state": "account_selection_reached_resume_pending",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery", "verification-documentation"],
+  "task_ids": ["BD-T208.1", "VD-T208.2", "BD-F03", "LC-F03"],
+  "target": {"target_name": "PI-HERMES", "architecture": "aarch64", "executor_uid": 0},
+  "candidate": {
+    "commit": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "tree": "74dca3566f212e185cbdada7a2d401cf0d63f6e9",
+    "source_archive_sha256": "061530989f92f4fd780175274e728d7f99e63218e7855fc1579655e6b635f0a7",
+    "frozen_annotated_tag_and_source_identity": "reported verified"
+  },
+  "attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "staging_and_tag_check": "same owned staging; tag checks reported",
+    "full_candidate_sha_prompts": "entered twice, as reported",
+    "progress": "reached existing non-root Linux account selection prompt",
+    "operator_input": "admin entered, as reported",
+    "result": "BootstrapEnrollmentPending; resume command returned to root prompt",
+    "exit_status": null,
+    "failure_cause": "not established"
+  },
+  "read_only_host_observations_after_attempt": {
+    "timestamp": null,
+    "effective_uid": 0,
+    "paths": {
+      "/usr/lib/hermes-installer": {"type": "directory", "uid": 0, "gid": 0, "mode_octal": "0755"},
+      "/usr/bin/hermes-installer-root-setup": "absent; actual launcher location was not verified",
+      "/etc/hermes-installer/root-setup-selection.json": "absent",
+      "/var/lib/hermes-installer/authority-journal/release-build-cas": {"type": "directory", "uid": 0, "gid": 0, "mode_octal": "0700"}
+    },
+    "interpretation_limit": "Read-only path metadata does not establish an installed release, active runtime, current deployment receipt, or the cause of the pending resume."
+  },
+  "not_observed": [
+    "completed installation or active/current runtime receipt",
+    "successful resume or command exit status",
+    "account credentials or enrollment completion",
+    "native model/provider/Coral operation or target acceptance",
+    "source/resource deletion safety"
+  ],
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "This record distinguishes an operator-reported account-selection and pending-resume attempt from the separate read-only path inspection. It does not prove installation, current runtime, or acceptance; all AC01-AC18 remain open."
+}
