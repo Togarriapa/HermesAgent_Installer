@@ -657,3 +657,17 @@ Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-captu
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
 
 Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Source reviewed application request mapping
+The system SHALL preserve original request bytes and use only a reviewed explicit native action projection or the separate v107 finite root installer qualification request to admit an application workload. It SHALL NOT infer a native mapping from application IDs or fixture recipe names.
+
+#### Scenario: Fixture recipe has no native registration
+- **WHEN** a fixture workload has no actual reviewed native registration
+- **THEN** native dispatch denies and the separate qualification flow does not constitute production application acceptance.
+
+### Requirement: Actual distinct private memory capability selection
+The system SHALL use v108 selected owned endpoint/model deployment and private text-generation/embedding capability receipts for the exact memory profile/namespace/provider/owner. It SHALL preserve GLM5.2 extraction, separately enroll an actual embedding model/dimension and enforce bounded source-owned serializers/parsers and fresh private authorization at every retry.
+
+#### Scenario: Only public chat dispatcher exists
+- **WHEN** private endpoint/model or embedding capability proof is absent
+- **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
