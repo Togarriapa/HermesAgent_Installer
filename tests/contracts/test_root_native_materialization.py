@@ -320,7 +320,7 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
         "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32,
         "profile", "profiles/profile.yaml", "e" * 64, "resources-revision")
     discovery = NativeInstallReceipt(
-        PINNED_HERMES_REVISION, "3.14.7", "profile", True, True,
+        PINNED_HERMES_REVISION, "3.14.7", "default", True, True, "Profile",
         ("skill-one",), ("skill-one",), {
             "SOUL.md": hashlib.sha256(body).hexdigest(),
             "skills/native-test/SKILL.md": hashlib.sha256(b"# Test skill\n").hexdigest(),

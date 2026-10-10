@@ -294,6 +294,9 @@ class RootNativeMaterialization:
                 or not discovery.python_version.startswith("3.14.")
                 or discovery.profile_id != native_profile_key
                 or not discovery.discovered_profile or not discovery.profile_identity_loaded
+                or discovery.profile_display_name != (
+                    "Jarvis" if resource_profile_id == "hermes"
+                    else resource_profile_id.replace("-", " ").replace("_", " ").title())
                 or set(discovery.loaded_skills) != _skill_ids(mapping)):
             raise NativeMaterializationDenied("native Hermes discovery receipt does not match the selected closure")
         handle = secrets.token_urlsafe(32)
@@ -664,8 +667,11 @@ class RootNativeMaterialization:
         expected_skills = sorted(item.resource_id for item in items if item.kind == "skill")
         if (discovery.hermes_revision != PINNED_HERMES_REVISION
                 or not discovery.python_version.startswith("3.14.")
-                or discovery.profile_id != profile_id or not discovery.discovered_profile
+                or discovery.profile_id != PRIMARY_NATIVE_PROFILE_KEY or not discovery.discovered_profile
                 or not discovery.profile_identity_loaded
+                or discovery.profile_display_name != (
+                    "Jarvis" if profile_id == "hermes"
+                    else selection.resource_profile_id.replace("-", " ").replace("_", " ").title())
                 or list(discovery.loaded_skills) != expected_skills
                 or list(discovery.discovered_skills) != expected_skills):
             raise NativeMaterializationDenied("pinned Hermes discovery result does not match the selected closure")
