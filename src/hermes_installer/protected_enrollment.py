@@ -666,8 +666,8 @@ class ProtectedEnrollmentCatalog:
             if key in public_scope_rows:
                 raise EnrollmentDenied("public web scope enrollment is duplicated")
             public_scope_rows[key] = scope
-        if tuple(scope.enrollment_id for scope in public_scope_rows.values()) != tuple(
-                sorted(scope.enrollment_id for scope in public_scope_rows.values())):
+        ordered_scope_ids = tuple(scope.enrollment_id for scope in public_scope_rows.values())
+        if ordered_scope_ids != tuple(sorted(set(ordered_scope_ids))):
             raise EnrollmentDenied("public web scope rows must be sorted by enrollment ID")
         if scope_ids_in_issuers != {scope.enrollment_id for scope in public_scope_rows.values()}:
             raise EnrollmentDenied("public web scope source issuer references do not resolve exactly")
@@ -1065,6 +1065,25 @@ class ProtectedEnrollmentCatalog:
         except Exception:
             raise EnrollmentDenied("private memory endpoint binding is no longer current") from None
         return row
+
+    def resolve_private_memory_endpoint_for_service(
+        self, service_enrollment_id: str, service_generation: str,
+        profile_id: str, principal_id: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        """Select the unique active endpoint row for a protected memory service."""
+        enrollment = _id(service_enrollment_id, "memory service enrollment ID")
+        generation = _id(service_generation, "memory service generation")
+        profile = _id(profile_id, "memory service profile ID")
+        principal = _id(principal_id, "memory service principal ID")
+        matches = [row for row in self._private_memory_endpoint_selections.values()
+                   if row.service_enrollment_id == enrollment
+                   and row.service_generation == generation
+                   and row.profile_id == profile
+                   and row.principal_id == principal]
+        if len(matches) != 1:
+            raise EnrollmentDenied("memory service has no unique selected endpoint binding")
+        # Re-run all service, process, route, and namespace joins on every lookup.
+        return self.resolve_private_memory_endpoint_binding(matches[0].binding_id)
 
     def resolve_private_memory_model_binding(
         self, binding_id: str, endpoint_binding_id: str | None = None,

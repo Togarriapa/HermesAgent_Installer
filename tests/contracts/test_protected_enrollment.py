@@ -238,14 +238,22 @@ def test_private_memory_catalog_getters_rejoin_exact_service_routes_and_endpoint
         private_memory_model_selections=[_private_model_row()],
     )
     endpoint = catalog.resolve_private_memory_endpoint_binding("endpoint-selection-a")
+    selected_endpoint = catalog.resolve_private_memory_endpoint_for_service(
+        "service-a", "memory-gen-a", "profile-a", "principal-a",
+    )
     model = catalog.resolve_private_memory_model_binding("model-selection-a", "endpoint-selection-a")
     assert endpoint.service_generation_digest == catalog.digest
+    assert selected_endpoint is endpoint
     assert model.endpoint_binding_id == endpoint.binding_id
-    assert resolved_routes == ["memory-search-v1", "memory-search-v1", "memory-search-v1"]
+    assert resolved_routes == ["memory-search-v1"] * 4
     with pytest.raises(EnrollmentDenied, match="another endpoint"):
         catalog.resolve_private_memory_model_binding("model-selection-a", "other-endpoint")
     with pytest.raises(EnrollmentDenied, match="absent or stale"):
         catalog.resolve_private_memory_model_binding("unknown-model")
+    with pytest.raises(EnrollmentDenied, match="no unique selected endpoint"):
+        catalog.resolve_private_memory_endpoint_for_service(
+            "service-a", "memory-gen-a", "profile-a", "other-principal",
+        )
 
 
 def test_private_memory_catalog_denies_stale_process_join_and_unknown_model_endpoint(monkeypatch):
@@ -806,6 +814,8 @@ def test_public_web_scope_parser_binds_canonical_payload_and_rejects_unsafe_targ
         {**raw, "targets": [{**raw["targets"][0], "hostname": "127.0.0.1"}]},
         {**raw, "targets": [{**raw["targets"][0], "hostname": "docs.example.org."}]},
         {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/../private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/%2e%2e/private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs", "/api"]}]},
         {**raw, "targets": [{**raw["targets"][0], "query_keys": ["access_token"]}]},
         {**raw, "deadline_seconds": True},
         {**raw, "response_bytes_limit": 2_097_153},
@@ -887,6 +897,12 @@ def test_public_web_scope_catalog_joins_exact_action_issuer_and_process_epoch(mo
                                    "capture-v1", (), "other-generation", "observer-a",
                                    ("authenticated-input",), (), ("web-scope-a",)),
             ], public_web_scopes=[raw_scope],
+        )
+    with pytest.raises(EnrollmentDenied, match="sorted by enrollment ID"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): profile}, digest="c" * 64,
+            native_packages=[package], source_issuers=[issuer],
+            public_web_scopes=[raw_scope, {**raw_scope, "generation": "process-g2"}],
         )
 
 

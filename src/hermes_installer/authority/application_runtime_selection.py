@@ -359,6 +359,13 @@ class RootApplicationRuntimePreparationSelectionRegistry:
             raise ApplicationRuntimeSelectionDenied("runtime input source/lock selection changed")
         return stored
 
+    def _resolve_current_package_closure(self, source_selection_handle: str) -> Any:
+        resolver = getattr(self.binding, "resolve_current_application_package_closure", None)
+        if not callable(resolver):
+            raise ApplicationRuntimeSelectionDenied(
+                "root setup binding has no current offline package-closure resolver")
+        return resolver(source_selection_handle)
+
     def resolve_application_runtime_preparation(
             self, qualification_choice_handle: str,
             application_id: str) -> RootApplicationRuntimePreparationSelection:
@@ -375,11 +382,18 @@ class RootApplicationRuntimePreparationSelectionRegistry:
                 inputs.selection_handle)
             if not isinstance(toolchain, tuple) or len(toolchain) != 2:
                 raise ApplicationRuntimeSelectionDenied("current Node/Bun toolchain resolver returned no typed receipt pair")
-            toolchain_handles = tuple(getattr(row, "receipt_handle", None) for row in toolchain)
-            closure = self.package_registry.resolve_current_package_closure_for_selection(
+            from .application_toolchains import RootApplicationToolchainObservation
+            if (any(type(row) is not RootApplicationToolchainObservation for row in toolchain)
+                    or {row.tool_id for row in toolchain} != {
+                        "application-node-26.7.0-linux-arm64",
+                        "application-bun-1.4.3-linux-arm64",
+                    }):
+                raise ApplicationRuntimeSelectionDenied("current Node/Bun toolchain resolver returned unreviewed receipts")
+            toolchain_handles = tuple(row.receipt_handle for row in toolchain)
+            closure = self._resolve_current_package_closure(
                 inputs.source_preparation_selection_handle)
         else:
-            closure = self.package_registry.resolve_current_package_closure_for_selection(
+            closure = self._resolve_current_package_closure(
                 inputs.source_preparation_selection_handle)
             toolchain_handles = tuple(getattr(closure, "runtime_toolchain_receipt_handles", ()))
         from .application_runtime_preparation import RootApplicationOfflinePackageClosureReceipt
@@ -388,7 +402,13 @@ class RootApplicationRuntimePreparationSelectionRegistry:
                 or closure.source_receipt_handle != inputs.prepared_source_receipt_handle
                 or closure.lock_receipt_handle != inputs.selected_lock_receipt_handle
                 or closure.lock_sha256 != inputs.lock_sha256
-                or not toolchain_handles or closure.expires_monotonic <= self.monotonic()):
+                or closure.setup_session_id != inputs.setup_session_id
+                or closure.transaction_handle != inputs.transaction_handle
+                or closure.prepared_generation_digest != inputs.prepared_generation_digest
+                or closure.application_id != application_id
+                or not toolchain_handles or len(set(toolchain_handles)) != len(toolchain_handles)
+                or any(not isinstance(handle, str) or len(handle) < 32 for handle in toolchain_handles)
+                or closure.expires_monotonic <= self.monotonic()):
             raise ApplicationRuntimeSelectionDenied("current retained package closure does not match source/lock/toolchain")
         choice = self.binding.resolve_application_setup_choice(qualification_choice_handle)
         consent = self.binding.resolve_application_qualification_consent(
@@ -402,6 +422,15 @@ class RootApplicationRuntimePreparationSelectionRegistry:
                 or getattr(consent, "revocation_epoch", None) != 0
                 or getattr(consent, "expires_monotonic", 0) <= self.monotonic()):
             raise ApplicationRuntimeSelectionDenied("current runtime preparation consent is absent, revoked or mismatched")
+        probe_resolver = getattr(self.binding, "resolve_application_runtime_probe_artifact", None)
+        if not callable(probe_resolver):
+            raise ApplicationRuntimeSelectionDenied(
+                "independent installed application ABI/origin probe artifact receipt is unavailable")
+        probe = probe_resolver(application_id)
+        probe_handle = getattr(probe, "receipt_handle", None)
+        _opaque(probe_handle, "runtime probe artifact")
+        if getattr(probe, "application_id", application_id) != application_id:
+            raise ApplicationRuntimeSelectionDenied("installed runtime probe artifact belongs to another application")
         build_profile = _PROFILES[application_id][3]
         build_resolver = getattr(self.binding, "resolve_prepared_application_build_service", None)
         if not callable(build_resolver):
@@ -421,13 +450,6 @@ class RootApplicationRuntimePreparationSelectionRegistry:
                 or getattr(build_service, "prepared_generation_id", None) != inputs.prepared_generation_id
                 or getattr(build_service, "prepared_generation_digest", None) != inputs.prepared_generation_digest):
             raise ApplicationRuntimeSelectionDenied("exact v132 app build subject/template is not held for this transaction")
-        probe_resolver = getattr(self.binding, "resolve_application_runtime_probe_artifact", None)
-        if not callable(probe_resolver):
-            raise ApplicationRuntimeSelectionDenied(
-                "independent installed application ABI/origin probe artifact receipt is unavailable")
-        probe = probe_resolver(application_id)
-        probe_handle = getattr(probe, "receipt_handle", None)
-        _opaque(probe_handle, "runtime probe artifact")
         key = (qualification_choice_handle, application_id)
         handle = self._final_by_choice.get(key)
         if handle is None:
@@ -457,16 +479,26 @@ class RootApplicationRuntimePreparationSelectionRegistry:
             "schema": 1,
             "build_profile_id": build_profile,
             "runtime_kind": inputs.runtime_kind,
-            "python_dependency_stage": (
+            "python_lock_integrity_check": (
+                ["uv", "lock", "--check", "--offline", "--no-progress"]
+                if inputs.runtime_kind == "python" else None),
+            "python_dependency_export": (
                 ["uv", "export", "--locked", "--offline", "--no-dev",
                  "--no-default-groups", "--no-editable", "--no-emit-project",
-                 "--format", "requirements-txt"]
+                 "--format", "requirements-txt", "--output-file",
+                 "<fixed-selected-work-requirements>"]
                 if inputs.runtime_kind == "python" else None),
             "python_dependency_install": (
                 ["uv", "pip", "sync", "--require-hashes", "--offline",
                  "--no-index", "--find-links", "<root-selected-wheelhouse>",
                  "--python", "<selected-environment-python>",
                  "<validated-target-requirements>"]
+                if inputs.runtime_kind == "python" else None),
+            "python_project_wheel_stage": (
+                {"source": "<fixed-readonly-selected-source>",
+                 "build_backend_closure": "<separate-reviewed-held-backend-closure-required>",
+                 "network": "disabled", "editable": False,
+                 "output": "<observed-source-bound-project-wheel>"}
                 if inputs.runtime_kind == "python" else None),
             "python_project_install": (
                 ["uv", "pip", "install", "--no-deps", "--require-hashes",
