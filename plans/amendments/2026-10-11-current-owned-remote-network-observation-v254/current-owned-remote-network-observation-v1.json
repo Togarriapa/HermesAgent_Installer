@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "id": "current-owned-remote-network-observation-v254",
+  "status": "specified; implementation and sustained Desktop/native acceptance OPEN",
+  "refines": [
+    "planning/current-remote-identity-adoption-v225.json",
+    "planning/gateway-digests-owned-network-cleanup-v234.json",
+    "planning/selected-remote-role-source-inputs-v202.json"
+  ],
+  "requirements": [
+    "direct-user-remote-desktop authenticated official app only",
+    "bounded active WebSocket expiry/revocation",
+    "current host/service/source/network custody",
+    "lifecycle recovery without foreign effects"
+  ],
+  "source_audit": {
+    "checkout": "/private/tmp/hermes-managed-remote-activation-luna",
+    "owner": "luna_active_service_lifetime",
+    "state": "read-only actual source plus owner-reported uncommitted renewal/currentness changes, not accepted runtime",
+    "methods": [
+      "authority/remote_network_lease.py:RootRemoteNetworkLeaseResolver.resolve_current_lease",
+      "authority/remote_network_lease.py:RootRemoteNetworkLeaseResolver.renew_current_lease",
+      "authority/private_loopback_network.py:renew_root_network_lease",
+      "managed_process_custodian.py:ManagedProcessEffectHandler._root_selected_recipe_deadline",
+      "managed_process_custodian.py:ManagedProcessEffectHandler.start_selected_operation",
+      "authority/selected_startup_authority.py:is_active_selected_service_policy_current"
+    ],
+    "observation": "Source network primitive already refreshes a short held kernel/tool observation after current still-live verification and fresh exact rules/topology readback. Source process recipe derives its own deadline and RuntimeMaxSec <=600; prior network expiry min-clamp terminates gateway at initial observation cap despite full current watchdog. These are distinct authorities."
+  },
+  "allowed_api": {
+    "owner": "RootRemoteNetworkLeaseResolver.from_root_runtime(runtime, active_identity_resolver, host_tool_registry); exact current root-owned runtime/service/bindings/issuer membership required. No caller policy/network row, lease, host tool or provider callback.",
+    "resolve": "resolve_current_lease(remote_enrollment_id) -> same retained RootPrivateLoopbackNetworkLease; resolve fresh current publication/core/source/adoption/choice/revocation/three NSS role facts/private network before returning or renewing. Caller ID only lookup, never authority.",
+    "renew": "renew_current_lease(lease_handle) -> same retained RootPrivateLoopbackNetworkLease; opaque issuer-retained lookup under lock, same current adopted remote/network/generation/full service generation digest, existing live held namespace/table/member custody; no new namespace/create/adoption/start effect.",
+    "fresh_tool": "HostToolObservationRegistry.observe_selected_nft_tool(original network) then resolve_selected_nft_tool(observation, original network) supplies exact fresh signed current tool/package/installed member/host proof. Do not accept caller tool DTO or direct executable path."
+  },
+  "renewal_order": [
+    "Reopen complete current published core/source/adoption/choice/revocation/NSS/network join; compare same retained generation/network/topology and issuer membership.",
+    "verify_root_network_lease(original retained lease) must succeed BEFORE refresh. Expired/cancelled/revoked/generation-replaced lease is terminally unavailable; no revival.",
+    "At <=8 seconds remaining, acquire fresh exact tool observation, bounded by original observation/tool operation limits and current root authority. If >8 seconds return existing live proof without acquiring new tool.",
+    "renew_root_network_lease re-verifies original live proof, executes fixed read-only nft/network readback inside exact retained namespace using fresh tool FD, validates full original nft ruleset and topology/member ownership, then atomically replaces only observation fields.",
+    "Verify again after replacement and before effect use; close old tool FD only after successful replacement. Failed partial work closes new observations and preserves cleanup custody; never publish mixed proof fields.",
+    "Serialize concurrent role watchdogs through same resolver lock; every return belongs to same issuer-retained live lease and fresh full current selection."
+  ],
+  "mutable_fields": [
+    "nft_tool",
+    "kernel_receipt_handle",
+    "kernel_release",
+    "kernel_version_sha256",
+    "link_state_sha256",
+    "address_state_sha256",
+    "route_state_sha256",
+    "kernel_observed_monotonic",
+    "expires_monotonic",
+    "kernel_state"
+  ],
+  "immutable_custody": "Do not change remote/network ID, generation/service generation digest, member enrollment identities/ports/topology policy, namespace FD/device/inode/mount identity, owned table/ruleset digest, cleanup reservation/source lineage or process/start grant. A changed kernel state matching only summary metadata is insufficient. Actual full fixed readback must remain policy-equivalent and same-owned.",
+  "observation_deadline": "expires=min(fresh kernel observed monotonic+30 seconds, fresh signed tool expiry); fresh expires must be future. Original observation must remain valid before and through effect/readback transition. Original effect operation/controller deadlines cannot be widened by acquisition/refresh. No expired object reopening or persisted process seal restoration.",
+  "watchdog": {
+    "callpoint": "Actual ManagedProcessEffectHandler._watch_parent invokes selected_startup_authority.is_active_selected_service_policy_current for its exact retained started effect and managed handle. That method calls resolver on every <=250ms policy poll and before newly admitted effects/input.",
+    "checks": "Same current signed generation/source adoption/choice revocation/NSS role identities/runtime/custody plus still-live held namespace/member proof. A current short observation may refresh only by allowed API. Kernel topology/table/member drift, tool/source failure or missing current proof returns false. No exception-to-true, generic fallback or metadata-only currentness.",
+    "stop": "On failed check/cancel/expired original role authority, immediately deny new bytes/input/effects and stop only this exact root-owned managed unit using retained unit InvocationID/cgroup/PIDFD proof. Verify terminal/owned member release. Lost/foreign identity yields unavailable and ownership-safe recovery pending, never kill by caller PID/unit string.",
+    "restart": "Daemon restart reconstructs current publication/adoption/NSS via existing protected resolver, but cannot revive old in-memory namespace lease/FD seal. New owned namespace admission/cleanup follows existing original reservation/current effect requirements. This amendment does not add cold cleanup or unowned lease recovery."
+  },
+  "deadline_domains": {
+    "startup": "RootSelectedServiceStartIntent/start effect/controller authority remains one-use and expires at its original bounded admission deadline. Fresh network observations cannot retry a consumed start or extend setup TTL.",
+    "process": "ManagedProcessEffectHandler._root_selected_recipe_deadline derives exactly now+source recipe.max_lifetime_seconds with ceiling min(profile.max_lifetime_seconds,600) for the currently reviewed finite role lane. Retain immutable started deadline and RuntimeMaxSec; refresh never extends/restarts it. Remove gateway observation-expiry clamp only with actual continuously enforced watchdog; all other original tighter role/custody constraints remain.",
+    "socket": "Desktop X display/socket custody deadlines are distinct and unchanged; no new socket renewal implied.",
+    "access": "Access JWT exp/nbf/issuer/audience/identity/revocation checks, active WebSocket bounded leases and tunnel credential/source expiry remain independent upper bounds. Network renewal cannot keep an expired/revoked session authenticated or pass bytes before Access validation.",
+    "sustained_session": "The current <=600 source recipe is an actual managed-process cap in this finite lane, not a newly imposed product-wide Jarvis/user session timeout, not merely a startup timeout, and not sustained Desktop acceptance. Original ongoing Desktop requirement remains OPEN if finite recipe cannot fulfill it. A genuine source-owned sustained service lifecycle with fresh current start/control authority must be implemented/reviewed under that original requirement before claiming ongoing operation; no automatic unbounded recipe, hidden restart, deadline rolling, global Jarvis cutoff or TTL widening is authorized here. Other native/private task profiles keep their exact original lifetimes."
+  },
+  "cleanup": "v234 removal-only custody unchanged: no observation renewal in terminal cleanup, no current-start authority inferred from cleanup receipt, no foreign nft/namespace/member effects. Failed observation owner retains original cleanup reservation and exact owned proofs; cleanup may acquire its distinct fresh removal tool as already specified without renewing old authority.",
+  "tests": {
+    "required_positive": [
+      "Real resolver and watchdog with current protected source/adoption/NSS/network receipts, actual owned namespace/nft proof and fresh signed tool observation across at least two refresh boundaries; process original deadline remains byte-for-byte unchanged.",
+      "Concurrent display/gateway/desktop currentness polls use one retained lease; no mixed tool FD/kernel fields, old tool closed after success.",
+      "Bounded managed process stays alive beyond initial30s only while fresh current proofs succeed and before immutable recipe expiry; distinguish fixture from native account/Pi acceptance."
+    ],
+    "required_failures": [
+      "expired original observation never renewed",
+      "current source/publication/generation/choice revoked or replaced",
+      "changed table/topology/member identity/tool bytes",
+      "fresh readback completes after original proof expiry",
+      "fresh tool expires/cancel/network owner closes during transition",
+      "watchdog false/exception stops exact owned unit and denies input",
+      "same-generation hash mismatch or caller copied lease/tool",
+      "JWT/WebSocket/tunnel expiry independent of live renewed network",
+      "recipe RuntimeMaxSec expiry unaffected by refresh",
+      "cleanup does not renew or stop foreign members"
+    ],
+    "evidence": "Actual source tests/effects/readback/terminal evidence, not topology-only string tests. No source pin until measured tested committed owner bytes; no sustained/native acceptance inferred."
+  },
+  "tasks": {
+    "HI-T254.1": "Integrate same-owned still-live fresh observation renewal with current protected generation/source/adoption/NSS joins and atomic FD custody.",
+    "LC-T254.2": "Separate actual network observation from unchanged finite process/start/access deadlines, continuously supervise and stop exact managed unit on currentness failure; preserve cleanup domain.",
+    "VD-T254.3": "Verify actual refresh/currentness/expiry/concurrency/watchdog/terminal/access failures and original recipe cap, leaving sustained Desktop/native acceptance separate OPEN."
+  }
+}

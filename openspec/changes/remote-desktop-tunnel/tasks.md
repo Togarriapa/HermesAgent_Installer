@@ -268,3 +268,6 @@ Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all 
 - [ ] RT-T251c.1 Implement source-only packaging intent and deterministic origin-bound normalized inputs receipts/closure with separate tar-byte digest; remove future prepared fields from prebuild.
 - [ ] RT-T251c.2 Generate true upstream prepared.json through fixed driver after materialization/native effects and retain/reobserve it in actual AppDir joined output.
 - [ ] VD-T251c.3 Test stale path/source, missing notice/helper/library, normalization/tar hash confusion, forged future prepared proof, link/extra member/selfhash/currentness/cancellation failures and genuine bounded offline prepared packaging effects.
+- [ ] HI-T254.1: Integrate same-owned still-live fresh observation renewal with current protected generation/source/adoption/NSS joins and atomic FD custody.
+- [ ] LC-T254.2: Separate actual network observation from unchanged finite process/start/access deadlines, continuously supervise and stop exact managed unit on currentness failure; preserve cleanup domain.
+- [ ] VD-T254.3: Verify actual refresh/currentness/expiry/concurrency/watchdog/terminal/access failures and original recipe cap, leaving sustained Desktop/native acceptance separate OPEN.

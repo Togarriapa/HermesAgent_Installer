@@ -173,6 +173,7 @@ Exact contract: `planning/xpra-link-count-correction-v250.json`.
 
 
 ## v251 Desktop native signed-source policy
+## Current owned network observation v254
 
 Extends frozen v226/v229/v240 for R0028/R0035/R0037/R0203/R0204/R0211. This append-only source contract supplies the previously missing genuine Desktop-specific policy; it does not approve a runtime or modify earlier plans.
 
@@ -207,3 +208,4 @@ Exact contract: `planning/official-desktop-prepared-packaging-direction-v251c.js
 Driver validates these actual source inputs, performs genuine fixed native effects, invokes the real upstream packaging producer in its manager-owned fresh workspace and retains its true prepared.json inside final AppDir. Generated native-build.json binds actual prepared bytes and separate source/member facts. Independent output observer reopens generated native/toolset/package bytes and all current original input receipt joins before issuance. Unknown tools, stale paths, missing notices, unlicensed wrapper or missing actual native proof deny.
 
 RT-T251c.1 → RT-T251c.2 → VD-T251c.3 are OPEN; Luna source/native provider and Desktop driver owners implement their respective real stages. No Python implementation, resource cap or runtime/Pi acceptance is claimed. Missing whole-build measured caps remain denied; all AC OPEN.
+`planning/current-owned-remote-network-observation-v254.json` separates fresh same-owned <=30s kernel/tool observations from original one-use start, actual <=600s finite recipe and independent Access/socket/tunnel deadlines. Complete current generation/adoption/NSS/kernel watchdog must stop exact owned unit on failure; no expiry resurrection or cleanup renewal. Sustained Desktop acceptance remains OPEN, no global Jarvis timeout inferred.

@@ -274,3 +274,6 @@ v253b: `planning/native-plugin-producer-sealed-api-v253b.json`; same253 tasks OP
 
 
 v251c: `plans/amendments/2026-10-11-official-desktop-prepared-packaging-direction-v251c.md` / `planning/official-desktop-prepared-packaging-direction-v251c.json`; RT-T251c.1/.2 and VD-T251c.3 OPEN. Actual source intent/normalization versus driver-generated upstream prepared.json; distinct tar byte and member closure, all caps/runtime/AC OPEN.
+## Current owned network observation v254
+
+`planning/current-owned-remote-network-observation-v254.json`; HI-T254.1/LC-T254.2/VD-T254.3 OPEN. Same live owned proof refresh only, unchanged finite recipe/start/Access/socket/tunnel deadlines and current-generation watchdog/owned stop. Sustained Desktop and all AC OPEN.

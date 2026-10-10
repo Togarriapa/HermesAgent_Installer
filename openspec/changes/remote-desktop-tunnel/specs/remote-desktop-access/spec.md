@@ -650,3 +650,16 @@ The installer SHALL require source-only toolset intent and normalized packaging 
 #### Scenario: Actual prepared packaging output is retained
 - **WHEN** fixed native/materialization/upstream packaging effects generate true prepared.json
 - **THEN** its exact bytes and native/toolset/package provenance are retained and independently reopened in final AppDir before receipt issuance, with all missing cap/runtime gates preserved
+
+## ADDED Requirements
+
+### Requirement: Fresh same-owned network observation v254
+The installer SHALL refresh only still-live same-owned network observations after full current publication/adoption/NSS and kernel readback. Watchdog failure SHALL deny input and stop the exact owned unit. Original start/process/socket/Access deadlines and removal-only cleanup remain unchanged.
+
+#### Scenario: Current proof refresh with unchanged process deadline
+- **WHEN** current same-generation owned kernel proof approaches expiry and fresh exact tool/readback succeeds before original proof expires
+- **THEN** replace only observation fields, retain process deadline and recheck authority before further effects
+
+#### Scenario: Expired or revoked proof
+- **WHEN** original proof expires or generation/source/adoption/member currentness fails
+- **THEN** deny renewal and effects, stop only verified owned unit and retain ownership-safe cleanup status

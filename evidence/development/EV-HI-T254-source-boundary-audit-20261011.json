@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "id": "EV-HI-T254-source-boundary-audit-20261011",
+  "source_head": "859cb371dd1f008201ef8725191f017d10043c5b",
+  "source_status": "source-owner WIP observation; not enrolled pins",
+  "method": "read-only actual methods plus implementation-owner API confirmation",
+  "facts": [
+    "renew_root_network_lease checks existing live proof and same rules/topology with fresh exact tool",
+    "actual fixed process recipe has independent <=600 cap/RuntimeMaxSec",
+    "active owner agrees immutable recipe/start/socket/JWT/tunnel deadlines and no sustained acceptance claim",
+    "watchdog currentness/stop integration requires genuine effects/failure tests"
+  ],
+  "files": [
+    {
+      "path": "src/hermes_installer/authority/remote_network_lease.py",
+      "sha256": "f12c1e835f18c34fbe60e7fc4fe28a372282edf09e93bae81ef886c63572d83f",
+      "size_bytes": 23470,
+      "use": "audit only; WIP may change"
+    },
+    {
+      "path": "src/hermes_installer/authority/private_loopback_network.py",
+      "sha256": "a56123f11f9069fc06b41921e4b2af704781ca321ddd6e314239236f3a6d2384",
+      "size_bytes": 70665,
+      "use": "audit only; WIP may change"
+    },
+    {
+      "path": "src/hermes_installer/managed_process_custodian.py",
+      "sha256": "392d1662ae5a399ecdd759212d3daaf47ce4c8b7bf8c18c5c0fc5778d6043274",
+      "size_bytes": 731310,
+      "use": "audit only; WIP may change"
+    },
+    {
+      "path": "src/hermes_installer/authority/selected_startup_authority.py",
+      "sha256": "172c79cb6c5c07dc8482a894524297e5c8660559d886529133f76b9392650aa1",
+      "size_bytes": 117375,
+      "use": "audit only; WIP may change"
+    }
+  ],
+  "acceptance": "All AC OPEN"
+}
