@@ -580,3 +580,10 @@ The system SHALL permit the v131 exact `_yaml/` and `_yaml/__init__.py` members 
 #### Scenario: Additional unreviewed compatibility member
 - **WHEN** a wheel adds another `_yaml` descendant or fails the exact artifact or RECORD checks
 - **THEN** materialization denies without publishing a runtime receipt.
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
