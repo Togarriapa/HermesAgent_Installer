@@ -24,6 +24,7 @@ import sysconfig
 import tarfile
 import time
 import threading
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request

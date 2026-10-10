@@ -214,6 +214,12 @@ def test_runtime_lock_requires_version_and_hash_pins():
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
 
 
+def test_selected_installer_python_requirement_is_parsed_from_toml():
+    release_build._require_python_requirement(b'[project]\nrequires-python = ">=3.11"\n')
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="valid installer Python requirement"):
+        release_build._require_python_requirement(b'[project\nrequires-python = ">=3.11"\n')
+
+
 def _runtime_archive(entries):
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
