@@ -102,3 +102,13 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 ## v184 exact wire clarification
 
 - [ ] `VD-T184.3` Verify exact parser/roundtrip/hash/FK failures and pre-READY bind vs later effect-proof ordering. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+
+
+## v185 owner observation and proxy
+
+- [ ] `VD-T185.3` Verify READY/source/schema/PIDFD/one-use positive path and forged/stale/replay failures. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+
+
+## v186 endpoint source phase
+
+- [ ] `VD-T186.3` Exercise preactive no-effects, authenticated transfer/CAS/revocation/conflict cleanup and phase evidence. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
