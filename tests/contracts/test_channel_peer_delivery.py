@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from hermes_installer.authority.channel_peer_delivery import (
-    ChannelEventDelivery, ChannelRuntimeBinding, RootChannelPeerDeliveryRegistry,
+    ChannelEventDelivery, ChannelRuntimeBinding, RootChannelInputDelivery,
+    RootChannelPeerDeliveryRegistry,
 )
 from hermes_installer.authority.native_custody_proof import LoadedPackageClosureProof
 from hermes_installer.authority.resource_source_controllers import (
@@ -100,15 +101,22 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
         registry.service = service
         registry._lock = threading.RLock()
         registry._events = {}
-        event_payload = b'{"message":"fixture inbound"}'
+        event_payload = (
+            b'{"controller_proof_handle":"' + (b"G" * 43)
+            + b'","event_data":{"message":"fixture inbound"}}'
+        )
         event = RootResourceEventHandle(
             "E" * 43, "F" * 43, "resource-1", "resource-gen-1", "native-input",
             "observer-1", ("receipt-1",), "b" * 64,
             hashlib.sha256(event_payload).hexdigest(), 9.0, 50.0, "epoch-1",
         )
+        parent_context = types.SimpleNamespace(
+            profile_id="profile-1", generation="profile-gen-1", signature="signed-fixture",
+            claims=lambda: {"profile_id": "profile-1", "generation": "profile-gen-1"},
+        )
         record = types.SimpleNamespace(
             handle=event, payload=event_payload,
-            parent_context=types.SimpleNamespace(profile_id="profile-1"),
+            parent_context=parent_context,
         )
         registry._events[event.handle] = record
         source_observers = types.SimpleNamespace(observers={"observer-1": observer})
@@ -137,6 +145,26 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
             try:
                 channel_binding = peer_registry.bind(peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd)
                 self.assertEqual(channel_binding.profile_id, "profile-1")
+                verified_peer = peer_registry.resolve_verified_native_peer_binding(
+                    channel_binding.binding_handle, channel_ingress_id="ingress-1",
+                    source_observer_enrollment_id="observer-1",
+                )
+                delivery_proof = peer_registry.prove_retained_event_for_peer(event, verified_peer)
+                self.assertTrue(peer_registry.validate_retained_channel_proof(
+                    delivery_proof, event_handle=event, native_binding=verified_peer,
+                    retained_record=record,
+                ))
+                self.assertEqual(peer_registry.resolve_retained_channel_proof(delivery_proof),
+                                 (event, verified_peer))
+                forged = RootChannelInputDelivery(
+                    "H" * 43, event.handle, channel_binding.binding_handle,
+                    "J" * 43, "K" * 43, delivery_proof.event_payload_sha256,
+                    delivery_proof._sequence, now[0], delivery_proof.expires_monotonic,
+                    object(),
+                )
+                with self.assertRaisesRegex(Exception, "source receipt or native context registration"):
+                    peer_registry.publish_issued_delivery(delivery_proof, forged)
+                self.assertTrue(peer_registry.cancel_retained_channel_proof(delivery_proof))
                 with self.assertRaisesRegex(Exception, "recipient-bound source and context handle issuance"):
                     peer_registry.publish_captured_event(
                         channel_ingress_id="ingress-1", event_handle=event)
