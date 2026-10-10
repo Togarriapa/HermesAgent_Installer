@@ -443,3 +443,6 @@ Exact contract: `planning/xpra-link-count-correction-v250.json`.
 
 Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
 Root-owned sealed source/account/target observations feed the v231 active aggregate and strict protected catalog. Production runtime composes the existing fixed broker factories; arbitrary caller rows/provider callbacks and FixtureEffects cannot establish this path.
+
+
+v253b source API review: `planning/native-plugin-producer-sealed-api-v253b.json` requires retained sealed vault/journal dependency getter, independent current result schema FK, fixed new GitHub /user observer and pending writes until actual attestor. No acceptance change.

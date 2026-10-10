@@ -347,3 +347,11 @@ The installer SHALL implement the closed v253 root source/account/target produce
 #### Scenario: Missing backend account
 - **WHEN** source discovery exists but the selected account/credential/target or backend producer is unavailable
 - **THEN** keep that action pending with exact prerequisite and resume without claiming functional acceptance or reducing original scope
+
+
+### Requirement: Sealed plugin producer dependencies v253b
+The installer SHALL obtain vault/journal/source owners through the sealed binding getter, resolve result-schema authority independently of argument DTOs, and keep mutations pending until an actual root confirmation attestor exists.
+
+#### Scenario: Account read does not establish writes
+- **WHEN** fixed GitHub /user and selected repository observations validate account/read readiness
+- **THEN** admit only independently joined read actions and retain write/admin/confirmation prerequisites as pending

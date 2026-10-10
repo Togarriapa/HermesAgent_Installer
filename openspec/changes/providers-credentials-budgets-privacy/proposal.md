@@ -65,3 +65,6 @@ Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-
 
 Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
 Current worker mediation alone cannot supply missing root backend handlers.
+
+
+v253b source API review: `planning/native-plugin-producer-sealed-api-v253b.json` requires retained sealed vault/journal dependency getter, independent current result schema FK, fixed new GitHub /user observer and pending writes until actual attestor. No acceptance change.

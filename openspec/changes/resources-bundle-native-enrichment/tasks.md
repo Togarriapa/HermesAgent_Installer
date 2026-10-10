@@ -183,3 +183,5 @@ Append-only contract `planning/native-plugin-backend-composition-v253.json` clos
 - [ ] RB-T253.1: Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites.
 - [ ] HI-T253.2: Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.
 - [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.
+
+- [ ] RB-T253.1 / HI-T253.2 / VD-T253.3 (v253b): Implement reviewed sealed dependency/result-schema/GitHub observation corrections; confirmation protocols cannot authorize writes.
