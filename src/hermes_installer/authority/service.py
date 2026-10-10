@@ -2543,8 +2543,10 @@ class AuthorityService:
             origin_id=observation.origin_id,
             payload=observation.payload_bytes, ttl_seconds=ttl,
         )
-        recipient_ceiling = (frozenset() if selected_input_consent is None
-                             else frozenset(selected_input_consent.private_recipient_ids))
+        recipient_ceiling = self._source_recipient_ceiling(
+            observation.source_kind, observation.parent_receipts,
+            selected_input_consent=selected_input_consent,
+        )
         if selected_input_consent is not None:
             parent_ceilings = [frozenset(item.recipient_ceiling) for item in observation.parent_receipts]
             if parent_ceilings:
@@ -2562,6 +2564,27 @@ class AuthorityService:
                 raise AuthorityDenied("source.capacity", "opaque source receipt handle collision")
             self._source_receipt_handles[str(handle)] = receipt
         return handle
+
+    @staticmethod
+    def _source_recipient_ceiling(source_kind: str, parent_receipts: tuple[Any, ...], *,
+                                  selected_input_consent: Any = None) -> frozenset[str]:
+        """Return only root-selected recipients preserved through this source edge."""
+        if selected_input_consent is not None:
+            recipients = getattr(selected_input_consent, "private_recipient_ids", None)
+            if not isinstance(recipients, (tuple, list, set, frozenset)):
+                raise AuthorityDenied("source.ceiling", "selected-input consent recipient set is invalid")
+            return frozenset(recipients)
+        if source_kind not in {"provider-result", "tool-result"} or not parent_receipts:
+            return frozenset()
+        ceilings: list[frozenset[str]] = []
+        for receipt in parent_receipts:
+            recipients = getattr(receipt, "recipient_ceiling", None)
+            if not isinstance(recipients, (tuple, list, set, frozenset)):
+                raise AuthorityDenied("source.ceiling", "verified parent recipient ceiling is invalid")
+            ceilings.append(frozenset(recipients))
+        # Intersection is deliberate: each ancestor must independently permit
+        # a recipient. Empty and absent ceilings remain empty at every depth.
+        return frozenset.intersection(*ceilings)
 
     def revalidate_effect(self, context: HostContext, authorization: EffectAuthorization, *,
                           operation: str, request_digest: str,
@@ -3823,15 +3846,22 @@ class AuthorityService:
             try:
                 rendered = strict_json_loads(body_bytes.decode("utf-8", errors="strict"))
                 fields = artifact.as_result_fields()
-                if (not isinstance(rendered, dict)
-                        or set(rendered) != {"url", "content_type", "content", "untrusted_source",
-                                             "authority", "redirects", "source_receipt"}
-                        or rendered["untrusted_source"] is not True
-                        or rendered["authority"] != "none"
+                envelope_fields = {"schema", "operation_id", "state", "result",
+                                   "verification_status", "resume_action_id"}
+                result = rendered.get("result") if isinstance(rendered, dict) else None
+                if (not isinstance(rendered, dict) or set(rendered) != envelope_fields
+                        or rendered["schema"] != 1 or rendered["state"] != "read-complete"
+                        or rendered["verification_status"] != "verified"
+                        or rendered["resume_action_id"] is not None
+                        or not isinstance(result, dict)
+                        or set(result) != {"url", "content_type", "content", "untrusted_source",
+                                           "authority", "redirects", "source_receipt"}
+                        or result["untrusted_source"] is not True
+                        or result["authority"] != "none"
                         or not isinstance(fields, Mapping)
-                        or not isinstance(rendered["source_receipt"], Mapping)):
+                        or not isinstance(result["source_receipt"], Mapping)):
                     raise ValueError
-                rendered["source_receipt"] = dict(fields)
+                result["source_receipt"] = dict(fields)
                 body_bytes = canonical_bytes(rendered)
                 if not 1 <= len(body_bytes) <= 2_097_152:
                     raise ValueError
