@@ -1067,3 +1067,17 @@ The installer SHALL apply only the finite source pin mapping in `planning/candid
 #### Scenario: Partial replacement fixture passes
 - **WHEN** mocked authority with actual filesystem replacement and rollback succeeds
 - **THEN** evidence remains partial and does not claim genuine complete update or Pi acceptance
+
+
+## ADDED Requirements
+
+### Requirement: Genuine preinstalled source update entry
+The installer SHALL provide only the finite source-update bridge in `planning/preinstalled-source-update-entry-v242.json`, retaining the verified installed predecessor and obtaining current root TTY source selection before isolated source-actor custody gates publication.
+
+#### Scenario: Pre-v235 installed dispatcher cannot select update
+- **WHEN** a reviewed new source launcher receives exactly source-update with a genuine present predecessor
+- **THEN** it uses the separate stage-only source bridge and never claims checkout code is the old installed actor
+
+#### Scenario: Old pointer or source authority fails verification
+- **WHEN** predecessor, selected source, controller or transition proof is absent, changed or foreign
+- **THEN** no update publication occurs and no old immutable release or pointer is removed to force source bootstrap

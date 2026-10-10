@@ -3663,5 +3663,19 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "preinstalled_source_update_entry_v242": {
+    "contract": "planning/preinstalled-source-update-entry-v242.json",
+    "task_dependencies": {
+      "BD-T242.1": [
+        "BD-T235.1",
+        "LC-T235.2"
+      ],
+      "VD-T242.2": [
+        "BD-T242.1",
+        "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

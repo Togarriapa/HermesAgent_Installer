@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "requirements": [
+    "R0029",
+    "R0055",
+    "R0148",
+    "R0151",
+    "R0153",
+    "R0172",
+    "R0190"
+  ],
+  "refines": [
+    "planning/predecessor-bound-candidate-update-v235.json",
+    "planning/candidate-update-source-review-v241.json"
+  ],
+  "why": "Actual pre-v235 cc81 installed root dispatcher has no UPDATE candidate selection. Executing new checkout ordinary UPDATE tries to verify checkout modules as the current old installed actor and fails correctly. Source bootstrap UPDATE already has a genuine independent source-actor path after reexec, but no public entry reaches it without that installed actor gate.",
+  "entry": {
+    "command": "sudo -- <reviewed-source-checkout>/scripts/hermes-installer-root-setup source-update",
+    "grammar": "Exactly one source-update command token and no additional arguments; no candidate SHA, source path, interpreter, journal, predecessor, receipt handle, skip flag or environment selection. The launcher location merely loads the reviewed bootstrap code; it is never selected candidate authority. Candidate comes only from fresh root TTY choice.",
+    "api": "root_setup.run_source_bootstrap_update() -> existing RootSetupResult only if bootstrap returns or fails; successful transition execs and does not return. main recognizes this finite separate command before normal lifecycle argument dispatch. RootSetupAction enum and ordinary install/resume/update/qualify remain unchanged.",
+    "preconditions": "Current Linux real/effective UID0 and real controlling stdin/stderr TTY. No outstanding FD3 transition may be adopted from this command. Verify present current installed predecessor and full immutable old release through existing concrete observer/receipt APIs, without InstalledRootReleaseVerifier.from_current_root_process against source checkout. Absent, invalid, inaccessible or conflicting predecessor fails/pends explicitly without replacement."
+  },
+  "pipeline": [
+    "Observe_deployment_predecessor and predecessor.verify_current; require present-verified with genuine retained verified release receipt; resolve_verified_deployment_release consume=False and verify its full current closure. Hold old release/root/member custody throughout admission. Do not mint or copy old actor/session seals.",
+    "Create actual RootBootstrapCandidateSelectionRegistry; issue_explicit_tty_choice(RootSetupAction.UPDATE), then call existing bootstrap_selected_release(choices,registry,update_predecessor=predecessor). No caller DTO or parsed record stands in for predecessor.",
+    "Existing RootInstallerUpdateTransitionRegistry.begin_selected_update binds original pointer canonical bytes/dev/inode/hash and full old closure before staging; no fresh changed prior later. Current exact selected SHA/fixed origin ancestry/source tree/frozen baseline and selected isolated bootstrap interpreter checks remain mandatory.",
+    "Acquisition/runtime staging uses only existing bounded owned CAS, no component/service/account/network effects. Existing v208 current samecandidate/controller reconfirmation creates genuine fresh boundary evidence; original deadlines are not extended.",
+    "Existing sealed sameprocess FD3 handoff transports exact candidate/predecessor/TTY/controller/boot/runtime receipts to isolated source runtime. RootSourceBootstrapActorVerifier reobserves actual loaded selected-source module/import closure and interpreter; only this real source actor admits builder/publication effects, independently of old installed actor.",
+    "Existing v235 retained build and present pointer CAS/publication/verified new installed launcher one-use entry follow. Actual new installed process verifies its new current pointer and code/actor identity before any runtime work. Original old active service generation remains intact when compatible update adapter is missing.",
+    "Cold recovery and failed postCAS verification/exec use existing v235 owned durable transaction/current samecandidate/sameprior TTY adoption/conditional rollback only; source-update is not a generic recovery receipt restorer. No deletion of pointer or editing old immutable release."
+  ],
+  "authority_boundary": "Source bootstrap preexec observation/staging is not an installed actor or active source actor. It can observe full predecessor and acquire selected fixed-origin source/runtime only. Real source-actor verified reexec gates build/publication; real newly installed actor gates runtime. Do not bypass verifier, relabel checkout modules as old release, relax imports, call currentness callbacks, restore private seals or use action flags as candidate selection.",
+  "failure_cleanup": "On any returned failure before pointer CAS, keep original pointer canonical bytes/inode unchanged and close only owned selection/predecessor/release descriptors. Source/bootstrap partial CAS cleanup remains existing ownership/dead-writer behavior. After CAS, exact v235 transaction rollback preserves newer/foreign pointer and restores fully verified old closure when permitted; quarantine actual conflicts. Foreign FD3 is not silently closed or consumed by source-update. Safe reason output and existing secret/redaction rules remain unchanged.",
+  "implementation_owner": "luna_bootstrap_fd_handoff implements public finite main/entry wrapper, real existing typed pipeline reuse and contract/failure tests. No new generic executor, extra journal schema or source/runtime authority is introduced.",
+  "failure_tests": [
+    "Separate source-update dispatch must not invoke from_current_root_process against old installed modules before source transition; ordinary UPDATE retains installed gate.",
+    "Exact command rejects extra flags/SHA/path and nonroot/nonLinux/nonTTY/outstandingFD3 without any staging effect.",
+    "Absent/present-invalid/symlink/tampered predecessor or changed old pointer/full member/controller before and during staging fails with old pointer intact; no absent fallback.",
+    "Actual genuine fixed-origin selected source + retained pre-v235 predecessor + isolated runtime/real source actor + presentCAS + new installed actor entry proves positive distribution update; no monkeypatched actor/receipt is a complete positive.",
+    "Wrong origin/SHA/tree/baseline/ancestry/runtime/module origins/FD3 owner/nonce/seals/TTL/boot/replay are denied.",
+    "Fail beforeCAS preserves old bytes/inode; postCAS fsync/verification/exec restores exact verified predecessor or preserves concurrent foreign pointer with durable conflict.",
+    "Old installed release remains immutable and old active service generation/data/credentials/models/overlays remain intact; missing compatible active update adapter is pending, not successful install."
+  ],
+  "evidence": "v241 exactae399 bytes remain valid narrow source approval; source-update changes create a new source leaf that requires separate measured source review before deployment. Existing83passed/2skipped unexcluded updater builder/publisher checks reported at92e88 are not pre-v235 bridge/full Pi positive evidence.",
+  "owners": {
+    "BD-T242.1": "Luna bootstrap owner: fixed source-update public entry and actual predecessor/currentTTY/source actor bridge",
+    "VD-T242.2": "Root/integrator: reviewed committed source bytes, unexcluded isolated genuine pre-v235 update failure/positive and Pi evidence"
+  },
+  "tasks": [
+    "BD-T242.1",
+    "VD-T242.2"
+  ],
+  "acceptance": "All AC01..18 OPEN. Existing BD-T235.1/LC-T235.2/VD-T235.3 remain OPEN. Frozen baseline/tag, earlier source approvals and amendments unchanged; no runtime edits/push/pins or installer/Pi acceptance in this specification."
+}

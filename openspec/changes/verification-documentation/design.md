@@ -204,3 +204,6 @@ The v239 aggregate also consumes exact root-issued enrollment reservation and pr
 
 
 v241 narrow candidate update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md` and `planning/candidate-update-source-review-v241.json`. Exact committed ae399 source fixes cold recovery, complete postCAS rollback and issued FD3 cleanup. Only existing root_setup tuple updates in both tables are approved; builder/publisher remain source-held metadata, no recipe/catalog changes. Genuine full positive/unexcluded/Pi evidence and BD-T235.1/LC-T235.2/VD-T235.3/all AC OPEN.
+
+
+v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md` / `planning/preinstalled-source-update-entry-v242.json` adds finite source-update entry using genuine present predecessor/current UPDATE TTY/fixed-origin CAS/FD3 and isolated source actor before new installed actor. Ordinary installed verifier is preserved; no oldrelease/pointer deletion, caller path/flag authority or restored seals. BD-T242.1 → VD-T242.2 and all AC OPEN.

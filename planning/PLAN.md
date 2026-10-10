@@ -229,3 +229,6 @@ v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `plannin
 
 
 v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md`; existing BD-T235.1/LC-T235.2/VD-T235.3 OPEN. Exact root_setup two-table tuple edit only; builder/publisher metadata, no native/catalog alias changes; full positive/unexcluded/Pi evidence pending and all AC OPEN.
+
+
+v242 genuine source-update bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md`; BD-T242.1 → VD-T242.2 OPEN, retaining v235 tasks/source approval separately. Actual old predecessor/rootTTY/fixedoriginFD3/source actor required; all AC OPEN.
