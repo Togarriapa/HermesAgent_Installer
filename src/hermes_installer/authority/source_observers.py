@@ -2020,6 +2020,9 @@ class SourceObserverRegistry:
                     or permission.profile_id != proof.profile_id
                     or permission.profile_generation != proof.profile_generation
                     or permission.service_generation_digest != proof.service_generation_digest
+                    or permission.purpose != "public-free-web-read"
+                    or permission.allowed_operations != ("plugin.web.read",)
+                    or permission.additional_metered_budget_usd != 0.0
                     or permission.public_recipient_ids is None
                     or not set(permission.public_recipient_ids).issubset(set(receipt.recipient_ceiling))
                     or not set(permission.web_scope_ids).issubset(
