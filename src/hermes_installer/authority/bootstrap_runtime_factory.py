@@ -930,6 +930,20 @@ class RootSelectedInstallationBinding:
         raise BootstrapEnrollmentPending(
             "native output definitions have no complete verified action/effect/observer projection")
 
+    def authorize_prepared_native_output(
+            self, assembly_selection_handle: str, artifact_role: str, output_kind: str,
+            member_tree_sha256: str, output_sha256: str, output_size_bytes: int) -> Any:
+        """v169 positional producer seam; all authority still resolves root-side."""
+        return self.authorize_native_output(
+            artifact_role=artifact_role, output_kind=output_kind,
+            member_tree_sha256=member_tree_sha256, output_sha256=output_sha256,
+            output_size_bytes=output_size_bytes,
+            assembly_selection_handle=assembly_selection_handle,
+        )
+
+    def revalidate_prepared_native_output(self, selection: Any) -> bool:
+        return self.revalidate_native_output(selection)
+
     def revalidate_native_output(self, selection: Any) -> bool:
         from .native_output_receipts import NativeOutputSelection
         if not secrets.compare_digest(self._seal, self._session._seal):
