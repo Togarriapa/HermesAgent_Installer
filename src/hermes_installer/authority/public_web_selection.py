@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ class RootSelectedPublicWebPermissionChoice:
 
     choice_handle: str
     choice_observation_id: str
+    consent_id: str
     setup_session_id: str
     transaction_handle: str
     plan_sha256: str
@@ -109,14 +111,14 @@ def collect_root_tty_public_web_scope_configuration(
     root_session._check_live()
     required_target = (
         "candidate_handle", "native_policy_selection_handle", "component_id",
-        "target_id", "profile_id", "profile_generation", "recipient",
+        "enrollment_id", "target_id", "profile_id", "profile_generation", "recipient",
         "principal_selection_handle", "namespace_selection_handle",
     )
     if (any(not isinstance(getattr(target, name, None), str)
             or not getattr(target, name) for name in required_target)
             or target.native_policy_selection_handle != native_policy_selection_handle
             or getattr(target, "backend_generation", None) != target.profile_generation
-            or not isinstance(target.recipient, str) or not target.recipient):
+            or target.recipient != "public-web"):
         raise PublicWebSelectionDenied("public scope requires an exact current typed target")
     from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
     proof = _capture_root_tty_proof()
@@ -210,7 +212,8 @@ def _validate_scope_configuration(value: RootPublicWebScopeConfiguration, now: f
         if (_canonical_json(row) != value.scope_payload or row["target_id"] != value.target_id
                 or row["profile_id"] != value.profile_id
                 or row["generation"] != value.profile_generation
-                or row["recipient"] != value.recipient):
+                or row["recipient"] != value.recipient
+                or value.recipient != "public-web"):
             raise ValueError
     except Exception:
         raise PublicWebSelectionDenied("scope payload changed from the exact target configuration") from None
@@ -256,6 +259,8 @@ def canonical_scope_payload(value: Any) -> tuple[bytes, str]:
     }
     if type(value) is not dict or set(value) != fields:
         raise PublicWebSelectionDenied("public scope must use the closed v142 payload schema")
+    if value.get("recipient") != "public-web":
+        raise PublicWebSelectionDenied("public-free web scope recipient must be the source-defined public-web label")
     try:
         raw = _canonical_json(value)
         if len(raw) > _MAX_SCOPE_BYTES:
@@ -283,7 +288,7 @@ def canonical_scope_payload(value: Any) -> tuple[bytes, str]:
 
 def _validate_choice(choice: RootSelectedPublicWebPermissionChoice, now: float) -> None:
     strings = (
-        choice.choice_handle, choice.choice_observation_id, choice.setup_session_id,
+        choice.choice_handle, choice.choice_observation_id, choice.consent_id, choice.setup_session_id,
         choice.transaction_handle, choice.prepared_generation_id,
         choice.principal_selection_handle, choice.namespace_selection_handle,
         choice.principal_id, choice.profile_id, choice.namespace_id,
@@ -302,6 +307,8 @@ def _validate_choice(choice: RootSelectedPublicWebPermissionChoice, now: float) 
         choice.target_contract_sha256s, choice.target_contract_source_receipt_handles,
     )
     if (any(type(value) is not str or not value for value in strings)
+            or not re.fullmatch(r"[0-9a-f]{48}", choice.consent_id)
+            or choice.consent_id in {choice.choice_handle, choice.choice_observation_id}
             or any(type(value) is not str or len(value) != 64
                    or any(c not in "0123456789abcdef" for c in value) for value in hashes)
             or not choice.web_scope_ids or len(set(choice.web_scope_ids)) != len(choice.web_scope_ids)
@@ -330,6 +337,7 @@ def _validate_choice(choice: RootSelectedPublicWebPermissionChoice, now: float) 
             if (_canonical_json(value) != raw or value["enrollment_id"] != scope_id
                     or value["principal_id"] != choice.principal_id
                     or value["profile_id"] != choice.profile_id
+                    or value["recipient"] != "public-web"
                     or value["generation"] != choice.profile_generation):
                 raise ValueError
         except Exception:
@@ -365,7 +373,7 @@ def _validate_disclosure(disclosure: RootTTYPublicInputDisclosure, now: float) -
 
 
 class RootPublicInputDisclosureRegistry:
-    """Session-owned TTY proof registry for exact retained native input bytes."""
+    """Root TTY proof registry for exact retained native input bytes."""
 
     def __init__(self, root_session: Any, source_observer_registry: Any) -> None:
         from .bootstrap_runtime_factory import RootBootstrapSession
@@ -383,14 +391,74 @@ class RootPublicInputDisclosureRegistry:
         self._consumed: set[str] = set()
         self._input_proofs: dict[str, tuple[Any, Any, bytes]] = {}
         self._permission_selections: dict[str, Any] = {}
+        self._runtime = None
+
+    @classmethod
+    def from_root_runtime(
+            cls, *, authority_service: Any, active_bindings: Any,
+            verified_installer_release: Any, current_installed_actor_verifier: Any,
+            foreground_tty_observer: Any, native_input_selection_registry: Any,
+            root_journal: Any) -> "RootPublicInputDisclosureRegistry":
+        """Compose a runtime-only disclosure registry without setup-session authority."""
+        from .service import AuthorityService
+        from .runtime_bindings import RootRuntimeBindings
+        from .installer_release import VerifiedInstallerReleaseReceipt, RootActorObservation
+        from ..protected_enrollment import RootJournalSelection
+        from .root_runtime_foreground_tty import RootRuntimeForegroundTTYObserver
+        if (type(authority_service) is not AuthorityService
+                or type(active_bindings) is not RootRuntimeBindings
+                or type(verified_installer_release) is not VerifiedInstallerReleaseReceipt
+                or type(current_installed_actor_verifier) is not RootActorObservation
+                or type(foreground_tty_observer) is not RootRuntimeForegroundTTYObserver
+                or type(root_journal) is not RootJournalSelection
+                or getattr(authority_service, "source_observer_registry", None)
+                    is not native_input_selection_registry
+                or not callable(getattr(native_input_selection_registry,
+                                       "resolve_current_retained_selected_input", None))
+                or not callable(getattr(native_input_selection_registry,
+                                       "verify_current_retained_selected_input", None))):
+            raise ValueError("runtime public disclosure requires exact installed root dependencies")
+        registry = getattr(authority_service, "public_input_permission_registry", None)
+        if not callable(getattr(registry, "resolve_current_selection", None)):
+            raise ValueError("runtime public permission selection registry is unavailable")
+        attach = getattr(native_input_selection_registry,
+                         "attach_public_input_disclosure_registry", None)
+        if not callable(attach):
+            raise ValueError("source observer cannot retain the runtime disclosure verifier")
+        verified_installer_release.verify_current()
+        current_installed_actor_verifier.verify_current(verified_installer_release)
+        instance = cls.__new__(cls)
+        instance._session = None
+        instance._source = native_input_selection_registry
+        instance._seal = secrets.token_bytes(32)
+        instance._by_handle = {}
+        instance._consumed = set()
+        instance._input_proofs = {}
+        instance._permission_selections = {}
+        instance._runtime = (authority_service, active_bindings, verified_installer_release,
+                             current_installed_actor_verifier, foreground_tty_observer,
+                             root_journal)
+        attach(instance)
+        return instance
+
+    def _check_runtime_current(self) -> None:
+        if self._runtime is None:
+            self._session._check_live()
+            return
+        service, bindings, release, actor, tty_observer, _journal = self._runtime
+        release.verify_current()
+        actor.verify_current(release)
+        if (service.source_observer_registry is not self._source
+                or service.service_generation_digest != bindings.service_generation_digest
+                or os.geteuid() != 0):
+            raise PublicWebSelectionDenied("installed root runtime identity changed")
 
     def observe_public_input_disclosure(
             self, public_permission_selection_handle: str,
             retained_observed_input_handle: str, selected_execution_handle: str,
     ) -> RootTTYPublicInputDisclosure:
         """Prompt over exact retained bytes; blank, EOF, or any other answer denies."""
-        session = self._session
-        session._check_live()
+        self._check_runtime_current()
         if (not isinstance(public_permission_selection_handle, str)
                 or not public_permission_selection_handle
                 or not isinstance(retained_observed_input_handle, str)
@@ -466,6 +534,7 @@ class RootPublicInputDisclosureRegistry:
                         or self._source.resolve_current_selected_execution(
                             selected_execution_handle) is not execution):
                     raise PublicWebSelectionDenied("selection or source input changed during root TTY review")
+                self._check_runtime_current()
                 self._by_handle[observation_handle] = disclosure
                 self._input_proofs[observation_handle] = (proof, execution, raw)
                 self._permission_selections[observation_handle] = selection
@@ -478,6 +547,7 @@ class RootPublicInputDisclosureRegistry:
             raise PublicWebSelectionDenied("current root TTY, input, execution, or permission is unavailable") from None
 
     def resolve_current_input_disclosure(self, disclosure_handle: str) -> RootTTYPublicInputDisclosure:
+        self._check_runtime_current()
         disclosure = self._by_handle.get(disclosure_handle)
         if (type(disclosure) is not RootTTYPublicInputDisclosure
                 or disclosure._issuer_token is not _DISCLOSURE_SEAL
@@ -496,6 +566,15 @@ class RootPublicInputDisclosureRegistry:
                     disclosure.selected_execution_handle) is not execution
                 or not self._same_current_permission_selection(disclosure, disclosure_handle)):
             raise PublicWebSelectionDenied("public input disclosure no longer resolves to current held state")
+        from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+        tty = _capture_root_tty_proof()
+        try:
+            _verify_root_tty_proof(tty)
+            if (_tty_controller_digest(tty) != disclosure.tty_controller_observation_handle
+                    or tty.controller_uid != 0 or tty.controller_pid != os.getpid()):
+                raise PublicWebSelectionDenied("foreground controlling TTY changed since input review")
+        finally:
+            tty.close()
         return disclosure
 
     def _same_current_permission_selection(self, disclosure: RootTTYPublicInputDisclosure,
@@ -569,8 +648,7 @@ class RootPublicInputDisclosureRegistry:
                 return False
             # The original root controller must still be the current root TTY
             # controller; merely presenting a copied DTO cannot pass this join.
-            session = self._session
-            session._check_live()
+            self._check_runtime_current()
             from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
             tty = _capture_root_tty_proof()
             try:
@@ -637,10 +715,7 @@ class RootPublicWebSelectionRegistry:
                 if len(profile_ids) != 1 or not next(iter(profile_ids)):
                     raise PublicWebSelectionDenied(
                         "blank public choice cannot revoke without one exact candidate profile")
-                revoke = getattr(binding, "revoke_durable_setup_choice_purpose", None)
-                if not callable(revoke):
-                    raise PublicWebSelectionDenied("durable public-choice revocation is unavailable")
-                revoke("public-free-web-read", next(iter(profile_ids)))
+                _revoke_public_choice(binding, next(iter(profile_ids)))
                 return None
             try:
                 selected_ids = tuple(item.strip() for item in raw.decode("utf-8").split(","))
@@ -659,8 +734,15 @@ class RootPublicWebSelectionRegistry:
         targets = []
         for candidate_handle in selected_ids:
             candidate = available[candidate_handle]
-            config = collect_root_tty_public_web_scope_configuration(
-                session, candidate, native_policy_selection_handle)
+            try:
+                config = collect_root_tty_public_web_scope_configuration(
+                    session, candidate, native_policy_selection_handle)
+            except PublicWebSelectionDenied as error:
+                if str(error) in {
+                        "blank public scope selection means no public-web configuration",
+                        "public web scope was not explicitly confirmed"}:
+                    _revoke_public_choice(binding, candidate.profile_id)
+                raise
             try:
                 target = self._targets.observe_configured_public_web_scope(
                     native_policy_selection_handle, candidate_handle, config)
@@ -743,6 +825,7 @@ class RootPublicWebSelectionRegistry:
         choice = RootSelectedPublicWebPermissionChoice(
             choice_handle=handle,
             choice_observation_id=secrets.token_hex(32),
+            consent_id=secrets.token_hex(24),
             setup_session_id=policy.setup_session_id,
             transaction_handle=policy.transaction_handle,
             plan_sha256=policy.plan_sha256,
@@ -815,6 +898,16 @@ def _tty_controller_digest(proof: Any) -> str:
         "device": proof.tty_device, "inode": proof.tty_inode,
         "rdevice": proof.tty_rdevice,
     })).hexdigest()
+
+
+def _revoke_public_choice(binding: Any, profile_id: str) -> None:
+    revoke = getattr(binding, "revoke_durable_setup_choice_purpose", None)
+    if not isinstance(profile_id, str) or not profile_id or not callable(revoke):
+        raise PublicWebSelectionDenied("durable public-choice revocation is unavailable")
+    try:
+        revoke("public-free-web-read", profile_id)
+    except Exception:
+        raise PublicWebSelectionDenied("prior public-web permission could not be revoked") from None
 
 
 def _render_exact_input_for_public_review(raw: bytes, digest: str) -> None:

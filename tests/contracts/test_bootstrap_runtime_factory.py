@@ -42,6 +42,41 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         session._last_receipt = committed
         self.assertIs(session._resolve_current_active_enrollment(), committed)
 
+    def test_prepared_enrollment_accessor_rechecks_the_durable_current_receipt(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="a" * 64)
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 48, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 1e20)
+        session._last_receipt = prepared
+        session._read_current_prepared_checkpoint_receipt = lambda: prepared
+        self.assertIs(session._resolve_current_prepared_enrollment(), prepared)
+
+        changed = EnrollmentReceipt(
+            1, "a" * 64, "d" * 48, "replacement-generation", "e" * 64,
+            None, "prepared", (), 2.0, 1e20)
+        session._read_current_prepared_checkpoint_receipt = lambda: changed
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._resolve_current_prepared_enrollment()
+
+    def test_resume_reissues_only_a_fresh_prepared_receipt(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(mode="resume")
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 48, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 1e20)
+        session._read_current_prepared_checkpoint_receipt = lambda: prepared
+        self.assertIs(session._restore_current_prepared_checkpoint(), prepared)
+        self.assertIs(session._last_receipt, prepared)
+
+        session._authorization = SimpleNamespace(mode="install")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._restore_current_prepared_checkpoint()
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 

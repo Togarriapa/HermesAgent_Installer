@@ -217,53 +217,17 @@ class RootNativeInputObserver:
             event_id = None
             try:
                 captured_target, target = target, None
-                public_selection_handle = getattr(
-                    selected_execution, "public_input_permission_selection_handle", None)
-                if public_selection_handle is None:
-                    source_handle = self.source_observers.capture_selected_native_ingress(
-                        observer.observer_enrollment_id,
-                        payload_bytes=exact_stdin, parent_context=parent_context,
-                        selected_execution=selected_execution, target=captured_target,
-                        selection_registry=registry,
-                        parent_receipt_handles=source.verified_source_receipt_handles,
-                    )
-                else:
-                    pending = self.source_observers.capture_selected_native_input_for_disclosure(
-                        observer.observer_enrollment_id,
-                        payload_bytes=exact_stdin, parent_context=parent_context,
-                        selected_execution=selected_execution, target=captured_target,
-                        selection_registry=registry,
-                        parent_receipt_handles=source.verified_source_receipt_handles,
-                    )
-                    disclosure_registry = getattr(
-                        self.source_observers, "_public_input_disclosure_registry", None)
-                    if disclosure_registry is None:
-                        raise AuthorityDenied(
-                            "native.input.public", "root TTY public-input disclosure is not composed")
-                    try:
-                        disclosure = disclosure_registry.observe_public_input_disclosure(
-                            public_selection_handle,
-                            pending.retained_observed_input_handle,
-                            pending.selected_execution_handle)
-                        retained_proof = self.source_observers.resolve_current_retained_selected_input(
-                            pending.retained_observed_input_handle,
-                            pending.selected_execution_handle)
-                        public_proof = self.source_observers.create_public_input_observation(
-                            retained_proof, disclosure)
-                        source_handle = service.issue_public_input_source(
-                            public_proof, selected_execution)
-                    except BaseException:
-                        cancel_pending = getattr(
-                            self.source_observers, "cancel_pending_public_input_disclosure", None)
-                        if callable(cancel_pending):
-                            cancel_pending(pending.retained_observed_input_handle,
-                                           pending.selected_execution_handle)
-                        raise
+                source_handle = self.source_observers.capture_selected_native_ingress(
+                    observer.observer_enrollment_id,
+                    payload_bytes=exact_stdin, parent_context=parent_context,
+                    selected_execution=selected_execution, target=captured_target,
+                    selection_registry=registry,
+                    parent_receipt_handles=source.verified_source_receipt_handles,
+                )
                 with service._lock:
                     receipt = service._source_receipt_handles.get(str(source_handle))
-                expected_sensitivities = ({Sensitivity.PUBLIC} if public_selection_handle is not None else {
-                    Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN})
-                if (receipt is None or receipt.sensitivity not in expected_sensitivities
+                if (receipt is None or receipt.sensitivity not in {
+                        Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}
                         or receipt.profile_id != selected_execution.profile_id
                         or receipt.process_generation != selected_execution.generation
                         or receipt.uid != uid

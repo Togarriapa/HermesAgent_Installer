@@ -9,6 +9,7 @@ from hermes_installer.authority.active_policy_compiler import (
     RootActivePolicyCompilationRegistry,
     _canonical,
     _manifest,
+    _ordered_unique_receipt_handles,
     _validate_claim_output_hashes,
 )
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
@@ -72,6 +73,87 @@ def test_active_claim_hashes_keep_predecessor_and_compiled_selection_domains_sep
     assert manifest["expected_selection_catalog_sha256"] == claim.expected_selection_catalog_sha256
     assert manifest["selection_catalog_sha256"] == claim.selection_catalog_sha256
     assert manifest["choice_adoptions"] == []
+
+
+def test_active_source_receipt_closure_is_ordered_unique_and_covers_explicit_receipts():
+    claim = _claim()
+    raw = ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64)
+    canonical = _ordered_unique_receipt_handles(raw, "test")
+    assert canonical == ("A" * 43, "B" * 43, "9" * 64)
+    from dataclasses import replace
+    _validate_claim_output_hashes(replace(claim, source_receipt_handles=canonical))
+    with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
+        _validate_claim_output_hashes(replace(claim, source_receipt_handles=raw))
+
+
+def test_complete_active_publication_accepts_publishers_deduplicated_input_closure(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from hermes_installer.authority import active_policy_compiler as compiler
+    from hermes_installer.authority.setup_policy_publication import (
+        PolicyPublicationReceiptResolver,
+        RootSetupPublicationReceipt,
+        _receipt_input_handles,
+        _SEAL,
+    )
+
+    claim = _claim()
+    # These are the real source components: PM, native output and principal.
+    # The PM/output handles also occur in the prepared-bundle source list.
+    claim = replace(claim, source_receipt_handles=_ordered_unique_receipt_handles(
+        ("A" * 43, "B" * 43, "9" * 64, "A" * 43, "B" * 43, "9" * 64), "test"))
+    claim = replace(claim, claim_digest=hashlib.sha256(_canonical(_manifest(claim))).hexdigest())
+    input_handles = _receipt_input_handles(claim)
+    receipt = RootSetupPublicationReceipt(
+        1, "R" * 43, claim.transaction_handle, "installer-bootstrap-policy-generation-v1",
+        "c" * 64, tmp_path / "generation", 1, 2, claim.compiled_policy_sha256,
+        claim.compiled_artifact_catalog_sha256, "d" * 64, "e" * 64,
+        claim.expected_selection_catalog_sha256, claim.selection_catalog_sha256,
+        input_handles, "active-committed", _SEAL, claim.publication_handle,
+        claim.claim_digest, claim.prepared_generation_id,
+        claim.expected_service_generation_digest, claim.runtime_receipt_handles,
+        claim.materialization_receipt_handles)
+    monkeypatch.setattr(PolicyPublicationReceiptResolver, "verify_current_active_claim",
+                        lambda **_kwargs: receipt)
+    registry = object.__new__(RootActivePolicyCompilationRegistry)
+    registry._seal = claim._seal
+    registry._claims = {claim.publication_handle: claim}
+    registry._states = {claim.publication_handle: "claimed"}
+    registry._locks = {}
+    registry._verify_postpublication_claim = lambda _claim: None
+    journal_record = {
+        "state": "claimed", "transaction_handle": claim.transaction_handle,
+        "publication_handle": claim.publication_handle, "claim_digest": claim.claim_digest,
+    }
+    def write_state(_claim, state, receipt_handle):
+        journal_record.update({"state": state, "publication_receipt_handle": receipt_handle})
+    registry._write_state = write_state
+    registry._close_lock = lambda *_args: None
+    registry._claim_root = tmp_path
+    journal_record_written = []
+    def write_journal(_path, value, **_kwargs):
+        journal_record.update(value)
+        journal_record_written.append(value)
+    monkeypatch.setattr(compiler, "_write_json", write_journal)
+    monkeypatch.setattr(compiler, "_read_json", lambda _path: dict(journal_record))
+    registry._verify_claim_bundle = lambda _claim: None
+    attempts = []
+    def complete_outputs(self, *args, **kwargs):
+        attempts.append((args, kwargs))
+        if len(attempts) == 1:
+            raise BootstrapEnrollmentPending("simulated native receipt completion interruption")
+    registry.materialization_receipts = type("Outputs", (), {
+        "complete_active_compilation": complete_outputs,
+    })()
+
+    with pytest.raises(BootstrapEnrollmentPending, match="completion interruption"):
+        registry.complete_active_publication(receipt)
+    assert registry._states[claim.publication_handle] == "active-committed"
+    registry.complete_active_publication(receipt)
+    assert registry._states[claim.publication_handle] == "active-committed"
+    assert receipt.input_receipt_handles == (
+        claim.observed_root_receipt_handle, *claim.source_receipt_handles)
+    assert len(attempts) == 2
+    assert journal_record_written[0]["publication_sha256"] == receipt.publication_sha256
 
 
 def test_caller_constructed_choice_projection_fails_compiler_seal_check():
