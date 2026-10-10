@@ -647,3 +647,10 @@ The installer SHALL validate raw root-observed result bytes against the exact se
 #### Scenario: Worker supplies a ToolMessage without a completed root result
 - **WHEN** no matching current root invocation/result/schema observation exists
 - **THEN** source capture denies and no worker message or generic object schema supplies authority
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
