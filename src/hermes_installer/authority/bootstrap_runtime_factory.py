@@ -1397,9 +1397,9 @@ class RootPreparedNativeProfileHomeSourceSet:
     def verify_current(self) -> "RootPreparedNativeProfileHomeSourceSet":
         session = self._session
         if (not isinstance(session, RootBootstrapSession)
-                or session._seal != self._session_seal
-                or session._check_live() is None):
+                or session._seal != self._session_seal):
             raise BootstrapEnrollmentPending("prepared Jarvis home source set lost its live root session")
+        session._check_live()
         current = session._resolve_prepared_native_profile_home_source_rows()
         payload = _canonical({"schema": 1, "rows": [row.public_row() for row in current]})
         try:

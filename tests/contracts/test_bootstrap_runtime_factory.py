@@ -94,6 +94,160 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaises(BootstrapEnrollmentPending):
             _jarvis_primary_source_row([("hermes", "../outside.yaml", "b" * 64)])
 
+    def test_prepared_native_home_source_set_rechecks_live_session_rows_and_reservation(self):
+        import hashlib
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            RootPreparedNativeProfileHomeSourceSet, _canonical,
+        )
+        from hermes_installer.authority.native_output_receipts import (
+            RootNativePrecompileOutputReservation,
+        )
+
+        public_row = {
+            "home_binding_id": "a" * 64, "source_profile_id": "hermes",
+            "source_revision": "b" * 40, "source_manifest_sha256": "c" * 64,
+            "role": "jarvis-primary-home", "native_profile_key": "default",
+            "display_name": "Jarvis", "home_selection_handle": "selection-handle",
+            "materialization_receipt_handle": "materialization-handle",
+            "mapping_sha256": "d" * 64, "home_generation": "generation",
+            "principal_id": "principal", "namespace_id": "namespace",
+            "runtime_receipt_handle": "runtime-handle",
+            "runtime_identity_sha256": "e" * 64,
+            "behavioral_manifest_sha256": "f" * 64,
+        }
+        source = SimpleNamespace(public_row=lambda: dict(public_row))
+        rows = (source,)
+        reservation = RootNativePrecompileOutputReservation(
+            schema=1, reservation_handle="reservation", publication_handle="publication",
+            setup_session_id="session", transaction_handle="transaction", plan_digest="1" * 64,
+            prepared_generation_id="generation", assembly_selection_handle="assembly",
+            assembly_selection_sha256="2" * 64, receipt_ids=("receipt",),
+            output_closure_sha256="3" * 64, issued_monotonic=1.0, expires_monotonic=1e20,
+        )
+        session = object.__new__(RootBootstrapSession)
+        session._seal = "seal"
+        session._check_live = lambda: None
+        session._resolve_prepared_native_profile_home_source_rows = lambda: rows
+        session._root_native_output_receipts = lambda: SimpleNamespace(
+            resolve_current_precompile_reservation=lambda handle: reservation
+            if handle == reservation.reservation_handle else None)
+        payload = _canonical({"schema": 1, "rows": [public_row]})
+        prepared = RootPreparedNativeProfileHomeSourceSet(
+            rows, reservation.output_closure_sha256, hashlib.sha256(payload).hexdigest(),
+            reservation, session, "seal")
+
+        # _check_live() returns None on success. The source rows and reservation
+        # are still re-read, so this proves the positive path and both stale
+        # joins rather than only testing an inventory/type predicate.
+        self.assertIs(prepared.verify_current(), prepared)
+        session._resolve_prepared_native_profile_home_source_rows = lambda: ()
+        with self.assertRaises(BootstrapEnrollmentPending):
+            prepared.verify_current()
+        session._resolve_prepared_native_profile_home_source_rows = lambda: rows
+        session._check_live = lambda: (_ for _ in ()).throw(
+            BootstrapEnrollmentPending("session expired"))
+        with self.assertRaises(BootstrapEnrollmentPending):
+            prepared.verify_current()
+
+    def test_prepared_jarvis_home_producer_rechecks_all_208_typed_source_rows(self):
+        import hashlib
+        import json
+        import time
+        from hermes_installer.authority.bootstrap_runtime_factory import _canonical
+        from hermes_installer.authority.native_output_receipts import (
+            RootNativePrecompileOutputReservation,
+        )
+        from hermes_installer.authority.pm_runtime import VerifiedPMRuntimeSelection
+        from hermes_installer.registry.native import NativeRegistry
+        from hermes_installer.registry.source import BundledRegistrySource, PinnedSource
+
+        bundle_dir = (Path(__file__).parents[2] / "src" / "hermes_installer" / "registry"
+                      / "bundle_data")
+        pin = PinnedSource.from_mapping(json.loads(
+            (bundle_dir / "hermes-agent-resources.pin.json").read_text(encoding="utf-8")))
+        verified_source = BundledRegistrySource(pin).load(
+            (bundle_dir / "hermes-agent-resources-2.3.1.tar.gz").read_bytes())
+        registry = NativeRegistry.from_verified_source(verified_source)
+        profile_rows = {
+            raw.identity: (registry.paths[key], hashlib.sha256(
+                verified_source.files[registry.paths[key]]).hexdigest(), verified_source.revision)
+            for key, raw in registry.resolver.raw.items() if raw.kind == "profiles"
+        }
+        assert len(profile_rows) == 208
+
+        class Materializer:
+            def __init__(self, profile_id):
+                self.profile_id = profile_id
+                self.behavior_digest = hashlib.sha256(
+                    ("behavior:" + profile_id).encode()).hexdigest()
+
+            def resolve_durable_home_identity(self, _receipt_handle):
+                return {"resource_profile_id": self.profile_id,
+                        "resources_revision": verified_source.revision,
+                        "home_generation": "prepared-generation",
+                        "behavioral_manifest_sha256": self.behavior_digest}
+
+        materializers = {profile_id: Materializer(profile_id) for profile_id in profile_rows}
+        receipts = {profile_id: SimpleNamespace(
+            resource_profile_id=profile_id, receipt_handle="receipt-" + profile_id)
+            for profile_id in profile_rows}
+        runtime = VerifiedPMRuntimeSelection(
+            receipt_handle="pm-runtime", setup_session_id="session",
+            transaction_handle="transaction", prepared_generation_id="prepared-generation",
+            source_artifact_id="official-python", python_path=Path("/verified/python"),
+            runtime_sha256="4" * 64, device=1, inode=2, uid=0, gid=0, mode=0o755,
+            version_info=(3, 14, 0), implementation="cpython", cache_tag="cpython-314",
+            soabi="cpython-314-x86_64-linux-gnu", machine="x86_64")
+        reservation = RootNativePrecompileOutputReservation(
+            schema=1, reservation_handle="reservation", publication_handle="publication",
+            setup_session_id="session", transaction_handle="transaction", plan_digest="1" * 64,
+            prepared_generation_id="prepared-generation", assembly_selection_handle="assembly",
+            assembly_selection_sha256="2" * 64, receipt_ids=("receipt",),
+            output_closure_sha256="3" * 64, issued_monotonic=1.0, expires_monotonic=1e20)
+        session = object.__new__(RootBootstrapSession)
+        session._seal = "session-seal"
+        session._closed = False
+        session._check_live = lambda: None
+        session._handle = SimpleNamespace(session_id="session")
+        session._authorization = SimpleNamespace(
+            transaction_handle="transaction", plan_digest="1" * 64)
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), generation_id="prepared-generation",
+            generation_digest="5" * 64)
+        session._resource_profile_source_index = dict(profile_rows)
+        session._resources_source_handle = "resources-source"
+        session._verified_resources = {"resources-source": (verified_source, registry)}
+        session._native_materializer = materializers["hermes"]
+        session._native_delegate_materializers = {
+            key: value for key, value in materializers.items() if key != "hermes"}
+        session._native_materialization_receipts = {"primary": receipts["hermes"]}
+        session._native_delegate_materialization_receipts = {
+            key: value for key, value in receipts.items() if key != "hermes"}
+        session._pm_runtime_handle = "pm-runtime"
+        session._pm_runtime_registry = SimpleNamespace(
+            resolve_runtime=lambda *_args: runtime)
+        session.resolve_current_setup_identity = lambda: SimpleNamespace(
+            principal=SimpleNamespace(principal_id="principal"),
+            namespace=SimpleNamespace(namespace_id="namespace"),
+            expires_monotonic=time.monotonic() + 60)
+        session.resolve_selected_native_profile_home_source = lambda source_id: SimpleNamespace(
+            home_selection_handle="home-selection-" + source_id)
+        session._root_native_output_receipts = lambda: SimpleNamespace(
+            resolve_current_precompile_reservation=lambda handle: reservation
+            if handle == reservation.reservation_handle else None)
+
+        source_set = session.resolve_prepared_native_profile_home_sources(reservation)
+        assert len(source_set.rows) == 208
+        assert sum(row.role == "jarvis-primary-home" for row in source_set.rows) == 1
+        assert sum(row.role == "resource-delegate-home" for row in source_set.rows) == 207
+        assert next(row for row in source_set.rows if row.source_profile_id == "hermes").display_name == "Jarvis"
+        assert source_set.verify_current() is source_set
+
+        changed_delegate = next(profile_id for profile_id in materializers if profile_id != "hermes")
+        materializers[changed_delegate].behavior_digest = "6" * 64
+        with self.assertRaises(BootstrapEnrollmentPending):
+            source_set.verify_current()
+
     def test_runnable_role_projection_exposes_only_literal_v72_fields_as_detached_values(self):
         child_refs = {"native-compiled-closure:test": "a" * 64,
                       "native-entrypoint-manifest:test": "b" * 64}

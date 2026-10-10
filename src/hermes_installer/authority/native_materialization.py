@@ -1006,31 +1006,85 @@ class RootOwnedNativeProfileHome:
 class RootOwnedNativeProfileHomeRegistry:
     """Reopen and retain only fixed-root homes present in the current core map."""
 
-    def __init__(self, *, service_parent_root: Path, root_journal: Path,
+    def __init__(self, *, service_parent_root: Path, root_journal_selection: Any,
+                 runtime_bindings: Any,
                  authority_core: Any, _seal: object):
+        from .setup_policy_publication import RootPublishedAuthorityCore
+        from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+        from hermes_installer.protected_enrollment import RootJournalSelection
+        from .bootstrap_runtime_factory import _SERVICE_PARENT_ROOT
         if (_seal is not _NATIVE_HOME_REGISTRY_SEAL or os.geteuid() != 0
-                or not service_parent_root.is_absolute() or not root_journal.is_absolute()
-                or type(authority_core).__name__ != "RootPublishedAuthorityCore"
+                or type(runtime_bindings) is not RootRuntimeBindings
+                or type(root_journal_selection) is not RootJournalSelection
+                or service_parent_root != Path(_SERVICE_PARENT_ROOT)
+                or type(authority_core) is not RootPublishedAuthorityCore
+                or runtime_bindings.service_generation_digest != authority_core.service_generation_digest
+                or root_journal_selection.root_id != "installer-authority-journal-v1"
+                or root_journal_selection.service_generation_digest != authority_core.service_generation_digest
                 or not callable(getattr(authority_core, "resolve_current_native_profile_home_crosswalk", None))):
             raise NativeMaterializationDenied("native home registry lacks current root authority")
         self._service_parent_root = service_parent_root
-        self._root_journal = root_journal
+        self._root_journal_selection = root_journal_selection
+        self._runtime_bindings = runtime_bindings
         self._authority_core = authority_core
         self._seal = _seal
         self._held: dict[str, RootOwnedNativeProfileHome] = {}
 
     @classmethod
-    def from_root_runtime(cls, root_runtime: Any, authority_core: Any
-                          ) -> "RootOwnedNativeProfileHomeRegistry":
-        from .bootstrap_runtime_factory import RootBootstrapRuntimeFactory
-        if type(root_runtime) is not RootBootstrapRuntimeFactory:
-            raise NativeMaterializationDenied("native home registry requires the current root bootstrap runtime")
-        journal = root_runtime.resolver.journal_root
-        parent = Path("/var/lib/hermes-installer/services/hermes-agent-native-v1")
-        result = cls(service_parent_root=parent, root_journal=journal,
+    def from_runtime_bindings(cls, runtime_bindings: Any, authority_core: Any
+                              ) -> "RootOwnedNativeProfileHomeRegistry":
+        from .setup_policy_publication import RootPublishedAuthorityCore
+        from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+        from hermes_installer.protected_enrollment import RootJournalSelection
+        from .bootstrap_runtime_factory import _SERVICE_PARENT_ROOT
+        if (type(runtime_bindings) is not RootRuntimeBindings
+                or type(authority_core) is not RootPublishedAuthorityCore
+                or runtime_bindings.service_generation_digest != authority_core.service_generation_digest
+                or not callable(getattr(runtime_bindings, "resolve_root_journal", None))):
+            raise NativeMaterializationDenied("native home registry requires current composed root bindings")
+        try:
+            journal = runtime_bindings.resolve_root_journal(
+                "installer-authority-journal-v1",
+                expected_active_generation_digest=authority_core.service_generation_digest,
+            )
+        except Exception:
+            raise NativeMaterializationDenied("current protected authority journal is unavailable") from None
+        if (type(journal) is not RootJournalSelection
+                or journal.root_id != "installer-authority-journal-v1"
+                or journal.service_generation_digest != authority_core.service_generation_digest):
+            raise NativeMaterializationDenied("current root journal selection is malformed or stale")
+        result = cls(service_parent_root=Path(_SERVICE_PARENT_ROOT),
+                     root_journal_selection=journal, runtime_bindings=runtime_bindings,
                      authority_core=authority_core, _seal=_NATIVE_HOME_REGISTRY_SEAL)
+        result._verify_current_root_journal()
         result._current_rows()
         return result
+
+    def _verify_current_root_journal(self) -> Any:
+        from hermes_installer.protected_enrollment import RootJournalSelection
+        selection = self._root_journal_selection
+        if (self._runtime_bindings.service_generation_digest
+                != self._authority_core.service_generation_digest):
+            raise NativeMaterializationDenied("active service generation changed since native home selection")
+        try:
+            current = self._runtime_bindings.resolve_root_journal(
+                "installer-authority-journal-v1",
+                expected_active_generation_digest=self._authority_core.service_generation_digest,
+            )
+        except Exception:
+            raise NativeMaterializationDenied("current protected authority journal is unavailable") from None
+        if (type(current) is not RootJournalSelection or current != selection
+                or current.service_generation_digest != self._authority_core.service_generation_digest):
+            raise NativeMaterializationDenied("protected authority journal selection changed")
+        try:
+            info = current.path.lstat()
+        except OSError:
+            raise NativeMaterializationDenied("protected authority journal directory is unavailable") from None
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700
+                or (info.st_dev, info.st_ino) != (current.device, current.inode)):
+            raise NativeMaterializationDenied("protected authority journal custody changed")
+        return current
 
     def open_current_profile_home(self, row: Any) -> RootOwnedNativeProfileHome:
         """Open only an exact currently published source identity; accept no path."""
@@ -1116,7 +1170,12 @@ class RootOwnedNativeProfileHomeRegistry:
         self._held.clear()
 
     def _current_rows(self) -> tuple[Any, ...]:
+        self._verify_current_root_journal()
+        from .native_profile_task_homes import RootPublishedNativeProfileHomeCrosswalk
         crosswalk = self._authority_core.resolve_current_native_profile_home_crosswalk()
+        if (type(crosswalk) is not RootPublishedNativeProfileHomeCrosswalk
+                or crosswalk.verify_current() is not crosswalk):
+            raise NativeMaterializationDenied("native home crosswalk is not the current published proof")
         rows = tuple(getattr(crosswalk, "rows", ()))
         if (len(rows) != 208
                 or len({getattr(row, "source_profile_id", None) for row in rows}) != 208
@@ -1148,9 +1207,10 @@ class RootOwnedNativeProfileHomeRegistry:
         if (not isinstance(source_id, str)
                 or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", source_id)):
             raise NativeMaterializationDenied("native home source identity is malformed")
-        journal_dir = (self._root_journal / "native-materialization"
+        root_journal = self._verify_current_root_journal().path
+        journal_dir = (root_journal / "native-materialization"
                        if source_id == "hermes" else
-                       self._root_journal / "native-materialization" / source_id)
+                       root_journal / "native-materialization" / source_id)
         database = journal_dir / "native-materialization.sqlite3"
         _verify_private_root_chain(database.parent)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -1444,6 +1504,7 @@ def _verify_root(root: Path, *, owner_uid: int | None, owner_gid: int | None = N
 
 def _published_home_row(row: Any) -> dict[str, Any]:
     """Extract the closed public v214 row without accepting caller paths."""
+    from .native_profile_task_homes import RootPublishedNativeProfileHomeRow
     names = (
         "home_binding_id", "source_profile_id", "source_revision",
         "source_manifest_sha256", "role", "native_profile_key", "display_name",
@@ -1451,7 +1512,7 @@ def _published_home_row(row: Any) -> dict[str, Any]:
         "home_generation", "principal_id", "namespace_id", "runtime_receipt_handle",
         "runtime_identity_sha256", "behavioral_manifest_sha256",
     )
-    if type(row).__name__ != "RootPublishedNativeProfileHomeRow":
+    if type(row) is not RootPublishedNativeProfileHomeRow:
         raise NativeMaterializationDenied("native home row is not a typed published row")
     try:
         output = {name: getattr(row, name) for name in names}
