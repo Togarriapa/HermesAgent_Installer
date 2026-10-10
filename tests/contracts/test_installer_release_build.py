@@ -221,27 +221,32 @@ def test_runtime_site_search_paths_deduplicate_purelib_and_platlib(monkeypatch, 
 
 def test_bundled_pip_is_bound_to_fixed_cpython_site_directory(tmp_path):
     relative_files = (
-        Path("lib/python3.14/site-packages/pip/__init__.py"),
-        Path("lib/python3.14/site-packages/pip-26.2.1.dist-info/METADATA"),
+        Path("pip/__init__.py"),
+        Path("pip-26.2.1.dist-info/METADATA"),
+        Path("../../../bin/pip"),
+        Path("../../../bin/pip3"),
+        Path("../../../bin/pip3.14"),
     )
     for relative in relative_files:
-        target = tmp_path / relative
+        target = tmp_path / "lib/python3.14/site-packages" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("pinned runtime archive member", encoding="utf-8")
 
     class Distribution:
         files = relative_files
+        version = "26.2.1"
 
         def locate_file(self, item):
-            return tmp_path / item
+            return tmp_path / "lib/python3.14/site-packages" / item
 
     release_build._verify_bundled_pip_distribution(Distribution(), tmp_path)
 
     class EscapingDistribution:
-        files = (Path("lib/python3.14/site-packages/other-package/__init__.py"),)
+        files = (Path("../../../bin/pipx"),)
+        version = "26.2.1"
 
         def locate_file(self, item):
-            target = tmp_path / item
+            target = tmp_path / "lib/python3.14/site-packages" / item
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("unexpected package", encoding="utf-8")
             return target

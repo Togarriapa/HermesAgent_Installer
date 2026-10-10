@@ -3527,10 +3527,17 @@ def _verify_bundled_pip_distribution(dist: Any, prefix: Path) -> None:
     files = dist.files
     if not files:
         raise BootstrapEnrollmentPending("bundled runtime pip has no installed file manifest")
+    version = dist.version
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
+        raise InstallerReleaseBuildError("bundled runtime pip version is malformed")
+    site_root = "lib/python3.14/site-packages/"
+    package_root = site_root + "pip/"
+    metadata_root = site_root + "pip-" + version + ".dist-info/"
+    bundled_scripts = {"bin/pip", "bin/pip3", "bin/pip3.14"}
     for item in files:
         relative = _relative_below(prefix, Path(dist.locate_file(item)))
-        if not (relative.startswith("lib/python3.14/site-packages/pip/")
-                or relative.startswith("lib/python3.14/site-packages/pip-")):
+        if not (relative.startswith(package_root) or relative.startswith(metadata_root)
+                or relative in bundled_scripts):
             raise InstallerReleaseBuildError("bundled runtime pip escaped its fixed CPython site directory")
 
 
