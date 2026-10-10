@@ -607,7 +607,10 @@ class MemoryCompoundExecutor:
             maximum_bytes=recipe.maximum_bytes)
         try:
             for index, step in enumerate(recipe.steps):
-                sequence = job.sequence if index == 0 else sequence
+                # commit_step advances the durable sequence and returns the
+                # updated job. Read that current value for every step instead
+                # of carrying a loop-local counter across a retry boundary.
+                sequence = job.sequence
                 source, consent, job = self.ledger.begin_step(
                     job.handle, expected_sequence=sequence,
                     step_id=step.step_id, expected_step_id=step.step_id)

@@ -105,6 +105,7 @@ class MemoryEnrollmentTests(unittest.TestCase):
         value["lifecycle_binding"] = {
             "service_enrollment_id": value["service_enrollment_id"],
             "service_generation": value["service_generation"],
+            "enablement_selection_handle": "memory-choice-one",
             "start_operation_id": "memory-agentmemory-serve-v1",
             "start_parameter_schema_id": "no-caller-parameters-v1",
             "prestart_receipt_handles": ["package-receipt", "engine-receipt"],
@@ -117,6 +118,8 @@ class MemoryEnrollmentTests(unittest.TestCase):
         enrollment = MemoryServiceEnrollment.from_protected_record(value)
         self.assertEqual(enrollment.lifecycle_binding.start_operation_id,
                          "memory-agentmemory-serve-v1")
+        self.assertEqual(enrollment.lifecycle_binding.enablement_selection_handle,
+                         "memory-choice-one")
         self.assertEqual(enrollment.lifecycle_binding.readiness_route_id,
                          "agentmemory-ready")
         self.assertEqual(enrollment.lifecycle_binding.prestart_receipt_handles,
@@ -124,6 +127,7 @@ class MemoryEnrollmentTests(unittest.TestCase):
 
         for mutate in (
             lambda row: row["lifecycle_binding"].update(start_operation_id="unreviewed"),
+            lambda row: row["lifecycle_binding"].update(enablement_selection_handle=""),
             lambda row: row["lifecycle_binding"].update(service_generation="stale-generation"),
             lambda row: row["lifecycle_binding"].update(readiness_schema_id="generic-health"),
             lambda row: row["lifecycle_binding"].update(start_parameter_schema_id="caller-args"),
