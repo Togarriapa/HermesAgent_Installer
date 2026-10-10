@@ -6,6 +6,7 @@ import io
 import json
 import os
 import tarfile
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -234,7 +235,7 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
                 "generation-1", "installer-module:native_materializer",
                 "3" * 64, "installer-module:native_materializer", "5" * 64,
                 ("A" * 48, "B" * 48), member_tree_sha256,
-                output_sha256, output_size_bytes, closure_tree_sha256, 10_000.0,
+                output_sha256, output_size_bytes, closure_tree_sha256, time.monotonic() + 3600,
             )
 
         def revalidate_native_output(self, selection):
@@ -268,3 +269,104 @@ def test_output_receipt_is_current_immutable_and_one_use(tmp_path: Path) -> None
         registry.resolve_for_activation(
             receipt.receipt_id, artifact_role="native-compiled-closure",
             prepared_generation_id="generation-1")
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="requires isolated root-owned Linux CAS fixture")
+def test_active_reservation_recovers_after_registry_restart_and_completes_idempotently(tmp_path: Path) -> None:
+    payload, members = _compiled_closure()
+    archive_contents = {member.path: _read_archive_member(payload, member.path)
+                        for member in members}
+    outputs = {
+        "native-entrypoint-manifest": ("entrypoint-json", "manifest.json"),
+        "native-action-resolver": ("resolver-json", "resolver/resolver"),
+        "native-boundary-overlay": ("boundary-overlay", "overlay/manifest.json"),
+        "native-candidate-index": ("candidate-index-json", "catalog/native-candidates.json"),
+        "native-compiled-closure": ("compiled-closure", ""),
+    }
+    closure_tree_sha256 = _closure_tree_sha256(payload)
+    claim_digest = "9" * 64
+    publication_handle = "P" * 48
+    transaction_handle = "transaction-" + "1" * 64
+    current_time = [time.monotonic()]
+    expires = current_time[0] + 3600
+
+    class Binding:
+        def authorize_native_output(self, *, artifact_role, output_kind,
+                                    member_tree_sha256, output_sha256,
+                                    output_size_bytes):
+            artifact_id = ("native-candidate-index:package-1:generation-1"
+                           if artifact_role == "native-candidate-index" else
+                           f"native-output:{artifact_role}:package-1:generation-1")
+            return NativeOutputSelection(
+                artifact_id, artifact_role, output_kind, "package-1", "demo", "generation-1",
+                "session-1", transaction_handle, "2" * 64, "generation-1",
+                "installer-module:native_materializer", "3" * 64,
+                "installer-module:native_materializer", "5" * 64,
+                ("A" * 48, "B" * 48), member_tree_sha256, output_sha256,
+                output_size_bytes, closure_tree_sha256, expires)
+
+        def revalidate_native_output(self, selection):
+            return selection.transaction_handle == transaction_handle
+
+        def verify_native_publication_receipt(self, reservation, receipt):
+            return (receipt.state == "active-committed"
+                    and receipt.publication_handle == reservation.publication_handle
+                    and receipt.claim_digest == reservation.claim_digest
+                    and receipt.prepared_generation_id == reservation.prepared_generation_id
+                    and receipt.transaction_handle == transaction_handle
+                    and set(reservation.receipt_ids).issubset(receipt.materialization_receipt_handles))
+
+    cas, journal = tmp_path / "cas", tmp_path / "journal"
+    cas.mkdir(mode=0o700)
+    journal.mkdir(mode=0o700)
+    binding = Binding()
+    registry = RootMaterializationReceiptRegistry._from_root_factory(
+        binding=binding, cas_root=cas, journal_root=journal)
+    registry._monotonic = lambda: current_time[0]
+    receipts = {}
+    for role, (kind, path) in outputs.items():
+        data = payload if role == "native-compiled-closure" else archive_contents[path]
+        rows = members if role == "native-compiled-closure" else (
+            NativeOutputMember(path, hashlib.sha256(data).hexdigest(), len(data), 0o644),)
+        receipts[role] = registry.publish_selected(
+            artifact_role=role, output_kind=kind, payload=data, members=rows)
+    receipt_ids = tuple(sorted(row.receipt_id for row in receipts.values()))
+    reservation = registry.reserve_for_active_compilation(
+        receipt_ids, prepared_generation_id="generation-1",
+        publication_handle=publication_handle, claim_digest=claim_digest)
+
+    class _Publication:
+        state = "active-committed"
+
+        def __init__(self):
+            self.publication_handle = publication_handle
+            self.claim_digest = claim_digest
+            self.prepared_generation_id = "generation-1"
+            self.transaction_handle = transaction_handle
+            self.materialization_receipt_handles = receipt_ids
+
+    # A newly opened registry recovers only by the typed current publication,
+    # exact transaction/claim, and the one complete durable output reservation.
+    reopened = RootMaterializationReceiptRegistry._from_root_factory(
+        binding=binding, cas_root=cas, journal_root=journal)
+    reopened._monotonic = lambda: current_time[0]
+    publication = _Publication()
+    tampered = _Publication()
+    tampered.claim_digest = "8" * 64
+    with pytest.raises(NativeOutputReceiptDenied, match="does not resolve"):
+        reopened.resolve_active_compilation_reservation(tampered)
+    recovered = reopened.resolve_active_compilation_reservation(publication)
+    assert recovered.reservation_handle == reservation.reservation_handle
+    assert recovered.receipt_ids == receipt_ids
+    completed = reopened.complete_active_compilation(
+        recovered.reservation_handle, publication, prepared_generation_id="generation-1",
+        publication_handle=publication_handle, claim_digest=claim_digest)
+    assert {row.receipt_id for row in completed} == set(receipt_ids)
+    # Retrying after the registry commit returns the exact consumed receipt set.
+    retry = reopened.complete_active_compilation(
+        recovered.reservation_handle, publication, prepared_generation_id="generation-1",
+        publication_handle=publication_handle, claim_digest=claim_digest)
+    assert {row.receipt_id for row in retry} == set(receipt_ids)
+    current_time[0] = expires + 1
+    with pytest.raises(NativeOutputReceiptDenied, match="does not resolve"):
+        reopened.resolve_active_compilation_reservation(publication)

@@ -142,6 +142,7 @@ class NativeOutputReservation:
     claim_digest: str
     prepared_generation_id: str
     receipt_ids: tuple[str, ...]
+    state: str = "reserved"
 
 
 class RootMaterializationReceiptRegistry:
@@ -349,7 +350,9 @@ class RootMaterializationReceiptRegistry:
                     if changed != 1:
                         raise NativeOutputReceiptDenied("native output changed during active compilation reservation")
                 db.execute(
-                    "INSERT INTO reservations VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO reservations(reservation_handle,publication_handle,claim_digest,"
+                    "prepared_generation_id,receipt_ids,transaction_handle,expires_monotonic,state) "
+                    "VALUES(?,?,?,?,?,?,?,'reserved')",
                     (reservation.reservation_handle, publication_handle, claim_digest,
                      prepared_generation_id, json.dumps(role_ids), first["transaction_handle"],
                      min(record["expires_monotonic"] for record in records)),
@@ -384,6 +387,63 @@ class RootMaterializationReceiptRegistry:
                                           resolving=True)
         return tuple(_receipt_from_record(record) for record in records)
 
+    def resolve_active_compilation_reservation(
+        self, publication_receipt: Any,
+    ) -> NativeOutputReservation:
+        """Recover exactly one still-current reservation after process restart.
+
+        The receipt is only a selector. The sealed root binding must re-resolve
+        the current durable publication before a reservation is returned.
+        """
+        self._require_root()
+        publication_handle = getattr(publication_receipt, "publication_handle", None)
+        claim_digest = getattr(publication_receipt, "claim_digest", None)
+        prepared_generation_id = getattr(publication_receipt, "prepared_generation_id", None)
+        transaction_handle = getattr(publication_receipt, "transaction_handle", None)
+        output_handles = getattr(publication_receipt, "materialization_receipt_handles", None)
+        if (getattr(publication_receipt, "state", None) not in {"active-committed", "active", "committed"}
+                or not _valid_handle(publication_handle)
+                or not isinstance(claim_digest, str) or not _HEX.fullmatch(claim_digest)
+                or not _valid_identifier(prepared_generation_id)
+                or not _valid_handle(transaction_handle)
+                or not isinstance(output_handles, tuple)
+                or any(not _valid_identifier(value) for value in output_handles)
+                or len(set(output_handles)) != len(output_handles)):
+            raise NativeOutputReceiptDenied("active publication receipt cannot select a native reservation")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM reservations WHERE publication_handle=? AND claim_digest=? "
+                "AND prepared_generation_id=? AND transaction_handle=? AND state IN ('reserved','completed')",
+                (publication_handle, claim_digest, prepared_generation_id, transaction_handle),
+            ).fetchall()
+        matching: list[NativeOutputReservation] = []
+        for row in rows:
+            ids = tuple(json.loads(row["receipt_ids"]))
+            if (row["expires_monotonic"] <= self._monotonic()
+                    or not set(ids).issubset(output_handles)):
+                continue
+            candidate = NativeOutputReservation(
+                row["reservation_handle"], publication_handle, claim_digest,
+                prepared_generation_id, ids, row["state"],
+            )
+            verifier = getattr(self._binding, "verify_native_publication_receipt", None)
+            try:
+                current = callable(verifier) and verifier(candidate, publication_receipt) is True
+            except Exception:
+                current = False
+            if not current:
+                continue
+            try:
+                self._verify_reservation_outputs(candidate)
+            except NativeOutputReceiptDenied:
+                continue
+            matching.append(candidate)
+        if len(matching) != 1:
+            raise NativeOutputReceiptDenied(
+                "active publication does not resolve one current native output reservation"
+            )
+        return matching[0]
+
     def complete_active_compilation(
         self, reservation_handle: str, publication_receipt: Any, *,
         prepared_generation_id: str, publication_handle: str,
@@ -398,6 +458,7 @@ class RootMaterializationReceiptRegistry:
         reservation = self._get_reservation(
             reservation_handle, prepared_generation_id=prepared_generation_id,
             publication_handle=publication_handle, claim_digest=claim_digest,
+            allow_completed=True,
         )
         verifier = getattr(self._binding, "verify_native_publication_receipt", None)
         if not callable(verifier):
@@ -416,6 +477,8 @@ class RootMaterializationReceiptRegistry:
             verified = False
         if verified is not True:
             raise NativeOutputReceiptDenied("active policy publication receipt does not bind this reservation")
+        if reservation.state == "completed":
+            return self._verify_reservation_outputs(reservation)
         receipts = self.verify_active_compilation(
             reservation_handle, prepared_generation_id=prepared_generation_id,
             publication_handle=publication_handle, claim_digest=claim_digest)
@@ -501,13 +564,15 @@ class RootMaterializationReceiptRegistry:
         return _read_private_file(path, _MAX_OUTPUT_BYTES[record["artifact_role"]])
 
     def _get_reservation(self, handle: str, *, prepared_generation_id: str,
-                         publication_handle: str, claim_digest: str) -> NativeOutputReservation:
+                         publication_handle: str, claim_digest: str,
+                         allow_completed: bool = False) -> NativeOutputReservation:
         self._require_root()
         if not _valid_handle(handle):
             raise NativeOutputReceiptDenied("active compilation reservation handle is malformed")
         with self._connect() as db:
             row = db.execute("SELECT * FROM reservations WHERE reservation_handle=?", (handle,)).fetchone()
-        if row is None or row["state"] not in {"reserved", "released"}:
+        accepted_states = {"reserved", "released"} | ({"completed"} if allow_completed else set())
+        if row is None or row["state"] not in accepted_states:
             raise NativeOutputReceiptDenied("active compilation reservation is stale or spent")
         if row["expires_monotonic"] <= self._monotonic():
             raise NativeOutputReceiptDenied("active compilation reservation is expired")
@@ -516,7 +581,24 @@ class RootMaterializationReceiptRegistry:
                 or row["claim_digest"] != claim_digest):
             raise NativeOutputReceiptDenied("active compilation reservation belongs to another claim")
         return NativeOutputReservation(handle, publication_handle, claim_digest,
-                                       prepared_generation_id, tuple(json.loads(row["receipt_ids"])))
+                                       prepared_generation_id, tuple(json.loads(row["receipt_ids"])),
+                                       row["state"])
+
+    def _verify_reservation_outputs(
+        self, reservation: NativeOutputReservation,
+    ) -> tuple[RuntimeArtifactReceipt, ...]:
+        records = [self._get_record(receipt_id) for receipt_id in reservation.receipt_ids]
+        expected_state = "consumed" if reservation.state == "completed" else "reserved"
+        for record in records:
+            if record["state"] != expected_state:
+                raise NativeOutputReceiptDenied("recovered native reservation output state is inconsistent")
+            self._verify_record_current(record)
+            payload = self._read_record_payload(record)
+            self._assert_output_relations(self._selection_for_record(record),
+                                          record["artifact_role"], payload, resolving=True)
+        if {record["artifact_role"] for record in records} != _GENERATED_ROLES:
+            raise NativeOutputReceiptDenied("recovered reservation lost a fixed native output role")
+        return tuple(_receipt_from_record(record) for record in records)
 
     def _validate_selection(self, selection: NativeOutputSelection,
                             role: str, kind: str, member_digest: str,
