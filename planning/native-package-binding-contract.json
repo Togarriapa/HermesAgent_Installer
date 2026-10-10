@@ -656,5 +656,15 @@
     "input_DTO_addition": "turn_handle: opaque string supplied only by root retained current turn; NativeInitialInputDelivery and ChannelEventDelivery",
     "response_DTO_additions": "ProviderResponseMetadata.turn_handle: opaque string; final_response_delivery_handle: opaque string|null; supplied only by actual root response observer",
     "authority": "Authenticated peer delivery only; DTO handles do not themselves mint context, public clearance or effect grants."
+  },
+  "mcp_derived_schema_cas": {
+    "schema": 1,
+    "task": "MC-F01",
+    "owner_module": "hermes_installer.authority.artifacts",
+    "producer": "RootSchemaDerivationReceiptRegistry.observe_mcp_tools_list(actual_tools_list_receipt,selected_binding,selected_tool)->RootSchemaDerivationReceipt root-private existing seam; exact authenticated selected MCP tools/list response/current service/tool/protocol/generation/source policy must resolve before deriving schema.",
+    "artifact_id_recipe": "native-mcp-schema:<sha256>; sha256 hashes exact canonical UTF8 schema JSON sorted keys compact separators ensure_ascii=false no newline. Root validates bounded selected tool inputSchema/outputSchema against approved finite native schema rules, never arbitrary caller schema. Each selected argument/result schema is its own child object.",
+    "CAS": "RootSchemaDerivationReceiptRegistry exclusively writes exact canonical child bytes into its already protected owned schema CAS, nofollow reopen/held FD proves device/inode/mode/owner/size/byte SHA. Dynamic schema need not already exist in static source ArtifactCatalog before this producer can write it. Returned derivation receipt binds actual source tools/list exchange, selected service enrollment/generation/tool/native binding/argument-or-result role and child artifact ID/SHA/size. Source/member proof is mandatory; no selfasserted receipt.",
+    "resolver_API": "RootSchemaDerivationReceiptRegistry.resolve_schema_artifact(derivation_receipt_handle,*,selected_binding,schema_role)->RootDerivedSchemaArtifact root-private; result fields artifact_id,sha256,size_bytes,canonical_schema_bytes,source_receipt_handle,derivation_receipt_handle,service_enrollment_id,service_generation,native_binding_id,tool_name,schema_role. Exact currentness rechecked. RootSourceArtifactReceiptVerifier reads dynamic child bytes only via this typed resolver when selected native schema row references exact derivation receipt; static packaged schema path remains unchanged.",
+    "publication": "Active publication installs selected protected native_schema_records row with child artifact_id/SHA/size and actual source+derivation handles. ArtifactCatalog may expose an immutable selected derived-artifact projection from this current root registry; it never accepts arbitrary unselected dynamic IDs. Prepublication bootstrap assembly uses sealed selected derivation receipt, not an active row prerequisite. Schema rotation requires fresh discovery/review/current selected binding and atomic generation update; no silent mutation."
   }
 }
