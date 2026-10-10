@@ -23,7 +23,9 @@ from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentP
 from .installer_release import (DEPLOYMENT_RECEIPT_PATH, RELEASE_STORE_ROOT,
                                 InstalledRootReleaseVerifier, MAX_FILES,
                                 MAX_FILE_BYTES, MAX_MANIFEST_BYTES, MAX_RECEIPT_BYTES,
-                                _artifact_id_for, _safe_relative, _unique_pairs)
+                                _artifact_id_for, _safe_relative, _unique_pairs,
+                                _validate_fixed_layout_role)
+from .installer_release_roles import RELEASE_MEMBER_ROLES
 
 _RECEIPT_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-"
 _MAX_RECORDS = 50_000
@@ -168,9 +170,6 @@ def _build_rows(receipt: Any) -> tuple[_ReleaseRow, ...]:
         raise BootstrapEnrollmentError("build receipt file closure is empty or oversized")
     rows: list[_ReleaseRow] = []
     previous = ""
-    roles_allowed = {"launcher", "interpreter", "module", "template", "plan",
-                     "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
-                     "runtime-member"}
     for entry in files:
         path, digest, size, mode, roles = (entry.relative_path, entry.sha256,
                                            entry.size_bytes, entry.mode, entry.roles)
@@ -181,8 +180,9 @@ def _build_rows(receipt: Any) -> tuple[_ReleaseRow, ...]:
                 or not isinstance(roles, tuple) or not roles
                 or any(not isinstance(role, str) for role in roles)
                 or tuple(sorted(set(roles))) != roles
-                or any(role not in roles_allowed for role in roles)):
+                or any(role not in RELEASE_MEMBER_ROLES for role in roles)):
             raise BootstrapEnrollmentError("build receipt contains a malformed closure row")
+        _validate_fixed_layout_role(path, digest, size, list(roles), mode=mode)
         artifact_id = _artifact_id_for(path, list(roles))
         if not artifact_id:
             raise BootstrapEnrollmentError("build receipt role mapping is invalid")

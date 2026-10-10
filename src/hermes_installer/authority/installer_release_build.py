@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
+from .installer_release_roles import RELEASE_MEMBER_ROLES
 
 
 SOURCE_ORIGIN = "https://github.com/Togarriapa/HermesAgent_Installer.git"
@@ -138,9 +139,7 @@ BOOTSTRAP_PYYAML_BYTES = 766_454
 BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-arm64"
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
-RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
-                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
-                           "runtime-member", "native-health-fixture"})
+RELEASE_ROLES = RELEASE_MEMBER_ROLES
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
 STAGED_LAUNCHER_SOURCE = "scripts/hermes-installer-root-setup"
 STAGED_LAUNCHER_PATH = "bin/hermes-installer-root-setup"
