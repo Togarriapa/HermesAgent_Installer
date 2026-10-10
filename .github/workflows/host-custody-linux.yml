@@ -57,8 +57,8 @@ jobs:
             --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=${unit}.service" \
             --setenv="PYTHONDONTWRITEBYTECODE=1" \
             /run/hermes-custody-python/python -m unittest discover \
-              -s "${GITHUB_WORKSPACE}/tests/contracts" \
-              -p 'test_managed_task_custody_linux.py' -v
+             -s "${GITHUB_WORKSPACE}/tests/contracts" \
+               -p 'test_managed_task_custody_linux.py' -v
 
       - name: Exercise root managed build custody
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
@@ -89,6 +89,34 @@ jobs:
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env HERMES_RUN_XVFB_PROOF=1 PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_remote_observations_xvfb_linux -v
+
+      - name: Restore Ubuntu runner trust-keyring path ownership for isolated host-tool fixture
+        if: ${{ always() && steps.prepare-private-loopback-tools.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+          test -f "$keyring" && test ! -L "$keyring"
+          test "$(dpkg-query -S "$keyring")" = "ubuntu-keyring: $keyring"
+          sudo dpkg --verify ubuntu-keyring
+          for path in /usr /usr/share /usr/share/keyrings "$keyring"; do
+            stat -c 'pre-repair %n uid=%u gid=%g mode=%a' "$path"
+          done
+          before="$(sha256sum "$keyring" | cut -d ' ' -f1)"
+          # Some hosted Ubuntu images leave /usr/share writable by the runner.
+          # Repair only this trust path in the disposable CI VM; never relax
+          # the runtime root-owned/no-write source check or alter keyring bytes.
+          sudo chown root:root /usr /usr/share /usr/share/keyrings "$keyring"
+          sudo chmod go-w /usr /usr/share /usr/share/keyrings "$keyring"
+          after="$(sha256sum "$keyring" | cut -d ' ' -f1)"
+          test "$before" = "$after"
+          for path in /usr /usr/share /usr/share/keyrings "$keyring"; do
+            test ! -L "$path"
+            test "$(stat -c '%u:%g' "$path")" = "0:0"
+            mode="$(stat -c '%a' "$path")"
+            mode_bits=$((8#$mode))
+            test $((mode_bits & 18)) -eq 0
+            stat -c 'post-repair %n uid=%u gid=%g mode=%a' "$path"
+          done
+          echo "Ubuntu archive keyring and trust path are root-owned and non-writable"
 
       - name: Exercise selected private loopback namespace and nft enforcement
         if: ${{ always() && steps.prepare-private-loopback-tools.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}

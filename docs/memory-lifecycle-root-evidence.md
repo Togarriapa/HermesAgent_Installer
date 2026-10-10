@@ -31,3 +31,18 @@ registry recreation, artifact replacement rejection, missing enablement choice,
 revocation/currentness, foreign-handle rejection, and fixed semantic route
 selection. These fixtures do not establish an active TTY enablement producer,
 managed memory start custody, live provider readiness, or target acceptance.
+
+## Fresh process controls (SK-T145)
+
+The initial start admission and its PIDFD/source evidence are short lived. A
+service process may live until its already-retained original deadline, so later
+status or shutdown uses `RootMemoryLifecycleRegistry.status_selected_memory`
+or `.stop_selected_memory` with the exact root-only
+`RootSelectedServiceProcessReceipt` returned at start. Each call resolves the
+active enrollment, durable enablement, lifecycle consent, pinned source closure,
+private route/deployment, current controller PIDFD, and manager-owned process
+identity again. It requires the same start-receipt object and preserves that
+receipt's original expiry; it does not renew the process deadline or reuse the
+expired start grant. Callers cannot supply PID, profile, UID, source, or a stop
+reason. A missing or changed proof denies productive control. The manager's
+retained process/PIDFD cleanup remains responsible for the original deadline.

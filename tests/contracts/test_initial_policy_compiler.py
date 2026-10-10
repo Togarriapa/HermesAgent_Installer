@@ -123,6 +123,7 @@ def test_v63_prepared_authority_binds_actual_key_and_exact_dormant_snapshot():
     assert snapshot["selected_application_runtimes"] == []
     assert snapshot["private_memory_endpoint_selections"] == []
     assert snapshot["private_memory_model_selections"] == []
+    assert snapshot["public_web_scopes"] == []
     assert set(snapshot) == {
         "schema", "generation_id", "service_records", "protected_devices", "protected_build_records",
         "native_packages", "memory_enrollments", "operation_parameter_schemas", "source_issuers",
@@ -133,6 +134,7 @@ def test_v63_prepared_authority_binds_actual_key_and_exact_dormant_snapshot():
         "remote_startup_enrollments", "private_loopback_networks",
         "selected_resource_executions", "selected_application_runtimes",
         "private_memory_endpoint_selections", "private_memory_model_selections",
+        "public_web_scopes",
         "generation_digest",
     }
 

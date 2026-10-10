@@ -297,6 +297,41 @@ class RootRuntimeBindings:
         # Reuse the binding-ID path so artifact pins are checked identically.
         return self.resolve_private_memory_endpoint_binding(selected.binding_id)
 
+    def retain_private_loopback_network_lease(self, binding_id: str, lease: Any) -> None:
+        """Attach an actual root network lease to the exact protected endpoint row."""
+        selected = self.resolve_private_memory_endpoint_binding(binding_id)
+        network = self.resolve_private_loopback_network(
+            selected.network_binding_handle,
+            service_generation_digest=selected.service_generation_digest,
+        )
+        if (selected.service_enrollment_id not in network.member_enrollment_ids
+                or selected.namespace_id != network.namespace_identity):
+            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
+        retain = getattr(self.process_manager, "retain_private_loopback_network_lease", None)
+        if not callable(retain):
+            raise EnrollmentDenied("root process custody has no private network lease registry")
+        retain(selected, network, lease)
+
+    def resolve_private_loopback_network_lease(self, network_binding_handle: str) -> Any:
+        """Return only the current retained lease joined to a protected endpoint row."""
+        if not isinstance(network_binding_handle, str) or not network_binding_handle:
+            raise EnrollmentDenied("private loopback binding handle is malformed")
+        endpoint = self.enrollment_catalog.resolve_private_loopback_binding_handle(
+            network_binding_handle,
+        )
+        endpoint = self.resolve_private_memory_endpoint_binding(endpoint.binding_id)
+        network = self.resolve_private_loopback_network(
+            endpoint.network_binding_handle,
+            service_generation_digest=endpoint.service_generation_digest,
+        )
+        if (endpoint.service_enrollment_id not in network.member_enrollment_ids
+                or endpoint.namespace_id != network.namespace_identity):
+            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
+        resolve = getattr(self.process_manager, "resolve_private_loopback_network_lease", None)
+        if not callable(resolve):
+            raise EnrollmentDenied("root process custody has no private network lease resolver")
+        return resolve(endpoint)
+
     def resolve_private_memory_model_binding(
         self, binding_id: str, endpoint_binding_id: str | None = None,
     ) -> RootSelectedPrivateMemoryModelBinding:
@@ -323,21 +358,6 @@ class RootRuntimeBindings:
             if artifact is None or getattr(artifact, "sha256", None) != selected.model_artifact_sha256:
                 raise EnrollmentDenied("private memory model artifact is not pinned")
         return selected
-
-    def retain_private_loopback_network_lease(self, binding_id: str, lease: Any) -> None:
-        """Retain an actual root network lease against exact active protected rows."""
-        selected = self.resolve_private_memory_endpoint_binding(binding_id)
-        network = self.resolve_private_loopback_network(
-            selected.network_binding_handle,
-            service_generation_digest=selected.service_generation_digest,
-        )
-        if (selected.service_enrollment_id not in network.member_enrollment_ids
-                or selected.namespace_id != network.namespace_identity):
-            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
-        retain = getattr(self.process_manager, "retain_private_loopback_network_lease", None)
-        if not callable(retain):
-            raise EnrollmentDenied("root process custody has no private network lease registry")
-        retain(selected, network, lease)
 
     private_memory_engine_selections: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 
@@ -552,23 +572,6 @@ class RootRuntimeBindings:
             raise EnrollmentDenied("private memory engine selection is unavailable")
         return selected
 
-    def resolve_private_loopback_network_lease(self, network_binding_handle: str) -> Any:
-        """Resolve custody's retained lease by the opaque protected network selector."""
-        endpoint = self.enrollment_catalog.resolve_private_loopback_binding_handle(
-            network_binding_handle,
-        )
-        endpoint = self.resolve_private_memory_endpoint_binding(endpoint.binding_id)
-        network = self.resolve_private_loopback_network(
-            endpoint.network_binding_handle,
-            service_generation_digest=endpoint.service_generation_digest,
-        )
-        if (endpoint.service_enrollment_id not in network.member_enrollment_ids
-                or endpoint.namespace_id != network.namespace_identity):
-            raise EnrollmentDenied("private memory endpoint does not join its protected network row")
-        resolve = getattr(self.process_manager, "resolve_private_loopback_network_lease", None)
-        if not callable(resolve):
-            raise EnrollmentDenied("root process custody has no private network lease resolver")
-        return resolve(endpoint)
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
         """Return one channel row only after active resource, issuer and controller joins."""

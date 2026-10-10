@@ -108,7 +108,8 @@ MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_FILES = 50_000
 MAX_FILE_BYTES = 512 * 1024 * 1024
 ROLES = frozenset({"launcher", "interpreter", "module", "template", "plan",
-                   "artifact-catalog", "bootstrap-policy", "baseline", "amendment"})
+                   "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                   "runtime-member"})
 _SEAL = object()
 _SHA = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -514,7 +515,7 @@ def _verify_file_rows(root_fd: int, manifest: Mapping[str, Any], expected_uid: i
             raise InstallerReleaseError("append-only amendment lacks amendment role")
         if "amendment" in roles and not path.startswith("plans/amendments/"):
             raise InstallerReleaseError("amendment role is outside append-only amendments")
-        _validate_fixed_layout_role(path, digest, size, roles)
+        _validate_fixed_layout_role(path, digest, size, roles, mode=mode)
         artifact_id = _artifact_id_for(path, roles)
         result.append(VerifiedReleaseFile(artifact_id, tuple(roles), path, digest, size,
                                           info.st_dev, info.st_ino, mode))
@@ -526,7 +527,8 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for row in rows:
         for role in row.roles:
             by_role.setdefault(role, []).append(row)
-    for role in ("launcher", "interpreter", "module", "template", "plan", "artifact-catalog", "baseline", "amendment"):
+    for role in ("launcher", "interpreter", "runtime-member", "module", "template", "plan",
+                 "artifact-catalog", "baseline", "amendment"):
         if role not in by_role:
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
@@ -674,7 +676,8 @@ def _artifact_id_for(path: str, roles: list[str]) -> str:
     return "release-file:" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:32]
 
 
-def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[str]) -> None:
+def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[str],
+                                *, mode: int | None = None) -> None:
     fixed_paths = {
         LAUNCHER_PATH: ("launcher", "installer-root-setup-launcher-v1"),
         INTERPRETER_PATH: ("interpreter", "installer-root-setup-interpreter-v1"),
@@ -701,6 +704,13 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
     if "module" in roles and not (path.startswith("lib/python/")
                                   or path in {item[1] for item in REVIEWED_SOURCE_MODULES}):
         raise InstallerReleaseError("module role is outside the finite source/import closure")
+    if path.startswith("runtime/") and path != INTERPRETER_PATH and roles != ["runtime-member"]:
+        raise InstallerReleaseError("installed runtime closure member lacks its exact runtime-member role")
+    if "runtime-member" in roles and (
+            roles != ["runtime-member"] or not path.startswith("runtime/") or path == INTERPRETER_PATH):
+        raise InstallerReleaseError("runtime-member role is outside the selected runtime closure")
+    if "runtime-member" in roles and mode is not None and mode not in {0o444, 0o555}:
+        raise InstallerReleaseError("runtime-member mode is outside the sealed runtime mode set")
     if path.startswith("plans/2026-10-09-v1/") and roles != ["baseline"]:
         raise InstallerReleaseError("frozen baseline files must carry only their baseline role")
     if "baseline" in roles and not path.startswith("plans/2026-10-09-v1/"):

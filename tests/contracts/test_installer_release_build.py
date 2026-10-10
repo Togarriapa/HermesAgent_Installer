@@ -140,10 +140,124 @@ def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp
         os.close(conflict_fd)
 
 
-def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
+def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path, monkeypatch):
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
     body = b"release module\n"
+    (output / "module.py").write_bytes(body)
+    os.chmod(output / "module.py", 0o444)
+    info = os.stat(output / "module.py", follow_symlinks=False)
+    row = release_build.BuildOutputFile("module.py", hashlib.sha256(body).hexdigest(), len(body), 0o444,
+                                        ("module",), info.st_dev, info.st_ino)
+    sibling_body = b"sealed sibling\n"
+    (output / "sibling.py").write_bytes(sibling_body)
+    os.chmod(output / "sibling.py", 0o444)
+    sibling_info = os.stat(output / "sibling.py", follow_symlinks=False)
+    sibling = release_build.BuildOutputFile(
+        "sibling.py", hashlib.sha256(sibling_body).hexdigest(), len(sibling_body), 0o444,
+        ("module",), sibling_info.st_dev, sibling_info.st_ino)
+    rows = (row, sibling)
+    manifest = release_build._canonical_json({
+        "schema": 1, "candidate_git_sha": "a" * 40,
+        "files": [{"relative_path": item.relative_path, "sha256": item.sha256,
+                   "size_bytes": item.size_bytes, "mode": item.mode, "roles": list(item.roles)}
+                  for item in rows],
+    })
+    (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+    os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+        release_build._SEAL, handle="r" * 43, candidate_git_sha="a" * 40,
+        distribution_receipt_handle="d" * 43, interpreter_receipt_handle="i" * 43,
+        source_tree_sha256="c" * 64, baseline_tree_sha256="b" * 64,
+        amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+        role_closure_manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        root_setup_plan_sha256="0" * 64, builder_artifact_sha256="1" * 64,
+        issued_monotonic=time.monotonic(),
+        deployment_predecessor=release_build.DeploymentPredecessor("absent", info.st_dev, info.st_ino),
+        files=rows, manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
+        expected_uid=os.geteuid())
+    try:
+        receipt.verify_current()
+        hashed_bytes = 0
+        original_hash_fd = release_build._hash_fd
+
+        def count_hash_bytes(fd, maximum):
+            nonlocal hashed_bytes
+            digest, size = original_hash_fd(fd, maximum)
+            hashed_bytes += size
+            return digest, size
+
+        monkeypatch.setattr(release_build, "_hash_fd", count_hash_bytes)
+        opened = receipt.open_file("module.py")
+        try:
+            assert os.read(opened, len(body)) == body
+        finally:
+            os.close(opened)
+        # Copy-time validation hashes only the requested member. A whole closure
+        # hash here would reread every sibling for each of the 938 publication
+        # opens and make the bounded transaction quadratic.
+        assert hashed_bytes == len(body)
+        receipt.consume()
+        with pytest.raises(release_build.BootstrapEnrollmentPending):
+            receipt.verify_current()
+    finally:
+        receipt.close()
+
+
+def test_build_receipt_rejects_expiry_during_copy_and_unsealed_extra_file(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    body = b"sealed bytes\n"
+    (output / "module.py").write_bytes(body)
+    os.chmod(output / "module.py", 0o444)
+    info = os.stat(output / "module.py", follow_symlinks=False)
+    row = release_build.BuildOutputFile("module.py", hashlib.sha256(body).hexdigest(), len(body), 0o444,
+                                        ("module",), info.st_dev, info.st_ino)
+    manifest = release_build._canonical_json({
+        "schema": 1, "candidate_git_sha": "a" * 40,
+        "files": [{"relative_path": row.relative_path, "sha256": row.sha256,
+                   "size_bytes": row.size_bytes, "mode": row.mode, "roles": list(row.roles)}],
+    })
+    (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+    os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    issued = time.monotonic()
+    receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+        release_build._SEAL, handle="r" * 43, candidate_git_sha="a" * 40,
+        distribution_receipt_handle="d" * 43, interpreter_receipt_handle="i" * 43,
+        source_tree_sha256="c" * 64, baseline_tree_sha256="b" * 64,
+        amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+        role_closure_manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        root_setup_plan_sha256="0" * 64, builder_artifact_sha256="1" * 64,
+        issued_monotonic=issued,
+        deployment_predecessor=release_build.DeploymentPredecessor("absent", info.st_dev, info.st_ino),
+        files=(row,), manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
+        expected_uid=os.geteuid())
+    try:
+        monkeypatch.setattr(release_build.time, "monotonic", lambda: receipt.expires_monotonic)
+        with pytest.raises(release_build.BootstrapEnrollmentPending):
+            receipt.open_file("module.py")
+        monkeypatch.undo()
+        (output / "extra.py").write_bytes(b"unsealed")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            receipt.verify_current()
+    finally:
+        receipt.close()
+
+
+def test_builder_assigns_one_interpreter_and_finite_runtime_member_roles():
+    assert release_build._runtime_output_roles("runtime/bin/python") == ("interpreter",)
+    assert release_build._runtime_output_roles("runtime/bin/python3") == ("runtime-member",)
+    assert release_build._runtime_output_roles("runtime/lib/python3.14/os.py") == ("runtime-member",)
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        release_build._runtime_output_roles("source/runtime/bin/python")
+
+
+def test_build_receipt_checks_copied_member_and_final_closure(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    body = b"sealed bytes\n"
     (output / "module.py").write_bytes(body)
     os.chmod(output / "module.py", 0o444)
     info = os.stat(output / "module.py", follow_symlinks=False)
@@ -169,15 +283,14 @@ def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
         files=(row,), manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
         expected_uid=os.geteuid())
     try:
-        receipt.verify_current()
-        opened = receipt.open_file("module.py")
-        try:
-            assert os.read(opened, len(body)) == body
-        finally:
-            os.close(opened)
-        receipt.consume()
-        with pytest.raises(release_build.BootstrapEnrollmentPending):
+        (output / "extra.py").write_bytes(b"unsealed")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
             receipt.verify_current()
+        (output / "extra.py").unlink()
+        os.chmod(output / "module.py", 0o644)
+        (output / "module.py").write_bytes(b"tampered bytes\n")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            receipt.open_file("module.py")
     finally:
         receipt.close()
 
@@ -191,6 +304,20 @@ def test_enumeration_rejects_unsealed_symlink(tmp_path):
     try:
         with pytest.raises(release_build.InstallerReleaseBuildError):
             release_build._enumerate_regular_files(fd)
+    finally:
+        os.close(fd)
+
+
+def test_hash_then_read_rewinds_a_consumed_descriptor(tmp_path):
+    body = b"sealed interpreter bytes" * 37
+    path = tmp_path / "interpreter"
+    path.write_bytes(body)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        digest, size, copied = release_build._hash_and_read_fd(fd, len(body))
+        assert copied == body
+        assert size == len(body)
+        assert digest == hashlib.sha256(body).hexdigest()
     finally:
         os.close(fd)
 
@@ -226,6 +353,73 @@ def test_runtime_lock_requires_version_and_hash_pins():
     assert not release_build._lock_contains_exact_pyyaml(without_reviewed_wheel)
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
+
+
+def test_runtime_site_search_paths_deduplicate_purelib_and_platlib(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_build.sysconfig, "get_path", lambda _key: str(tmp_path))
+    assert release_build._runtime_site_search_paths() == [str(tmp_path.resolve())]
+
+
+def test_only_absent_fixed_optional_stdlib_zip_is_ignored(tmp_path):
+    runtime = tmp_path / "runtime"
+    library = runtime / "lib"
+    library.mkdir(parents=True)
+    optional_zip = library / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+
+    assert release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, {
+        optional_zip.relative_to(runtime).as_posix(),
+    })
+    assert not release_build._is_absent_optional_stdlib_zip(library / "python999.zip", runtime, set())
+    assert not release_build._is_absent_optional_stdlib_zip(runtime / "missing.zip", runtime, set())
+
+    optional_zip.symlink_to(library / "missing-target.zip")
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+    optional_zip.unlink()
+    optional_zip.write_bytes(b"unrecorded archive")
+    assert not release_build._is_absent_optional_stdlib_zip(optional_zip, runtime, set())
+
+
+def test_bundled_pip_is_bound_to_fixed_cpython_site_directory(tmp_path):
+    relative_files = (
+        Path("pip/__init__.py"),
+        Path("pip-26.2.1.dist-info/METADATA"),
+        Path("../../../bin/pip"),
+        Path("../../../bin/pip3"),
+        Path("../../../bin/pip3.14"),
+    )
+    for relative in relative_files:
+        target = tmp_path / "lib/python3.14/site-packages" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("pinned runtime archive member", encoding="utf-8")
+
+    class Distribution:
+        files = relative_files
+        version = "26.2.1"
+
+        def locate_file(self, item):
+            return tmp_path / "lib/python3.14/site-packages" / item
+
+    release_build._verify_bundled_pip_distribution(Distribution(), tmp_path)
+
+    class EscapingDistribution:
+        files = (Path("../../../bin/pipx"),)
+        version = "26.2.1"
+
+        def locate_file(self, item):
+            target = tmp_path / "lib/python3.14/site-packages" / item
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("unexpected package", encoding="utf-8")
+            return target
+
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="escaped its fixed CPython site directory"):
+        release_build._verify_bundled_pip_distribution(EscapingDistribution(), tmp_path)
+
+
+def test_selected_installer_python_requirement_is_parsed_from_toml():
+    release_build._require_python_requirement(b'[project]\nrequires-python = ">=3.11"\n')
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="valid installer Python requirement"):
+        release_build._require_python_requirement(b'[project\nrequires-python = ">=3.11"\n')
 
 
 def _runtime_archive(entries):

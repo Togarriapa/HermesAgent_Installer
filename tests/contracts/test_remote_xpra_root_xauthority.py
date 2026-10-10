@@ -121,7 +121,11 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             archive_root.mkdir()
             with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as package:
                 package.extractall(archive_root, filter="data")
-            pinned_tree = next(archive_root.iterdir())
+            # `git archive` places repository paths directly at the extraction
+            # root; it does not add a wrapper directory. Stage the complete
+            # pinned tree so the regular-file and directory closure checks see
+            # the same source that the runtime verifier will receive.
+            pinned_tree = archive_root
             regular_stage = root / "regular-source"
             regular_stage.mkdir()
             for current, names, files in os.walk(pinned_tree, followlinks=False):
