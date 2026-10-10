@@ -237,3 +237,8 @@ Exact typed registration/READY/module/source-capture and worker proxy→native.o
 ## Preactive listener phase clarification v186
 
 Actual fixed root-owned listener before recipe signing and exact authenticated active FD adoption/re-observation: `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`. No future path/socketpair or prepared receipt substitutes for active authority; no effects before adoption. Source pins pending, all AC01..18 OPEN.
+
+
+## Cross-process listener activation v187
+
+Exact supervised installed daemon/private pathname control/peer PIDFD/unit/release/source/current publication binding and one-use SCM_RIGHTS adoption: `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md` / `planning/listener-activation-channel-v187.json`. Each actor verifies only itself locally; UID0/same-process/socketpair does not prove handoff. Source pins/acceptance OPEN.

@@ -390,3 +390,9 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 
 - [ ] `HI-T186.1` Create and observe actual preactive root custody socket with no effects before signed recipe. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
 - [ ] `HI-T186.2` Verify active adoption and one-use exact listener FD transfer/current active re-observation. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
+
+
+## v187 actual activation transport
+
+- [ ] `HI-T187.1` Produce verified installed root daemon supervisor/unit/launch and distinct peer observations. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+- [ ] `HI-T187.2` Implement actual both-process authenticated activation channel and one-use exact listener FD adoption. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
