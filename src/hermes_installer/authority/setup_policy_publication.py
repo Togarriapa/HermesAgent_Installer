@@ -294,7 +294,7 @@ class PolicyPublicationReceiptResolver:
         raw_selection, _ = _read_fixed(SELECTION_PATH, 0, 0o600, 2 * 1024 * 1024)
         if _sha(raw_selection) != receipt.selection_sha256:
             raise BootstrapEnrollmentError("current root selection bytes differ from the committed publication")
-        descriptor, files = _read_generation_descriptor(receipt, 0)
+        descriptor, files, file_bytes = _read_generation_descriptor(receipt, 0)
         if (_sha(_canonical(descriptor)) != receipt.publication_sha256
                 or _sha(_canonical(descriptor)) != receipt.descriptor_sha256
                 or descriptor.get("inputs", {}).get("source_receipt_handles")
@@ -305,6 +305,28 @@ class PolicyPublicationReceiptResolver:
         if (files["plans/bootstrap-policy-v1.json"] != receipt.policy_sha256
                 or files["catalog/artifacts.json"] != receipt.artifact_catalog_sha256):
             raise BootstrapEnrollmentError("current generation file hashes differ from the receipt")
+        current_release = _verify_live_release_and_selection(descriptor, selection, file_bytes)
+        try:
+            current_release.verify_current()
+            # Re-read the fixed current pointer after joining the policy documents to
+            # the release closure. This closes the window where a deployment switch
+            # could otherwise leave the just-checked selection bound to stale code.
+            from .installer_release import InstalledRootReleaseVerifier
+            latest_release = InstalledRootReleaseVerifier.verify_installed_release()
+            try:
+                if (latest_release.release_commit != current_release.release_commit
+                        or latest_release.deployment_receipt_sha256
+                            != current_release.deployment_receipt_sha256
+                        or latest_release.closure_manifest_sha256
+                            != current_release.closure_manifest_sha256):
+                    raise BootstrapEnrollmentPending(
+                        "installed release changed while resolving the current policy publication"
+                    )
+                latest_release.verify_current()
+            finally:
+                latest_release.close()
+        finally:
+            current_release.close()
         return receipt
 
     @classmethod
@@ -404,7 +426,7 @@ def _verify_active_receipt_descriptor(receipt: RootSetupPublicationReceipt,
 
 
 def _read_generation_descriptor(receipt: RootSetupPublicationReceipt, uid: int
-                                ) -> tuple[dict[str, Any], dict[str, str]]:
+                                ) -> tuple[dict[str, Any], dict[str, str], dict[str, bytes]]:
     try:
         root_fd = os.open(receipt.generation_root,
                           os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -422,6 +444,7 @@ def _read_generation_descriptor(receipt: RootSetupPublicationReceipt, uid: int
         if not isinstance(descriptor, dict):
             raise BootstrapEnrollmentError("policy publication descriptor is malformed")
         result: dict[str, str] = {}
+        contents: dict[str, bytes] = {}
         verified_files = [_FileSpec("publication.json", descriptor_bytes)]
         for relative, expected in (("plans/bootstrap-policy-v1.json", receipt.policy_sha256),
                                    ("catalog/artifacts.json", receipt.artifact_catalog_sha256)):
@@ -430,12 +453,72 @@ def _read_generation_descriptor(receipt: RootSetupPublicationReceipt, uid: int
             if info.st_nlink != 1 or digest != expected:
                 raise BootstrapEnrollmentError("current policy file digest differs from the journal receipt")
             result[relative] = digest
+            contents[relative] = raw
             verified_files.append(_FileSpec(relative, raw))
         _verify_generation(receipt.generation_root, receipt.publication_sha256,
                            _canonical(descriptor), tuple(verified_files), uid)
-        return descriptor, result
+        return descriptor, result, contents
     finally:
         os.close(root_fd)
+
+
+def _restore_compiled_selection(descriptor: Mapping[str, Any],
+                                selected_document: Mapping[str, Any]) -> dict[str, Any]:
+    """Recover the exact pre-publication selection bytes from current root state."""
+    inputs = descriptor.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise BootstrapEnrollmentError("published policy descriptor lacks durable input bindings")
+    compiled_selection_sha = inputs.get("selection_catalog_sha256")
+    if not isinstance(compiled_selection_sha, str) or not _SHA.fullmatch(compiled_selection_sha):
+        raise BootstrapEnrollmentError("published policy lacks its compiled selection catalog digest")
+    selection = dict(selected_document)
+    selection.pop("policy_generation", None)
+    selection["catalog_sha256"] = compiled_selection_sha
+    unsigned = {key: value for key, value in selection.items() if key != "catalog_sha256"}
+    if (_sha(_canonical(unsigned)) != compiled_selection_sha
+            or _sha(_canonical(selection)) != descriptor.get("selection_sha256")):
+        raise BootstrapEnrollmentError("current selection cannot be reconstructed from the durable compiler digest")
+    return selection
+
+
+def _verify_live_release_and_selection(descriptor: Mapping[str, Any],
+                                      selected_document: Mapping[str, Any],
+                                      generation_files: Mapping[str, bytes]) -> Any:
+    """Rejoin durable published bytes to the currently installed release closure."""
+    from .installer_release import InstalledRootReleaseVerifier
+    inputs = descriptor.get("inputs")
+    if not isinstance(inputs, Mapping):
+        raise BootstrapEnrollmentError("published policy descriptor lacks durable input bindings")
+    release = InstalledRootReleaseVerifier.verify_installed_release()
+    try:
+        if (release.release_commit != inputs.get("release_commit")
+                or release.deployment_receipt_sha256 != inputs.get("release_deployment_receipt_sha256")
+                or release.closure_manifest_sha256 != inputs.get("release_closure_manifest_sha256")):
+            raise BootstrapEnrollmentPending("published policy no longer matches the fixed installed release receipt")
+        plan_id, plan_sha = inputs.get("plan_artifact_id"), inputs.get("plan_sha256")
+        template_id, template_sha = inputs.get("template_artifact_id"), inputs.get("template_sha256")
+        plans = [row for row in release.files if "plan" in row.roles and row.artifact_id == plan_id]
+        templates = [row for row in release.files if "template" in row.roles and row.artifact_id == template_id]
+        if (len(plans) != 1 or plans[0].sha256 != plan_sha
+                or len(templates) != 1 or templates[0].sha256 != template_sha):
+            raise BootstrapEnrollmentError("published policy plan or template differs from installed release bytes")
+        selection = _restore_compiled_selection(descriptor, selected_document)
+        compiled_selection_sha = inputs["selection_catalog_sha256"]
+        policy_bytes = generation_files.get("plans/bootstrap-policy-v1.json")
+        catalog_bytes = generation_files.get("catalog/artifacts.json")
+        if not isinstance(policy_bytes, bytes) or not isinstance(catalog_bytes, bytes):
+            raise BootstrapEnrollmentError("current policy generation is missing exact compiled document bytes")
+        policy_doc = _json_bytes(policy_bytes, "current bootstrap policy")
+        _validate_compiled_documents(
+            policy_bytes, catalog_bytes, selection, compiled_selection_sha,
+            plan_id, plan_sha, policy_doc.get("id"), _sha(policy_bytes),
+            release.release_commit, release,
+        )
+        release.verify_current()
+        return release
+    except Exception:
+        release.close()
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -693,15 +776,21 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
             "inode": generation_info.st_ino,
             "publication_receipt_handle": receipt_handle,
         }
-        existing_policies = [row for row in final_selection.get("bootstrap_policies", [])
-                             if not isinstance(row, dict)
-                             or row.get("artifact_id") != POLICY_ARTIFACT_ID]
-        existing_policies.append({
+        existing_policies = list(final_selection.get("bootstrap_policies", []))
+        policy_row = {
             "artifact_id": POLICY_ARTIFACT_ID,
             "relative_path": "plans/bootstrap-policy-v1.json",
             "sha256": getattr(compiled, "bootstrap_policy_sha256",
                                getattr(compiled, "compiled_policy_sha256", None)),
-        })
+        }
+        policy_positions = [index for index, row in enumerate(existing_policies)
+                            if isinstance(row, dict) and row.get("artifact_id") == POLICY_ARTIFACT_ID]
+        if len(policy_positions) > 1:
+            raise BootstrapEnrollmentError("compiled selection has duplicate bootstrap policy rows")
+        if policy_positions:
+            existing_policies[policy_positions[0]] = policy_row
+        else:
+            existing_policies.append(policy_row)
         final_selection["bootstrap_policies"] = existing_policies
         final_unsigned = {key: value for key, value in final_selection.items() if key != "catalog_sha256"}
         final_selection["catalog_sha256"] = _sha(_canonical(final_unsigned))
