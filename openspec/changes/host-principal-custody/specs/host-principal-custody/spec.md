@@ -513,3 +513,12 @@ The system SHALL use the v115 exact root setup build service template and actual
 #### Scenario: First setup lacks active worker profile
 - **WHEN** a valid root prepared transaction selects the finite build
 - **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Bounded source-derived native financial and web results
+
+The installer SHALL validate source-derived financial observations and web result artifacts using v120 exact selected schemas and actual root receipt currentness, preserving untrusted result semantics.
+
+#### Scenario: False web artifact receipt
+
+- **WHEN** a web result supplies a structurally valid receipt that does not resolve current root artifact/source membership
+- **THEN** result promotion is denied and no provenance or authority is inferred from the returned dictionary
