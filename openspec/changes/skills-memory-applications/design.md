@@ -134,3 +134,5 @@ Stable private endpoint/model binding v151: `plans/amendments/2026-10-10-stable-
 Separate PEP517 backend source closure v152: `plans/amendments/2026-10-10-pep517-backend-source-closure-v152.md`; held reviewed finite backend table/CAS/license receipts, isolated frontend/project wheel separate runtime lock and probe. All AC open.
 
 Toolchain policy member binding v155: `plans/amendments/2026-10-10-toolchain-policy-member-binding-v155.md`; exact selected held amendment policy identity, separate acquired archive proof. All AC open.
+
+Backend source observer v157: `plans/amendments/2026-10-10-backend-source-observer-v157.md`; separate finite wheel/embedded-license observer and actual selected held source policy, no Node/Bun scope widening.
