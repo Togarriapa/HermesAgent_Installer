@@ -2356,18 +2356,48 @@ class VerifiedInstallerReleaseBuildReceipt:
             raise InstallerReleaseBuildError("sealed manifest does not describe the retained role closure")
 
     def open_file(self, relative_path: str) -> int:
-        self.verify_current()
+        # The publisher verifies the complete sealed closure before copying and
+        # again before committing its pointer.  Repeating that whole-tree hash
+        # here for every member turns a linear publication into O(files * tree
+        # size).  Keep each copy independently bound to its exact retained row:
+        # a no-follow FD, complete byte hash, metadata identity, and the same
+        # live receipt/root custody checks.  The publisher's final full verify
+        # detects sibling changes and additions before pointer publication.
+        self._verify_live_root()
         row = next((item for item in self.files if item.relative_path == relative_path), None)
         if row is None:
             raise InstallerReleaseBuildError("publisher requested a file outside the sealed output closure")
         fd = _open_relative(self._root_fd, relative_path, os.O_RDONLY)
-        info = os.fstat(fd)
-        digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-        if digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device or info.st_ino != row.inode:
+        try:
+            before = os.fstat(fd)
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            self._verify_live_root()
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or before.st_uid != self._expected_uid or before.st_dev != row.device
+                    or before.st_ino != row.inode or stat.S_IMODE(before.st_mode) != row.mode
+                    or before.st_size != row.size_bytes or digest != row.sha256 or size != row.size_bytes
+                    or (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_nlink,
+                        before.st_uid, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_nlink,
+                        after.st_uid, after.st_mtime_ns, after.st_ctime_ns)):
+                raise InstallerReleaseBuildError("release output changed while opening sealed file")
+            os.lseek(fd, 0, os.SEEK_SET)
+            return fd
+        except BaseException:
             os.close(fd)
-            raise InstallerReleaseBuildError("release output changed while opening sealed file")
-        os.lseek(fd, 0, os.SEEK_SET)
-        return fd
+            raise
+
+    def _verify_live_root(self) -> None:
+        if self._seal is not _SEAL or self._closed or self._consumed or self._root_fd < 0:
+            raise BootstrapEnrollmentPending("release build receipt is absent or already consumed")
+        if time.monotonic() >= self.expires_monotonic:
+            raise BootstrapEnrollmentPending("release build receipt expired before stage publication")
+        root = os.fstat(self._root_fd)
+        if (not stat.S_ISDIR(root.st_mode) or root.st_uid != self._expected_uid
+                or stat.S_IMODE(root.st_mode) & 0o077 or root.st_dev != self._root_device
+                or root.st_ino != self._root_inode):
+            raise InstallerReleaseBuildError("release build output root custody changed")
 
     def open_manifest(self) -> int:
         self.verify_current()

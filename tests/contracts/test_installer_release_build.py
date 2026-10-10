@@ -140,10 +140,116 @@ def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp
         os.close(conflict_fd)
 
 
-def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
+def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path, monkeypatch):
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
     body = b"release module\n"
+    (output / "module.py").write_bytes(body)
+    os.chmod(output / "module.py", 0o444)
+    info = os.stat(output / "module.py", follow_symlinks=False)
+    row = release_build.BuildOutputFile("module.py", hashlib.sha256(body).hexdigest(), len(body), 0o444,
+                                        ("module",), info.st_dev, info.st_ino)
+    sibling_body = b"sealed sibling\n"
+    (output / "sibling.py").write_bytes(sibling_body)
+    os.chmod(output / "sibling.py", 0o444)
+    sibling_info = os.stat(output / "sibling.py", follow_symlinks=False)
+    sibling = release_build.BuildOutputFile(
+        "sibling.py", hashlib.sha256(sibling_body).hexdigest(), len(sibling_body), 0o444,
+        ("module",), sibling_info.st_dev, sibling_info.st_ino)
+    rows = (row, sibling)
+    manifest = release_build._canonical_json({
+        "schema": 1, "candidate_git_sha": "a" * 40,
+        "files": [{"relative_path": item.relative_path, "sha256": item.sha256,
+                   "size_bytes": item.size_bytes, "mode": item.mode, "roles": list(item.roles)}
+                  for item in rows],
+    })
+    (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+    os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+        release_build._SEAL, handle="r" * 43, candidate_git_sha="a" * 40,
+        distribution_receipt_handle="d" * 43, interpreter_receipt_handle="i" * 43,
+        source_tree_sha256="c" * 64, baseline_tree_sha256="b" * 64,
+        amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+        role_closure_manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        root_setup_plan_sha256="0" * 64, builder_artifact_sha256="1" * 64,
+        issued_monotonic=time.monotonic(),
+        deployment_predecessor=release_build.DeploymentPredecessor("absent", info.st_dev, info.st_ino),
+        files=rows, manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
+        expected_uid=os.geteuid())
+    try:
+        receipt.verify_current()
+        hashed_bytes = 0
+        original_hash_fd = release_build._hash_fd
+
+        def count_hash_bytes(fd, maximum):
+            nonlocal hashed_bytes
+            digest, size = original_hash_fd(fd, maximum)
+            hashed_bytes += size
+            return digest, size
+
+        monkeypatch.setattr(release_build, "_hash_fd", count_hash_bytes)
+        opened = receipt.open_file("module.py")
+        try:
+            assert os.read(opened, len(body)) == body
+        finally:
+            os.close(opened)
+        # Copy-time validation hashes only the requested member. A whole closure
+        # hash here would reread every sibling for each of the 938 publication
+        # opens and make the bounded transaction quadratic.
+        assert hashed_bytes == len(body)
+        receipt.consume()
+        with pytest.raises(release_build.BootstrapEnrollmentPending):
+            receipt.verify_current()
+    finally:
+        receipt.close()
+
+
+def test_build_receipt_rejects_expiry_during_copy_and_unsealed_extra_file(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    body = b"sealed bytes\n"
+    (output / "module.py").write_bytes(body)
+    os.chmod(output / "module.py", 0o444)
+    info = os.stat(output / "module.py", follow_symlinks=False)
+    row = release_build.BuildOutputFile("module.py", hashlib.sha256(body).hexdigest(), len(body), 0o444,
+                                        ("module",), info.st_dev, info.st_ino)
+    manifest = release_build._canonical_json({
+        "schema": 1, "candidate_git_sha": "a" * 40,
+        "files": [{"relative_path": row.relative_path, "sha256": row.sha256,
+                   "size_bytes": row.size_bytes, "mode": row.mode, "roles": list(row.roles)}],
+    })
+    (output / release_build.RELEASE_MANIFEST_PATH).write_bytes(manifest)
+    os.chmod(output / release_build.RELEASE_MANIFEST_PATH, 0o444)
+    root_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    issued = time.monotonic()
+    receipt = release_build.VerifiedInstallerReleaseBuildReceipt(
+        release_build._SEAL, handle="r" * 43, candidate_git_sha="a" * 40,
+        distribution_receipt_handle="d" * 43, interpreter_receipt_handle="i" * 43,
+        source_tree_sha256="c" * 64, baseline_tree_sha256="b" * 64,
+        amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+        role_closure_manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+        root_setup_plan_sha256="0" * 64, builder_artifact_sha256="1" * 64,
+        issued_monotonic=issued,
+        deployment_predecessor=release_build.DeploymentPredecessor("absent", info.st_dev, info.st_ino),
+        files=(row,), manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
+        expected_uid=os.geteuid())
+    try:
+        monkeypatch.setattr(release_build.time, "monotonic", lambda: receipt.expires_monotonic)
+        with pytest.raises(release_build.BootstrapEnrollmentPending):
+            receipt.open_file("module.py")
+        monkeypatch.undo()
+        (output / "extra.py").write_bytes(b"unsealed")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            receipt.verify_current()
+    finally:
+        receipt.close()
+
+
+def test_build_receipt_checks_copied_member_and_final_closure(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir(mode=0o700)
+    body = b"sealed bytes\n"
     (output / "module.py").write_bytes(body)
     os.chmod(output / "module.py", 0o444)
     info = os.stat(output / "module.py", follow_symlinks=False)
@@ -169,15 +275,14 @@ def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
         files=(row,), manifest_sha256=hashlib.sha256(manifest).hexdigest(), root_fd=root_fd,
         expected_uid=os.geteuid())
     try:
-        receipt.verify_current()
-        opened = receipt.open_file("module.py")
-        try:
-            assert os.read(opened, len(body)) == body
-        finally:
-            os.close(opened)
-        receipt.consume()
-        with pytest.raises(release_build.BootstrapEnrollmentPending):
+        (output / "extra.py").write_bytes(b"unsealed")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
             receipt.verify_current()
+        (output / "extra.py").unlink()
+        os.chmod(output / "module.py", 0o644)
+        (output / "module.py").write_bytes(b"tampered bytes\n")
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            receipt.open_file("module.py")
     finally:
         receipt.close()
 
