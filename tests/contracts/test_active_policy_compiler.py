@@ -45,7 +45,7 @@ def _claim() -> RootActivePolicyCompilationClaim:
     policy = b'{"schema":1}'
     catalog = b'{"schema":1,"artifacts":[],"packages":[]}'
     return RootActivePolicyCompilationClaim(
-        schema=1, plan_artifact_id="installer-root-setup-plan-v1", release_commit="a" * 40,
+        schema=2, plan_artifact_id="installer-root-setup-plan-v1", release_commit="a" * 40,
         publication_handle="H" * 43, setup_session_id="S" * 64, transaction_handle="T" * 64,
         plan_sha256="f" * 64, prepared_generation_id="prepared-1",
         expected_selection_catalog_sha256="7" * 64, expected_service_generation_digest="8" * 64,
