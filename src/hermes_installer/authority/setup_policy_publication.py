@@ -213,6 +213,8 @@ class RootSetupPolicyGenerationPublisher:
         else:
             compiled = self.registry.claim_compilation(publication_handle,
                                                        expected_selection_catalog_sha256)
+        publication_started = False
+        receipt: RootSetupPublicationReceipt | None = None
         try:
             self.release.verify_current()
             if self._active:
@@ -242,6 +244,11 @@ class RootSetupPolicyGenerationPublisher:
                 policy_id, policy_sha256,
                 getattr(compiled, "release_commit", self.release.release_commit), self.release,
             )
+            # Validate the exact ordered closure before creating immutable
+            # generations or a journal row. The active compiler owns this
+            # canonical ordering; the publisher must never silently dedupe it.
+            _receipt_input_handles(compiled, active=self._active)
+            publication_started = True
             receipt = self._publish_compiled(compiled, expected_selection_catalog_sha256,
                                              state="active-committed" if self._active else "prepared")
             if self._active:
@@ -249,12 +256,56 @@ class RootSetupPolicyGenerationPublisher:
             else:
                 self.registry.complete_publication(receipt)
             return receipt
-        except Exception:
+        except Exception as exc:
+            if self._active and publication_started:
+                # The selection replacement is the externally visible commit.
+                # A failure after that point must not release the native output
+                # reservation or mark the compiler claim releasable. Recover a
+                # receipt from the fixed root journal when _publish_compiled
+                # raised after its atomic replacement but before returning.
+                if receipt is None:
+                    try:
+                        receipt = PolicyPublicationReceiptResolver.resolve_current()
+                    except Exception:
+                        receipt = None
+                if receipt is not None and _receipt_matches_active_claim(receipt, compiled):
+                    try:
+                        self.registry.complete_active_publication(receipt)
+                        return receipt
+                    except Exception as completion_error:
+                        raise BootstrapEnrollmentPending(
+                            "active policy selection is committed; compiler claim and output reservation "
+                            "are retained for publication finalization recovery"
+                        ) from completion_error
+                raise BootstrapEnrollmentPending(
+                    "active policy publication may have crossed its durable selection commit; "
+                    "compiler claim and output reservation are retained for recovery"
+                ) from exc
             if self._active:
                 self.registry.release_active_policy(publication_handle)
             else:
                 self.registry.release_compilation(publication_handle)
             raise
+
+    def recover_active_publication(self, publication_handle: str) -> RootSetupPublicationReceipt:
+        """Finish a previously committed active publication from durable current state.
+
+        This deliberately accepts no receipt or claim fields from the caller. It
+        resolves the fixed root selection and journal, checks the opaque handle,
+        then asks the typed compiler registry to reconcile its retained claim and
+        output reservation. It cannot recover a superseded or merely prepared
+        generation.
+        """
+        _require_root_linux()
+        if not self._active:
+            raise BootstrapEnrollmentError("active publication recovery requires the active compiler registry")
+        if not isinstance(publication_handle, str) or not _HANDLE.fullmatch(publication_handle):
+            raise BootstrapEnrollmentError("active publication recovery handle is malformed")
+        receipt = PolicyPublicationReceiptResolver.resolve_current()
+        if receipt.publication_handle != publication_handle or receipt.state != "active-committed":
+            raise BootstrapEnrollmentPending("the requested active publication is not the durable current selection")
+        self.registry.complete_active_publication(receipt)
+        return receipt
 
     def _publish_compiled(self, compiled: CompiledRootSetupPublication,
                           expected_selection_catalog_sha256: str | None,
@@ -496,6 +547,8 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
                     or row.prepared_generation != record.get("prepared_generation_id")
                     or row.service_generation_digest != record.get("service_generation_digest")):
                 raise BootstrapEnrollmentError("setup choice adoption differs from its active publication")
+            if not set(row.source_member_receipt_handles).issubset(handles):
+                raise BootstrapEnrollmentError("setup choice source receipts are outside the publication input closure")
     return RootSetupPublicationReceipt(
         1, record["publication_receipt_handle"], record["transaction_handle"],
         record["generation_id"], record["publication_sha256"], Path(record["generation_root"]),
@@ -972,7 +1025,8 @@ def _publish_policy_generation(*, policy_root: Path, selection_path: Path,
         final_unsigned = {key: value for key, value in final_selection.items() if key != "catalog_sha256"}
         final_selection["catalog_sha256"] = _sha(_canonical(final_unsigned))
         final_selection_bytes = _canonical(final_selection)
-        receipt_inputs = _receipt_input_handles(compiled)
+        receipt_inputs = _receipt_input_handles(
+            compiled, active=publication_state == "active-committed")
         receipt = RootSetupPublicationReceipt(
             1, receipt_handle, compiled.transaction_handle, POLICY_GENERATION_ID,
             publication_sha, generation_path, generation_info.st_dev, generation_info.st_ino,
@@ -1207,12 +1261,59 @@ def _write_publication_record(journal_root: Path, transaction: str,
     _fsync_dir(path.parent)
 
 
-def _receipt_input_handles(compiled: Any) -> tuple[str, ...]:
+def _receipt_input_handles(compiled: Any, *, active: bool = False) -> tuple[str, ...]:
     observed = getattr(compiled, "observed_root_receipt_handle", None)
+    if active:
+        source = tuple(getattr(compiled, "source_receipt_handles", ()))
+        handles = (observed, *source)
+        if (not observed or len(set(source)) != len(source)
+                or observed in source):
+            raise BootstrapEnrollmentError(
+                "active compiler receipt closure is not in canonical unique order"
+            )
+        if any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in handles):
+            raise BootstrapEnrollmentError("publication input receipt closure contains a malformed handle")
+        # Every explicitly named runtime/materialization/principal/adopted-choice
+        # input must be represented in the canonical compiler-owned closure.
+        required = set(getattr(compiled, "runtime_receipt_handles", ()))
+        required.update(getattr(compiled, "materialization_receipt_handles", ()))
+        principal = getattr(compiled, "principal_selection_receipt_handle", None)
+        if principal:
+            required.add(principal)
+        for adoption in getattr(compiled, "choice_adoptions", ()):
+            required.update(getattr(adoption, "source_member_receipt_handles", ()))
+        if not required.issubset(set(source)):
+            raise BootstrapEnrollmentError(
+                "active compiler receipt closure omits an explicit runtime, materialization, "
+                "principal, or choice-source input"
+            )
+        return handles
     handles = ([observed] if observed is not None else []) + list(_receipt_source_handles(compiled))
     if any(not isinstance(item, str) or not _HANDLE.fullmatch(item) for item in handles):
         raise BootstrapEnrollmentError("publication input receipt closure contains a malformed handle")
     return tuple(dict.fromkeys(handles))
+
+
+def _receipt_matches_active_claim(receipt: RootSetupPublicationReceipt,
+                                  compiled: Any) -> bool:
+    """Return true only for the exact committed receipt represented by a claim."""
+    try:
+        expected_inputs = _receipt_input_handles(compiled, active=True)
+        return (
+            receipt.state == "active-committed"
+            and receipt.publication_handle == compiled.publication_handle
+            and receipt.claim_digest == compiled.claim_digest
+            and receipt.prepared_generation_id == compiled.prepared_generation_id
+            and receipt.transaction_handle == compiled.transaction_handle
+            and receipt.service_generation_digest == compiled.expected_service_generation_digest
+            and receipt.input_receipt_handles == expected_inputs
+            and receipt.runtime_receipt_handles == tuple(compiled.runtime_receipt_handles)
+            and receipt.materialization_receipt_handles == tuple(compiled.materialization_receipt_handles)
+            and receipt.policy_sha256 == compiled.compiled_policy_sha256
+            and receipt.artifact_catalog_sha256 == compiled.compiled_artifact_catalog_sha256
+        )
+    except (AttributeError, TypeError, ValueError, BootstrapEnrollmentError):
+        return False
 
 
 def _receipt_source_handles(compiled: Any) -> tuple[str, ...]:
