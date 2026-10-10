@@ -415,3 +415,8 @@ Cold process custody v236b: planning/root-service-process-cold-source-custody-v2
 See `planning/preactive-remote-build-output-receipts-v239.json`: executor-owned terminal membership precedes exact adapter observation, immutable CAS/attestation and root-held data-root materialization. Only genuine typed proofs mint v209/v202 runtime receipts; v225 owns publication/restart adoption. Existing scopes/deadlines and all AC remain open.
 
 The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.
+
+
+## Gateway source and wheel issuer refinement v244
+
+Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.

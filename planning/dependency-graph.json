@@ -3694,5 +3694,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "gateway_source_wheel_issuers_v244": {
+    "amendment": "plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md",
+    "contract": "planning/gateway-source-wheel-issuers-v244.json",
+    "tasks": {
+      "RT-T244.1": [
+        "RT-T239.1"
+      ],
+      "RT-T244.2": [
+        "RT-T244.1"
+      ],
+      "VD-T244.3": [
+        "RT-T244.1",
+        "RT-T244.2"
+      ]
+    },
+    "acceptance": "open"
   }
 }

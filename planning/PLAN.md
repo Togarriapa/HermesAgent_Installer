@@ -233,3 +233,8 @@ v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-
 
 v242 genuine source-update bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md`; BD-T242.1 → VD-T242.2 OPEN, retaining v235 tasks/source approval separately. Actual old predecessor/rootTTY/fixedoriginFD3/source actor required; all AC OPEN.
 v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md` / `planning/official-desktop-measured-headers-managed-plan-v240.json`; RT-T240.1/.2 and VD-T240.3 OPEN. Exact observed header/member tuples and fixed Desktop managed interface; AppDir/measured caps/current receipts pending, no runtime/Pi acceptance.
+
+
+## Gateway source and wheel issuers v244
+
+Append-only `plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md` / `planning/gateway-source-wheel-issuers-v244.json`; RT-T244.1/.2, VD-T244.3 open. Exact source-only held release projection plus selected Gateway locked-wheel CAS/license/FD issuer closes the source production seam; no source pins or acceptance inferred.

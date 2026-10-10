@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "amendment": "v244",
+  "baseline_requirements": [
+    "AC13",
+    "AC14",
+    "AC15"
+  ],
+  "refines": [
+    "v202",
+    "v209",
+    "v223",
+    "v239"
+  ],
+  "source_audit": {
+    "commit": "e634288c06ad2f6ad175610a35f86284992c5276",
+    "paths": [
+      "authority/gateway_runtime_adapter.py",
+      "authority/gateway_runtime_acquisition.py",
+      "authority/gateway_runtime_builder.py"
+    ],
+    "facts": "18 exact source paths; module-only release lookup cannot prove source-only lock. AcquiredGatewayWheelClosure contains raw bodies, not receipts. Generic Xpra source acquisition and unrelated active FixedBuildProfile are not Gateway issuers. No source digest is enrolled by this amendment."
+  },
+  "issuer": {
+    "module": "hermes_installer.authority.gateway_setup_input_receipts",
+    "class": "RootGatewaySetupInputReceiptRegistry",
+    "constructor": "from_root_setup(binding, remote_runtime_registry, verified_release, current_actor_verifier, root_journal, pm_toolchain_provider)",
+    "methods": [
+      "resolve_current_gateway_source_members(selection) -> tuple[RootHeldGatewayRuntimeMember,...]",
+      "resolve_current_gateway_toolchain_members(selection) -> tuple[RootHeldGatewayRuntimeMember,...]",
+      "resolve_current_gateway_dependency_members(selection) -> tuple[RootHeldGatewayRuntimeMember,...]",
+      "resolve_current_source_projection(selection_handle) -> RootGatewaySourceProjection",
+      "verify_and_duplicate_for_selection(selection, member) -> tracked duplicated FD",
+      "verify_available_current(binding, choice) -> None"
+    ],
+    "selection": "Exact root-issued gateway selection/current remote choice/config/session/transaction/prepared generation/definition/source closure and current selected PM identity. Re-resolve issuer membership each use; original deadline is min retained inputs/session/controller/source/PM. No raw caller mappings, IDs, paths, generic lookup callback or new signing key. Acquisition requires actual Linux ARM64 root and exact reviewed Gateway choice acquisition permission; no service-start download.",
+    "constructor_types": "binding: exact RootSelectedInstallationBinding; remote_runtime_registry: exact RootSelectedRemoteRuntimeRegistry; verified_release: exact VerifiedInstallerReleaseReceipt retained by same current session; current_actor_verifier: current session installed RootActorObservation verifier; root_journal: same current selected protected journal; pm_toolchain_provider: exact RootGatewayPMToolchainProvider resolving current binding PM projection. No caller source owner or generic release_member_lookup."
+  },
+  "release_source": {
+    "type": "RootGatewayReleaseSourceMemberReceipt",
+    "fields": [
+      "receipt_handle",
+      "artifact_id",
+      "release_deployment_receipt_sha256",
+      "relative_path",
+      "sha256",
+      "size_bytes",
+      "mode",
+      "role",
+      "choice_handle",
+      "selection_handle",
+      "transaction_handle",
+      "prepared_generation_id",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "role": "gateway-source-member",
+    "release_root": "gateway-source/",
+    "mapping": "Exact release descriptor table maps each logical src/... path below gateway-source/src/...; artifact selector installer-gateway-source:<logical relative path>. These are source-only members, not root-import module receipts. Verified release files descriptor plus current actor/release-held FD proves bytes. Builder source paths use same prefix and source-only role. New release role/layout addition is finite to the 22 listed paths; actual digest/size source-review commit is required before enrollment. Existing reviewed leaf/module pins are unchanged.",
+    "paths": [
+      "src/hermes_installer/__init__.py",
+      "src/hermes_installer/remote/__init__.py",
+      "src/hermes_installer/remote/server.py",
+      "src/hermes_installer/remote/gateway.py",
+      "src/hermes_installer/remote/root_sessions.py",
+      "src/hermes_installer/remote/verifier_ipc.py",
+      "src/hermes_installer/remote/client_assets.py",
+      "src/hermes_installer/remote/http_framing.py",
+      "src/hermes_installer/remote/policy.py",
+      "src/hermes_installer/remote/cloudflare.py",
+      "src/hermes_installer/remote/jwks.py",
+      "src/hermes_installer/authority/__init__.py",
+      "src/hermes_installer/authority/types.py",
+      "src/hermes_installer/authority/remote_sessions.py",
+      "src/hermes_installer/network.py",
+      "src/hermes_installer/service_connector.py",
+      "src/hermes_installer/remote/startup_driver.py",
+      "src/hermes_installer/remote/requirements-arm64-py314.lock",
+      "src/hermes_installer/authority/gateway_runtime_builder.py",
+      "src/hermes_installer/authority/gateway_elf.py",
+      "src/hermes_installer/authority/remote_probe_connector_authority.py",
+      "src/hermes_installer/authority/remote_connector_authority.py"
+    ],
+    "read_current": "Reverify exact release/current actor and same selector, open relative to held release dirfd O_NOFOLLOW, fstat regular root-owned immutable descriptor-matching mode/size/inode then bounded hash read. No importer origin required/claimed. No open caller path. Lock additionally <=1MiB.",
+    "closure_gate": "The 18 source paths are the audited adapter minimum, not proof of complete runtime import closure. service_connector.py dynamically imports authority/remote_probe_connector_authority.py, which imports authority/remote_connector_authority.py. Add both exact fixed source paths to the finite release cohort if those routes remain reachable; otherwise source-review must prove the fixed gateway runtime cannot enter them. Never assert positive availability from an incomplete closure."
+  },
+  "adapter_projection": {
+    "type": "RootHeldGatewayRuntimeMember",
+    "fields": [
+      "member_id",
+      "role",
+      "relative_path",
+      "artifact_id",
+      "receipt_handle",
+      "sha256",
+      "size_bytes",
+      "mode",
+      "fd",
+      "kind",
+      "target"
+    ],
+    "roles": [
+      "gateway-source",
+      "gateway-lock",
+      "gateway-runtime-builder",
+      "gateway-toolchain-python",
+      "gateway-toolchain-pip",
+      "gateway-dependency-wheel"
+    ],
+    "source_rule": "19 actual application import files (17 current paths plus remote_probe_connector_authority.py and remote_connector_authority.py) are gateway-source; exact requirements-arm64-py314.lock alone gateway-lock; two fixed gateway_runtime_builder.py/gateway_elf.py files gateway-runtime-builder. Builder members are excluded from source_closure_sha256 and bound only by builder_member_receipt_handles and v209 member closure. Regular source files only; no new aliases. Exact closure source audit must validate dynamic imports before positive admission. Existing PM provider owns Python/pip closure separately. Retained private issuer/seal/selection membership authorizes duplication."
+  },
+  "wheel_cas": {
+    "class": "RootGatewayLockedWheelReceiptIssuer",
+    "owner": "Private child owned by RootGatewaySetupInputReceiptRegistry, same fixed root journal CAS; reuse immutable CAS file primitives, do not call Xpra-only policy issuer.",
+    "acquire": "acquire_selected_locked_wheels(selection) -> RootGatewayLockedWheelClosureReceipt. Registry invokes corrected acquisition helper with exact current RootGatewayReleaseSourceMemberReceipt and binding.resolve_current_pm_runtime_projection retained Python/pip members. Helper must consume duplicated held projection FDs/fixed acquisition mounts rather than caller python_path/public VerifiedPMRuntimeSelection; no RootReleaseModuleReceipt cast or duck typing. Fixed source/PM/lock acquisition is pre-build; raw output remains untrusted until issuer readback.",
+    "fields": [
+      "receipt_handle",
+      "selection_handle",
+      "choice_handle",
+      "transaction_handle",
+      "prepared_generation_id",
+      "lock_receipt_handle",
+      "lock_sha256",
+      "pm_runtime_receipt_handle",
+      "dependency_closure_sha256",
+      "license_evidence_sha256",
+      "wheel_receipt_handles",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "wheel_fields": [
+      "receipt_handle",
+      "artifact_id",
+      "filename",
+      "name",
+      "version",
+      "sha256",
+      "size_bytes",
+      "platform_tag",
+      "lock_receipt_handle",
+      "selection_handle",
+      "license_evidence_sha256"
+    ],
+    "validation": "Exact held lock grammar/name/version/SHA256; no deps/index override/unhashed source/host ambient config. Match exactly one wheel per lock requirement, no extras or duplicates; inspect bounded archive metadata and selected CPython3.14 Linux ARM64 tags independently. Existing max64 wheels,512MiB each,1GiB total,900s acquisition cap retained; cancel/current controller checks and bounded subprocess logs required, no unbounded captured output. TLS verified official PyPI/index+files transport, reject redirects outside reviewed official hosts; no custom proxy/insecure flags. No wheel execution on acquisition. License/dependency evidence must resolve exact wheel contents and reviewed license policy; absent license evidence leaves build unadmitted.",
+    "ingest": "Atomic O_EXCL nofollow temporary root-owned0700 journal child; hash bytes during bounded write, fsync, immutable0444 CAS object addressed SHA, reopen/hash/fstat before receipt insertion. Existing object reuse only exact immutable bytes/owner/mode; foreign/conflicting deny. Failed acquisition cleans only owned temp after actual subprocess terminal, retains verified immutable CAS. Raw bodies/dicts never accepted through public receipt API.",
+    "closure_digest": "SHA256 ASCII JSON sort_keys=True,separators=(comma,colon),ensure_ascii=True,allow_nan=False over filename-sorted rows exactly filename,name,version,sha256,size_bytes,platform_tag, matching current acquisition dependency closure. License digest separate; wheel artifact ID gateway-wheel:<sha256> selector only.",
+    "fd": "Issuer retains CAS regular-file FDs and reopens/currentness verifies receipt object membership + lock/source/PM/choice/controller before tracked duplication. Duplicate release verifies recorded fd device/inode; do not close recycled caller FD."
+  },
+  "source_projection": {
+    "fields": [
+      "source_receipt_handle",
+      "selection_handle",
+      "choice_handle",
+      "transaction_handle",
+      "prepared_generation_id",
+      "release_deployment_receipt_sha256",
+      "source_member_receipt_handles",
+      "source_closure_sha256",
+      "lock_receipt_handle",
+      "lock_sha256",
+      "builder_member_receipt_handles",
+      "dependency_receipt_handle",
+      "dependency_closure_sha256",
+      "license_evidence_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "digest": "source_closure_sha256=SHA256 canonical UTF8 sorted compact JSON of logical-path-sorted exact 19 app source plus lock rows {relative_path,artifact_id,sha256,size_bytes,mode}; excludes the two builder members. Builder/toolchain/dependency closure independently bound by v209 member closure and builder_member_receipt_handles. No service_generation_digest invented.",
+    "integration": "Central remote registry retains this sealed issuer projection for gateway and binds its handle/digests into RootSelectedRemoteRoleBuildInputs. v239 package store.resolve_current_source_projection(selection_handle) delegates only to retained exact issuer and revalidates; it does not mint source proof from output/envelope metadata. Adapter consumes existing provider APIs, then central owner independently duplicates/remints actual member FDs under the selected input closure. Full actual build/qualification/materialization/postpublication adoption remains required."
+  },
+  "tasks": [
+    "RT-T244.1",
+    "RT-T244.2",
+    "VD-T244.3"
+  ],
+  "acceptance": "Open. Source audit and schema are not acquired bytes, licensed wheel closure, native build/start or Pi acceptance."
+}

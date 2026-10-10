@@ -207,3 +207,8 @@ v241 narrow candidate update source review: `plans/amendments/2026-10-10-candida
 
 
 v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md` / `planning/preinstalled-source-update-entry-v242.json` adds finite source-update entry using genuine present predecessor/current UPDATE TTY/fixed-origin CAS/FD3 and isolated source actor before new installed actor. Ordinary installed verifier is preserved; no oldrelease/pointer deletion, caller path/flag authority or restored seals. BD-T242.1 → VD-T242.2 and all AC OPEN.
+
+
+## Gateway source and wheel issuer refinement v244
+
+Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.

@@ -204,3 +204,10 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 - [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
 
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## Gateway source and wheel issuer refinement v244
+
+- [ ] RT-T244.1 Implement fixed held release source receipt/member projection and reviewed exact source-member cohort.
+- [ ] RT-T244.2 Implement Gateway lock/PM/choice-bound bounded acquisition, license verification, immutable CAS and retained provider/source projection integration.
+- [ ] VD-T244.3 Exercise spoofed receipts, changed lock/source/PM, stale choice, cancellation, conflicting CAS, bounded dependency/license failure and genuine ARM64 production positives; target acceptance separately open.

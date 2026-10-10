@@ -143,3 +143,8 @@ Measured official headers and fixed offline Desktop managed interface are now sp
 
 The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.
 Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## Gateway source and wheel issuer refinement v244
+
+Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.

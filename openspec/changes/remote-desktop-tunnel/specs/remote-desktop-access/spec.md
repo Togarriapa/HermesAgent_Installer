@@ -530,3 +530,17 @@ The implementation SHALL use the exact v240 official header/member observations 
 #### Scenario: Header or stamp mismatch
 - **WHEN** redirect/checksum/member/source revision differs or the stamp is zero/fallback/fake CI or Git
 - **THEN** packaging SHALL remain unavailable and preserve genuine source identity
+
+
+## ADDED Requirements
+
+### Requirement: Gateway source and dependency inputs have genuine finite issuers
+The system SHALL use the v244 exact held release source-only receipt and current selected Gateway wheel CAS issuer before permitting offline remote Gateway build, retaining original currentness, PM, license, controller and FD custody boundaries.
+
+#### Scenario: Raw acquisition output is not build authority
+- **WHEN** a wheel body or module-shaped lock receipt is supplied without the exact current Gateway issuer proof
+- **THEN** build admission is denied before effects
+
+#### Scenario: Exact finite source and locked wheel closure is retained
+- **WHEN** the current reviewed release source cohort and complete lock/PM/license wheel closure are independently verified and retained in immutable CAS
+- **THEN** only their current issuer-backed FDs enter selected build inputs, without claiming runtime or Pi acceptance
