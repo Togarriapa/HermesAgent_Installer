@@ -86,3 +86,6 @@ HI-T188.3 → VD-T188.4 OPEN: exact native Hermes module launch mode resolves so
 
 
 Committed PM executable v189: `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; HI-T189.1 → VD-T189.2 OPEN. Exact private native runtime identity, unchanged generic static catalog validation, all AC01..18 OPEN.
+
+
+Same-worker namespace v190: `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md`; HI-T190.1 → VD-T190.2 OPEN, staged actual namespace before probes/release, all AC01..18 OPEN.
