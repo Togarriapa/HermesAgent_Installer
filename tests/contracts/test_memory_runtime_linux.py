@@ -333,6 +333,7 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                 else None,
             )
             self.assertTrue(runtime["state_root_ready"])
+            self.assertIs(runtime["job_resolver"], runtime["queue"])
             self.assertIsNotNone(runtime["step_authority"])
             self.assertIn(enrollment.target_id, runtime["step_authority"]._registered)
             runtime["owner_ledger"].set_owner(enrollment.profile_id, enrollment.provider)
