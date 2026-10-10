@@ -274,3 +274,31 @@ Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-lo
 Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
 
 Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+### Requirement: Current installed network tool proof
+The system SHALL use v105 HostToolObservationRegistry to authenticate exact installed nft and its complete dependency closure against signed package evidence, retaining root-owned descriptors and revalidating current selection and expiry before each effect.
+
+#### Scenario: Source measurement alone
+- **WHEN** only an archived package measurement exists without actual host and kernel proof
+- **THEN** private network execution remains unavailable.
+
+### Requirement: Finite managed Xpra transformation
+The system SHALL execute only the v106 selected empty-parameter Xpra build recipe under actual official PM runtime and pinned installed transform module, retaining original source and distinct regular staging closure. It SHALL require actual managed terminal and dynamic output attestation before overlay publication.
+
+#### Scenario: Archive hash presented as executable identity
+- **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
+- **THEN** build admission or publication is denied.
+
+### Requirement: Exact regular Xpra build topology
+The system SHALL use the v109 source-verified transform module and exact original regular staging directory topology, mount the PM builder executable as a file and publish the archive as non-executable data.
+
+#### Scenario: Missing source topology
+- **WHEN** staging omits a required original manifest directory or changes the selected source links
+- **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.
