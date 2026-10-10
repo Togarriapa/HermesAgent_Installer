@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T72",
+    "HI-T165",
+    "HI-T169"
+  ],
+  "why": "Direct source inspection confirms v72 receipt template and native_output_receipts use native-boundary-overlay. v165/v169 accidentally named native-overlay-archive; that is not an alias or new output role.",
+  "role_output_kinds": {
+    "native-compiled-closure": "compiled-closure",
+    "native-entrypoint-manifest": "entrypoint-json",
+    "native-action-resolver": "resolver-json",
+    "native-boundary-overlay": "boundary-overlay",
+    "native-candidate-index": "candidate-index-json"
+  },
+  "correction": "Replace native-overlay-archive everywhere in v165/v169 role mapping/finite authorization with native-boundary-overlay and exact output_kind boundary-overlay. RootSelectedRunnableRoleClosure.role_rows.role, producer artifact_role and v72 receipt_role match these exact existing literals. No aliases, new CAS enum, unrelated static artifact conversion or duplicate boundary output. Receipt/member/source/root ownership/currentness checks unchanged.",
+  "source": "Actual authority/native_output_receipts.py _ROLE_KINDS and v72 bootstrap-receipt-bindings-template-v1.json receipt_binding_rules independently agree on these five role/kind pairs.",
+  "tasks": [
+    {
+      "id": "HI-T170.1",
+      "owner": "factory/native outputs/compiler",
+      "work": "Use exact existing five roles/kinds throughout precompile reservation/projection/compile/publish; unknown/mistaken role deny."
+    }
+  ],
+  "acceptance": "All AC open; baseline unchanged."
+}
