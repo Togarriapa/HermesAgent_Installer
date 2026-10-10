@@ -23,7 +23,7 @@ import select
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Iterator, Mapping, Protocol
 
 
 MAX_AUTHORITY_BYTES = 8 * 1024 * 1024
@@ -69,6 +69,49 @@ class BootstrapSystemCallFailure(OSError):
         self.step = step
         self.errno_name = errno_name if safe_errno is not None else "UNKNOWN"
         super().__init__(safe_errno, "installer bootstrap system call failed")
+
+
+class BootstrapRuntimeStepFailure(RuntimeError):
+    """A fixed bootstrap stage and built-in RuntimeError category only."""
+
+    STEPS = frozenset({
+        "bootstrap.tty_selection",
+        "source_cas.construct",
+        "source_cas.registry",
+        "source_cas.acquire",
+        "source_cas.resolve",
+        "installer_runtime.registry",
+        "installer_runtime.provision",
+        "bootstrap.handoff",
+        "bootstrap.reexec",
+        "installed_release.predecessor",
+        "installed_release.import_closure",
+        "installed_release.actor_observation",
+        "installed_release.actor_verification",
+    })
+    ERROR_KINDS = frozenset({"RuntimeError"})
+
+    def __init__(self, step: str, error_kind: str):
+        if type(step) is not str or step not in self.STEPS:
+            raise ValueError("bootstrap runtime diagnostic step is outside the fixed catalog")
+        if type(error_kind) is not str or error_kind not in self.ERROR_KINDS:
+            raise ValueError("bootstrap runtime diagnostic category is outside the fixed catalog")
+        self.step = step
+        self.error_kind = error_kind
+        super().__init__("installer bootstrap runtime step failed")
+
+
+@contextmanager
+def bootstrap_runtime_error_step(step: str) -> Iterator[None]:
+    """Add only a reviewed stage to an exact built-in RuntimeError."""
+    if type(step) is not str or step not in BootstrapRuntimeStepFailure.STEPS:
+        raise ValueError("bootstrap runtime diagnostic step is outside the fixed catalog")
+    try:
+        yield
+    except RuntimeError as exc:
+        if type(exc) is not RuntimeError:
+            raise
+        raise BootstrapRuntimeStepFailure(step, "RuntimeError") from None
 
 
 @dataclass(frozen=True, slots=True)
