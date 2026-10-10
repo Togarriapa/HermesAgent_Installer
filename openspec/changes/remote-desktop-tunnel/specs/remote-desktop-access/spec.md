@@ -354,3 +354,12 @@ The installer SHALL implement v212's corrected v209 member schema and independen
 #### Scenario: Unknown or escaping AppDir link
 - **WHEN** a link is unknown, absolute, escaping, cyclic, dangling, a directory target or differs from the reviewed literal target/member identity
 - **THEN** package admission SHALL deny without broadening generic symlink authority or disabling Electron sandbox
+
+## ADDED Requirements
+
+### Requirement: Actual remote role source definition producer
+The installer SHALL use planning/official-remote-role-definition-producer-v222.json to select exact source-held roledefinitions and genuine current role receipts before activepromotion.
+
+#### Scenario: Prepared enrollment has no runnable records
+- **WHEN** initial remote role preparation occurs with empty preparedrecords
+- **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted

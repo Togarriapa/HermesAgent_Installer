@@ -165,3 +165,5 @@ OfficialDesktop buildacquisition218: plans/amendments/2026-10-10-official-deskto
 HA v216 plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md refines MC-R0101.5/.6 actual setup observation→schema→functional pipeline; no forged daemon receipt/context, all AC OPEN.
 
 SealedFD3source review220: plans/amendments/2026-10-10-sealed-bootstrap-fd3-source-review-v220.md; structural482source/effectproof only, unchanged211leafpins/authority/TTLs; BD-T208.1/VD-T208.2 target/allACOPEN.
+
+Officialremote roledefinition222: plans/amendments/2026-10-10-official-remote-role-definition-producer-v222.md; RT-T222.1/.2 VD-T222.3 OPEN; exact3roleheldsource/separateidentitytransaction nofutureactiveclaims/allACOPEN.

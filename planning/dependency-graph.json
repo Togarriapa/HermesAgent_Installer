@@ -3256,5 +3256,20 @@
       "VD-T208.2"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "official_remote_role_definition_producer_v222": {
+    "contract": "planning/official-remote-role-definition-producer-v222.json",
+    "tasks": {
+      "RT-T222.1": [
+        "HI-T197.2"
+      ],
+      "RT-T222.2": [
+        "RT-T222.1"
+      ],
+      "VD-T222.3": [
+        "RT-T222.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

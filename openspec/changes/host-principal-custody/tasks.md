@@ -467,3 +467,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
 
 - [ ] BD-T208.1 / VD-T208.2 (v220): Integrate exact reviewed FD3 source/evidence, full coherent checks and actual target handoff; no installed selfpin or acceptance inference.
+
+- [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
+- [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
+- [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.

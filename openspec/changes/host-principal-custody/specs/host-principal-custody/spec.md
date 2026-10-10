@@ -1197,3 +1197,12 @@ The installer SHALL carry only its previously authorized sealedFD3 through exist
 #### Scenario: Sealed memfd is already descriptor three
 - **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
 - **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins
+
+## ADDED Requirements
+
+### Requirement: Actual remote role source definition producer
+The installer SHALL use planning/official-remote-role-definition-producer-v222.json to select exact source-held roledefinitions and genuine current role receipts before activepromotion.
+
+#### Scenario: Prepared enrollment has no runnable records
+- **WHEN** initial remote role preparation occurs with empty preparedrecords
+- **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted
