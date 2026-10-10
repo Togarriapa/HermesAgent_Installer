@@ -3,8 +3,9 @@
 The archive is transport only. A runtime is usable only after root verifies the
 entire member manifest, extracts it through no-follow directory descriptors,
 reopens the resulting tree, and binds it to an independent installed-runtime
-probe. Interpreter aliases are deliberately excluded: the caller must bind the
-exact alias to a separately held PM runtime receipt.
+probe. The regular Python entrypoint is the held PM executable copy; only the
+fixed `python` and `python3` aliases are omitted from the archive and recreated
+as relative links to that regular member.
 """
 from __future__ import annotations
 
@@ -24,7 +25,8 @@ MAX_ARCHIVE_BYTES = 2 * 1024**3
 MAX_EXPANDED_BYTES = 2 * 1024**3
 MAX_MEMBERS = 131_072
 MANIFEST_NAME = "HERMES-RUNTIME-MANIFEST.json"
-PYTHON_RUNTIME_ALIASES = frozenset({"bin/python", "bin/python3", "bin/python3.14"})
+PYTHON_RUNTIME_INTERPRETER = "bin/python3.14"
+PYTHON_RUNTIME_ALIASES = frozenset({"bin/python", "bin/python3"})
 _SHA = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 
 
@@ -194,6 +196,8 @@ def _manifest(application_id: str, runtime_kind: str, entrypoint: str,
     if interpreter_aliases != allowed_aliases:
         raise RuntimeArchiveError("runtime interpreter aliases differ from the fixed selected-runtime contract")
     entrypoint = _path(entrypoint)
+    if runtime_kind == "python" and entrypoint != PYTHON_RUNTIME_INTERPRETER:
+        raise RuntimeArchiveError("Python runtime entrypoint is not the fixed copied PM interpreter")
     if not any(item.path == entrypoint and item.kind == "file" and item.mode & 0o111 for item in members):
         raise RuntimeArchiveError("runtime archive lacks its selected executable entrypoint")
     document = {"schema": 1, "application_id": application_id,
@@ -355,6 +359,8 @@ def inspect_runtime_archive(stream: BinaryIO, *, expected_application_id: str,
                 or document["entrypoint"] != expected_entrypoint
                 or document["interpreter_aliases"] != sorted(
                     PYTHON_RUNTIME_ALIASES if expected_runtime_kind == "python" else ())
+                or (expected_runtime_kind == "python"
+                    and document["entrypoint"] != PYTHON_RUNTIME_INTERPRETER)
                 or not isinstance(document["members"], list)):
             raise ValueError
         expected = tuple(RuntimeArchiveMember(**row) for row in document["members"])
@@ -395,6 +401,14 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
         info = held_interpreter.lstat()
         if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_uid != expected_uid:
             raise RuntimeArchiveError("selected held interpreter is not a root-owned executable")
+        interpreter_member = next((row for row in verified.members
+                                   if row.path == PYTHON_RUNTIME_INTERPRETER
+                                   and row.kind == "file"), None)
+        if interpreter_member is None:
+            raise RuntimeArchiveError("archive lacks the regular copied PM interpreter member")
+        held_sha, held_size = _sha_file(held_interpreter, ceiling=MAX_EXPANDED_BYTES)
+        if held_sha != interpreter_member.sha256 or held_size != interpreter_member.size_bytes:
+            raise RuntimeArchiveError("copied archive interpreter differs from the held PM executable")
     elif held_interpreter is not None:
         raise RuntimeArchiveError("Node runtime extraction cannot accept a Python interpreter alias")
     _require_no_symlink_ancestors(destination)
@@ -513,7 +527,9 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
                                           dir_fd=parent_fd)
                         os.close(parent_fd)
                         parent_fd = next_fd
-                    relative_target = os.path.relpath(held_interpreter, destination / PurePosixPath(alias).parent)
+                    relative_target = os.path.relpath(
+                        destination / PYTHON_RUNTIME_INTERPRETER,
+                        destination / PurePosixPath(alias).parent)
                     if os.path.isabs(relative_target) or "\x00" in relative_target:
                         raise RuntimeArchiveError("selected interpreter alias cannot be represented safely")
                     os.symlink(relative_target, parts[-1], dir_fd=parent_fd)
@@ -529,8 +545,9 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
         raise
     else:
         os.close(root_fd)
-    # Reopen exact tree without following links; aliases are verified against
-    # the selected external runtime and omitted from the archive manifest.
+    # Reopen exact tree without following links; aliases must resolve to the
+    # copied regular interpreter member whose bytes were joined to the held PM
+    # executable before extraction.
     for member in verified.members:
         path = destination / member.path
         info = path.lstat()
@@ -546,8 +563,17 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
         if digest != member.sha256 or size != member.size_bytes:
             raise RuntimeArchiveError("extracted runtime file no longer matches its receipt")
     if expected_runtime_kind == "python":
+        interpreter_path = destination / PYTHON_RUNTIME_INTERPRETER
+        interpreter_info = interpreter_path.lstat()
+        interpreter_digest, interpreter_size = _sha_file(
+            interpreter_path, ceiling=MAX_EXPANDED_BYTES)
+        if (not stat.S_ISREG(interpreter_info.st_mode)
+                or not interpreter_info.st_mode & 0o111
+                or interpreter_digest != held_sha or interpreter_size != held_size):
+            raise RuntimeArchiveError("materialized Python entrypoint differs from the selected PM executable")
         for alias in PYTHON_RUNTIME_ALIASES:
             alias_path = destination / alias
-            if not alias_path.is_symlink() or alias_path.resolve(strict=True) != held_interpreter.resolve(strict=True):
-                raise RuntimeArchiveError("extracted Python interpreter alias is not bound to the held PM runtime")
+            if (not alias_path.is_symlink()
+                    or alias_path.resolve(strict=True) != interpreter_path.resolve(strict=True)):
+                raise RuntimeArchiveError("extracted Python interpreter alias is not bound to the copied PM member")
     return verified
