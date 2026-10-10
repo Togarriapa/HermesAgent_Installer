@@ -779,3 +779,15 @@ The installer SHALL implement the actual both-process supervisor/peer/activation
 #### Scenario: Cross-process proof invalid
 - **WHEN** remote actor is treated as local, only UID0 or same-process channel is known, or peer/unit/source/CAS/FD differs
 - **THEN** adoption/startup SHALL deny and owned cleanup/conflict preservation remain mandatory with all acceptance pending
+
+
+### Requirement: Two-actor same-generation functional health v191
+The installer SHALL enforce the independent daemon commit/source proof and fixed authenticated setup health intent in `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`, without transferring live setup authority.
+
+#### Scenario: Real daemon health completion
+- **WHEN** the actual selected source/native run produces passed same-generation semantic health and verified terminal cleanup
+- **THEN** only its concrete root consumer MAY issue the current committed journal witness used for functional enablement
+
+#### Scenario: Transport or copied setup proof only
+- **WHEN** only ACK, copied DTO, wrong generation/source, stale intent or incomplete observer/terminal evidence exists
+- **THEN** functional enablement SHALL remain pending with one-use reconciliation and owned cleanup

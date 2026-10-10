@@ -82,3 +82,6 @@ Committed PM identity v189: `plans/amendments/2026-10-10-committed-pm-executable
 
 
 Same-worker namespace handshake v190: `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md` fixes schema2 helper-only initial launch, real owned MainPID namespace observation, authenticated namespace gate then actual probes and separate one-use app release. No future namespace/skip/source pin approval.
+
+
+Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md` replaces unsafe setup-session aliasing with independently current daemon commit/source proof, actual fixed source run/events and one-use authenticated setup health intent. Only consumer-completed same-generation journal witness may enable; ACK is insufficient. All acceptance/source pins remain OPEN.
