@@ -226,6 +226,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("resource profile selection is not owned by this setup session")
         return self._session.resolve_selected_resource_profile(receipt_handle)
 
+    def resolve_current_active_enrollment(self) -> EnrollmentReceipt:
+        """Return only the actual current committed enrollment from this live session."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("active enrollment is not owned by this setup session")
+        return self._session._resolve_current_active_enrollment()
+
     def resolve_native_bootstrap_assembly(
             self, prepared_setup_receipt_handle: str,
             native_materialization_receipt_handle: str) -> "RootNativeBootstrapAssemblySelection":
@@ -3171,6 +3177,19 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentError("first setup did not publish the required empty prepared generation")
         self._last_receipt = receipt
         self._refresh_authorization()
+        return receipt
+
+    def _resolve_current_active_enrollment(self) -> EnrollmentReceipt:
+        """Typed bridge for root composers; a prepared receipt never passes."""
+        self._check_live()
+        self._refresh_authorization()
+        receipt = self._last_receipt
+        if (not isinstance(receipt, EnrollmentReceipt)
+                or receipt.state != "committed"
+                or not receipt.enrollment_ids
+                or receipt.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending(
+                "current setup session has no committed active enrollment")
         return receipt
 
     def resolve_prepared_receipt(self, provision_receipt_handle: str) -> EnrollmentReceipt:
