@@ -1066,5 +1066,255 @@
       }
     ],
     "acceptance": "Source publisher selection only, no binary execution/native ARM64/build/live application acceptance claimed; all original AC open."
+  },
+  "lock_export_offline_wheel_install_v147": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "R0067",
+      "R0138",
+      "SK-T132",
+      "SK-T136"
+    ],
+    "why": "Measured uv0.12.3 flat-wheelhouse sync changes upstream lock source; official lock-derived export plus hash-constrained pip sync preserves source identity. Approve only the measured finite dependency install stage, not unverified full app qualification.",
+    "evidence": {
+      "owner": "luna_uv_offline_probe",
+      "workspace": "/private/tmp/hermes-uv-offline-source-probe",
+      "environment": "network-disabled Linux ARM64 isolated container, official selected PM CPython3.14.7 and uv0.12.3; no privileged Mac installer",
+      "uv_artifact_id": "hermes-pm-uv-linux-arm64",
+      "uv_archive_sha256": "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2",
+      "uv_archive_size_bytes": 20423730,
+      "uv_executable_sha256": "20d0be6a6bd33f55e4ceb0e52ac2f733722b1a7959498e6401ecf84bc05e48a8",
+      "browser_use_pyproject_sha256": "5a61c6cc0b66c5e51972c7deeabefe00cf9a8127d7408bdbf3e573bdaf582f87",
+      "browser_use_lock_sha256": "51a998bc09c355b39ca5979a4ffd5e05fe3daf8b6d423151df4add75b83ffeb4",
+      "export_sha256": "ebcc381801b95240d8d86deae4c5fd0cd011b2b3c44d9d5586cb03192abc5e7d",
+      "result": "Lock check/export succeed, original lock unchanged; export1715lines/265 marked rows/657hash tokens. Target-active package name+version projection exactly103 selected ARM64 wheels and each selected hash present. Representative verified two-wheel aiofiles25.1.0/rpds-py2026.9.1 offline install/import succeeds. Full103 CAS/license/build/backend/project/probe not proven."
+    },
+    "finite_python_dependency_recipe": {
+      "profiles": [
+        "application-graphify-runtime-prepare-v1",
+        "application-browser-use-runtime-prepare-v1",
+        "application-scrapegraph-ai-runtime-prepare-v1"
+      ],
+      "substitution": "Supersedes previous uv sync dependency-install command only for source-selected Python profiles after actual same-lock export/platform closure validation. Other source/build/project/native prerequisites unchanged; Hyperframes Bun unaffected.",
+      "steps": [
+        "Held selected PM uv and PM Python executable receipts, immutable exact source/pyproject/lock receipts and v136 complete licensed package closure resolve under fresh current setup controller/phase consent.",
+        "In read-only selected source, uv lock --check --offline --no-progress. Original lock SHA before/after must match.",
+        "uv export --locked --offline --no-dev --no-default-groups --no-editable --no-emit-project --format requirements-txt --output-file <fixed work requirements path>. Original lock SHA remains exact.",
+        "Root validates target-active exported normalized names/versions equal complete selected v136 package closure; every chosen held wheel actual SHA present exported allowed hashes, target wheel ABI/platform valid; no URL/direct-source/editable/local project line or unselected requirement enabled. Evaluate actual selected interpreter marker environment, not hardcoded worker labels or probe python3.14.0 value.",
+        "Stage only actual receipt-held selected wheels into private read-only wheelhouse, create isolated selected Python environment with no inherited site packages, then uv pip sync --require-hashes --offline --no-index --find-links <fixed wheelhouse> --python <fixed selected environment executable> <fixed validated requirements file>. No ambient cache/index/user config/proxy, network denied.",
+        "Observe actual installed distribution/version/member-origin manifest under isolated environment; reject extra/unselected dependencies, missing active package or changed hashes/lock/toolchain. Distinct full archive/tree/probe receipts still required."
+      ],
+      "paths": "All bracketed paths are root-selected tagged build mount/work/output paths from existing v132 selection, never caller args. Fixed environment disables user config/proxy/PYTHONPATH/system site packages and uses isolated interpreter; no global pip/uv install.",
+      "hashed_requirements": "Retain full export bytes/hash and target marker evaluation evidence. Inactive exported platform rows (e.g. PyObjC) are not removed from source lock or promoted active. If materializing a target-only file, its canonical projection is registry-derived exact name/version+allowed hashes from retained export and current target, receipt binds both hashes. No broadened version/hash/URL sources."
+    },
+    "project_stage": "--no-emit-project intentionally omits project. Default export includes dot/local project which is not hash-addressed and forbidden under require-hashes. A complete application environment MUST additionally build/install actual noneditable project wheel from exact source/pyproject/lock with reviewed selected offline PEP517 backend/build-dependency closure, retain actual wheel SHA/member manifest/source+recipe+terminal receipt, then hash-constrained no-deps offline install that observed wheel into same isolated environment. Exact per-project backend/recipe must be source reviewed/selected; missing build backend/source wheel leaves project/runtime qualification unavailable. Never qualify dependencies-only environment or use editable source link/dot exception to bypass hashes.",
+    "receipt_binding": [
+      "source_receipt_handle",
+      "lock_receipt_handle",
+      "qualification_choice_handle",
+      "current_phase_consent_receipt_handle",
+      "offline_package_closure_handle",
+      "runtime_toolchain_receipt_handles",
+      "original_lock_sha256",
+      "export_sha256",
+      "target_requirements_sha256",
+      "target_marker_environment_sha256",
+      "installed_dependency_manifest_sha256",
+      "project_wheel_receipt_handle",
+      "managed_build_terminal_receipt_handle"
+    ],
+    "lifetime": "Retained immutable package/export evidence bounded stable selected setup/source/lock deadline; every install/build uses fresh<=30s current phase consent/controller. No 30s GET snapshot masquerades as full closure lease, no grant expiry extension.",
+    "tasks": [
+      {
+        "id": "SK-T147.1",
+        "owner": "application build/package broker",
+        "work": "Implement exact lock-derived export/active closure comparison and offline require-hashes pip sync with held wheelhouse/no ambient dependencies; preserve original lock and source receipts."
+      },
+      {
+        "id": "SK-T147.2",
+        "owner": "app source/build/probe",
+        "work": "Review exact per-project offline backend/source-wheel stage and genuine observed wheel receipt; full installed env/probe requires project plus complete103 closure where selected, no dependency-only success."
+      }
+    ],
+    "acceptance": "Empirical representative dependency transport only; no full103 acquisition/license/runtime/native application or original AC acceptance. Baseline unchanged."
+  },
+  "offline_probe_environment_clarification_v148": {
+    "schema": 1,
+    "requirements": [
+      "SK-T147.1",
+      "SK-T147.2"
+    ],
+    "correction": "The detailed empirical uv owner report identifies Python as python:3.14.7-slim-bookworm container interpreter, Linux ARM64/network none; the v147 evidence summary phrase official selected PM CPython3.14.7 overstates interpreter provenance. Actual uv executable is the catalog-pinned official PM source bytes; no actual RootPMRuntimeReceipt or installed setup environment was observed by this fixture.",
+    "actual_marker_environment": {
+      "python_full_version": "3.14.7",
+      "python_version": "3.14",
+      "implementation_name": "cpython",
+      "sys_platform": "linux",
+      "platform_system": "Linux",
+      "platform_machine": "aarch64",
+      "os_name": "posix",
+      "extra": ""
+    },
+    "verified_wheels": {
+      "aiofiles==25.1.0": "abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695",
+      "rpds-py==2026.9.1": "07deecbfce94c78473018bc7d10b337cc651d12df87a1eb2cb3e4024bc9c33d0"
+    },
+    "unchanged": "v147 approved finite lock-derived dependency stage and actual unchanged lock/export/hash comparison remain supported by isolated fixture. Production requires genuine selected PM runtime/toolchain/current source/package/license/setup receipts and independently observed installed project wheel/environment probe. Container tag/version/import success cannot mint those receipts. Two of103 wheels only; no full application qualification.",
+    "tasks": [
+      {
+        "id": "SK-T148.1",
+        "owner": "uv probe/application build",
+        "work": "Record exact container interpreter provenance versus official pinned uv bytes in nonreceipt empirical evidence; production rechecks actual PM toolchain/current closure and full project/environment probe."
+      }
+    ],
+    "acceptance": "Evidence correction only; all original AC and baseline unchanged."
+  },
+  "selected_toolchain_source_observer_v150": {
+    "schema": 1,
+    "requirements": [
+      "SK-T132",
+      "SK-T144"
+    ],
+    "why": "Actual v144 toolchain implementation declares but does not call artifact_source_observer and independently fetches into CAS; this is not selected-plan source evidence. Existing generic catalog metadata observer256KiB must not widen globally.",
+    "owner": "application toolchain source producer with artifact broker source verification/CAS conventions",
+    "module": "hermes_installer.authority.application_toolchain_sources",
+    "class": "RootSelectedApplicationToolchainSourceObserver",
+    "constructor": "from_root_setup(selected_installation_binding,verified_installer_release,root_setup_choice_registry,root_journal,selected_toolchain_source_catalog)",
+    "selection": "Consumes genuine early application runtime input selection/source-lock/qualification choice currentness, not final build/output result. Catalog is exact held v144 source policy plus selected actual installed catalog/plan rows; caller tool ID must match finite selected toolchain choice. No worker URL/path/schema/size/hash accepted.",
+    "catalog_ids": [
+      {
+        "artifact_id": "application-node-26.7.0-linux-arm64",
+        "tool_id": "application-node-26.7.0-linux-arm64",
+        "source": "Exact v144 Node26.7 official archive SHA/size/path; actual descriptor must be allowed by selected setup plan source policy"
+      },
+      {
+        "artifact_id": "application-bun-1.4.3-linux-arm64",
+        "tool_id": "application-bun-1.4.3-linux-arm64",
+        "source": "Exact v144 official Bun asset SHA/size/path; actual selected plan/source policy with Bun-only scoped official redirect rule"
+      }
+    ],
+    "observe_call": "observe_selected_toolchain_source(preparation_input_selection_handle,tool_id)->VerifiedApplicationToolchainSourceObservation",
+    "observation_fields": [
+      "schema",
+      "observation_handle",
+      "artifact_id",
+      "tool_id",
+      "source_policy_artifact_id",
+      "source_policy_sha256",
+      "source_url_sha256",
+      "archive_kind",
+      "sha256",
+      "size_bytes",
+      "file_device",
+      "file_inode",
+      "file_uid",
+      "file_gid",
+      "file_mode",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "preparation_input_selection_handle",
+      "source_preparation_selection_handle",
+      "qualification_choice_handle",
+      "choice_epoch",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "held_observation": "Genuine root registry membership, exclusive atomic nofollow root0 CAS write/open, held archive FD and exact actual hash/size/type/single-link/stat before/after read. Observation identity binds actual source policy/selected plan/current qualification phase and source-lock, no raw URL exposed to worker. Immutable retained source evidence until stable setup deadline; fresh current<=30s source proof each build/resolve. Actual choice issuer signs intent only, not forged artifact facts.",
+    "limits": "Source-specific cap64MiB compressed; exact v144 sizes32581212/41786424 required. No arbitrary large observer or global generic cap change. Download TLS/source URL/port/hash/size and Bun official redirect bounded exactlyv144; no credentials/headers/proxy/latest/globalinstall. Missing catalog/plan/source choice or changed bytes denies.",
+    "methods": [
+      "verify_current(observation,preparation_input_selection_handle)->same current held observation",
+      "open_blob(observation)->duplicate held FD only after verify_current"
+    ],
+    "consumer": "RootApplicationToolchainRegistry.from_root_setup receives this concrete artifact_source_observer and MUST call observe/verify_current/open_blob; remove independent unobserved _acquire HTTP/CAS producer. It extracts only that verified held archive under root-selected private toolchain tree, validates path/types/modes/member executable/source notices and emits actual isolated toolchain observation. Existing generic source small metadata observer unaffected.",
+    "provenance": "Toolchain observation retains genuine source observation_handle/SHA/size and exact selected policy/artifact identity. Source archive proof not runtime execution/ABI/source-license eligibility; actual runtime executable/root/member manifest and observed version/probe separate. No source observation from arbitrary private CAS bytes alone.",
+    "tasks": [
+      {
+        "id": "SK-T150.1",
+        "owner": "toolchain producer/artifact broker",
+        "work": "Implement finite selected-plan-bound64MiB source observer/held FD and actual exact catalog/plan source rows; require current explicit package acquisition choice and exactNode/Bunpolicy."
+      },
+      {
+        "id": "SK-T150.2",
+        "owner": "toolchain registry/application build",
+        "work": "Use genuine observer result instead of disconnected HTTP/CAS path; source/member/plan mismatch negatives and actual isolated executable/version/notice observation."
+      }
+    ],
+    "acceptance": "No toolchain install/runtime compatibility or app acceptance from source observer; baseline/allAC unchanged."
+  },
+  "pep517_backend_source_closure_v152": {
+    "schema": 1,
+    "requirements": [
+      "SK-T132",
+      "SK-T136",
+      "SK-T147"
+    ],
+    "why": "Project source wheel needs a separate exact PEP517 backend closure; missing backend packages are not in project runtime locks and cannot get honest lock-derived receipts.",
+    "source_table": {
+      "artifact_id": "installer-application-pep517-backend-sources-v1",
+      "path": "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
+      "sha256": "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623",
+      "size_bytes": 15907,
+      "release_role": "amendment"
+    },
+    "source_eligibility": "Exact held source table plus actual selected source pyproject build-system.requires/build-backend must match selected profile. This separate reviewed backend table is authority for absent backend sources, not runtime lock membership. Original project lock/source stays unchanged; tool package versions are exact independently reviewed picks, no resolver latest/update/defaultextras. Graphifysetuptools84 matches lockdev but remains separate buildonly source.",
+    "registry": {
+      "owner_module": "hermes_installer.authority.application_runtime_preparation",
+      "class": "RootApplicationBuildBackendClosureRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,source_preparation_registry,toolchain_source_observer,root_journal,setup_choice_registry)",
+      "prepare": "prepare_selected_backend(preparation_input_selection_handle)->RootApplicationBuildBackendClosureReceipt",
+      "resolve": "resolve_selected_backend(receipt_handle,preparation_input_selection_handle)->current held closure",
+      "source_receipt": "RootApplicationBuildBackendArtifactReceipt, separate RootApplicationLockedPackageArtifactReceipt. Fields schema,receipt_handle,artifact_id,package_name,package_version,filename,sha256,size_bytes,source_url_sha256,metadata_sha256,license_observation_handle,backend_manifest_artifact_id,backend_manifest_sha256,backend_manifest_receipt_handle,pyproject_receipt_handle,source_preparation_selection_handle,qualification_choice_handle,target_platform,python_abi,issued_monotonic,expires_monotonic. Genuine held CAS membership/current source+choice/signature linkage; not fake runtime-lock row.",
+      "closure_fields": [
+        "schema",
+        "receipt_handle",
+        "application_id",
+        "build_backend",
+        "backend_requirement_sha256",
+        "backend_manifest_artifact_id",
+        "backend_manifest_sha256",
+        "backend_manifest_receipt_handle",
+        "pyproject_receipt_handle",
+        "source_preparation_selection_handle",
+        "qualification_choice_handle",
+        "package_artifact_receipt_handles",
+        "license_observation_handles",
+        "backend_closure_sha256",
+        "target_platform",
+        "python_abi",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "closure_hash": "SHA256 canonical sorted exact selected package records artifactID/name/version/sourceSHA/size/licenseevidence + actual pyproject backend requirement and reviewed manifest hash; no future output hash."
+    },
+    "acquisition_license": "Explicit existing acquire-locked-runtime-packages choice covers separately disclosed finite reviewed backend packages; registry verifies fresh actual phase/controller/source selection each TLS GET. Exact files.pythonhosted.org selected URLs no redirects/auth/proxy/downgrade; size/hash/type/RECORD/archive member safety and actual license member hashes source table. Retain MIT/Apache/BSD notices and setuptools vendored LGPLv3 autocommand LICENSE/source. Eligibility here is local offline unmodified build-tool use only, no public redistribution/relicensing verdict; preserve all actual vendor notices/source and do not include backend environment in application runtime archive. Missing/changed notice/source review denies corresponding closure; no main SPDX label substitutes vendor evidence. v136 source lease/current grant distinction remains.",
+    "frontend_recipe": "Existing held official PM uv0.12.3 is build frontend, selected PM Python3.14 executable. Separate isolated backend environment populated ONLY exact backend hashed wheels via uv pip sync --require-hashes --offline --no-index --find-links; no inheritedsite/cache/network/extras. Actual source-selected backend then fixed uv build --wheel --offline --no-build-isolation --python <backendenv selected executable> --out-dir <fixed projectwheel output> <fixed exact source mount>. Tagged paths/literals and actual selecteduv CLI capability verified before enablement; no backend-path or dynamic undeclared build hooks, no extra get_requires_for_build_wheel dependency silently fetched. Unexpected extra requirement explicit source refinement prerequisite. Actual complete source-owned hook/code review and no-network managedunit required.",
+    "project_output": "Exactly one noneditable wheel observed after real managed build terminal, SHA/size/full safe wheel member/RECORD/source+backend/recipe receipt; hash-constrained no-deps offline install into separate v147 runtime dependency environment. Backend artifacts never count as runtime package closure or ABI/probe result. Original source/lockunchanged, actual isolated installed distribution/import-origin probe mandatory.",
+    "selection_extension": "Final v132 Python RootApplicationRuntimePreparationSelection adds build_backend_closure_receipt_handle; runtime package_closure_receipt_handle remains distinct. Early input handle/source choice exists before package/toolchain/backend acquisition; final prebuild selection requires actual held backend closure not a future source-wheel/output receipt.",
+    "tasks": [
+      {
+        "id": "SK-T152.1",
+        "owner": "app build/source broker",
+        "work": "Actual separate reviewed backend table source/member observation, finite artifact/license/CAS receipt and complete current backend closure."
+      },
+      {
+        "id": "SK-T152.2",
+        "owner": "factory/application selection/build/probe",
+        "work": "Final backend handle join, isolated actual project wheel frontend/backend/no-network source hook execution and genuine wheel output/install/probe; extra build requirements/source/license/currentness failures deny."
+      }
+    ],
+    "primary_sources": [
+      "https://pypi.org/pypi/setuptools/84.0.0/json",
+      "https://pypi.org/pypi/hatchling/1.32.0/json",
+      "https://pypi.org/pypi/hatchling/1.26.3/json",
+      "https://pypi.org/pypi/tomlkit/0.15.1/json",
+      "https://pypi.org/pypi/trove-classifiers/2026.9.21.13/json",
+      "https://pypi.org/pypi/packaging/26.3/json",
+      "https://pypi.org/pypi/pathspec/1.1.1/json",
+      "https://pypi.org/pypi/pluggy/1.6.0/json",
+      "https://docs.astral.sh/uv/reference/cli/"
+    ],
+    "acceptance": "Small wheels TLS/hash/license source inspection only, no execution/full environment/ARM application qualification. All original AC/baseline unchanged."
   }
 }

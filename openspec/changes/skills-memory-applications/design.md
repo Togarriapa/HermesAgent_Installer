@@ -120,3 +120,15 @@ Existing model-store source v139: `plans/amendments/2026-10-10-existing-model-st
 Hyperframes finite toolchain source v144: `plans/amendments/2026-10-10-hyperframes-toolchain-source-v144.md`; separate held Node/Bun source receipts, exact offline lock and native probe, no Python substitution/global install. All AC open.
 
 Memory process control re-admission v145: `plans/amendments/2026-10-10-memory-process-control-readmission-v145.md`; fresh current short status/stop proof joins original owned process, immutable deadline and revocation cleanup. All AC open.
+
+Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
+
+Lock-derived offline dependency install v147: `plans/amendments/2026-10-10-lock-export-offline-wheel-install-v147.md`; official unchanged-lock export + hash-constrained offline pip sync, exact active package receipt closure, separate actual project wheel/backend and full env probe. All AC open.
+
+Offline probe provenance v148: `plans/amendments/2026-10-10-offline-probe-environment-clarification-v148.md`; container Python is fixture evidence, not observed PM receipt. Exact official uv and unchanged lock tests distinct production toolchain proof.
+
+Selected toolchain source observer v150: `plans/amendments/2026-10-10-selected-toolchain-source-observer-v150.md`; actual finite plan-bound source observer FD feeds toolchain extraction, no disconnected CAS/global cap widening. All AC open.
+
+Stable private endpoint/model binding v151: `plans/amendments/2026-10-10-stable-private-endpoint-binding-v151.md`; source-selected IDs before process observation, genuine runtime receipt proofs after startup. All AC open.
+
+Separate PEP517 backend source closure v152: `plans/amendments/2026-10-10-pep517-backend-source-closure-v152.md`; held reviewed finite backend table/CAS/license receipts, isolated frontend/project wheel separate runtime lock and probe. All AC open.
