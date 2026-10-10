@@ -103,6 +103,9 @@ class RootNativePolicyPreparationSelection:
     target_selection_handles: tuple[str, ...]
     source_role_selection_handles: tuple[str, ...]
     private_input_consent_selection_handle: str | None
+    setup_choice_selection_handle: str
+    choice_epoch: int
+    choice_payload_sha256: str
     controller_binding_handle: str
     selection_sha256: str
     issued_monotonic: float
@@ -176,7 +179,7 @@ class RootNativePolicyPreparationRegistry:
                  root_release_module_registry: Any,
                  root_native_registration_projection_registry: Any,
                  root_schema_observation_registry: Any,
-                 root_journal: Path, authority_service: Any) -> None:
+                 root_journal: Path) -> None:
         from .bootstrap_runtime_factory import RootSelectedInstallationBinding
 
         if (type(selected_installation_binding) is not RootSelectedInstallationBinding
@@ -188,7 +191,8 @@ class RootNativePolicyPreparationRegistry:
                 or root_release_module_registry is None
                 or root_native_registration_projection_registry is None
                 or root_schema_observation_registry is None
-                or authority_service is None):
+                or not callable(getattr(selected_installation_binding, "record_durable_setup_choice", None))
+                or not callable(getattr(selected_installation_binding, "resolve_current_setup_choice", None))):
             raise ValueError("native policy preparation requires the exact root setup registries")
         self._binding = selected_installation_binding
         self._principal = root_principal_selection_registry
@@ -197,7 +201,6 @@ class RootNativePolicyPreparationRegistry:
         self._registration = root_native_registration_projection_registry
         self._schemas = root_schema_observation_registry
         self._journal = root_journal
-        self._authority = authority_service
         self._source_definitions: Any | None = None
         self._source_definition_bundles: dict[str, Any] = {}
         self._seal = secrets.token_bytes(32)
@@ -224,12 +227,12 @@ class RootNativePolicyPreparationRegistry:
                         root_release_module_registry: Any,
                         root_native_registration_projection_registry: Any,
                         root_schema_observation_registry: Any,
-                        root_journal: Path, authority_service: Any
+                        root_journal: Path
                         ) -> "RootNativePolicyPreparationRegistry":
         return cls(selected_installation_binding, root_principal_selection_registry,
                    root_component_target_registry, root_release_module_registry,
                    root_native_registration_projection_registry,
-                   root_schema_observation_registry, root_journal, authority_service)
+                   root_schema_observation_registry, root_journal)
 
     def record_configuration(self, choice: RootNativePolicyConfigurationChoice
                              ) -> RootNativePolicyPreparationSelection:
@@ -239,6 +242,15 @@ class RootNativePolicyPreparationRegistry:
         now = time.monotonic()
         _validate_choice(choice, now)
         self._assert_binding_current()
+        choice_resolver = getattr(self._binding, "resolve_current_native_policy_configuration_choice", None)
+        if not callable(choice_resolver):
+            raise NativePolicyPreparationDenied("root TTY native-policy choice resolver is unavailable")
+        try:
+            current_choice = choice_resolver(choice.choice_handle)
+        except Exception:
+            raise NativePolicyPreparationDenied("root TTY native-policy choice is no longer current") from None
+        if current_choice is not choice:
+            raise NativePolicyPreparationDenied("root TTY resolver did not return the exact retained choice")
         if (len(set(choice.selected_component_ids)) != len(choice.selected_component_ids)
                 or len(set(choice.selected_registration_ids)) != len(choice.selected_registration_ids)
                 or len(set(choice.selected_action_binding_ids)) != len(choice.selected_action_binding_ids)):
@@ -249,7 +261,30 @@ class RootNativePolicyPreparationRegistry:
                 or any(registration_components[item] not in set(choice.selected_component_ids)
                        for item in choice.selected_registration_ids)):
             raise NativePolicyPreparationDenied("native policy choice exceeds the held finite source catalog")
-        body = _choice_payload(choice)
+        try:
+            durable_handle = self._binding.record_durable_setup_choice(choice)
+            snapshot = self._binding.resolve_current_setup_choice(
+                durable_handle, "native-policy-preparation")
+        except Exception:
+            raise NativePolicyPreparationDenied("durable signed native-policy choice could not be retained") from None
+        payload = _choice_payload(choice)
+        payload_digest = hashlib.sha256(_canonical(payload)).hexdigest()
+        if (not isinstance(durable_handle, str) or not durable_handle
+                or getattr(snapshot, "selection_handle", None) != durable_handle
+                or getattr(snapshot, "purpose", None) != "native-policy-preparation"
+                or getattr(snapshot, "choice_payload", None) != payload
+                or getattr(snapshot, "choice_payload_sha256", None) != payload_digest
+                or getattr(snapshot, "adoption_publication_receipt_handle", None) is not None
+                or getattr(snapshot, "principal_selection_handle", None) != choice.principal_selection_handle
+                or getattr(snapshot, "namespace_selection_handle", None) != choice.namespace_selection_handle
+                or type(getattr(snapshot, "choice_epoch", None)) is not int
+                or type(getattr(snapshot, "revocation_epoch", None)) is not int
+                or snapshot.revocation_epoch != choice.revocation_epoch):
+            raise NativePolicyPreparationDenied("signed setup-choice record does not match current root intent")
+        body = {**payload, "setup_choice_selection_handle": durable_handle,
+                "choice_payload_sha256": payload_digest,
+                "choice_epoch": snapshot.choice_epoch,
+                "revocation_epoch": snapshot.revocation_epoch}
         handle = secrets.token_hex(32)
         selection = RootNativePolicyPreparationSelection(
             handle, choice.choice_observation_id, choice.setup_session_id,
@@ -261,9 +296,11 @@ class RootNativePolicyPreparationRegistry:
             choice.package_id, choice.native_package_generation,
             choice.selected_component_ids, choice.selected_registration_ids,
             choice.selected_action_binding_ids, (), (),
-            choice.private_input_consent_selection_handle, choice.controller_binding_handle,
+            choice.private_input_consent_selection_handle, durable_handle,
+            snapshot.choice_epoch, payload_digest,
+            choice.controller_binding_handle,
             "0" * 64, now, min(now + _TTL_SECONDS, choice.expires_monotonic),
-            choice.revocation_epoch, _SELECTION_SEAL)
+            snapshot.revocation_epoch, _SELECTION_SEAL)
         digest = hashlib.sha256(_canonical(_selection_payload(selection))).hexdigest()
         selection = replace(selection, selection_sha256=digest)
         self._validate_selection_context(selection)
@@ -421,6 +458,22 @@ class RootNativePolicyPreparationRegistry:
             raise NativePolicyPreparationDenied("native policy setup session changed")
         if actual_transaction is not None and actual_transaction != selection.transaction_handle:
             raise NativePolicyPreparationDenied("native policy transaction changed")
+        try:
+            choice = self._binding.resolve_current_setup_choice(
+                selection.setup_choice_selection_handle, "native-policy-preparation")
+        except Exception:
+            raise NativePolicyPreparationDenied("signed native-policy setup choice is stale or revoked") from None
+        if (choice.selection_handle != selection.setup_choice_selection_handle
+                or choice.purpose != "native-policy-preparation"
+                or choice.choice_payload_sha256 != selection.choice_payload_sha256
+                or choice.choice_epoch != selection.choice_epoch
+                or choice.revocation_epoch != selection.revocation_epoch
+                or not _selection_matches_choice_payload(selection, choice.choice_payload)
+                or choice.principal_selection_handle != selection.principal_selection_handle
+                or choice.namespace_selection_handle != selection.namespace_selection_handle
+                or choice.prepared_generation != selection.prepared_generation_id
+                or choice.adoption_publication_receipt_handle is not None):
+            raise NativePolicyPreparationDenied("signed native-policy choice no longer matches selected intent")
         resolver = getattr(self._principal, "resolve_current_setup_identity", None)
         if not callable(resolver) or handle is None:
             raise NativePolicyPreparationDenied("current principal and namespace resolver is unavailable")
@@ -429,7 +482,8 @@ class RootNativePolicyPreparationRegistry:
         if (current.principal_selection_handle != selection.principal_selection_handle
                 or current.namespace_selection_handle != selection.namespace_selection_handle
                 or current.principal.binding_sha256 != selection.principal_binding_sha256
-                or current.namespace.binding_sha256 != selection.namespace_binding_sha256):
+                or current.namespace.binding_sha256 != selection.namespace_binding_sha256
+                or current.principal.service_profile_id != selection.service_profile_id):
             raise NativePolicyPreparationDenied("native policy principal or namespace changed")
 
     def _persist(self, kind: str, handle: str, payload: Mapping[str, Any]) -> None:
@@ -489,7 +543,7 @@ def _validate_choice(choice: RootNativePolicyConfigurationChoice, now: float) ->
 
 
 def _choice_payload(choice: RootNativePolicyConfigurationChoice) -> dict[str, Any]:
-    return {name: getattr(choice, name) for name in (
+    payload = {name: getattr(choice, name) for name in (
         "choice_handle", "choice_observation_id", "setup_session_id", "transaction_handle",
         "plan_sha256", "prepared_generation_id", "prepared_generation_digest",
         "principal_selection_handle", "principal_binding_sha256", "namespace_selection_handle",
@@ -498,6 +552,10 @@ def _choice_payload(choice: RootNativePolicyConfigurationChoice) -> dict[str, An
         "selected_component_ids", "selected_registration_ids", "selected_action_binding_ids",
         "controller_binding_handle", "private_input_consent_selection_handle",
         "issued_monotonic", "expires_monotonic", "revocation_epoch")}
+    for name, value in tuple(payload.items()):
+        if type(value) is tuple:
+            payload[name] = list(value)
+    return payload
 
 
 def _selection_payload(selection: RootNativePolicyPreparationSelection) -> dict[str, Any]:
@@ -509,7 +567,35 @@ def _selection_payload(selection: RootNativePolicyPreparationSelection) -> dict[
         "package_id", "native_package_generation", "selected_component_ids",
         "selected_registration_ids", "selected_action_binding_ids", "target_selection_handles",
         "source_role_selection_handles", "private_input_consent_selection_handle",
-        "controller_binding_handle", "issued_monotonic", "expires_monotonic", "revocation_epoch")}
+        "setup_choice_selection_handle", "choice_payload_sha256", "controller_binding_handle",
+        "choice_epoch", "issued_monotonic", "expires_monotonic", "revocation_epoch")}
+
+
+def _selection_matches_choice_payload(selection: RootNativePolicyPreparationSelection,
+                                      payload: Mapping[str, Any]) -> bool:
+    expected = {
+        "choice_observation_id": selection.choice_observation_id,
+        "setup_session_id": selection.setup_session_id,
+        "transaction_handle": selection.transaction_handle,
+        "plan_sha256": selection.plan_sha256,
+        "prepared_generation_id": selection.prepared_generation_id,
+        "prepared_generation_digest": selection.prepared_generation_digest,
+        "principal_selection_handle": selection.principal_selection_handle,
+        "principal_binding_sha256": selection.principal_binding_sha256,
+        "namespace_selection_handle": selection.namespace_selection_handle,
+        "namespace_binding_sha256": selection.namespace_binding_sha256,
+        "service_profile_id": selection.service_profile_id,
+        "service_generation": selection.service_generation,
+        "resource_profile_selection_handle": selection.resource_profile_selection_handle,
+        "package_id": selection.package_id,
+        "native_package_generation": selection.native_package_generation,
+        "selected_component_ids": list(selection.selected_component_ids),
+        "selected_registration_ids": list(selection.selected_registration_ids),
+        "selected_action_binding_ids": list(selection.selected_action_binding_ids),
+        "controller_binding_handle": selection.controller_binding_handle,
+        "private_input_consent_selection_handle": selection.private_input_consent_selection_handle,
+    }
+    return all(payload.get(name) == value for name, value in expected.items())
 
 
 def _source_coverage(selection: RootNativePolicyPreparationSelection,
