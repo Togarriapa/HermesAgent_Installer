@@ -75,3 +75,6 @@ Owner observer/capture/RPC v185: `plans/amendments/2026-10-10-owner-overlay-obse
 
 
 Preactive listener v186: `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; real prepared root no-effect socket precedes signed recipe, active FD transfer/re-observation follows publication. HI-T186.1/.2/VD-T186.3 OPEN, no future socket/active proof, all AC01..18 OPEN.
+
+
+Listener activation v187: `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; actual supervised daemon/peer transaction and named private channel, each process locally verifies own actor. HI-T187.1/.2/VD-T187.3 OPEN, source pins pending, allAC01..18 OPEN.
