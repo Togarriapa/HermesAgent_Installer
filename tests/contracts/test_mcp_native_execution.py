@@ -22,7 +22,9 @@ from hermes_installer.authority.service import AuthorityService, EffectRule, Pri
 from hermes_installer.authority.native_runtime_observer import (
     NativeActionSelection, NativeInvocationRegistry, NativeRuntimeObserver,
 )
-from hermes_installer.authority.types import HostContext, Sensitivity, SourceReceipt, canonical_digest
+from hermes_installer.authority.types import (
+    EffectAuthorization, HostContext, Sensitivity, SourceReceipt, canonical_digest,
+)
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.mcp_discovery_registry import MCPDiscoveryObservationRegistry
 from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec
@@ -49,6 +51,17 @@ RESULT_SCHEMA = {
         "isError": {"type": "boolean"},
     }, "required": ["content", "isError"], "additionalProperties": False,
 }
+
+
+def _validate_result_schema(raw: bytes) -> bool:
+    from hermes_installer.authority.types import strict_json_loads
+    from hermes_installer.mcp.native_execution import _validate_value
+
+    try:
+        _validate_value(strict_json_loads(raw.decode("utf-8")), RESULT_SCHEMA)
+        return True
+    except Exception:
+        return False
 
 
 class _Policy:
@@ -162,18 +175,34 @@ class NativeMCPExecutionTests(unittest.TestCase):
         handlers = build_mcp_handlers(
             {"figma": protected_service}, transport_factory=lambda _service, _context: FixtureTransport(),
         )
-        caps = frozenset({"mcp:figma:connect", "mcp:figma:read", "mcp:test:loopback"})
+        provider_capability = "provider:fixture"
+        provider_target = "provider://fixture"
+        provider_recipient = "provider:fixture"
+        caps = frozenset({"mcp:figma:connect", "mcp:figma:read", "mcp:test:loopback",
+                          provider_capability})
         rules = {
             ("mcp:figma:connect", "mcp.request", "mcp:figma:http"):
                 EffectRule("mcp:figma:connect", "mcp.request", "mcp:figma:http"),
             ("mcp:figma:read", "mcp.request", "mcp:figma:http"):
                 EffectRule("mcp:figma:read", "mcp.request", "mcp:figma:http"),
+            (provider_capability, "provider.dispatch", provider_target):
+                EffectRule(provider_capability, "provider.dispatch", provider_target,
+                           recipient=provider_recipient),
+        }
+        handlers[("provider.dispatch", provider_target)] = lambda **_kwargs: {
+            "status": 200, "body": b"provider-fixture", "headers": {},
+            "receipt_id": "provider-fixture-receipt",
         }
 
         class SourceObservers:
             observers = {"mcp-result-observer": SimpleNamespace(
-                source_kind="tool-result", profile_id="profile-a",
+                source_kind="tool-result", observer_enrollment_id="mcp-result-observer",
+                role_id="role.native", package_id="package-a",
+                native_package_generation="package-gen-a", profile_id="profile-a",
                 generation="process-gen-a", producer_uid=1234,
+                capture_schema_id="native-registered-tool-result-v1",
+                source_action_id="mcp-selected-tool-result",
+                source_registration_ids=("registration.native.mcp",),
             )}
 
             def __init__(self):
@@ -186,10 +215,23 @@ class NativeMCPExecutionTests(unittest.TestCase):
                     capture_schema_id="native-root-provider-response-v1",
                     role_id="role.native", package_id="package-a",
                     native_package_generation="package-gen-a", profile_id="profile-a",
-                    generation="process-gen-a",
+                    generation="process-gen-a", producer_uid=1234,
                     source_registration_ids=("registration.provider",),
                 )
                 self.observers["provider-result-observer"] = self.provider_observer
+                self.discovery_observer = SimpleNamespace(
+                    source_kind="tool-result", observer_enrollment_id="mcp-discovery-observer",
+                    capture_schema_id="native-root-mcp-discovery-response-v1",
+                    source_action_id="root-mcp-tools-list-discovery-v1",
+                    role_id="role.native", package_id="package-a",
+                    native_package_generation="package-gen-a", profile_id="profile-a",
+                    generation="process-gen-a", producer_uid=1234,
+                    source_registration_ids=("registration.discovery",),
+                    max_event_bytes=1_048_576, lease_seconds=30.0,
+                    principal_id="principal:a", namespace_id="namespace-a",
+                    enrollment_id="enrollment-a",
+                )
+                self.observers["mcp-discovery-observer"] = self.discovery_observer
                 binding_id = "binding.native.mcp"
                 self.package = SimpleNamespace(
                     package_id="package-a", generation="package-gen-a",
@@ -202,9 +244,11 @@ class NativeMCPExecutionTests(unittest.TestCase):
                     process_role_records={"role.native": SimpleNamespace(
                         package_id="package-a", native_package_generation="package-gen-a",
                         profile_id="profile-a", profile_generation="process-gen-a",
-                        observer_enrollment_ids=("provider-result-observer",),
+                    observer_enrollment_ids=("provider-result-observer", "mcp-discovery-observer",
+                                             "mcp-result-observer"),
                         action_binding_ids=(binding_id,),
-                        registration_ids=("registration.native.mcp", "registration.provider"),
+                        registration_ids=("registration.native.mcp", "registration.provider",
+                                          "registration.discovery"),
                         workflow_ids=(),
                     )},
                     registration_records={
@@ -217,26 +261,36 @@ class NativeMCPExecutionTests(unittest.TestCase):
                             registration_id="registration.provider", generation="package-gen-a",
                             adapter_id=HANDLER_ARTIFACT_ID, action_bindings=(),
                         ),
+                        "registration.discovery": SimpleNamespace(
+                            registration_id="registration.discovery", generation="package-gen-a",
+                            adapter_id=HANDLER_ARTIFACT_ID, action_bindings=(),
+                        ),
                     },
                     workflow_records={},
                 )
                 self.loaded_proof = SimpleNamespace(observed_registration_ids=(
-                    "registration.provider", "registration.native.mcp",
+                    "registration.provider", "registration.native.mcp", "registration.discovery",
                 ))
 
             def record_observed_event(self, observer_id, **kwargs):
-                if observer_id != "mcp-result-observer":
+                if observer_id not in {"mcp-result-observer", "mcp-discovery-observer",
+                                       "provider-result-observer"}:
                     raise PermissionError("unknown fixture observer")
                 self.events["e" * 40] = kwargs
                 return "e" * 40
 
             def capture_observed_source(self, observer_id, event_id, payload, **kwargs):
-                if observer_id != "mcp-result-observer" or event_id != "e" * 40:
+                if observer_id not in {"mcp-result-observer", "mcp-discovery-observer",
+                                       "provider-result-observer"} or event_id != "e" * 40:
                     raise PermissionError("unknown fixture event")
                 self.captured.append(payload)
-                if self.revoke_after_capture:
+                if self.revoke_after_capture and observer_id == "mcp-result-observer":
                     self.current = False
-                handle = "l" * 40 if b'"tools"' in payload else "r" * 40
+                handle = {
+                    "provider-result-observer": "p" * 40,
+                    "mcp-discovery-observer": "l" * 40,
+                    "mcp-result-observer": "r" * 40,
+                }[observer_id]
                 event = self.events[event_id]
                 parent = event["parent_context"]
                 now = time.monotonic()
@@ -261,10 +315,10 @@ class NativeMCPExecutionTests(unittest.TestCase):
                 return handle
 
             def take_source_receipt(self, *_args, **_kwargs):
-                return "r" * 40
+                return _args[0]
 
             def _resolve(self, *_args, **_kwargs):
-                return self.provider_observer
+                return self.live_identity
 
             def _resolve_package_role(self, _observer):
                 return self.package, None
@@ -276,7 +330,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
 
         class ReceiptDelivery:
             def take_source_receipt(self, handle, *, peer_uid, peer_pid, peer_pidfd):
-                if (handle not in {"r" * 40, "l" * 40} or peer_uid != 1234 or peer_pid != 3456
+                if (handle not in {"p" * 40, "r" * 40, "l" * 40} or peer_uid != 1234 or peer_pid != 3456
                         or peer_pidfd != self_peer_pidfd):
                     raise PermissionError("receipt peer mismatch")
                 return handle
@@ -288,6 +342,10 @@ class NativeMCPExecutionTests(unittest.TestCase):
             effect_observer_ids={
                 ("mcp:figma:read", "mcp.request", "mcp:figma:http"):
                     "mcp-result-observer",
+            },
+            discovery_observer_ids={
+                ("mcp:figma:read", "mcp.request", "mcp:figma:http"):
+                    "mcp-discovery-observer",
             },
         )
         self.authority = AuthorityService(
@@ -301,6 +359,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
             service_generation_digest="c" * 64,
         )
         self_authority = self.authority
+        self.source_observers.service = self.authority
         self.identity_patch = patch.object(
             AuthorityService, "_native_process_identity",
             staticmethod(lambda _pid, _uid: "native-process-fixture"),
@@ -317,6 +376,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
             profile_id="gateway-profile", generation="gateway-gen", kernel_uid=4321,
             executable_sha256="f" * 64,
         )
+        self.source_observers.live_identity = producer_identity
 
         def process_resolver(pid, pidfd, *, profile_id, generation):
             if not self.source_observers.current:
@@ -324,8 +384,8 @@ class NativeMCPExecutionTests(unittest.TestCase):
             if ((pid, profile_id, generation) == (3456, "profile-a", "process-gen-a")
                     and os.fstat(pidfd)[:2] == os.fstat(self.producer_fd)[:2]):
                 return producer_identity
-            if (pid, pidfd, profile_id, generation) == (
-                    4567, self.gateway_fd, "gateway-profile", "gateway-gen"):
+            if ((pid, profile_id, generation) == (4567, "gateway-profile", "gateway-gen")
+                    and os.fstat(pidfd)[:2] == os.fstat(self.gateway_fd)[:2]):
                 return gateway_identity
             return None
 
@@ -333,6 +393,11 @@ class NativeMCPExecutionTests(unittest.TestCase):
             bridge_id="native-mcp-fixture-bridge", producer_uid=1234,
             producer_profile_id="profile-a", producer_generation="process-gen-a",
             gateway_profile_id="gateway-profile", gateway_generation="gateway-gen",
+            gateway_uid=4321, provider_enrollment_id="fixture-provider",
+            target=provider_target, recipient=provider_recipient,
+            approved_operation="provider.dispatch",
+            producer_executable_sha256="e" * 64,
+            gateway_executable_sha256="f" * 64,
         )
         selected_action = NativeActionSelection(
             package_id="package-a", profile_id="profile-a", generation="process-gen-a",
@@ -341,7 +406,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
             registration_id="registration.native.mcp", operation="mcp.request",
             validate_arguments=lambda body: body == b'{"fileKey":"selected-file"}',
             result_schema_id="schema-result", result_schema_sha256="a" * 64,
-            validate_result=lambda raw: raw == b'{"ok":true}',
+            validate_result=lambda raw: _validate_result_schema(raw),
         )
 
         def action_resolver(_bridge, identity, tool_name):
@@ -353,52 +418,67 @@ class NativeMCPExecutionTests(unittest.TestCase):
             service=self.authority, source_observers=self.source_observers,
             bridges={bridge.bridge_id: bridge},
             provider_result_observer_ids={
-                ("fixture-provider", "provider.fixed", "fixture-recipient"):
+                ("fixture-provider", provider_target, provider_recipient):
                     "provider-result-observer",
             },
-            provider_tool_call_parser=lambda *_args: (),
+            provider_tool_call_parser=lambda _provider, status, headers, body: (
+                __import__("hermes_installer.provider_response_observer", fromlist=[
+                    "parse_successful_provider_tool_calls",
+                ]).parse_successful_provider_tool_calls("openrouter", status, headers, body)
+            ),
             process_resolver=process_resolver, action_resolver=action_resolver,
         )
         self.authority.attach_native_invocation_registry(self.invocation_registry)
-        context = self.authority._issue_context(1234, {
+        request_payload = b'{"model":"fixture-model","messages":[{"role":"user","content":"lookup"}]}'
+        request_digest = hashlib.sha256(request_payload).hexdigest()
+        request_context = HostContext.from_wire(self.authority._issue_context(1234, {
             "purpose": "native-mcp-fixture", "intent": "selected-plugin-read",
             "trace_id": "native-mcp-fixture-trace", "lease_seconds": 30,
-            "source_contexts": [],
-            "final_payload_digest": hashlib.sha256(
-                b'{"fileKey":"selected-file"}',
-            ).hexdigest(),
+            "source_contexts": [], "final_payload_digest": request_digest,
             "operation": "provider.dispatch",
-        }, peer_pid=3456)
-        source_receipt = self.authority.issue_source_receipt(
-            HostContext.from_wire(context),
-            source_kind="tool-result", origin_id="fixture-provider-result",
-            payload=b"root-captured provider result", ttl_seconds=30,
-        )
-        self.source_handle = "s" * 40
-        self.authority._source_receipt_handles[self.source_handle] = source_receipt
-        self.invocation_handle = "i" * 40
-        self.invocation = _NativeInvocation(
-            invocation_handle=self.invocation_handle,
-            response_handle="d" * 43, observed_call_handle="o" * 40,
+        }, peer_pid=3456))
+        provider_grant = EffectAuthorization.from_wire(self.authority._authorize_effect(1234, {
+            "context": request_context.to_wire(), "capability": provider_capability,
+            "target": provider_target, "recipient": provider_recipient,
+            "request_digest": request_digest, "retry_index": 0,
+        }, peer_pid=3456))
+        provider_body = json.dumps({"choices": [{"message": {"tool_calls": [{
+            "id": "call-mcp", "type": "function", "function": {
+                "name": "mcp__figma__read_metadata",
+                "arguments": '{"fileKey":"selected-file"}',
+            },
+        }]}, "finish_reason": "tool_calls"}]}).encode()
+        response_delivery = self.invocation_registry.register_provider_response(
             bridge=bridge, producer_identity=producer_identity, producer_pid=3456,
             producer_pidfd=self.producer_fd, gateway_identity=gateway_identity,
-            gateway_pid=4567, gateway_pidfd=self.gateway_fd, package_id="package-a",
-            profile_id="profile-a", generation="process-gen-a",
-            package_generation="package-gen-a",
-            adapter_id=HANDLER_ARTIFACT_ID, action_id="action-mcp-read",
-            registration_id="registration.native.mcp",
-            tool_name="mcp__figma__read_metadata",
-            arguments_sha256=hashlib.sha256(b'{"fileKey":"selected-file"}').hexdigest(),
-            canonical_arguments=b'{"fileKey":"selected-file"}',
-            operation="mcp.request",
-            parent_closure_digest="b" * 64, receipt_handles=(self.source_handle,),
-            observer_id="provider-result-observer", loaded_package_proof=self.source_observers.loaded_proof,
-            expires_monotonic=time.monotonic() + 30,
-            service_generation_digest=self.authority.service_generation_digest,
-            result_schema_id="schema-result",
-            result_schema_sha256="a" * 64,
+            gateway_pid=4567, gateway_pidfd=self.gateway_fd,
+            request_context=request_context, request_source_receipts=(),
+            authorization=provider_grant, target=provider_target,
+            recipient=provider_recipient, request_digest=request_digest,
+            response_status=200, response_headers={"content-type": "application/json"},
+            response_bytes=provider_body, response_digest=hashlib.sha256(provider_body).hexdigest(),
+            native_request_handle="n" * 43, expires_monotonic=time.monotonic() + 30,
+            cancelled=lambda: False,
         )
-        self.invocation_registry._invocations[self.invocation_handle] = self.invocation
+        metadata = self.invocation_registry.take_native_response_metadata(
+            peer_uid=1234, peer_pid=3456, peer_pidfd=self.producer_fd,
+            response_delivery_handle=response_delivery.response_delivery_handle,
+            response_body_sha256=hashlib.sha256(provider_body).hexdigest(),
+            native_request_handle="n" * 43,
+        )
+        provider_context_handle = metadata.producer_context_handle
+        call_binding = metadata.tool_call_bindings[0]
+        invocation_binding = self.invocation_registry.begin_native_invocation(
+            peer_uid=1234, peer_pid=3456, peer_pidfd=self.producer_fd,
+            producer_context_handle=provider_context_handle,
+            observed_call_handle=call_binding.observed_call_handle,
+            canonical_arguments=b'{"fileKey":"selected-file"}',
+        )
+        self.invocation_handle = invocation_binding.invocation_handle
+        self.invocation = None
+        self.source_handle = self.invocation_registry._invocations[
+            self.invocation_handle
+        ].receipt_handles[-1]
         def artifact_bytes(schema):
             return json.dumps(schema, sort_keys=True, separators=(",", ":"),
                               ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -423,7 +503,7 @@ class NativeMCPExecutionTests(unittest.TestCase):
         for index, record in enumerate(schema_records):
             body = schema_bytes[record["id"]]
             receipt = self.authority.issue_source_receipt(
-                HostContext.from_wire(context), source_kind="static-context",
+                request_context, source_kind="static-context",
                 origin_id=record["id"], payload=body, ttl_seconds=30,
             )
             handle = ("q" if index == 0 else "w") * 40
@@ -611,9 +691,9 @@ class NativeMCPExecutionTests(unittest.TestCase):
         self.assertNotIn(b"fixture-secret-canary", body)
         self.assertIn(b"Bearer [REDACTED]", body)
         self.assertEqual(response["source_receipt_handle"], "r" * 40)
-        self.assertEqual(len(self.source_observers.captured), 2)
+        self.assertEqual(len(self.source_observers.captured), 3)
         self.assertEqual(self.source_observers.captured[-1], body)
-        self.assertIn(b'"tools"', self.source_observers.captured[0])
+        self.assertIn(b'"tools"', self.source_observers.captured[1])
         self.assertEqual(len(self.discovery_registry._records), 2)
         retained_record = next(record for record in self.discovery_registry._records.values()
                                if record.observation.schema_kind == "arguments")
@@ -785,9 +865,9 @@ class NativeMCPExecutionTests(unittest.TestCase):
         with self.assertRaises(NativeMCPExecutionDenied):
             self._service_dispatch(b'{"fileKey":"selected-file"}')
         self.assertEqual([row[0]["method"] for row in self.http.requests], [
-            "initialize", "notifications/initialized", "tools/list",
+            "initialize", "notifications/initialized", "tools/list", "tools/call",
         ])
-        self.assertEqual(len(self.source_observers.captured), 1)
+        self.assertEqual(len(self.source_observers.captured), 3)
 
     def _service_dispatch(self, arguments):
         return self.authority._dispatch_native_mcp(

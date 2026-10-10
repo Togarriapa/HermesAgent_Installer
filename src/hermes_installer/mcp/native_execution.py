@@ -290,7 +290,7 @@ class NativeMCPDispatcher:
             )
             selected_schema, discovery_response = self._discover(
                 peer_uid, peer_pid, peer_pidfd, invocation, service, operation, target,
-                selection, deadline, cancelled, lineage_handles, binding.mcp_tool_name,
+                selection, deadline, cancelled, lineage_handles, binding.mcp_tool_name, binding,
             )
             for schema_kind, schema_key, expected_schema in (
                 ("arguments", "inputSchema", request_schema),
@@ -460,7 +460,7 @@ class NativeMCPDispatcher:
                   service: ProtectedMCPService, operation: str, target: str,
                   selection: Mapping[str, Any], deadline: float,
                   cancelled: Callable[[], bool], lineage_handles: list[str],
-                  selected_tool: str) -> tuple[Mapping[str, Any], _MCPResponse]:
+                  selected_tool: str, selected_binding: Any) -> tuple[Mapping[str, Any], _MCPResponse]:
         cursor: str | None = None
         seen_cursors: set[str] = set()
         selected: Mapping[str, Any] | None = None
@@ -471,7 +471,7 @@ class NativeMCPDispatcher:
                 uid, pid, pidfd, invocation, service, operation, target,
                 request_id=secrets.token_urlsafe(12), method="tools/list", selection=selection,
                 params=params, deadline=deadline, cancelled=cancelled,
-                lineage_handles=lineage_handles,
+                lineage_handles=lineage_handles, selected_binding=selected_binding,
             )
             result = response.value.get("result")
             if not isinstance(result, Mapping) or not isinstance(result.get("tools"), list):
@@ -505,7 +505,8 @@ class NativeMCPDispatcher:
                     params: Mapping[str, Any], deadline: float,
                     cancelled: Callable[[], bool], lineage_handles: list[str],
                     notification: bool = False,
-                    consume_sources: bool = False) -> _MCPResponse:
+                    consume_sources: bool = False,
+                    selected_binding: Any | None = None) -> _MCPResponse:
         remaining = min(deadline, invocation.expires_monotonic) - self._monotonic()
         self._require_current(invocation, uid, pid, pidfd)
         if remaining <= 0 or cancelled():
@@ -547,6 +548,20 @@ class NativeMCPDispatcher:
             "retry_index": 0,
         }, peer_pid=pid)
         grant = EffectAuthorization.from_wire(grant_wire)
+        if method == "tools/list":
+            observer = getattr(self.service, "native_runtime_observer", None)
+            register = getattr(observer, "register_mcp_discovery_request", None)
+            if not callable(register) or selected_binding is None:
+                raise NativeMCPExecutionDenied(
+                    "native.mcp.discovery", "root MCP discovery request observer is unavailable",
+                )
+            register(
+                invocation=invocation, service=service, binding=selected_binding,
+                context=context, authorization=grant, operation=operation, target=target,
+                request_payload=payload, peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
+                selection=selection, parent_receipt_handles=parent_handles,
+                cancelled=cancelled,
+            )
         self._require_current(invocation, uid, pid, pidfd)
         if cancelled() or self._monotonic() >= min(deadline, invocation.expires_monotonic,
                                                     grant.monotonic_expires_at):
