@@ -452,21 +452,56 @@ class RootPreparedNativeServiceGenerationProducer:
 
     def _source_definition_member_records(self, recipe: RootPreparedNativeWorkerRecipe
                                           ) -> list[dict[str, Any]]:
-        from .bootstrap_runtime_factory import RootPreparedReleaseMemberReceipt
+        from .bootstrap_runtime_factory import (
+            RootInstalledReleaseMemberReceipt, RootPreparedReleaseMemberReceipt,
+        )
         session = self.binding._session
         start = recipe._start_recipe
         handles = set(start.installer_member_receipt_handles)
         handles.update(start.worker_member_receipt_handles)
         handles.add(recipe.definition_member_receipt_handle)
+        health_definition = recipe.health_definition
+        from .native_health_source import RootPreparedNativeHealthSourceDefinition
+        if (type(health_definition) is not RootPreparedNativeHealthSourceDefinition
+                or health_definition.verify_current() is not True):
+            raise NativeServiceGenerationUnavailable(
+                "selected health source definition is not current")
+        health_receipts = tuple(self.binding.resolve_prepared_native_health_fixture_receipts())
+        if (len(health_receipts) != 5
+                or any(type(row) is not RootInstalledReleaseMemberReceipt for row in health_receipts)):
+            raise NativeServiceGenerationUnavailable(
+                "the exact five held health fixture release receipts are unavailable")
+        health_handles = {row.receipt_handle for row in health_receipts}
+        definition_handles = {row.receipt_handle for row in health_definition._receipts}
+        if (len(health_handles) != 5 or health_handles != definition_handles
+                or len(health_definition._receipts) != 5):
+            raise NativeServiceGenerationUnavailable(
+                "signed health definition does not join the five retained source receipts")
+        handles.update(health_handles)
         receipts = (
             tuple(self.binding.resolve_prepared_native_worker_start_source_module_receipts())
             + tuple(self.binding.resolve_prepared_worker_role_module_receipts())
+            + health_receipts
         )
-        by_handle = {row.source_receipt_handle: row for row in receipts
-                     if type(row) is RootPreparedReleaseMemberReceipt}
+        by_handle: dict[str, Any] = {}
+        for row in receipts:
+            if type(row) is RootPreparedReleaseMemberReceipt:
+                handle = row.source_receipt_handle
+            elif type(row) is RootInstalledReleaseMemberReceipt:
+                handle = row.receipt_handle
+                if row.role != "native-health-fixture":
+                    raise NativeServiceGenerationUnavailable(
+                        "health source receipt has an unreviewed installed-release role")
+            else:
+                raise NativeServiceGenerationUnavailable(
+                    "source-definition closure contains an unknown receipt type")
+            if handle in by_handle:
+                raise NativeServiceGenerationUnavailable(
+                    "source-definition closure repeats a receipt handle")
+            by_handle[handle] = row
         if len(by_handle) != len(receipts) or set(by_handle) != handles:
             raise NativeServiceGenerationUnavailable(
-                "exact source-definition receipts do not match the signed start-recipe member closure")
+                "exact source-definition receipts do not match the signed recipe and health-source closure")
         release = session._factory._release
         actor = session._factory._actor
         actor.verify_current(release)
@@ -476,8 +511,11 @@ class RootPreparedNativeServiceGenerationProducer:
             receipt = by_handle[handle]
             content = receipt.read_current()
             release_row = release_rows.get(receipt.artifact_id)
+            expected_role = ("native-health-fixture"
+                             if type(receipt) is RootInstalledReleaseMemberReceipt else None)
             if (release_row is None or release_row.relative_path != receipt.relative_path
-                    or release_row.sha256 != receipt.sha256 or release_row.size_bytes != receipt.size_bytes):
+                    or release_row.sha256 != receipt.sha256 or release_row.size_bytes != receipt.size_bytes
+                    or (expected_role is not None and release_row.roles != (expected_role,))):
                 raise NativeServiceGenerationUnavailable(
                     "source-definition receipt is outside the current held release")
             fd = release.open_file(receipt.artifact_id)
@@ -492,7 +530,9 @@ class RootPreparedNativeServiceGenerationProducer:
                         "source-definition bytes or actual held file identity changed")
                 projected.append({
                     "artifact_id": receipt.artifact_id,
-                    "receipt_handle": receipt.source_receipt_handle,
+                    "receipt_handle": (receipt.source_receipt_handle
+                                       if type(receipt) is RootPreparedReleaseMemberReceipt
+                                       else receipt.receipt_handle),
                     "relative_path": receipt.relative_path,
                     "kind": "regular-file", "sha256": receipt.sha256,
                     "size_bytes": receipt.size_bytes, "mode": stat.S_IMODE(info.st_mode),
