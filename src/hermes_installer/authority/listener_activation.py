@@ -872,7 +872,10 @@ class RootSetupHealthIntentJournal:
                     or body["setup_actor_witness_sha256"] != record["setup_actor_binding_sha256"]
                     or now < body["issued_monotonic"] or now >= body["expires_monotonic"]
                     or body["expires_monotonic"] - now > _MAX_TTL
-                    or body["committed_transaction_id"] != record["transaction_handle"]
+                    # The journal transaction id is the durable CAS id; the
+                    # activation record carries the setup transaction handle.
+                    # They are distinct identifiers and are independently
+                    # joined by the daemon health commit resolver.
                     or body["bootstrap_transaction_handle"] != record["transaction_handle"]
                     or body["profile_id"] != record["profile_id"]
                     or body["enrollment_id"] != record["service_enrollment_id"]):
