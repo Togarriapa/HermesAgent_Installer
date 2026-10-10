@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from ..artifacts import ArtifactCatalog, load_protected_catalog
 from ..protected_enrollment import RootJournalSelection
@@ -44,7 +44,9 @@ from .bootstrap_enrollment import (
     VerifiedArtifactReceipt,
     VerifiedRootSetupAuthorization,
     VerifiedRootSetupPlan,
+    _atomic_root_file,
     _canonical,
+    _create_service_root,
     _ensure_root_directory,
     _read_json_if_owned,
     _secure_directory_identity,
@@ -54,6 +56,9 @@ from .bootstrap_enrollment import (
     _validate_sha256,
     _verify_release_file_at,
 )
+
+if TYPE_CHECKING:
+    from .native_materialization import NativeMaterializationSelection
 
 
 _SELECTION_PATH = Path("/etc/hermes-installer/root-setup-selection.json")
@@ -2700,7 +2705,7 @@ class RootComposioSetupSelectionAuthority:
                 or isinstance(initial_or_normal_session_registry, RootSetupSessionStore)):
             raise BootstrapEnrollmentPending("Composio setup authority requires a concrete stage-zero or normal root session store")
         verified_release.verify_current()
-        cls._verify_reader_policy(verified_release)
+        self._verify_reader_policy(verified_release)
         _secure_directory_identity(root_journal)
         self.release = verified_release
         self.actor_verifier = current_actor_verifier
