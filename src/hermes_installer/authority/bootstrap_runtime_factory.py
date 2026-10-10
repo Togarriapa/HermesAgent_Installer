@@ -87,6 +87,7 @@ _COMPOSIO_OPERATION = "composio.whatsapp.catalog.read"
 _COMPOSIO_ORIGIN = "https://backend.composio.dev"
 _COMPOSIO_TOOLKIT_VERSION = "20260721_00"
 _COMPOSIO_POLICY_ARTIFACT_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
+_PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID = "installer-private-loopback-nft-v1"
 _COMPOSIO_POLICY_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
 _COMPOSIO_POLICY_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 _RECEIPT_TEMPLATE_ID = "installer-bootstrap-receipt-bindings-template-v1"
@@ -2818,7 +2819,8 @@ class RootInitialCompilationRegistry:
                 or value.get("bootstrap_policy_artifact_id") != _POLICY_ID
                 or value.get("template_artifact_ids") != [
                     _TEMPLATE_ID, _IDENTITY_TEMPLATE_ID, _PREPARED_BASE_TEMPLATE_ID,
-                    _RECEIPT_TEMPLATE_ID, _COMPOSIO_POLICY_ARTIFACT_ID]
+                    _RECEIPT_TEMPLATE_ID, _COMPOSIO_POLICY_ARTIFACT_ID,
+                    _PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID]
                 or value.get("initial_acceptance_ids") != expected_acceptance
                 or not isinstance(allowed, list) or not 1 <= len(allowed) <= 4096
                 or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in allowed)
@@ -3209,7 +3211,8 @@ class RootInitialCompilationRegistry:
                             _PLAN_TEMPLATE_ID,
                             _TEMPLATE_ID, _IDENTITY_TEMPLATE_ID,
                             _PREPARED_BASE_TEMPLATE_ID, _COMPOSIO_POLICY_ARTIFACT_ID,
-                            _RECEIPT_TEMPLATE_ID, _CAPABILITY_MAP_TEMPLATE_ID)
+                            _RECEIPT_TEMPLATE_ID, _CAPABILITY_MAP_TEMPLATE_ID,
+                            _PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID)
             if any(artifact_id not in files for artifact_id in required_ids):
                 raise BootstrapEnrollmentPending("installed release closure is missing a fixed setup input")
             template = files[_TEMPLATE_ID]

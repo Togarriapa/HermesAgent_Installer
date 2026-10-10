@@ -75,6 +75,12 @@ EXISTING_MODEL_STORE_TEMPLATE = (
     "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
     712,
 )
+PRIVATE_LOOPBACK_POLICY_TEMPLATE = (
+    "installer-private-loopback-nft-v1",
+    "templates/private-loopback-policy-v1.json",
+    "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc",
+    1_482,
+)
 REVIEWED_NATIVE_CAPABILITY_MAP_TEMPLATE = (
     "installer-reviewed-native-capability-map-v1",
     "templates/reviewed-native-capability-map-v1.json",
@@ -84,7 +90,7 @@ REVIEWED_NATIVE_CAPABILITY_MAP_TEMPLATE = (
 FIXED_TEMPLATES = (TEMPLATE, PLAN_TEMPLATE, AUTHENTIK_TEMPLATE,
                    PREPARED_BASE_TEMPLATE, RECEIPT_BINDINGS_TEMPLATE,
                    COMPOSIO_READER_TEMPLATE, EXISTING_MODEL_STORE_TEMPLATE,
-                   REVIEWED_NATIVE_CAPABILITY_MAP_TEMPLATE)
+                   PRIVATE_LOOPBACK_POLICY_TEMPLATE, REVIEWED_NATIVE_CAPABILITY_MAP_TEMPLATE)
 REVIEWED_SOURCE_MODULES = (
     ("installer-module:hermes_installer.components.native_plugins",
      "lib/python/hermes_installer/components/native_plugins.py",

@@ -192,6 +192,19 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
+def test_private_loopback_policy_is_an_exact_installed_template_member():
+    source_path = Path(__file__).parents[2] / release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH
+    body = source_path.read_bytes()
+    assert release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID == "installer-private-loopback-nft-v1"
+    assert release_build.STAGED_PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH == (
+        "templates/private-loopback-policy-v1.json")
+    assert (hashlib.sha256(body).hexdigest(), len(body)) == (
+        release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_SHA256,
+        release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_BYTES,
+    )
+    assert release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID in release_build.ROOT_PLAN_TEMPLATE_ARTIFACT_IDS
+
+
 def test_first_source_actor_preloads_exact_installed_launcher_module_closure():
     release_build._load_installed_setup_module_closure()
     for name in (

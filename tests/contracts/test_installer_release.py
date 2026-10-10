@@ -192,12 +192,15 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "templates/existing-model-store-root-template-v1.json":
                 ("installer-existing-model-store-root-template-v1",
                  "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f", 712),
+            "templates/private-loopback-policy-v1.json":
+                ("installer-private-loopback-nft-v1",
+                 "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc", 1482),
         }
         actual = {path: (artifact_id, digest, size)
                   for artifact_id, path, digest, size in FIXED_TEMPLATES}
         for path, value in expected.items():
             self.assertEqual(actual[path], value)
-        self.assertEqual(len(actual), 8)
+        self.assertEqual(len(actual), 9)
         self.assertEqual(
             _artifact_id_for("templates/existing-model-store-root-template-v1.json", ["template"]),
             "installer-existing-model-store-root-template-v1",
