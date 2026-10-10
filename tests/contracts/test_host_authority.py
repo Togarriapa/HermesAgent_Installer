@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import os
 import socket
 import stat
@@ -1149,10 +1151,52 @@ class RootSetupChoiceSignerContracts(unittest.TestCase):
 
     def test_setup_choice_signer_input_is_finite_canonical_json(self):
         from hermes_installer.authority.service import _validate_setup_choice_record_bytes
+        from hermes_installer.authority.root_setup_choices import _RECORD_FIELDS
 
-        raw = b'{"purpose":"public-free-web-read","schema":1}'
+        choice_payload = {"profile_id": "profile:choice", "route_ids": ["route:one"]}
+        choice_payload_bytes = json.dumps(
+            choice_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        record = {
+            "schema": 1,
+            "selection_handle": "choice:one",
+            "purpose": "public-free-web-read",
+            "key_id": "authority-key-choice-test",
+            "release_deployment_receipt_sha256": "a" * 64,
+            "setup_session_handle": "setup:one",
+            "transaction_handle": "transaction:one",
+            "plan_id": "plan:one",
+            "prepared_generation": "generation:one",
+            "principal_selection_handle": "principal-selection:one",
+            "namespace_selection_handle": "namespace-selection:one",
+            "private_profile_selection_handle": None,
+            "source_member_receipt_handles": ["receipt:one"],
+            "choice_payload": choice_payload,
+            "choice_payload_sha256": hashlib.sha256(choice_payload_bytes).hexdigest(),
+            "choice_epoch": 1,
+            "revocation_epoch": 1,
+            "issued_at_unix": 1000.0,
+            "setup_deadline_unix": 1200.0,
+            "adoption_publication_receipt_handle": None,
+        }
+        self.assertEqual(set(record), _RECORD_FIELDS - {"signature"})
+        raw = json.dumps(record, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+
         self.assertEqual(
-            _validate_setup_choice_record_bytes("public-free-web-read", raw), raw)
+            _validate_setup_choice_record_bytes(
+                "public-free-web-read", raw, expected_key_id="authority-key-choice-test"), raw)
+        with self.assertRaises(AuthorityDenied):
+            _validate_setup_choice_record_bytes(
+                "public-free-web-read", raw, expected_key_id="another-key")
+        signed_row = dict(record, signature="a" * 64)
+        signed_bytes = json.dumps(signed_row, sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=False, allow_nan=False).encode("utf-8")
+        with self.assertRaises(AuthorityDenied):
+            _validate_setup_choice_record_bytes(
+                "public-free-web-read", signed_bytes,
+                expected_key_id="authority-key-choice-test")
         for purpose, payload in (
             ("unbounded-purpose", raw),
             ("public-free-web-read", b'{ "purpose":"public-free-web-read","schema":1}'),
