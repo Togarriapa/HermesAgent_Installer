@@ -15,6 +15,8 @@ from hermes_installer.models.private_deployment import (
     PrivateEndpointObservation,
     PrivateDeploymentDenied,
     PrivateModelDeploymentObservation,
+    RootExistingModelSelectionRegistry,
+    _validate_model_subpath,
     _tcp4_listener_inodes,
     inspect_loopback_listener,
     RootExistingModelArtifactObserver,
@@ -245,5 +247,48 @@ def test_existing_model_observer_rejects_unissued_selection_object(
     observer = RootExistingModelArtifactObserver(
         object(), object(), object(), FakeSelectionRegistry(), FakeArtifactObserver(),
     )
-    with pytest.raises(PrivateDeploymentDenied, match="not issued by the protected root setup factory"):
+    with pytest.raises(PrivateDeploymentDenied, match="not issued by the protected root selection registry"):
         observer.observe_selected_tree("selection-from-caller")
+
+
+def test_existing_model_choice_path_is_relative_and_cannot_escape() -> None:
+    assert _validate_model_subpath("models/glm52") == "models/glm52"
+    for candidate in ("", ".", "../model", "models/../other", "/root/model", "models\\glm52"):
+        with pytest.raises(PrivateDeploymentDenied):
+            _validate_model_subpath(candidate)
+
+
+def test_existing_model_selection_fails_before_tty_without_source_catalog_pins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No source/license catalog pins means no path prompt or selection receipt."""
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+    class ArtifactCatalog:
+        artifacts = {}
+
+    class ArtifactObserver:
+        runtime_bindings = SimpleNamespace(artifact_catalog=ArtifactCatalog())
+
+        def observe(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("catalog rows are absent")
+
+        def verify_current(self, _observation: object) -> bool:
+            return False
+
+    class NeverRootFilesystem:
+        def resolve_selection(self, _handle: str) -> object:
+            raise AssertionError("catalog pins must be checked before filesystem selection")
+
+        def verify_current(self, _selection: object) -> object:
+            raise AssertionError("catalog pins must be checked before filesystem selection")
+
+        def open_selected_subdirectory(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("catalog pins must be checked before filesystem selection")
+
+    registry = RootExistingModelSelectionRegistry(
+        object(), NeverRootFilesystem(), object(), ArtifactObserver(),
+        input_reader=lambda _prompt: (_ for _ in ()).throw(AssertionError("no TTY prompt expected")),
+    )
+    with pytest.raises(PrivateDeploymentDenied, match="absent from the protected artifact catalog"):
+        registry.observe_existing_model_directory("root-store-receipt")

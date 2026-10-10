@@ -14,10 +14,12 @@ import os
 import re
 import secrets
 import stat
+import sys
 import time
 import base64
 from dataclasses import dataclass, fields
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Callable, Mapping
 
 from hermes_installer.managed_process_custodian import RemoteOriginKernelProof
@@ -31,6 +33,8 @@ _AUTHORITY_KINDS = {
     "private-model-deployment": "PrivateModelDeploymentObservation",
     "existing-model-tree": "ExistingModelArtifactObservation",
 }
+_GLM_SOURCE_MANIFEST_ARTIFACT_ID = "glm52-source-manifest"
+_GLM_LICENSE_ARTIFACT_ID = "glm52-license-mit"
 
 
 class PrivateDeploymentDenied(RuntimeError):
@@ -80,6 +84,33 @@ def _canonical_claims(value: Any) -> dict[str, Any]:
     if len(encoded) > 1_000_000:
         raise PrivateDeploymentDenied("observation claims exceed the fixed bound")
     return result
+
+
+def _validate_model_subpath(value: Any) -> str:
+    if (not isinstance(value, str) or not value or len(value) > 1024
+            or value != value.strip() or "\\" in value or "\x00" in value):
+        raise PrivateDeploymentDenied("model directory choice must be one bounded relative path")
+    path = PurePosixPath(value)
+    if (not path.parts or path == PurePosixPath(".") or path.is_absolute() or path.as_posix() != value
+            or any(part in {"", ".", ".."} for part in path.parts)):
+        raise PrivateDeploymentDenied("model directory choice contains an unsafe path component")
+    return value
+
+
+def _root_selection_fields(selection: Any) -> dict[str, Any]:
+    names = (
+        "selection_handle", "model_store_root_id", "model_store_root_receipt_handle",
+        "principal_id", "profile_id", "namespace_id", "controller_binding_handle",
+        "issued_monotonic", "expires_monotonic", "device", "inode", "uid", "gid", "mode",
+    )
+    values = {name: getattr(selection, name, None) for name in names}
+    if (any(not isinstance(values[name], str) or not values[name]
+            for name in names[:7])
+            or any(type(values[name]) not in {int, float} for name in ("issued_monotonic", "expires_monotonic"))
+            or any(type(values[name]) is not int for name in ("device", "inode", "uid", "gid", "mode"))
+            or values["uid"] != 0 or values["gid"] != 0 or values["mode"] & 0o022):
+        raise PrivateDeploymentDenied("root model-store choice does not carry the required protected identity")
+    return values
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +246,310 @@ class VerifiedExistingModelArtifactObservation:
     observer_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class RootExistingModelArtifactSelection:
+    """Root-TTY-selected, source-pinned directory beneath an existing model store."""
+
+    selection_handle: str
+    choice_observation_id: str
+    principal_id: str
+    profile_id: str
+    namespace_id: str
+    model_store_root_id: str
+    model_store_root_receipt_handle: str
+    relative_subpath: str
+    source_model_id: str
+    source_revision: str
+    source_manifest_artifact_id: str
+    source_manifest_sha256: str
+    license_artifact_id: str
+    license_sha256: str
+    controller_binding_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
+@dataclass(slots=True)
+class RootHeldExistingModelDirectory:
+    """One owned duplicate FD for the selected model subdirectory."""
+
+    selection: RootExistingModelArtifactSelection
+    directory_fd: int
+    device: int
+    inode: int
+    uid: int
+    gid: int
+    mode: int
+    expires_monotonic: float
+
+    def close(self) -> None:
+        if self.directory_fd >= 0:
+            os.close(self.directory_fd)
+            self.directory_fd = -1
+
+
+@dataclass(slots=True)
+class _ExistingModelSelectionState:
+    selection: RootExistingModelArtifactSelection
+    root_selection: Any
+    root_receipt_handle: str
+    tty_proof: Any
+    directory_fd: int
+    device: int
+    inode: int
+    uid: int
+    gid: int
+    mode: int
+
+
+class RootExistingModelSelectionRegistry:
+    """Retain the second root-TTY choice and exact existing model directory.
+
+    The root filesystem registry owns the first store-root choice. This layer
+    never accepts a path from an RPC/profile; it reads one relative subpath
+    from the foreground root TTY and asks that registry to open it beneath its
+    held root FD. Source metadata and license must already be immutable catalog
+    artifacts under the reviewed IDs before any prompt is shown.
+    """
+
+    def __init__(self, selected_installation_binding: Any,
+                 root_owned_filesystem_selection_registry: Any, root_journal: Any,
+                 artifact_observer: Any, *, expected_uid: int = 0,
+                 input_reader: Callable[[str], str] = input,
+                 monotonic: Callable[[], float] = time.monotonic):
+        if (os.geteuid() != expected_uid or expected_uid != 0
+                or selected_installation_binding is None or root_journal is None
+                or artifact_observer is None
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "resolve_selection", None))
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "verify_current", None))
+                or not callable(getattr(root_owned_filesystem_selection_registry,
+                                        "open_selected_subdirectory", None))
+                or not callable(getattr(artifact_observer, "observe", None))
+                or not callable(getattr(artifact_observer, "verify_current", None))):
+            raise PrivateDeploymentDenied("existing-model root selection services are unavailable")
+        self.installation_binding = selected_installation_binding
+        self.filesystem_registry = root_owned_filesystem_selection_registry
+        self.root_journal = root_journal
+        self.artifact_observer = artifact_observer
+        self.expected_uid = expected_uid
+        self.input_reader = input_reader
+        self._monotonic = monotonic
+        self._selections: dict[str, _ExistingModelSelectionState] = {}
+
+    @classmethod
+    def from_root_setup(cls, selected_installation_binding: Any,
+                        root_owned_filesystem_selection_registry: Any,
+                        root_journal: Any, artifact_observer: Any = None, *,
+                        expected_uid: int = 0, **kwargs: Any
+                        ) -> "RootExistingModelSelectionRegistry":
+        if artifact_observer is None:
+            raise PrivateDeploymentDenied("protected source manifest/license catalog observer is unavailable")
+        return cls(selected_installation_binding,
+                   root_owned_filesystem_selection_registry, root_journal,
+                   artifact_observer, expected_uid=expected_uid, **kwargs)
+
+    def observe_existing_model_directory(self, root_receipt_handle: str
+                                         ) -> RootExistingModelArtifactSelection:
+        if (os.geteuid() != self.expected_uid or self.expected_uid != 0
+                or not isinstance(root_receipt_handle, str) or not root_receipt_handle):
+            raise PrivateDeploymentDenied("root model-store selection receipt is unavailable")
+        manifest_sha = self._catalog_digest(_GLM_SOURCE_MANIFEST_ARTIFACT_ID)
+        license_sha = self._catalog_digest(_GLM_LICENSE_ARTIFACT_ID)
+        root_selection = self._resolve_current_root(root_receipt_handle)
+        proof = None
+        held = None
+        retained = False
+        try:
+            from hermes_installer.root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+            if not (sys.stdin.isatty() and sys.stderr.isatty()):
+                raise PrivateDeploymentDenied("model subdirectory selection requires the root controlling TTY")
+            proof = _capture_root_tty_proof()
+            raw_subpath = self.input_reader(
+                "Relative path of the already-present GLM-5.2 model directory (no default): "
+            )
+            _verify_root_tty_proof(proof)
+            subpath = _validate_model_subpath(raw_subpath)
+            held = self.filesystem_registry.open_selected_subdirectory(root_receipt_handle, subpath)
+            root_info = os.fstat(held.directory_fd)
+            self._verify_held_root_subdirectory(held, root_selection, root_info)
+            root_fields = _root_selection_fields(root_selection)
+            now = self._monotonic()
+            expiry = min(float(root_fields["expires_monotonic"]),
+                         float(proof.expires_monotonic), now + 60.0)
+            if expiry <= now:
+                raise PrivateDeploymentDenied("root model-store selection expired during TTY choice")
+            choice_observation_id = "root-tty-model-choice:" + secrets.token_urlsafe(24)
+            controller = root_fields["controller_binding_handle"]
+            from hermes_installer.models.artifacts import MODEL_ID, MODEL_REVISION
+            selection = RootExistingModelArtifactSelection(
+                selection_handle="existing-model-selection:" + secrets.token_urlsafe(24),
+                choice_observation_id=choice_observation_id,
+                principal_id=root_fields["principal_id"], profile_id=root_fields["profile_id"],
+                namespace_id=root_fields["namespace_id"],
+                model_store_root_id=root_fields["model_store_root_id"],
+                model_store_root_receipt_handle=root_receipt_handle,
+                relative_subpath=subpath, source_model_id=MODEL_ID,
+                source_revision=MODEL_REVISION,
+                source_manifest_artifact_id=_GLM_SOURCE_MANIFEST_ARTIFACT_ID,
+                source_manifest_sha256=manifest_sha,
+                license_artifact_id=_GLM_LICENSE_ARTIFACT_ID, license_sha256=license_sha,
+                controller_binding_handle=controller,
+                issued_monotonic=now, expires_monotonic=expiry,
+            )
+            _verify_root_tty_proof(proof)
+            state = _ExistingModelSelectionState(
+                selection, root_selection, root_receipt_handle, proof,
+                os.dup(held.directory_fd), root_info.st_dev, root_info.st_ino,
+                root_info.st_uid, root_info.st_gid, stat.S_IMODE(root_info.st_mode),
+            )
+            self._selections[selection.selection_handle] = state
+            retained = True
+            return selection
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("root model subdirectory choice could not be retained") from None
+        finally:
+            if held is not None and held.directory_fd >= 0:
+                os.close(held.directory_fd)
+            if proof is not None and not retained:
+                proof.close()
+
+    def resolve_selection(self, selection_handle: str) -> RootExistingModelArtifactSelection:
+        state = self._selections.get(selection_handle)
+        if state is None:
+            raise PrivateDeploymentDenied("model directory selection handle is absent or foreign")
+        self.verify_current(state.selection)
+        return state.selection
+
+    def verify_current(self, selection: RootExistingModelArtifactSelection
+                       ) -> RootExistingModelArtifactSelection:
+        if type(selection) is not RootExistingModelArtifactSelection:
+            raise PrivateDeploymentDenied("model selection has an unknown type")
+        state = self._selections.get(selection.selection_handle)
+        if state is None or state.selection is not selection:
+            raise PrivateDeploymentDenied("model selection is not the retained root TTY choice")
+        now = self._monotonic()
+        if not selection.issued_monotonic <= now < selection.expires_monotonic:
+            raise PrivateDeploymentDenied("model selection lease expired")
+        try:
+            from hermes_installer.root_setup import _verify_root_tty_proof
+            _verify_root_tty_proof(state.tty_proof)
+            root_current = self.filesystem_registry.verify_current(state.root_selection)
+            if root_current is not state.root_selection:
+                raise ValueError
+            self._verify_source_catalog_current(selection)
+            info = os.fstat(state.directory_fd)
+            if ((info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+                    != (state.device, state.inode, state.uid, state.gid, state.mode)
+                    or not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & 0o022):
+                raise ValueError
+            held = self.filesystem_registry.open_selected_subdirectory(
+                state.root_receipt_handle, selection.relative_subpath,
+            )
+            try:
+                reopened = os.fstat(held.directory_fd)
+                self._verify_held_root_subdirectory(held, state.root_selection, reopened)
+                if (reopened.st_dev, reopened.st_ino) != (state.device, state.inode):
+                    raise ValueError
+            finally:
+                os.close(held.directory_fd)
+            return selection
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("root model directory selection is stale") from None
+
+    def open_selected_directory(self, selection_handle: str) -> RootHeldExistingModelDirectory:
+        selection = self.resolve_selection(selection_handle)
+        state = self._selections[selection_handle]
+        held = None
+        try:
+            held = self.filesystem_registry.open_selected_subdirectory(
+                state.root_receipt_handle, selection.relative_subpath,
+            )
+            info = os.fstat(held.directory_fd)
+            self._verify_held_root_subdirectory(held, state.root_selection, info)
+            if (info.st_dev, info.st_ino) != (state.device, state.inode):
+                raise ValueError
+            fd = os.dup(held.directory_fd)
+            os.close(held.directory_fd)
+            held = None
+            return RootHeldExistingModelDirectory(
+                selection, fd, info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                stat.S_IMODE(info.st_mode), selection.expires_monotonic,
+            )
+        except Exception:
+            raise PrivateDeploymentDenied("selected model directory could not be reopened by held receipt") from None
+        finally:
+            if held is not None:
+                try:
+                    os.close(held.directory_fd)
+                except OSError:
+                    pass
+
+    def close(self) -> None:
+        for state in self._selections.values():
+            if state.directory_fd >= 0:
+                os.close(state.directory_fd)
+                state.directory_fd = -1
+            state.tty_proof.close()
+        self._selections.clear()
+
+    def _resolve_current_root(self, receipt_handle: str) -> Any:
+        try:
+            selection = self.filesystem_registry.resolve_selection(receipt_handle)
+            if self.filesystem_registry.verify_current(selection) is not selection:
+                raise ValueError
+            fields = _root_selection_fields(selection)
+            if fields["model_store_root_receipt_handle"] != receipt_handle:
+                raise ValueError
+            return selection
+        except Exception:
+            raise PrivateDeploymentDenied("root-held model-store receipt is stale or foreign") from None
+
+    def _catalog_digest(self, artifact_id: str) -> str:
+        try:
+            catalog = self.artifact_observer.runtime_bindings.artifact_catalog
+            artifact = catalog.artifacts[artifact_id]
+            digest = artifact.sha256
+            if not _SHA256.fullmatch(digest):
+                raise ValueError
+            return digest
+        except Exception:
+            raise PrivateDeploymentDenied(
+                "pinned GLM source manifest and license are absent from the protected artifact catalog"
+            ) from None
+
+    def _verify_source_catalog_current(self, selection: RootExistingModelArtifactSelection) -> None:
+        for artifact_id, digest in ((selection.source_manifest_artifact_id,
+                                     selection.source_manifest_sha256),
+                                    (selection.license_artifact_id, selection.license_sha256)):
+            observation = None
+            try:
+                observation = self.artifact_observer.observe(artifact_id, digest)
+                if not self.artifact_observer.verify_current(observation):
+                    raise ValueError
+            finally:
+                close = getattr(observation, "close", None)
+                if callable(close):
+                    close()
+
+    @staticmethod
+    def _verify_held_root_subdirectory(held: Any, root_selection: Any,
+                                       info: os.stat_result) -> None:
+        if (type(info.st_mode) is not int or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o022
+                or getattr(held, "selection", None) is not root_selection
+                or (info.st_dev, info.st_ino) != (held.device, held.inode)
+                or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+                   != (held.uid, held.gid, held.mode)):
+            raise PrivateDeploymentDenied("selected model directory custody is invalid")
+
+
 class RootExistingModelArtifactObserver:
     """Observe an already present model tree through a root-held TTY choice.
 
@@ -300,8 +635,7 @@ class RootExistingModelArtifactObserver:
             if current is not selection:
                 raise PrivateDeploymentDenied("existing-model selection is not the retained current object")
             held = self.selection_registry.open_selected_directory(selection_handle)
-            if (type(held).__name__ != "RootHeldExistingModelDirectory"
-                    or type(held).__module__ != "hermes_installer.authority.bootstrap_runtime_factory"
+            if (type(held) is not RootHeldExistingModelDirectory
                     or getattr(held, "selection", None) is not selection):
                 raise PrivateDeploymentDenied("held model directory belongs to another selection")
             directory_fd = getattr(held, "directory_fd", -1)
@@ -385,10 +719,9 @@ class RootExistingModelArtifactObserver:
                     close()
 
     def _validate_selection(self, selection: Any, selection_handle: str) -> None:
-        if (type(selection).__name__ != "RootExistingModelArtifactSelection"
-                or type(selection).__module__ != "hermes_installer.authority.bootstrap_runtime_factory"
+        if (type(selection) is not RootExistingModelArtifactSelection
                 or getattr(selection, "selection_handle", None) != selection_handle):
-            raise PrivateDeploymentDenied("model selection was not issued by the protected root setup factory")
+            raise PrivateDeploymentDenied("model selection was not issued by the protected root selection registry")
         required = ("choice_observation_id", "principal_id", "profile_id", "namespace_id",
                     "model_store_root_id", "model_store_root_receipt_handle", "relative_subpath",
                     "source_model_id", "source_revision", "source_manifest_artifact_id",
@@ -421,8 +754,7 @@ class RootExistingModelArtifactObserver:
         self._verify_source_pins_current(retained[1])
         held = self.selection_registry.open_selected_directory(observation.selection_handle)
         try:
-            if (type(held).__name__ != "RootHeldExistingModelDirectory"
-                    or type(held).__module__ != "hermes_installer.authority.bootstrap_runtime_factory"
+            if (type(held) is not RootHeldExistingModelDirectory
                     or getattr(held, "selection", None) is not retained[1]):
                 raise PrivateDeploymentDenied("held model directory changed its root selection")
             facts = retained[2]
@@ -451,8 +783,7 @@ class RootExistingModelArtifactObserver:
             raise PrivateDeploymentDenied("requested file is not in the exact pinned source manifest")
         held = self.selection_registry.open_selected_directory(pair[0].observation.selection_handle)
         try:
-            if (type(held).__name__ != "RootHeldExistingModelDirectory"
-                    or type(held).__module__ != "hermes_installer.authority.bootstrap_runtime_factory"
+            if (type(held) is not RootHeldExistingModelDirectory
                     or getattr(held, "selection", None) is not pair[1]):
                 raise PrivateDeploymentDenied("held model directory changed its root selection")
             current = self.selection_registry.verify_current(pair[1])
@@ -1034,11 +1365,91 @@ class RootPrivateMemoryDeploymentRegistry:
                    **kwargs)
 
     def observe_selected_endpoint(self, selected_service_binding: Any) -> str:
-        raise PrivateDeploymentDenied("protected endpoint selection and connector receipt producer are not yet composed")
+        binding_id = selected_service_binding if isinstance(selected_service_binding, str) else getattr(
+            selected_service_binding, "binding_id", None)
+        self.resolve_endpoint_selection(binding_id)
+        raise PrivateDeploymentDenied(
+            "endpoint selection is valid, but no retained private-network lease and loaded-config proof is composed")
 
     def observe_selected_model_deployment(self, endpoint_receipt_handle: str,
                                           selected_model_binding: Any) -> str:
-        raise PrivateDeploymentDenied("protected model selection and actual load observer are not yet composed")
+        binding_id = selected_model_binding if isinstance(selected_model_binding, str) else getattr(
+            selected_model_binding, "binding_id", None)
+        self.resolve_model_selection(binding_id)
+        endpoint = self.resolve_private_endpoint_receipt(endpoint_receipt_handle)
+        if endpoint is None:
+            raise PrivateDeploymentDenied("model source selection has no current observed endpoint receipt")
+        raise PrivateDeploymentDenied(
+            "model selection is valid, but no process load/source probe or selected weights are observed")
+
+    def resolve_endpoint_selection(self, binding_id: str) -> Any:
+        """Resolve only current v128 protected metadata; this never creates a receipt."""
+        resolve = getattr(self.bindings, "resolve_private_memory_endpoint_binding", None)
+        if not callable(resolve):
+            raise PrivateDeploymentDenied("protected endpoint binding getter is unavailable")
+        try:
+            binding = resolve(binding_id)
+            if (getattr(binding, "service_generation_digest", None)
+                    != self.bindings.service_generation_digest):
+                raise PrivateDeploymentDenied("endpoint binding belongs to a stale service generation")
+            service = self.bindings.enrollment_catalog.resolve_enrollment(
+                binding.service_enrollment_id, binding.service_generation)
+            process = self.bindings.process_profiles.get(binding.process_profile_id)
+            if (service.profile_id != binding.profile_id
+                    or service.namespace_identity != binding.namespace_id
+                    or getattr(service, "principal_id", None) != binding.principal_id
+                    or process is None
+                    or getattr(process, "generation", None) != binding.process_profile_generation):
+                raise PrivateDeploymentDenied("endpoint binding does not join its current service/process identities")
+            from hermes_installer.service_connector import ROUTES
+            routes = [ROUTES.get((binding.endpoint_target_id, route_id))
+                      for route_id in binding.connector_route_ids]
+            if (not routes or any(route is None or route.target_id != binding.endpoint_target_id
+                                  for route in routes)):
+                raise PrivateDeploymentDenied("endpoint binding contains an unknown connector route")
+            return binding
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("protected endpoint binding is absent, stale, or malformed") from None
+
+    def resolve_model_selection(self, binding_id: str) -> Any:
+        """Resolve only current v128 model metadata and existing-tree membership."""
+        resolve = getattr(self.bindings, "resolve_private_memory_model_binding", None)
+        if not callable(resolve):
+            raise PrivateDeploymentDenied("protected model binding getter is unavailable")
+        try:
+            model = resolve(binding_id)
+            if getattr(model, "service_generation_digest", None) != self.bindings.service_generation_digest:
+                raise PrivateDeploymentDenied("model binding belongs to a stale service generation")
+            endpoint = self.resolve_endpoint_selection(model.endpoint_binding_id)
+            if endpoint.service_generation_digest != model.service_generation_digest:
+                raise PrivateDeploymentDenied("model and endpoint bindings belong to different service generations")
+            if model.model_artifact_id.startswith("existing-model:"):
+                candidates = [receipt for kind, receipt in self._receipts.values()
+                              if kind == "existing-model-tree"
+                              and receipt.artifact_id == model.model_artifact_id
+                              and receipt.tree_manifest_sha256 == model.model_tree_manifest_sha256]
+                if len(candidates) != 1 or not self.resolve_existing_model_tree(candidates[0].observation_handle):
+                    raise PrivateDeploymentDenied("selected existing weights have no unique current source observation")
+            return model
+        except PrivateDeploymentDenied:
+            raise
+        except Exception:
+            raise PrivateDeploymentDenied("protected model binding is absent, stale, or malformed") from None
+
+    def resolve_private_endpoint_receipt(self, receipt_handle: str) -> PrivateEndpointObservation | None:
+        pair = self._receipts.get(receipt_handle)
+        if pair is None or pair[0] != "private-endpoint":
+            return None
+        receipt = pair[1]
+        try:
+            if (self.authority_service.verify_private_memory_observation(receipt)
+                    and self.verify_observation_receipt(receipt)):
+                return receipt
+        except Exception:
+            return None
+        return None
 
     def resolve_selected_private_route(self, **_kwargs: Any) -> Any:
         raise PrivateDeploymentDenied("no signed current private endpoint deployment receipt is enrolled")
@@ -1268,7 +1679,9 @@ def _open_private_child(root_journal: Any, name: str) -> int:
 
 __all__ = [
     "ExistingModelArtifactObservation", "ExistingModelTreeFacts",
-    "RootExistingModelArtifactObserver", "VerifiedExistingModelArtifactObservation",
+    "RootExistingModelArtifactObserver", "RootExistingModelArtifactSelection",
+    "RootExistingModelSelectionRegistry", "RootHeldExistingModelDirectory",
+    "VerifiedExistingModelArtifactObservation",
     "LoopbackListenerObservation",
     "PrivateDeploymentDenied", "PrivateEndpointObservation",
     "PrivateModelDeploymentObservation",
