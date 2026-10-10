@@ -1231,6 +1231,7 @@ class RootNativeAssemblyDefinitions:
     native_schema_records: tuple[Mapping[str, Any], ...]
     native_schema_bytes: tuple[tuple[str, bytes], ...]
     source_issuer_records: tuple[Mapping[str, Any], ...]
+    process_role_records: tuple[Mapping[str, Any], ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
     action_records: tuple[Mapping[str, Any], ...]
     workflow_records: tuple[Mapping[str, Any], ...]
