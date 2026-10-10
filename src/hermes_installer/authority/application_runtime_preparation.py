@@ -118,6 +118,53 @@ class PythonPackageLicenseEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ApplicationBuildBackendRequirements:
+    """Source-observed PEP 517 requirements; not package or license receipts."""
+
+    application_id: str
+    backend: str
+    requirements: tuple[str, ...]
+
+
+_PYTHON_BUILD_BACKENDS: Mapping[str, tuple[str, tuple[str, ...]]] = {
+    "graphify": ("setuptools.build_meta", ("setuptools>=83.0.0",)),
+    "browser-use": ("hatchling.build", ("hatchling==1.32.0",)),
+    "scrapegraph-ai": ("hatchling.build", ("hatchling==1.26.3",)),
+}
+
+
+def inspect_application_build_backend(
+    application_id: str, pyproject_bytes: bytes,
+) -> ApplicationBuildBackendRequirements:
+    """Match the pinned source manifest to its finite reviewed PEP 517 shape.
+
+    This rejects source drift. The returned requirements are deliberately not
+    treated as acquired wheels, a complete backend dependency closure, or a
+    license approval; those need separate root-held package observations.
+    """
+    expected = _PYTHON_BUILD_BACKENDS.get(application_id)
+    if (expected is None or not isinstance(pyproject_bytes, bytes)
+            or not 1 <= len(pyproject_bytes) <= 1024 * 1024):
+        raise ApplicationRuntimePreparationDenied(
+            "application has no finite reviewed Python project build profile")
+    try:
+        project = tomllib.loads(pyproject_bytes.decode("utf-8"))
+        build_system = project.get("build-system")
+        if not isinstance(build_system, dict):
+            raise ValueError
+        backend = build_system.get("build-backend")
+        requirements = build_system.get("requires")
+        if (backend != expected[0] or not isinstance(requirements, list)
+                or tuple(requirements) != expected[1]
+                or any(not isinstance(item, str) for item in requirements)):
+            raise ValueError
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError, TypeError):
+        raise ApplicationRuntimePreparationDenied(
+            "pinned source PEP 517 backend requirements changed or are unsupported") from None
+    return ApplicationBuildBackendRequirements(application_id, backend, tuple(requirements))
+
+
+@dataclass(frozen=True, slots=True)
 class RootApplicationLockedPackageArtifactReceipt:
     receipt_handle: str
     artifact_id: str
