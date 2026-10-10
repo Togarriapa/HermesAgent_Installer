@@ -515,3 +515,8 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] RT-T248.1 Implement exact held policy source and wheel/metadata/notice eligibility issuer with preserved package notices.
 - [ ] RT-T248.2 Implement root-only no-proxy/no-redirect official metadata/file transport, DNS/TLS/currentness/cancellation custody and v244 CAS integration without subprocess network.
 - [ ] VD-T248.3 Verify metadata/license mismatch, unsafe archive, redirect/private DNS/changed hash, deadline/cancel cleanup and all13 genuine selected wheel positives; native/Pi acceptance separately open.
+
+
+### Gateway license policy role correction v248b
+
+Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.

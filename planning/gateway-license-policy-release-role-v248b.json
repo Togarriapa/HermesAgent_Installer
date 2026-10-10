@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "amendment": "v248b",
+  "corrects": "v248 license_policy_source.role only",
+  "source_fact": "Actual installer_release_roles.RELEASE_MEMBER_ROLES has gateway-source-member and no literal source. Do not introduce generic source role.",
+  "policy_source": {
+    "artifact_id": "gateway-locked-wheel-license-policy-v248",
+    "role": "gateway-source-member",
+    "source_path": "plans/amendments/2026-10-10-gateway-wheel-license-transport-v248/gateway-locked-wheel-license-policy-v1.json",
+    "release_path": "source-policies/gateway-locked-wheel-license-policy-v248.json",
+    "sha256": "ae7b23b63b60e839e2f5ee12e4a8125e6fdbf34ae314bc0e1bbed670a4c16340",
+    "size_bytes": 15664,
+    "mode": 292
+  },
+  "scope": "One extra exact finite source-only release row with existing gateway-source-member role. Dedicated license policy resolver verifies held release descriptor/current actor/bytes. Policy row is not an application import/source input, lock, builder or wheel; excluded from v24422 input paths and source/member closures, bound separately by policy_source_receipt_handle/policy_sha256. No root import claim/new enum/generic callback. Other v248 fields/tasks/evidence/guards unchanged.",
+  "tasks": [
+    "RT-T248.1",
+    "RT-T248.2",
+    "VD-T248.3"
+  ],
+  "acceptance": "open"
+}

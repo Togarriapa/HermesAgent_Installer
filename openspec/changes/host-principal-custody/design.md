@@ -425,3 +425,8 @@ Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held 
 ## Gateway license and official acquisition custody v248
 
 Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bounded direct official PyPI transport are defined in `planning/gateway-wheel-license-transport-v248.json`; raw metadata, caller license approval and pip network do not authorize admission. All acceptance remains open.
+
+
+### Gateway license policy role correction v248b
+
+Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.

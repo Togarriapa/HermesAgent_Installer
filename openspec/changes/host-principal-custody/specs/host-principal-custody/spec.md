@@ -1330,3 +1330,13 @@ The system SHALL issue Gateway build dependency receipts only after exact v248 h
 #### Scenario: Exact reviewed wheel has current custody and retained notices
 - **WHEN** the official lock-matching wheel and exact reviewed metadata/notice files pass held policy verification under current selection and bounded transport
 - **THEN** only its issuer-backed CAS FD enters the offline build closure, with no runtime acceptance claim
+
+
+## ADDED Requirements
+
+### Requirement: Gateway license policy has an actual finite release role
+The system SHALL use the exact v248b gateway-source-member policy row and separately bind its held bytes, without adding a generic source role or including policy bytes in the Gateway application input closure.
+
+#### Scenario: Policy source is separately verified
+- **WHEN** the exact reviewed Gateway policy member is reopened through current verified release custody
+- **THEN** its existing source-only role authorizes policy verification only and does not claim an application import or build member

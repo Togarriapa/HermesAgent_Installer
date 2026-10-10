@@ -3780,5 +3780,15 @@
       ]
     },
     "acceptance": "open"
+  },
+  "gateway_license_policy_release_role_v248b": {
+    "contract": "planning/gateway-license-policy-release-role-v248b.json",
+    "amendment": "plans/amendments/2026-10-10-gateway-license-policy-release-role-v248b.md",
+    "tasks": [
+      "RT-T248.1",
+      "RT-T248.2",
+      "VD-T248.3"
+    ],
+    "acceptance": "open"
   }
 }

@@ -248,3 +248,8 @@ v245: `plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md` / `planning/xpra-
 ## Gateway license and acquisition custody v248
 
 Append-only `plans/amendments/2026-10-10-gateway-wheel-license-transport-v248.md` and `planning/gateway-wheel-license-transport-v248.json`; RT-T248.1/.2, VD-T248.3 open. Official exact13 wheel audit is evidence; held exact license policy plus finite root HTTPS custody must produce current receipts before offline build.
+
+
+### Gateway policy role v248b
+
+`planning/gateway-license-policy-release-role-v248b.json` corrects v248 to actual existing gateway-source-member role for its one separately bound policy source; no enum/scope/acceptance change.
