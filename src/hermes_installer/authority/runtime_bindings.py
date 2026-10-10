@@ -147,6 +147,7 @@ class RootRuntimeBindings:
 
     def resolve_public_web_scope(self, enrollment_id: str, generation: str) -> Any:
         selected = self.enrollment_catalog.resolve_public_web_scope(enrollment_id, generation)
+        self._revalidate_public_web_target_selection(selected)
         artifact = self.artifact_catalog.artifacts.get(selected.target_contract_artifact_id)
         if artifact is None or artifact.sha256 != selected.target_contract_sha256:
             raise EnrollmentDenied("public web target contract is absent from the verified artifact catalog")
@@ -158,6 +159,36 @@ class RootRuntimeBindings:
             self.artifact_staging_directory, expected_uid=0,
         )
         return selected
+
+    def _revalidate_public_web_target_selection(self, scope: Any) -> None:
+        """Revalidate a scope against its retained TTY target selection."""
+        from .native_component_targets import (
+            RootNativeComponentTargetRegistry, RootPreparedNativeTargetSelection,
+        )
+
+        registry = self.native_component_target_registry
+        if type(registry) is not RootNativeComponentTargetRegistry:
+            raise EnrollmentDenied("public web target selection registry is unavailable")
+        try:
+            current = registry.resolve_current_target_handle(scope.target_selection_handle)
+        except Exception:
+            raise EnrollmentDenied("public web target selection is no longer current") from None
+        if type(current) is not RootPreparedNativeTargetSelection:
+            raise EnrollmentDenied("public web target selection proof is malformed")
+        if (
+            current.selection_handle != scope.target_selection_handle
+            or current.target_id != scope.target_id
+            or current.profile_id != scope.enrolled_scope.profile_id
+            or current.profile_generation != scope.generation
+            or current.recipient != scope.enrolled_scope.recipient
+            or current.configuration_observation_handle != scope.configuration_observation_handle
+            or current.configuration_sha256 != scope.configuration_sha256
+            or current.target_contract_artifact_id != scope.target_contract_artifact_id
+            or current.target_contract_sha256 != scope.target_contract_sha256
+            or current.target_contract_source_receipt_handle != scope.target_contract_source_receipt_handle
+            or getattr(current, "scope_payload_sha256", None) != scope.scope_payload_sha256
+        ):
+            raise EnrollmentDenied("public web selection differs from its retained target receipt")
 
     def resolve_private_memory_engine_selection(self, selection_id: str, *,
                                                 service_generation_digest: str) -> Mapping[str, Any]:
@@ -180,6 +211,7 @@ class RootRuntimeBindings:
     artifact_staging_directory: Path | None = None
     application_source_receipts: Any | None = None
     application_runtime_receipts: Any | None = None
+    native_component_target_registry: Any | None = None
     # Preserve the digest-verified v128 rows alongside the catalog so callers
     # can inspect selections without reparsing authority.json. Resolution must
     # still go through the catalog methods above, which revalidate currentness.
@@ -1362,6 +1394,7 @@ def build_root_runtime_bindings(
     native_discoveries: Mapping[str, Any] | None = None,
     application_source_receipts: Any | None = None,
     application_runtime_receipts: Any | None = None,
+    native_component_target_registry: Any | None = None,
 ) -> RootRuntimeBindings:
     """Build root handlers only from service-generation records already verified.
 
@@ -1628,6 +1661,7 @@ def build_root_runtime_bindings(
         artifact_staging_directory=Path(enrollment.artifact_staging_directory),
         application_source_receipts=application_source_receipts,
         application_runtime_receipts=application_runtime_receipts,
+        native_component_target_registry=native_component_target_registry,
     )
 
 

@@ -93,6 +93,24 @@ def test_root_runtime_private_memory_getters_forward_only_protected_binding_ids(
     assert bindings.resolve_private_memory_model_binding("model-a", "endpoint-a") is model
 
 
+def test_public_web_scope_metadata_never_works_without_live_target_registry():
+    scope = SimpleNamespace(
+        enrollment_id="web-scope-a", generation="generation-a",
+        target_selection_handle="target-selection-a",
+    )
+    catalog = SimpleNamespace(
+        digest="a" * 64,
+        resolve_public_web_scope=lambda *_: scope,
+    )
+    bindings = RootRuntimeBindings(
+        enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None,
+    )
+    with pytest.raises(EnrollmentDenied, match="target selection registry is unavailable"):
+        bindings.resolve_public_web_scope("web-scope-a", "generation-a")
+
+
 def test_empty_device_and_build_catalogs_fail_only_when_selected():
     from hermes_installer.protected_enrollment import ProtectedBuildCatalog, ProtectedDeviceCatalog
 
