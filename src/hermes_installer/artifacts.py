@@ -38,6 +38,15 @@ CORAL_PACKAGE_SET_ID = "coral-cp39-runtime-v1"
 CORAL_INSTALLER_ARTIFACT_ID = "hermes-installer-artifact-broker-v1"
 
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+_REVIEWED_INSTALLED_MODULE_IDS = frozenset({
+    "installer-module:hermes_installer.authority.local_resource_effects",
+    "installer-module:hermes_installer.authority.native_worker_start_recipe",
+    "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
+    "installer-module:hermes_installer.native_boundary_patch",
+    "installer-module:hermes_installer.native_plugin_bindings",
+    "installer-module:hermes_installer.native_plugin_loader",
+    "installer-module:hermes_installer.registry.resource_backends",
+})
 _VERSION = re.compile(r"[A-Za-z0-9+_.-]{1,128}\Z")
 _HOST = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -1721,7 +1730,8 @@ def _safe_leaf(value: str) -> bool:
 
 
 def _validate_id(value: str) -> None:
-    if not isinstance(value, str) or value in {".", ".."} or not _ID.fullmatch(value):
+    if (not isinstance(value, str) or value in {".", ".."}
+            or not (_ID.fullmatch(value) or value in _REVIEWED_INSTALLED_MODULE_IDS)):
         raise ValueError("catalog identity is invalid")
 
 
