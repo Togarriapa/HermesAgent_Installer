@@ -559,3 +559,59 @@ Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-lo
 Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
 
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Scoped pinned runtime asset redirect
+The system SHALL apply only the v116 exact publicCPython artifact redirect policy, enforcing one302 to the exact officialasset authority with TLS, no credential forwarding, redacted signedquery and actual finalsize/hash. All other artifact NoRedirect defaults SHALL remain unchanged.
+
+#### Scenario: Unexpected redirect destination
+- **WHEN** the response redirects to an unlisted authority, protocol, port or a second hop
+- **THEN** acquisition denies without publishing any runtime artifactreceipt.
+
+### Requirement: Exact pinned PyYAML compatibility package
+The system SHALL permit the v131 exact `_yaml/` and `_yaml/__init__.py` members only for the unchanged pinned installer PyYAML wheel, preserving complete RECORD, archive bounds, isolated site directory and actual import/extension checks.
+
+#### Scenario: Additional unreviewed compatibility member
+- **WHEN** a wheel adds another `_yaml` descendant or fails the exact artifact or RECORD checks
+- **THEN** materialization denies without publishing a runtime receipt.
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created
+
+### Requirement: Qualification root adapter v162
+The installer SHALL isolate fixture publication/session/key authority under the exact observed recipe-owned run root while preserving production constants and source/kernel effect validation.
+
+#### Scenario: Fixture handle is presented to production consumer
+- **WHEN** a qualification session or signed fixture receipt targets production authority
+- **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted

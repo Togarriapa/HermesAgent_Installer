@@ -1,0 +1,3 @@
+# Xpra link target source pin v111
+
+HI-T09/HI-T13 correction: source owner found five link target byte SHA/size validation missing from prior module. Final committed b50c291e moduleSHA3342afa5311fef5008a35317a526c75b3d1531d21e92d1f8aae87dba38b0a7d1,59621bytes independently reopened. Exact target string+byteSHA+size for every original mode120000 row now enforced. Owner official archive staging/overlay verifier succeeded; deterministic tardc9d1af40a8ff456dfc1ba7decc577b50c07fad230e71c2032090df9bcb75710 is source fixture measurement only. Preserve immutable v106/v109. Actual managed build/runtime/acceptance open, baseline unchanged.

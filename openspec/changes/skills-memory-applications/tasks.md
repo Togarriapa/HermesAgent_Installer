@@ -110,3 +110,121 @@ Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected
 Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
 
 Application request source v107: `plans/amendments/2026-10-10-application-request-source-v107.md`; actual finite installer qualification request distinct from absent native application mappings. Existing SK-F03/R0067/R0138/AC12 implementation and acceptance remain open.
+
+Private memory endpoint adapter v108: `plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108.md`; exact distinct private text/embed model/deployment/current consent and bounded protocol producer required. Existing engine lifecycle/semantic memory/acceptance remain open.
+
+Preactive application source and qualification consent v117: `plans/amendments/2026-10-10-preactive-application-source-consent-v117.md`; actual setupsource/lock receipts beforeactive and same explicitchoice finite purposeconsent, operational authorization untouched. Existing application/AC12 gates open.
+
+Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecycle-active-closure-v119.md`; existing lifecycle/capture/semantic acceptance obligations remain open.
+
+- [ ] SK-T119.1: lifecycle authority owner implement active closure prestart registry and current semantic readiness registry; no live setup authorization dependency.
+
+- [ ] SK-T119.2: factory/active publisher preserve actual same-choice purpose-specific memory service enablement and selected receipt closure linkage.
+
+- [ ] SK-T119.3: test stale/revoked enablement, replaced artifact/process, setup expiry, liveness-versus-semantic distinction, unknown engine/route and private provider denial; actual engine semantics/ARM/account acceptance open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
+
+- [ ] SK-T124.1: factory/choice owner implement actual root TTY configuration producer/retained choice and service-enablement registry; no fictitious existing source.
+
+- [ ] SK-T124.2: enrollment/active compiler add exact lifecycle enablement handle and current post-activation projection from actual selected service/source/runtime receipt closure.
+
+- [ ] SK-T124.3: lifecycle owner consume resolver; test default disabled, false user journal, wrong owner/profile/backend, revoke/service replacement and independence from capture/private consent; actual engine/target acceptance open.
+
+Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
+
+- [ ] SK-T125.1: models owner implement actual endpoint/model observation registry from held artifacts/config/runtime/live PIDFD/listener/load evidence and existing provider protocols; no model download or alias-only proof.
+
+- [ ] SK-T125.2: provider/host/factory owner compose typed selected existing-service/model bindings and exact v108 receipt joins; retain unavailable remote/unselected embedding/absent weights facts.
+
+- [ ] SK-T125.3: test wrong alias-to-source mapping, changed config/weights/process/network/boot, false catalog/credential/consent, text-as-embed and probe-only claims; actual weights/ARM/private target/semantic memory acceptance remain open.
+
+Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+- [ ] SK-T127.1: models owner implement existing-root tree observation and explicit service signing injection, source presence separate load/deployment proof.
+
+- [ ] SK-T127.2: factory/owned-root/authority owner implement actual existing-model TTY/root selection retained receipt and finite signer attachment; no arbitrary path/default or copying/download.
+
+- [ ] SK-T127.3: test absent/unowned/writable/missing/hash-changed tree, forged source/selection/member handles, boot/lease/revocation, alias-only load and separately absent embedding; actual pre-existing model/ARM/server proof pending.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.
+
+- [ ] SK-T128.1: host enrollment/runtime owner strict endpoint/model tables/types/getters and exact nonrecursive v108/source/process/route/receipt joins.
+
+- [ ] SK-T128.2: factory/owned-root owner actual staged configuration/existing-tree selection registry resolve/verify/open seam; models observer consumes duplicated held directory only.
+
+- [ ] SK-T128.3: test forged typed objects/unknown IDs/wrong FK/stale enclosing generation and arbitrary relative member/FD; real private endpoint/model/embedding proof open.
+
+Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
+
+- [ ] SK-T130.1: application execution owner implement prepared request/admission path from actual completed preparation/probe/choice/source/lock/fixture, preserve operational active checks.
+
+- [ ] SK-T130.2: runtime preparation owner implement actual isolated source-backed environment producer and fixed installed Python/Node discriminated probe source/receipt; report unavailable toolchain or recipe exactly rather than RuntimeReview substitution.
+
+- [ ] SK-T130.3: factory/source/probe/custody owner wire genuine held runtime/toolchain/root/controller/namespace receipts before request mint; test missing runtime/probe, active-row fabrication, Python-for-Node, stale consent/controller/environment/fixture and arbitrary dispatch denial. All four real workflows/ARM/AC12 open.
+
+- [ ] SK-T132.1 factory: sealed finite runtime preparation/build subject selection and exact template release pin
+
+- [ ] SK-T132.2 build owner: lock-selected genuine offline package closure and finite managed Python/Bun environment build/archive/preparation receipt; preserve missing integrity/toolchain blockers
+
+- [ ] SK-T132.3 build/execution owners: installed independent Python/Node ABI/origin probes, genuine preparation/probe qualification joins, bound/failure/source mismatch tests and actual isolated platform CI; no active row prerequisite
+
+- [ ] HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests
+
+- [ ] SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease
+
+- [ ] SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies
+
+- [ ] SK-T135.1 artifact broker: Enroll exact three blob catalog/source rows, actual release-member receipt association and held-byte observer tests; no weights rows or broad catalog namespace.
+
+- [ ] SK-T135.2 models/factory: Consume exact source/license/README observations in existing-model selection and current directory verification; preserve absent tree/runtime/load/embedding/account evidence as pending.
+
+- [ ] SK-T136.1 factory: Actual same-choice package acquisition phase and fresh purpose resolution; old phase snapshots denied; no repeated routine prompt.
+
+- [ ] SK-T136.2 build owner: Genuine lock-selected dynamic package CAS receipts and license evidence observer, exact TLS/origin/integrity/phase/root retention failures; review actual selected closure licensing before build.
+
+- [ ] SK-T136.3 build/source owners: Fixed noneditable/no-default-groups deployment recipe and actual source/ABI/import-origin/offline tests; keep platform/toolchain gaps explicit.
+
+- [ ] SK-T136.4 models/host authority: Signed supporting source receipt digest and durable exact v135 evidence membership; preserve member digest domain.
+
+- [ ] SK-T139.1 factory/release builder: Pin literal root template in genuine release/source descriptor, implement actual root-held filesystem observer and same normal configuration existing-child model selection; absent/unowned/symlink/writable/root/source mismatch denies.
+
+- [ ] SK-T139.2 models/active publisher: Consume actual root/child/source observations and signed durable selection/current adoption, complete model member verification independent deployment; no arbitrary paths/copies/downloads or inferred embedding.
+
+- [ ] SK-T144.1 app build/source broker: Exact finite Node/Bun source/license/notice catalog selection and held isolated toolchain producer; actual digest/member/currentness failures and no global effects.
+
+- [ ] SK-T144.2 application environment build/probe: Actual offline lock-preserving Bun package closure/build and separate Node/Bun/native origin probe; missing artifact/license/cache/native support exact unavailable prerequisites.
+
+- [ ] SK-T145.1 memory lifecycle/selected startup authority/custody: Fresh status/stop re-admission bound original process receipt with current controller/policy/source/enablement; independent revocation/deadline cleanup via retained PIDFD.
+
+- [ ] SK-T145.2 memory lifecycle integration: Service outlives initial admission; old lease denies, fresh same-process status/stop succeeds, changed generation/PID/revocation denies productive work and cleanup retains exact ownership.
+
+- [ ] SK-T146.1 factory/model selection/consent: Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately.
+
+- [ ] HI-T146.2 native target/factory/enrollment: Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation.
+
+- [ ] SK-T147.1 application build/package broker: Implement exact lock-derived export/active closure comparison and offline require-hashes pip sync with held wheelhouse/no ambient dependencies; preserve original lock and source receipts.
+
+- [ ] SK-T147.2 app source/build/probe: Review exact per-project offline backend/source-wheel stage and genuine observed wheel receipt; full installed env/probe requires project plus complete103 closure where selected, no dependency-only success.
+
+- [ ] SK-T148.1 uv probe/application build: Exact nonreceipt container provenance and production PM/runtime/project proof separation.
+
+- [ ] SK-T150.1 toolchain producer/artifact broker: Implement finite selected-plan-bound64MiB source observer/held FD and actual exact catalog/plan source rows; require current explicit package acquisition choice and exactNode/Bunpolicy.
+
+- [ ] SK-T150.2 toolchain registry/application build: Use genuine observer result instead of disconnected HTTP/CAS path; source/member/plan mismatch negatives and actual isolated executable/version/notice observation.
+
+- [ ] SK-T151.1 host enrollment/factory/active compiler: Replace future runtime-handle active FKs with exact stable endpoint/model binding IDs and protected table/current source joins.
+
+- [ ] SK-T151.2 models/private providers/runtime composer: Observe actual managed endpoint/model deployment after selected startup and resolve stable IDs into current genuine runtime route proofs, no source alias/URI/assertion substitute.
+
+- [ ] SK-T152.1 app build/source broker: Actual separate reviewed backend table source/member observation, finite artifact/license/CAS receipt and complete current backend closure.
+
+- [ ] SK-T152.2 factory/application selection/build/probe: Final backend handle join, isolated actual project wheel frontend/backend/no-network source hook execution and genuine wheel output/install/probe; extra build requirements/source/license/currentness failures deny.
+
+- [ ] SK-T155.1 Broker/release/toolchain producer: exact held finite policy member/current selected dependency joins, no disconnected artifact authority.
+
+- [ ] SK-T157.1 Builder/broker/backend source producer: actual finite backend policy/wheel/license/CAS observer and closure consumer with meaningful denial tests.
+
+- [ ] SK-T161.1 application builder/factory/custody: Implement sealed finite app admission/private FixedBuildProfile/output/service held inputs and one-use setup grant adapter; actual managed runner union/currentness/cleanup/denial tests.
+
+- [ ] SK-T161.2 application builder/source broker: Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts.
