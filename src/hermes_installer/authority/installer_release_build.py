@@ -964,8 +964,7 @@ def _lock_contains_exact_pyyaml(lock: bytes) -> bool:
         return False
     text = lock.decode("utf-8", "strict")
     return (rows.get("pyyaml") == frozenset({"6.0.3"}) and
-            BOOTSTRAP_PYYAML_SHA256 in text and
-            "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl" in text)
+            f"--hash=sha256:{BOOTSTRAP_PYYAML_SHA256}" in text)
 
 
 def _extract_verified_runtime_archive(archive: bytes, destination: Path) -> None:
