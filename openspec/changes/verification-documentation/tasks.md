@@ -154,3 +154,6 @@ Existing `HI-T197.1`/`HI-T197.2`/`VD-T197.4` remain OPEN and include exact durab
 
 
 Existing HI-T197.1/.2/.3, HI-T173.1/178.2 and VD-T197.4 include the exact source producer ownership/order in `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; remain OPEN.
+
+
+Existing `HI-T149.1`/`VD-T196.2` and source integration evidence include `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md`; actual Pi publication/installed-runtime acceptance remains OPEN.

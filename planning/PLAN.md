@@ -114,5 +114,9 @@ Installed startup/qualification custody v197: `plans/amendments/2026-10-10-insta
 
 Existing HI-T197.1/.2 and VD-T197.4: exact durable Xpra adoption and admission/active lifecycle clarification `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; all OPEN.
 
+Home Assistant existing-instance root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md` / `planning/home-assistant-root-enrollment-contract.json`; MC-R0101.1/.2 OPEN. Current root-only instance/token-reference/source selection, harmless MCP discovery/read and strict publication/adoption; preserve HA config and all original account/target acceptance OPEN.
 
 Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; all OPEN.
+
+
+Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.

@@ -129,3 +129,6 @@ Durable Xpra startup adoption v198: `plans/amendments/2026-10-10-durable-xpra-st
 
 
 Finite actual setup/fixture source producers v199: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`. Existing HI197/173/178 tasks require genuine setup protected selection/role producer and distinct child-owned qualification acquisition; no copied stores, caller rows or publication cycle. All acceptance OPEN.
+
+
+Fixed release-store publisher source review v200: `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md`. Existing HI-T149.1 admits only the exact corrected candidate-held publisher metadata and fixed root directory effect; no new pin table/catalog row or acceptance.

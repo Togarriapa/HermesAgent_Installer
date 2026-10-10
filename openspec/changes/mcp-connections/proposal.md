@@ -49,3 +49,5 @@ MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-sch
 Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
 
 Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
+
+Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.

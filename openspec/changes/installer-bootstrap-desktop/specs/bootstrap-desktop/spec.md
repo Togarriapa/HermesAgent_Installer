@@ -819,3 +819,18 @@ The installer SHALL report bootstrap OS failures only through the exact finite s
 #### Scenario: Exact source application remains separate from target success
 - **WHEN** the two reviewed source tuples are applied and source tests pass
 - **THEN** actual candidate publication, installed execution and all original runtime/target acceptance SHALL still require their genuine evidence
+
+
+### Requirement: Fixed release-store publication custody
+
+The installer SHALL create missing fixed release-store children only under the v200 verified root ancestor/predecessor/lock and identity-preserving conflict rules, using actual candidate-held publisher source metadata.
+
+#### Scenario: Fresh fixed publication store
+
+- **WHEN** the actual selected publisher holds current source/build/predecessor custody and only fixed safe release-store children are absent
+- **THEN** it creates and fsyncs those children and continues existing pointer-last publication without changing unrelated paths
+
+#### Scenario: Conflicting or replaced directory
+
+- **WHEN** a fixed ancestor/child is unsafe, linked, foreign or replaced during creation/rollback
+- **THEN** publication denies and preserves the conflict rather than normalizing or deleting a foreign identity
