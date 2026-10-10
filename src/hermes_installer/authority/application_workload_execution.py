@@ -2137,6 +2137,7 @@ class RootApplicationQualificationEffectAuthority:
                     or terminal.service_generation_digest != selection.service_selection_digest
                     or terminal.source_receipt_handle != context.prepared_source_receipt_handle
                     or terminal.runtime_receipt_handle != selection.handle
+                    or terminal.expires_monotonic <= self.authority.service.monotonic()
                     or terminal.state != "completed" or terminal.exit_code != 0 or not terminal.reaped
                     or terminal.cancelled or terminal.timed_out or not terminal.stdin_eof
                     or not isinstance(stdout, bytes) or not isinstance(stderr, bytes)
@@ -2222,7 +2223,9 @@ class RootApplicationQualificationEffectAuthority:
             namespace_selection_receipt_handle=context.namespace_selection_receipt_handle,
             fixture_receipt_handle=context.fixture_receipt_handle,
             issued_monotonic=now,
-            expires_monotonic=min(request.expires_monotonic, resolved.expires_monotonic, now + 30.0),
+            expires_monotonic=min(request.expires_monotonic, resolved.expires_monotonic,
+                selection.expires_monotonic, now + 30.0,
+                *(terminal.expires_monotonic for terminal in terminals)),
             signature="pending")
         unsigned = RootApplicationQualificationEffectReceipt(**fields)
         receipt = RootApplicationQualificationEffectReceipt(**{**unsigned.claims(), "signature":
