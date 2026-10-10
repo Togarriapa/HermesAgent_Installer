@@ -675,3 +675,10 @@ The installer SHALL isolate fixture publication/session/key authority under the 
 #### Scenario: Fixture handle is presented to production consumer
 - **WHEN** a qualification session or signed fixture receipt targets production authority
 - **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted
+
+### Requirement: Health input source delivery v163
+The installer SHALL bind selected health fixture input to the actual started native peer, PRIVATE source context and distinct actual capture/write/EOF/take receipts.
+
+#### Scenario: Captured health source has no completed stdin delivery
+- **WHEN** native input take lacks exact successful write and EOF receipts for the current health peer
+- **THEN** delivery denies and no health success is recorded

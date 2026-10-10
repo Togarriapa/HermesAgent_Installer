@@ -297,3 +297,6 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] SK-T161.2 application builder/source broker: Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts.
 
 - [ ] HI-T162.1 Controller custody/fixture publisher/host authority/entrypoint: genuine finite fixture compiler/key/publication/session/runtime adapter and namespace/currentness negative tests.
+
+- [ ] HI-T163.1 Health/source/authority/custody: genuine selected source/context and health capture/write/EOF/take current-peer joins and negative tests.
+- [ ] HI-T163.2 Broker/release/health: exact source asset enrollment, owned seed cleanup and semantic result gate with required actual provider.
