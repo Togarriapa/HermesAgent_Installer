@@ -17,7 +17,8 @@ class HyperframesInvocationTests(unittest.TestCase):
         self.assertEqual("/owned/envs/hyperframes/bin/hyperframes", invocation.executable)
         self.assertEqual(
             ("render", "-c", "/owned/fixtures/tiny-video/composition.html",
-             "-o", "/owned/work/hyperframes/rendered.mp4"),
+             "-o", "/owned/work/hyperframes/rendered.mp4", "--format", "mp4", "--fps", "24",
+             "--quality", "draft", "--workers", "1", "--no-browser-gpu"),
             invocation.argv,
         )
         self.assertEqual("PRIVATE", invocation.sensitivity)
