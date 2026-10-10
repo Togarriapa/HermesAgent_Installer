@@ -287,6 +287,21 @@ class _ApplicationPackageObservationSigner:
             "package-license", receipt)
 
 
+class _PublicInputPermissionSigner:
+    """Narrow signer facade for the v138 public-web-read permission DTO."""
+
+    __slots__ = ("__service",)
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+
+    def issue_permission(self, permission: Any) -> Any:
+        return self.__service._issue_public_input_permission(permission)
+
+    def verify_permission(self, receipt: Any) -> Any:
+        return self.__service._verify_public_input_permission(receipt)
+
+
 class AuthorityService:
     """One authenticated client request per connection on the fixed socket."""
 
@@ -366,6 +381,8 @@ class AuthorityService:
         self.private_memory_observation_producer = None
         self.application_package_observation_producer = None
         self._application_package_observation_signer = None
+        self.public_input_permission_registry = None
+        self._public_input_permission_signer = None
         self.web_content_artifact_registry = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -629,6 +646,97 @@ class AuthorityService:
             raise
         except Exception:
             raise AuthorityDenied("application.package_observation", "package observation could not be verified") from None
+
+    def attach_root_public_input_permission_registry(self, registry: Any) -> None:
+        """Attach the exact durable public-input permission registry once."""
+        from .root_public_input_permission import RootPublicInputPermissionRegistry
+
+        if (self.public_input_permission_registry is not None
+                or type(registry) is not RootPublicInputPermissionRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "verify_observation_for_authority", None))
+                or not callable(getattr(registry, "retain_authority_signed_observation", None))
+                or not callable(getattr(registry, "verify_permission_membership", None))):
+            raise AuthorityDenied("source.public_permission", "root public-input permission registry is invalid")
+        self.public_input_permission_registry = registry
+
+    def root_public_input_permission_signer(self) -> Any:
+        """Return the only signer for the exact v138 public-input permission DTO."""
+        if self._public_input_permission_signer is None:
+            self._public_input_permission_signer = _PublicInputPermissionSigner(self)
+        return self._public_input_permission_signer
+
+    def _issue_public_input_permission(self, permission: Any) -> Any:
+        from dataclasses import replace
+        from .root_public_input_permission import RootPublicInputPermission
+
+        registry = self.public_input_permission_registry
+        expected_claims = frozenset({
+            "receipt_handle", "consent_id", "purpose", "selection_handle",
+            "principal_id", "profile_id", "namespace_id", "profile_generation",
+            "service_generation_digest", "retained_input_selection_handle",
+            "input_observation_handle", "input_sha256", "web_scope_ids",
+            "web_scope_sha256", "public_recipient_ids", "allowed_operations",
+            "additional_metered_budget_usd", "revocation_epoch", "issued_monotonic",
+            "expires_monotonic",
+        })
+        if (registry is None or type(permission) is not RootPublicInputPermission
+                or not callable(getattr(permission, "claims", None))):
+            raise AuthorityDenied("source.public_permission", "public-input permission candidate is unavailable")
+        try:
+            if registry.verify_observation_for_authority(permission) is not True:
+                raise AuthorityDenied("source.public_permission", "public-input observation or selection is not current")
+            claims = permission.claims()
+            if not isinstance(claims, Mapping) or set(claims) != expected_claims:
+                raise AuthorityDenied("source.public_permission", "public-input permission claims differ from v138 schema")
+            now = self.monotonic()
+            if (permission.purpose != "public-free-web-read"
+                    or permission.allowed_operations != ("plugin.web.read",)
+                    or isinstance(permission.additional_metered_budget_usd, bool)
+                    or not isinstance(permission.additional_metered_budget_usd, (int, float))
+                    or permission.additional_metered_budget_usd != 0.0
+                    or isinstance(permission.issued_monotonic, bool)
+                    or not isinstance(permission.issued_monotonic, (int, float))
+                    or isinstance(permission.expires_monotonic, bool)
+                    or not isinstance(permission.expires_monotonic, (int, float))
+                    or not math.isfinite(permission.issued_monotonic)
+                    or not math.isfinite(permission.expires_monotonic)
+                    or not permission.issued_monotonic <= now < permission.expires_monotonic
+                    or permission.expires_monotonic - permission.issued_monotonic > 30.0):
+                raise AuthorityDenied("source.public_permission", "public-input permission exceeds its fixed purpose")
+            signed = replace(permission, signature=self._sign_root_selected(
+                "root-public-input-permission-v138", claims))
+            if registry.retain_authority_signed_observation(signed) is not True:
+                raise AuthorityDenied("source.public_permission", "signed public-input permission was not retained")
+            return signed
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.public_permission", "public-input permission could not be signed and retained") from None
+
+    def _verify_public_input_permission(self, receipt: Any) -> Any:
+        from .root_public_input_permission import RootPublicInputPermission
+
+        registry = self.public_input_permission_registry
+        if (registry is None or type(receipt) is not RootPublicInputPermission
+                or not isinstance(getattr(receipt, "signature", None), str)
+                or len(receipt.signature) != hashlib.sha256().digest_size * 2
+                or not callable(getattr(receipt, "claims", None))):
+            raise AuthorityDenied("source.public_permission", "public-input permission receipt type is invalid")
+        try:
+            claims = receipt.claims()
+            if (not isinstance(claims, Mapping)
+                    or set(claims) != set(receipt.__dataclass_fields__) - {"signature"}):
+                raise AuthorityDenied("source.public_permission", "public-input permission claims differ from typed schema")
+            self._verify_root_selected_signature(
+                "root-public-input-permission-v138", claims, receipt.signature)
+            if registry.verify_permission_membership(receipt) is not True:
+                raise AuthorityDenied("source.public_permission", "public-input permission is stale or unretained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.public_permission", "public-input permission could not be verified") from None
 
     def attach_web_content_artifact_registry(self, registry: Any) -> None:
         """Attach the exact staged web-content CAS/receipt owner once."""
