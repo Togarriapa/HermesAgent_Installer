@@ -1226,3 +1226,16 @@ The installer SHALL retain actual service NSS, principal/namespace, PM/native cl
 #### Scenario: Current source receipts join active compilation
 - **WHEN** the prepared catalog is dormant and a selected worker/local policy is complete
 - **THEN** the pure root renderer derives actual service/process/effect rows and keeps the aggregate nonactive until the same current publication and enrollment CAS commit
+
+## ADDED Requirements
+
+### Requirement: Genuine selected root service process authority
+The installer SHALL implement planning/root-service-process-authority-lane-v236.json with a separately selected source-reviewed root-service six-operation declaration and exact current typed task/health/control admission issuer. Local owner capabilities SHALL retain their actual selected overlay ceiling, and complete service identity/process rule/currentness/kernel checks SHALL remain mandatory.
+
+#### Scenario: Root admitted worker starts under distinct process policy
+- **WHEN** actual source-selected process declarations and retained root task or health admissions join the current protected worker service/namespace/runtime/home generation
+- **THEN** a fresh one-use root-process proof is consumed before the exact managed worker effect while the local socket user gains no process or unrelated effect capability
+
+#### Scenario: Process source or issuer is incomplete
+- **WHEN** any of the six reviewed operation targets, exact rule/handler/schema joins, current root admission or consumed proof is missing, foreign, altered or stale
+- **THEN** active enrollment/start fails with the exact prerequisite and no fabricated usercaps, relaxed validation, uid0 allow or copied launchproof substitute

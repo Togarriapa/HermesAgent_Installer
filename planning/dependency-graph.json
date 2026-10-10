@@ -3487,5 +3487,24 @@
       ]
     },
     "acceptance": "All AC01..18 OPEN; implementation and target evidence separate"
+  },
+  "root_service_process_authority_lane_v236": {
+    "contract": "planning/root-service-process-authority-lane-v236.json",
+    "tasks": {
+      "HI-T236.1": [
+        "HI-T09"
+      ],
+      "HI-T236.2": [
+        "HI-T236.1"
+      ],
+      "VD-T236.3": [
+        "HI-T236.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN",
+    "unblocks": [
+      "HI-T231.1",
+      "BD-T231.2"
+    ]
   }
 }

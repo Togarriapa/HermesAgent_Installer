@@ -483,3 +483,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actual effects separately.
 
 - [ ] HI-T231.1 (v231): Retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication. Genuine pipeline/failure evidence VD-T231.3 and target acceptance separately OPEN.
+
+- [ ] HI-T236.1: Produce actual selected reviewed six-operation process declaration and strict protected root-service process binding separately from local user overlay caps.
+- [ ] HI-T236.2: Integrate typed current source/task/health/control process admission and one-use consume into actual root manager paths; preserve all kernel and child authority checks.
+- [ ] VD-T236.3: Verify strict dual domain enrollment plus genuine task/health process effects, unchanged user ceiling and replay/currentness/sibling isolation failures; target acceptance separate.
