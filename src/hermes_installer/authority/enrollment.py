@@ -346,6 +346,7 @@ class NativeBridgeEnrollment:
     provider_enrollment_id: str
     target: str
     recipient: str
+    observer_delivery_bindings: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +360,16 @@ class SourceIssuerRecord:
     generation: str
     observer_enrollment_id: str
     source_action_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RootObserverDeliveryBinding:
+    observer_enrollment_id: str
+    delivery_role: str
+
+
+# Compatibility name used by the strict authority configuration parser.
+ProtectedObserverDeliveryBinding = RootObserverDeliveryBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,9 +401,15 @@ class ProtectedEnrollment:
     remote_session_records: tuple[Mapping[str, Any], ...]
     resource_backend_enrollment_records: tuple[Mapping[str, Any], ...]
     resource_body_recipe_records: tuple[Mapping[str, Any], ...]
-    resource_scope_binding_records: tuple[Mapping[str, Any], ...]
-    resource_validator_records: tuple[Mapping[str, Any], ...]
-    root_journal_root_records: tuple[Mapping[str, Any], ...]
+    resource_scope_binding_records: tuple[Mapping[str, Any], ...] = ()
+    resource_validator_records: tuple[Mapping[str, Any], ...] = ()
+    root_journal_root_records: tuple[Mapping[str, Any], ...] = ()
+    native_mcp_tool_binding_records: tuple[Mapping[str, Any], ...] = ()
+    resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
+    remote_observation_records: tuple[Mapping[str, Any], ...] = ()
+    native_schema_artifact_records: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollment_records: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_binding_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -446,6 +463,160 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
     return tuple(result)
 
 
+def _parse_observer_delivery_bindings(
+    value: Any, *, source_issuers: tuple[SourceIssuerRecord, ...],
+    peer_generations: Mapping[str, str],
+) -> tuple[RootObserverDeliveryBinding, ...]:
+    """Parse bridge target-role selectors and join each observer to a bridge peer."""
+    if not isinstance(value, list) or len(value) > 128:
+        raise AuthorityDenied("enrollment.native_bridge", "native observer delivery bindings are malformed")
+    issuers = {row.observer_enrollment_id: row for row in source_issuers}
+    selected: list[RootObserverDeliveryBinding] = []
+    seen: set[str] = set()
+    for raw in value:
+        try:
+            item = _exact(raw, {"observer_enrollment_id", "delivery_role"},
+                          "native observer delivery binding")
+            observer_id = _read_id(item["observer_enrollment_id"], "observer enrollment ID")
+            role = item["delivery_role"]
+            issuer = issuers.get(observer_id)
+            if (role not in {"producer", "gateway"} or issuer is None
+                    or observer_id in seen
+                    or peer_generations.get(issuer.producer_profile_id) != issuer.generation):
+                raise ValueError("observer delivery target or peer join is invalid")
+            seen.add(observer_id)
+            selected.append(RootObserverDeliveryBinding(observer_id, role))
+        except (TypeError, ValueError, AuthorityDenied):
+            raise AuthorityDenied(
+                "enrollment.native_bridge",
+                "native observer delivery binding is not joined to a current bridge peer",
+            ) from None
+    return tuple(selected)
+
+
+def _parse_native_schema_artifact_records(value: Any) -> tuple[Mapping[str, Any], ...]:
+    """Validate active native schema artifact references without trusting receipt labels."""
+    if not isinstance(value, list) or len(value) > 4096:
+        raise AuthorityDenied("enrollment.generation", "native schema artifact catalog is invalid")
+    fields = {"id", "artifact_id", "sha256", "schema_kind", "native_package_id",
+              "native_package_generation", "adapter_id", "action_id", "source_receipt_handle"}
+    records: list[Mapping[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+    for raw in value:
+        item = _exact(raw, fields, "native schema artifact")
+        schema_id = _read_id(item["id"], "native schema ID")
+        artifact_id = _read_id(item["artifact_id"], "native schema artifact ID")
+        package_id = _read_id(item["native_package_id"], "native schema package ID")
+        generation = _read_id(item["native_package_generation"], "native schema package generation")
+        adapter_id = _read_id(item["adapter_id"], "native schema adapter ID")
+        action_id = _read_id(item["action_id"], "native schema action ID")
+        source_receipt = _read_id(item["source_receipt_handle"], "native schema source receipt")
+        digest = item["sha256"]
+        kind = item["schema_kind"]
+        if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or kind not in {"arguments", "result"}):
+            raise AuthorityDenied("enrollment.generation", "native schema artifact digest or kind is invalid")
+        identity = (schema_id, package_id, generation, adapter_id, action_id, kind)
+        if identity in seen:
+            raise AuthorityDenied("enrollment.generation", "native schema artifact binding is duplicated")
+        seen.add(identity)
+        records.append(MappingProxyType({
+            "id": schema_id, "artifact_id": artifact_id, "sha256": digest,
+            "schema_kind": kind, "native_package_id": package_id,
+            "native_package_generation": generation, "adapter_id": adapter_id,
+            "action_id": action_id, "source_receipt_handle": source_receipt,
+        }))
+    return tuple(records)
+
+
+def _parse_composio_channel_enrollment_records(value: Any) -> tuple[Mapping[str, Any], ...]:
+    """Strictly retain digest-covered WhatsApp Composio selections."""
+    if not isinstance(value, list) or len(value) > 1024:
+        raise AuthorityDenied("enrollment.generation", "Composio channel enrollment catalog is invalid")
+    fields = {
+        "id", "channel_resource_id", "resource_generation", "profile_id", "controller_role_id",
+        "source_issuer_id", "composio_enrollment_id", "composio_user_id", "connected_account_id",
+        "auth_config_id", "toolkit_version", "trigger_artifact_id", "trigger_artifact_sha256",
+        "trigger_slug", "trigger_instance_id", "webhook_subscription_id",
+        "webhook_route_enrollment_id", "webhook_secret_reference_id", "allowed_user_numbers",
+        "payload_field_bindings", "max_event_age_seconds", "account_receipt_handle",
+        "setup_receipt_handle",
+    }
+    rows: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    binding_fields = {"sender_number", "message_id", "message_text", "event_timestamp"}
+    for raw in value:
+        item = _exact(raw, fields, "Composio channel enrollment")
+        row_id = _read_id(item["id"], "Composio channel enrollment ID")
+        if row_id in seen:
+            raise AuthorityDenied("enrollment.generation", "Composio channel enrollment is duplicated")
+        seen.add(row_id)
+        id_fields = fields - {"trigger_artifact_sha256", "toolkit_version", "trigger_slug",
+                              "allowed_user_numbers", "payload_field_bindings", "max_event_age_seconds"}
+        clean = {name: _read_id(item[name], f"Composio {name}") for name in id_fields}
+        if item["toolkit_version"] != "20260721_00":
+            raise AuthorityDenied("enrollment.generation", "Composio toolkit version is not the pinned selection")
+        slug = item["trigger_slug"]
+        if (not isinstance(slug, str) or not 1 <= len(slug) <= 256
+                or any(ord(ch) < 0x21 or ord(ch) > 0x7e for ch in slug)):
+            raise AuthorityDenied("enrollment.generation", "Composio trigger slug is invalid")
+        digest = item["trigger_artifact_sha256"]
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise AuthorityDenied("enrollment.generation", "Composio trigger artifact digest is invalid")
+        numbers = item["allowed_user_numbers"]
+        if (not isinstance(numbers, list) or not 1 <= len(numbers) <= 256
+                or any(not isinstance(number, str) or not re.fullmatch(r"\+[1-9][0-9]{1,14}", number)
+                       for number in numbers) or len(set(numbers)) != len(numbers)):
+            raise AuthorityDenied("enrollment.generation", "Composio sender allowlist is invalid")
+        raw_bindings = item["payload_field_bindings"]
+        if not isinstance(raw_bindings, dict) or set(raw_bindings) != binding_fields:
+            raise AuthorityDenied("enrollment.generation", "Composio payload field bindings are invalid")
+        bindings: dict[str, tuple[str, ...]] = {}
+        for name in sorted(binding_fields):
+            selected = raw_bindings[name]
+            if (not isinstance(selected, list) or not 1 <= len(selected) <= 8
+                    or any(not isinstance(field, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,127}", field)
+                           for field in selected) or len(set(selected)) != len(selected)):
+                raise AuthorityDenied("enrollment.generation", "Composio payload field binding is invalid")
+            bindings[name] = tuple(selected)
+        max_age = item["max_event_age_seconds"]
+        if type(max_age) is not int or not 1 <= max_age <= 300:
+            raise AuthorityDenied("enrollment.generation", "Composio event freshness bound is invalid")
+        rows.append(MappingProxyType({
+            **clean, "toolkit_version": item["toolkit_version"], "trigger_slug": slug,
+            "trigger_artifact_sha256": digest, "allowed_user_numbers": tuple(numbers),
+            "payload_field_bindings": MappingProxyType(bindings), "max_event_age_seconds": max_age,
+        }))
+    return tuple(rows)
+
+
+def _parse_channel_delivery_binding_records(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list) or len(value) > 1024:
+        raise AuthorityDenied("enrollment.generation", "channel delivery binding catalog is invalid")
+    fields = {"id", "profile_id", "process_generation", "native_package_id",
+              "native_package_generation", "authority_endpoint_id", "allowed_channel_ingress_ids",
+              "source_observer_enrollment_ids", "generation"}
+    result: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for raw in value:
+        row = _exact(raw, fields, "channel delivery binding")
+        clean = {name: _read_id(row[name], f"channel delivery {name}")
+                 for name in fields - {"allowed_channel_ingress_ids", "source_observer_enrollment_ids"}}
+        if clean["id"] in seen:
+            raise AuthorityDenied("enrollment.generation", "channel delivery binding is duplicated")
+        seen.add(clean["id"])
+        lists: dict[str, tuple[str, ...]] = {}
+        for name in ("allowed_channel_ingress_ids", "source_observer_enrollment_ids"):
+            selected = row[name]
+            if (not isinstance(selected, list) or not 1 <= len(selected) <= 16
+                    or any(not isinstance(item, str) for item in selected)
+                    or len(set(selected)) != len(selected)):
+                raise AuthorityDenied("enrollment.generation", "channel delivery selection list is invalid")
+            lists[name] = tuple(_read_id(item, f"channel delivery {name} item") for item in selected)
+        result.append(MappingProxyType({**clean, **lists}))
+    return tuple(result)
+
+
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
@@ -453,7 +624,9 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-            "root_journal_roots",
+            "root_journal_roots", "resource_controller_roles",
+            "native_mcp_tool_bindings", "remote_observation_enrollments",
+            "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -470,12 +643,94 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot digest does not match")
     list_fields = ("service_records", "protected_devices", "protected_build_records",
                    "native_packages", "memory_enrollments", "operation_parameter_schemas",
-                   "source_issuers")
+                   "source_issuers", "native_mcp_tool_bindings",
+                   "resource_controller_roles", "remote_observation_enrollments")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
+    composio_channel_records = _parse_composio_channel_enrollment_records(
+        item["composio_channel_enrollments"],
+    )
+    channel_delivery_records = _parse_channel_delivery_binding_records(item["channel_delivery_bindings"])
+    native_mcp_fields = {
+        "id", "profile_id", "process_generation", "native_package_id",
+        "native_package_generation", "native_server_name", "native_tool_name",
+        "native_schema_sha256", "mcp_enrollment_id", "mcp_generation",
+        "mcp_tool_name", "request_schema_id", "result_schema_id", "effect_operation",
+        "effect_target", "capability", "recipient", "scope_bindings",
+        "handler_artifact_id", "handler_artifact_sha256",
+    }
+    native_mcp_ids: set[str] = set()
+    native_mcp_action_keys: set[tuple[str, str, str]] = set()
+    for row in item["native_mcp_tool_bindings"]:
+        binding = _exact(row, native_mcp_fields, "native MCP tool binding")
+        binding_id = _read_id(binding["id"], "native MCP binding ID")
+        if binding_id in native_mcp_ids:
+            raise AuthorityDenied("enrollment.generation", "native MCP binding ID is duplicated")
+        native_mcp_ids.add(binding_id)
+        for field in (native_mcp_fields - {"native_schema_sha256", "handler_artifact_sha256",
+                                           "native_server_name", "native_tool_name", "mcp_tool_name",
+                                           "effect_operation", "recipient", "scope_bindings"}):
+            _read_id(binding[field], f"native MCP {field}")
+        for field in ("native_schema_sha256", "handler_artifact_sha256"):
+            if not isinstance(binding[field], str) or not re.fullmatch(r"[0-9a-f]{64}", binding[field]):
+                raise AuthorityDenied("enrollment.generation", "native MCP digest is malformed")
+        if (not isinstance(binding["native_server_name"], str)
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,62}", binding["native_server_name"])
+                or any(not isinstance(binding[field], str) or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}", binding[field])
+                       for field in ("native_tool_name", "mcp_tool_name"))
+                or binding["effect_operation"] not in {"mcp.request", "mcp.stdio"}
+                or binding["recipient"] is not None):
+            raise AuthorityDenied("enrollment.generation", "native MCP tool identity is malformed")
+        key = (binding["profile_id"], binding["process_generation"], binding["native_tool_name"])
+        if key in native_mcp_action_keys:
+            raise AuthorityDenied("enrollment.generation", "native MCP tool selection is duplicated")
+        native_mcp_action_keys.add(key)
+        scopes = binding["scope_bindings"]
+        if not isinstance(scopes, list) or not 1 <= len(scopes) <= 64:
+            raise AuthorityDenied("enrollment.generation", "native MCP scope bindings are malformed")
+        names: set[str] = set()
+        selected_resources: set[str] = set()
+        for raw_scope in scopes:
+            scope = _exact(raw_scope, {"argument_field", "selected_resource_id"}, "native MCP scope binding")
+            name = _read_id(scope["argument_field"], "native MCP argument field")
+            selected = _read_id(scope["selected_resource_id"], "native MCP selected resource")
+            if name in names or selected in selected_resources:
+                raise AuthorityDenied("enrollment.generation", "native MCP scope binding is duplicated")
+            names.add(name)
+            selected_resources.add(selected)
+    controller_fields = {"id", "controller_kind", "daemon_unit_id", "daemon_executable_artifact_id",
+                         "daemon_executable_sha256", "role_module_artifact_id", "role_module_sha256",
+                         "controller_generation", "source_observer_enrollment_ids",
+                         "allowed_backend_enrollment_ids", "allowed_operations", "max_lease_seconds"}
+    controller_ids: set[str] = set()
+    for row in item["resource_controller_roles"]:
+        controller = _exact(row, controller_fields, "resource controller role")
+        controller_id = _read_id(controller["id"], "resource controller ID")
+        if controller_id in controller_ids:
+            raise AuthorityDenied("enrollment.generation", "resource controller role is duplicated")
+        controller_ids.add(controller_id)
+        for field in ("daemon_unit_id", "daemon_executable_artifact_id", "role_module_artifact_id",
+                      "controller_generation"):
+            _read_id(controller[field], f"resource controller {field}")
+        if (controller["controller_kind"] not in {"worker", "root-scheduler", "root-webhook", "root-channel"}
+                or any(not isinstance(controller[field], str) or not re.fullmatch(r"[0-9a-f]{64}", controller[field])
+                       for field in ("daemon_executable_sha256", "role_module_sha256"))
+                or type(controller["max_lease_seconds"]) is not int
+                or not 1 <= controller["max_lease_seconds"] <= 600):
+            raise AuthorityDenied("enrollment.generation", "resource controller role is malformed")
+        for field in ("source_observer_enrollment_ids", "allowed_backend_enrollment_ids", "allowed_operations"):
+            values = controller[field]
+            if (not isinstance(values, list) or len(values) > 128
+                    or any(not isinstance(value, str) for value in values)
+                    or len(values) != len(set(values))):
+                raise AuthorityDenied("enrollment.generation", "resource controller role lists are malformed")
+            for value in values:
+                _read_id(value, f"resource controller {field}")
     jobs = item["resource_jobs"]
     if (not isinstance(jobs, list) or len(jobs) > 692
             or any(not isinstance(row, dict) for row in jobs)):
@@ -667,6 +922,44 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         except (TypeError, ValueError, AuthorityDenied):
             raise AuthorityDenied("enrollment.generation", "protected remote session record is malformed") from None
         seen_remote_ids.add(remote_id)
+    observation_rows = item["remote_observation_enrollments"]
+    if (not isinstance(observation_rows, list) or len(observation_rows) > 128
+            or any(not isinstance(row, dict) for row in observation_rows)):
+        raise AuthorityDenied("enrollment.generation", "protected remote observation catalog is invalid")
+    remote_by_id = {row["id"]: row for row in remote_rows}
+    observation_fields = {"id", "remote_enrollment_id", "gateway_listener_port",
+                          "native_window_enrollment_id", "display_server_profile_id",
+                          "display_server_generation", "display_name", "xauthority_receipt_handle"}
+    observation_ids: set[str] = set()
+    selected_remote_ids: set[str] = set()
+    for row in observation_rows:
+        observation = _exact(row, observation_fields, "remote observation selection")
+        observation_id = _read_id(observation["id"], "remote observation ID")
+        remote_id = _read_id(observation["remote_enrollment_id"], "remote observation enrollment")
+        native_window_id = _read_id(observation["native_window_enrollment_id"], "native window enrollment")
+        _read_id(observation["display_server_profile_id"], "display server profile")
+        _read_id(observation["display_server_generation"], "display server generation")
+        _read_id(observation["display_name"], "selected display name")
+        _read_id(observation["xauthority_receipt_handle"], "Xauthority receipt handle")
+        port = observation["gateway_listener_port"]
+        remote = remote_by_id.get(remote_id)
+        native_service_rows = [service for service in item["service_records"]
+                               if service.get("profile_id") == (remote or {}).get("native_desktop_profile_id")
+                               and service.get("generation") == (remote or {}).get("native_generation")]
+        display_service_rows = [service for service in item["service_records"]
+                                if service.get("profile_id") == observation["display_server_profile_id"]
+                                and service.get("generation") == observation["display_server_generation"]]
+        if (observation_id in observation_ids or remote_id in selected_remote_ids or remote is None
+                or type(port) is not int or not 1 <= port <= 65535
+                or len(native_service_rows) != 1 or len(display_service_rows) != 1
+                or native_window_id != native_service_rows[0].get("enrollment_id")
+                or observation["display_server_profile_id"] == remote["native_desktop_profile_id"]
+                or not observation["display_name"].strip()
+                or len(observation["display_name"]) > 128
+                or any(ord(char) < 0x20 for char in observation["display_name"])):
+            raise AuthorityDenied("enrollment.generation", "remote observation selection is malformed or stale")
+        observation_ids.add(observation_id)
+        selected_remote_ids.add(remote_id)
     backend_rows = item["resource_backend_enrollments"]
     if (not isinstance(backend_rows, list) or len(backend_rows) > 692
             or any(not isinstance(row, dict) for row in backend_rows)):
@@ -678,7 +971,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         "approved_action_ids", "operation", "target_id", "recipient",
         "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
         "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
-        "profile_generation", "execution_binding",
+        "profile_generation", "execution_binding", "credential_bindings",
     }
     seen_backend_ids: set[str] = set()
     for row in backend_rows:
@@ -690,7 +983,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
         for name in (backend_fields - {"handler_sha256", "approved_action_ids",
                                        "credential_reference_ids", "maximum_request_bytes",
                                        "maximum_response_bytes", "maximum_seconds", "recipient",
-                                       "execution_binding"}):
+                                       "execution_binding", "credential_bindings"}):
             _read_id(backend[name], f"resource backend {name}")
         if (not isinstance(backend["handler_sha256"], str)
                 or not re.fullmatch(r"[0-9a-f]{64}", backend["handler_sha256"])
@@ -712,6 +1005,22 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             raise AuthorityDenied("enrollment.generation", "protected resource backend bounds are invalid")
         for action in backend["approved_action_ids"]:
             _read_id(action, "resource backend action ID")
+        credential_bindings = backend["credential_bindings"]
+        if (not isinstance(credential_bindings, list) or len(credential_bindings) > 16
+                or any(not isinstance(binding, dict) for binding in credential_bindings)):
+            raise AuthorityDenied("enrollment.generation", "resource backend credential bindings are malformed")
+        placeholders: set[str] = set()
+        allowed_usage = {"webhook-hmac-verify", "channel-account", "backend-account"}
+        allowed_refs = set(backend["credential_reference_ids"])
+        for raw_binding in credential_bindings:
+            binding = _exact(raw_binding, {"source_placeholder", "credential_reference_id", "usage"},
+                             "resource credential binding")
+            placeholder = _read_id(binding["source_placeholder"], "resource credential placeholder")
+            reference, usage = binding["credential_reference_id"], binding["usage"]
+            if (placeholder in placeholders or not _is_credential_reference(reference)
+                    or reference not in allowed_refs or usage not in allowed_usage):
+                raise AuthorityDenied("enrollment.generation", "resource credential binding is invalid")
+            placeholders.add(placeholder)
         if backend["recipient"] is not None:
             _read_id(backend["recipient"], "resource backend recipient")
         execution = backend["execution_binding"]
@@ -1151,7 +1460,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                             "normalization_policy_id", "normalization_policy_sha256",
                             "normalization_policy_revision", "route_schema_id",
                             "output_limit_mode", "output_limit_ceiling",
-                            "approved_operation"}, "native bridge")
+                            "approved_operation", "observer_delivery_bindings"}, "native bridge")
         bridge_id = _read_id(item["id"], "native bridge ID")
         producer_id = _read_id(item["producer_profile_id"], "native producer profile")
         gateway_id = _read_id(item["gateway_profile_id"], "native gateway profile")
@@ -1180,6 +1489,11 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                 or producer_binding.uid != producer.owner_uid
                 or gateway_binding.uid != gateway.owner_uid):
             raise AuthorityDenied("enrollment.native_bridge", "native bridge identity or canonicalizer binding is invalid")
+        delivery_bindings = _parse_observer_delivery_bindings(
+            item["observer_delivery_bindings"],
+            source_issuers=_parse_source_issuers(service_generations["source_issuers"]),
+            peer_generations={producer_id: producer.generation, gateway_id: gateway.generation},
+        )
         provider_routes = [route for route in catalogs["provider_enrollments"].values()
                            if route["principal_id"] == producer_binding.principal_id]
         if len(provider_routes) != 1 or "provider-dispatch" not in producer_binding.capabilities:
@@ -1246,6 +1560,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             output_limit_mode=limit_mode, output_limit_ceiling=output_ceiling,
             approved_operation="provider.dispatch", provider_enrollment_id=route["id"],
             target=provider_target, recipient=provider_recipient,
+            observer_delivery_bindings=tuple(delivery_bindings),
         )
         bridge_pairs.add(pair)
     mcp_bindings: dict[str, Any] = {}
@@ -1394,6 +1709,12 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_scope_bindings"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["resource_validators"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["root_journal_roots"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["native_mcp_tool_bindings"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["resource_controller_roles"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["remote_observation_enrollments"]),
+        tuple(native_schema_records),
+        tuple(composio_channel_records),
+        tuple(channel_delivery_records),
     )
 
 

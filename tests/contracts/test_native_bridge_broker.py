@@ -183,7 +183,7 @@ class NativeBridgeBrokerContracts(unittest.TestCase):
             for fd in (producer_read, producer_write, gateway_read, gateway_write):
                 os.close(fd)
 
-    def test_worker_submitted_request_is_not_promoted_to_observed_source(self):
+    def test_worker_submitted_request_without_retained_root_input_is_denied(self):
         producer = PrincipalBinding(1201, "principal:producer", "profile:producer",
                                     "namespace:producer", frozenset({"provider-inference"}))
         gateway = PrincipalBinding(1202, "principal:gateway", "profile:gateway",
@@ -250,7 +250,7 @@ class NativeBridgeBrokerContracts(unittest.TestCase):
                 "parent_receipt_handles": [], "purpose": "native-hermes-chat",
                     "intent_id": "intent:fixture", "trace_id": "trace:fixture", "retry_index": 0,
                     }, cancelled=lambda: False)
-            self.assertEqual(denied.exception.code, "native.observer_unavailable")
+            self.assertEqual(denied.exception.code, "native.lineage")
             self.assertEqual(outbound, [])
             self.assertEqual(service._source_receipt_handles, {})
         finally:

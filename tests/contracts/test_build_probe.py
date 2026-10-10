@@ -72,6 +72,7 @@ class ProbeLauncher:
             generation=self.changes.get("generation", "build-generation-1"),
             uid=os.getuid(), gid=os.getgid(), pid=422, start_ticks=1235,
             exit_code=self.changes.get("exit_code", 0), cleanup_verified=self.changes.get("cleanup", True),
+            startup_gate_verified=self.changes.get("startup_gate_verified", True),
             cgroup_id="/system.slice/probe-1.service", mount_namespace_inode=201,
             network_namespace_inode=202, output_root_id=inputs.output_root_id,
             output_root_device=root_info.st_dev, output_root_inode=root_info.st_ino,
@@ -114,6 +115,7 @@ def test_probe_returns_runtime_facts_and_signed_receipt_material_only_after_veri
     {"build_process_identity_digest": "d" * 64},
     {"exit_code": 1},
     {"cleanup": False},
+    {"startup_gate_verified": False},
     {"stdout": b"not-json"},
     {"stdout": b'{"python_version":"3.9.25","python_version":"3.9.25"}'},
 ])

@@ -55,6 +55,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             service_profile_id="hermes-profile", principal_id="hermes-service",
             generation_id="root-generation-1", source_artifact_id="hermes-source",
             records=({"label": "café"},),
+            resource_controller_roles=(), native_mcp_tool_bindings=(),
+            remote_observation_enrollments=(),
         ))
         self.assertEqual(_validate_service_generations(snapshot), snapshot)
         self.assertEqual(set(snapshot), {
@@ -64,6 +66,8 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "remote_session_enrollments", "resource_backend_enrollments",
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
             "root_journal_roots",
+            "resource_controller_roles", "native_mcp_tool_bindings",
+            "remote_observation_enrollments",
             "generation_digest",
         })
         expected = hashlib.sha256(json.dumps(
@@ -257,10 +261,16 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
                 InstalledRootSetupPlanResolver().resolve("installer-root-setup-plan-v1")
 
     def test_incomplete_root_policy_is_rejected(self):
-        policy = EnrollmentPolicy("profile", "principal", "generation", "source", ())
+        policy = EnrollmentPolicy("profile", "principal", "generation", "source", (),
+                                  resource_controller_roles=(), native_mcp_tool_bindings=(),
+                                  remote_observation_enrollments=())
         with self.assertRaises(BootstrapEnrollmentError):
             _validate_policy(policy)
-        without_source = EnrollmentPolicy("profile", "principal", "generation", "", ({"row": 1},))
+        without_source = EnrollmentPolicy(
+            "profile", "principal", "generation", "", (),
+            resource_controller_roles=(), native_mcp_tool_bindings=(),
+            remote_observation_enrollments=(),
+        )
         with self.assertRaises(BootstrapEnrollmentError):
             _validate_policy(without_source)
 
@@ -484,6 +494,8 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
                 service_profile_id="hermes-profile", principal_id="hermes-service",
                 generation_id="fixture-generation-" + phase["value"] + "-" + fixture_id,
                 source_artifact_id="hermes-fixture-source", records=(),
+                resource_controller_roles=(), native_mcp_tool_bindings=(),
+                remote_observation_enrollments=(),
                 authority_base=base_authority,
                 operation_parameter_schemas=({"id": "fixture-parameters", "fields": []},),
                 activation_state=phase["value"],

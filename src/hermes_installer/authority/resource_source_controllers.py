@@ -41,6 +41,13 @@ _MAX_ROOT_EVENT_COUNT = 256
 _MAX_ROOT_EVENT_BYTES = 8 * 1024 * 1024
 _MAX_ROOT_EVENT_IDS_PER_EPOCH = 100_000
 _MAX_EVENT_LEASE_SECONDS = 600
+_INGRESS_CAPTURE_SCHEMA_ID = "resource-ingress-capture-v1"
+_INGRESS_CAPTURE_SCHEMA_SHA256 = "0a0c8d71b58cbc04d65309003a65701b0dfb1e57a9931c5a96356f5c647609b1"
+_INGRESS_ENVELOPE_FIELDS = frozenset({
+    "schema", "kind", "resource_id", "resource_generation", "profile_id",
+    "controller_proof_handle", "raw_observation_handle", "raw_payload_sha256",
+    "event_data", "observed_monotonic", "replay_key_sha256",
+})
 
 
 def _identifier(value: Any) -> bool:
@@ -73,6 +80,75 @@ def _event_fields_from_payload(payload: bytes) -> Mapping[str, Any]:
     if not isinstance(decoded, dict) or len(decoded) > 64:
         raise AuthorityDenied("resource.event", "observed event fields are outside the supported object bound")
     return MappingProxyType(decoded)
+
+
+def _validate_ingress_envelope(
+    payload: bytes, *, expected_kind: str, expected_resource_id: str,
+    expected_generation: str, expected_profile_id: str,
+    expected_controller_handle: str | None, expected_raw_handle: str | None,
+    expected_raw_sha256: str | None, expected_replay_sha256: str | None,
+    expected_observed: float | None, expected_event_data: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
+    """Validate the exact canonical root envelope against retained raw proof."""
+    from .types import canonical_bytes
+    if (not isinstance(payload, bytes) or not 1 <= len(payload) <= 1_048_576
+            or expected_event_data is None):
+        raise AuthorityDenied("resource.ingress", "canonical ingress envelope is outside its bound")
+    try:
+        decoded = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=lambda pairs: _unique_json_pairs(pairs),
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("non-finite number")),
+        )
+    except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError):
+        raise AuthorityDenied("resource.ingress", "canonical ingress envelope is malformed") from None
+    key_count = [0]
+    if not _bounded_event_json(decoded, depth=0, key_count=key_count):
+        raise AuthorityDenied("resource.ingress", "canonical ingress envelope exceeds JSON bounds")
+    if (not isinstance(decoded, dict) or set(decoded) != _INGRESS_ENVELOPE_FIELDS
+            or canonical_bytes(decoded) != payload
+            or decoded.get("schema") != 1
+            or decoded.get("kind") != expected_kind
+            or decoded.get("resource_id") != expected_resource_id
+            or decoded.get("resource_generation") != expected_generation
+            or decoded.get("profile_id") != expected_profile_id
+            or decoded.get("controller_proof_handle") != expected_controller_handle
+            or decoded.get("raw_observation_handle") != expected_raw_handle
+            or decoded.get("raw_payload_sha256") != expected_raw_sha256
+            or decoded.get("replay_key_sha256") != expected_replay_sha256
+            or decoded.get("event_data") != dict(expected_event_data)
+            or isinstance(decoded.get("observed_monotonic"), bool)
+            or not isinstance(decoded.get("observed_monotonic"), (int, float))
+            or not math.isfinite(decoded["observed_monotonic"])
+            or decoded["observed_monotonic"] != expected_observed):
+        raise AuthorityDenied("resource.ingress", "canonical ingress envelope differs from selected raw observation")
+    return MappingProxyType(dict(decoded))
+
+
+def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _bounded_event_json(value: Any, *, depth: int, key_count: list[int]) -> bool:
+    if depth > 32:
+        return False
+    if isinstance(value, dict):
+        key_count[0] += len(value)
+        return (key_count[0] <= 4096
+                and all(isinstance(key, str)
+                        and _bounded_event_json(item, depth=depth + 1, key_count=key_count)
+                        for key, item in value.items()))
+    if isinstance(value, list):
+        return len(value) <= 4096 and all(
+            _bounded_event_json(item, depth=depth + 1, key_count=key_count) for item in value)
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return value is None or type(value) in {str, int, bool}
 
 
 RootControllerRoleEnrollment = _CustodyRoleEnrollment
@@ -146,6 +222,8 @@ class RootResourceJobContextRequest:
     service_generation_digest: str
     authority_epoch: str
     issuer_token: object = field(repr=False, compare=False)
+    admission_handle: Any = field(default=None, repr=False, compare=False)
+    node_result_closure_handle: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +237,8 @@ class RootResourceContextReservation:
     backend: Any = field(repr=False)
     role: RootControllerRoleEnrollment
     controller_proof: Any = field(repr=False)
+    admission_handle: Any = field(default=None, repr=False)
+    node_result_closure: Any = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +261,13 @@ class RootResourceSourceEventProof:
     payload: bytes = field(repr=False)
     verified_provenance: object = field(repr=False, compare=False)
     issuer_token: object = field(repr=False, compare=False)
+    raw_observation_handle: str | None = None
+    raw_payload_sha256: str | None = None
+    replay_key_sha256: str | None = None
+    observed_monotonic: float | None = None
+    controller_proof_handle: str | None = None
+    capture_schema_id: str | None = None
+    capture_schema_sha256: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("producer_handle", "event_id", "resource_id", "resource_generation",
@@ -194,6 +281,24 @@ class RootResourceSourceEventProof:
                 or isinstance(self.verified_provenance, (str, bytes, bool, int, float, dict, list, tuple))
                 or isinstance(self.issuer_token, (str, bytes, bool, int, float, dict, list, tuple))):
             raise ValueError("root source event proof is malformed")
+        if any(value is not None for value in (
+                self.raw_observation_handle, self.raw_payload_sha256, self.replay_key_sha256,
+                self.observed_monotonic, self.controller_proof_handle,
+                self.capture_schema_id, self.capture_schema_sha256)):
+            if (not isinstance(self.raw_observation_handle, str)
+                    or not _OPAQUE_HANDLE.fullmatch(self.raw_observation_handle)
+                    or self.raw_payload_sha256 != hashlib.sha256(self.payload).hexdigest()
+                    or not isinstance(self.replay_key_sha256, str)
+                    or not _SHA256.fullmatch(self.replay_key_sha256)
+                    or isinstance(self.observed_monotonic, bool)
+                    or not isinstance(self.observed_monotonic, (int, float))
+                    or not math.isfinite(self.observed_monotonic)
+                    or self.observed_monotonic < 0
+                    or not isinstance(self.controller_proof_handle, str)
+                    or not _OPAQUE_HANDLE.fullmatch(self.controller_proof_handle)
+                    or self.capture_schema_id != _INGRESS_CAPTURE_SCHEMA_ID
+                    or self.capture_schema_sha256 != _INGRESS_CAPTURE_SCHEMA_SHA256):
+                raise ValueError("root source raw-observation binding is malformed")
 
     @property
     def observer_enrollment_id(self) -> str:
@@ -216,6 +321,12 @@ class RootResourceIssuedSourceEvent:
     source_kind: str
     controller_role_id: str
     controller_proof: Any = field(repr=False)
+    raw_observation_handle: str | None = None
+    raw_payload: bytes | None = field(default=None, repr=False)
+    raw_payload_sha256: str | None = None
+    replay_key_sha256: str | None = None
+    observed_monotonic: float | None = None
+    event_data: Mapping[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         for name in ("producer_handle", "event_id", "resource_id", "resource_generation",
@@ -228,6 +339,17 @@ class RootResourceIssuedSourceEvent:
                 or not isinstance(self.payload, bytes) or not self.payload
                 or not isinstance(self.parent_receipts, tuple)):
             raise ValueError("issued root source event is malformed")
+        if self.raw_observation_handle is not None:
+            if (not _OPAQUE_HANDLE.fullmatch(self.raw_observation_handle)
+                    or not isinstance(self.raw_payload, bytes) or not self.raw_payload
+                    or self.raw_payload_sha256 != hashlib.sha256(self.raw_payload).hexdigest()
+                    or not isinstance(self.replay_key_sha256, str)
+                    or not _SHA256.fullmatch(self.replay_key_sha256)
+                    or isinstance(self.observed_monotonic, bool)
+                    or not isinstance(self.observed_monotonic, (int, float))
+                    or not math.isfinite(self.observed_monotonic)
+                    or not isinstance(self.event_data, Mapping)):
+                raise ValueError("issued root raw-observation binding is malformed")
 
     @property
     def observer_enrollment_id(self) -> str:
@@ -258,12 +380,19 @@ class _RootEventRecord:
     event_fields: Mapping[str, Any] = field(repr=False)
     selected_spec: Mapping[str, Any] = field(repr=False)
     parent_results: Mapping[str, Any] = field(repr=False)
+    raw_payload: bytes | None = field(default=None, repr=False)
+    raw_observation_handle: str | None = None
+    raw_payload_sha256: str | None = None
+    replay_key_sha256: str | None = None
+    observed_monotonic: float | None = None
 
     def __post_init__(self) -> None:
         from types import MappingProxyType
         object.__setattr__(self, "event_fields", MappingProxyType(dict(self.event_fields)))
         object.__setattr__(self, "selected_spec", MappingProxyType(dict(self.selected_spec)))
         object.__setattr__(self, "parent_results", MappingProxyType(dict(self.parent_results)))
+        if self.raw_payload is not None:
+            object.__setattr__(self, "raw_payload", bytes(self.raw_payload))
 
 
 class RootResourceControllerRegistry:
@@ -312,6 +441,7 @@ class RootResourceControllerRegistry:
         self._used: set[tuple[str, str]] = set()
         self._pending_context_requests: dict[int, RootResourceJobContextRequest] = {}
         self._event_ids_seen: set[tuple[str, str, str]] = set()
+        self._replay_keys_seen: set[tuple[str, str, str]] = set()
         self._ingress_token = object()
         self._context_issuer_token = object()
         self._event_issuer: Any = None
@@ -322,6 +452,8 @@ class RootResourceControllerRegistry:
         # producer observation.  The handle is opaque and never worker-visible.
         self._ingress_proofs: dict[str, tuple[Any, Any, Any, Any, Any]] = {}
         self._event_bytes = 0
+        self._resource_job_authority: Any = None
+        self._event_admissions: dict[str, Any] = {}
 
     def resolve_selected_ingress_controller(
         self, controller_role_id: str, selected_source_issuer_id: str,
@@ -451,6 +583,11 @@ class RootResourceControllerRegistry:
                     or root_observed_input_record.source_kind != observer.source_kind
                     or root_observed_input_record.source_kind not in enrollment.source_policy
                     or len(root_observed_input_record.payload) > enrollment.max_payload_bytes
+                    or root_observed_input_record.raw_payload_sha256
+                       != hashlib.sha256(root_observed_input_record.payload).hexdigest()
+                    or root_observed_input_record.controller_proof_handle != proof_handle
+                    or root_observed_input_record.capture_schema_id != _INGRESS_CAPTURE_SCHEMA_ID
+                    or root_observed_input_record.capture_schema_sha256 != _INGRESS_CAPTURE_SCHEMA_SHA256
                     or self.selected_specs.get((enrollment.resource_id, enrollment.generation)) is None
                     or root_observed_input_record.issuer_token is not capability._token
                     or self.service.authority_epoch != self.authority_epoch
@@ -461,13 +598,15 @@ class RootResourceControllerRegistry:
             capture = getattr(issuer, "capture_selected_ingress", None)
             if not callable(capture):
                 raise AuthorityDenied("resource.ingress", "root source event issuer has no ingress capture callpoint")
+            event_data = self.resolve_validated_source_event_data(
+                root_observed_input_record, capability)
             try:
                 issued = capture(proof, root_observed_input_record, capability)
             except Exception:
                 raise AuthorityDenied("resource.ingress", "root source event capture failed") from None
             return self._finalize_issued_event(
                 root_observed_input_record, issued, role,
-                expected=(enrollment, observer, backend, proof),
+                expected=(enrollment, observer, backend, proof), event_data=event_data,
             )
         finally:
             if callable(release):
@@ -479,10 +618,57 @@ class RootResourceControllerRegistry:
             if callable(close):
                 close()
 
+    def resolve_validated_source_event_data(
+        self, proof: RootResourceSourceEventProof, capability: RootResourceEventIssuerCapability,
+    ) -> Mapping[str, Any]:
+        """Resolve schema-validated event fields from the exact retained issuer proof.
+
+        This deliberately never reads event data from the producer DTO. The
+        attached issuer must resolve and validate its own retained raw ingress
+        record; only that immutable root result may feed event/body recipes.
+        """
+        if type(proof) is not RootResourceSourceEventProof:
+            raise AuthorityDenied("resource.ingress", "root source proof is invalid")
+        with self._lock:
+            issuer = self._event_issuer
+            if (issuer is None or capability is not self._event_issuer_capability
+                    or proof.issuer_token is not capability._token):
+                raise AuthorityDenied("resource.ingress", "root event issuer capability is invalid")
+        enrollment = self.job_enrollments.get((proof.resource_id, proof.resource_generation))
+        observer = getattr(self.source_observers, "observers", {}).get(
+            proof.source_observer_enrollment_id)
+        resolver = getattr(issuer, "resolve_validated_source_event_data", None)
+        if (enrollment is None or observer is None
+                or enrollment.selected_enabled is not True
+                or proof.source_kind not in enrollment.source_policy
+                or observer.source_kind != proof.source_kind
+                or observer.capture_schema_id != _INGRESS_CAPTURE_SCHEMA_ID
+                or proof.capture_schema_id != _INGRESS_CAPTURE_SCHEMA_ID
+                or proof.capture_schema_sha256 != _INGRESS_CAPTURE_SCHEMA_SHA256
+                or not callable(resolver)):
+            raise AuthorityDenied("resource.ingress", "selected ingress schema or validator is unavailable")
+        try:
+            event_data = resolver(proof, capability)
+        except Exception:
+            raise AuthorityDenied("resource.ingress", "retained raw ingress did not validate") from None
+        if (not isinstance(event_data, Mapping)
+                or type(event_data) is dict):
+            raise AuthorityDenied("resource.ingress", "source validator did not return immutable event fields")
+        try:
+            frozen = MappingProxyType(dict(event_data))
+            encoded = json.dumps(dict(frozen), sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            raise AuthorityDenied("resource.ingress", "validated event fields are not bounded JSON") from None
+        if len(encoded) > 1_048_576:
+            raise AuthorityDenied("resource.ingress", "validated event fields exceed the selected bound")
+        return frozen
+
     def _finalize_issued_event(
         self, producer_record: RootResourceSourceEventProof,
         issued: RootResourceIssuedSourceEvent,
         expected_role: RootControllerRoleEnrollment, *, expected: tuple[Any, Any, Any, Any],
+        event_data: Mapping[str, Any] | None = None,
     ) -> RootResourceEventHandle:
         """Validate and retain one source event signed by the attached issuer."""
         if not isinstance(issued, RootResourceIssuedSourceEvent):
@@ -493,8 +679,29 @@ class RootResourceControllerRegistry:
                 or issued.resource_generation != producer_record.resource_generation
                 or issued.source_observer_enrollment_id != producer_record.source_observer_enrollment_id
                 or issued.source_kind != producer_record.source_kind
-                or issued.payload != producer_record.payload):
+                or issued.raw_observation_handle != producer_record.raw_observation_handle
+                or issued.raw_payload != producer_record.payload
+                or issued.raw_payload_sha256 != producer_record.raw_payload_sha256
+                or issued.replay_key_sha256 != producer_record.replay_key_sha256
+                or issued.observed_monotonic != producer_record.observed_monotonic
+                or not isinstance(issued.event_data, Mapping)
+                or event_data is None
+                or dict(issued.event_data) != dict(event_data)):
             raise AuthorityDenied("resource.event_issuer", "signed source event differs from producer provenance")
+        envelope = _validate_ingress_envelope(
+            issued.payload, expected_kind={"schedule-event": "schedule-event",
+                                           "webhook-event": "webhook-event",
+                                           "native-input": "channel-event"}[issued.source_kind],
+            expected_resource_id=issued.resource_id,
+            expected_generation=issued.resource_generation,
+            expected_profile_id=getattr(expected[0], "profile_id", ""),
+            expected_controller_handle=producer_record.controller_proof_handle,
+            expected_raw_handle=producer_record.raw_observation_handle,
+            expected_raw_sha256=producer_record.raw_payload_sha256,
+            expected_replay_sha256=producer_record.replay_key_sha256,
+            expected_observed=producer_record.observed_monotonic,
+            expected_event_data=event_data,
+        )
         enrollment, observer, backend, controller_proof = expected
         from .types import HostContext, SourceReceipt
         if (not isinstance(issued.source_context, HostContext)
@@ -557,6 +764,12 @@ class RootResourceControllerRegistry:
                 payload=issued.payload,
                 parent_context=issued.source_context,
                 parent_receipts=issued.parent_receipts,
+                event_fields=envelope["event_data"],
+                raw_payload=issued.raw_payload,
+                raw_observation_handle=issued.raw_observation_handle,
+                raw_payload_sha256=issued.raw_payload_sha256,
+                replay_key_sha256=issued.replay_key_sha256,
+                observed_monotonic=issued.observed_monotonic,
                 _issuer=self._ingress_token,
             )
         finally:
@@ -618,6 +831,51 @@ class RootResourceControllerRegistry:
             capability = RootResourceEventIssuerCapability(object())
             self._event_issuer_capability = capability
             return capability
+
+    def attach_resource_job_authority(self, authority: Any) -> None:
+        """Attach the exact root durable job authority used for event admission/results."""
+        with self._lock:
+            if self._resource_job_authority is not None:
+                raise AuthorityDenied("resource.admission", "resource job authority is already attached")
+            if (authority is None
+                    or not callable(getattr(authority, "is_root_admission_current", None))
+                    or not callable(getattr(authority, "resolve_node_result_closure", None))
+                    or not callable(getattr(authority, "resolve_node_result_values", None))):
+                raise ValueError("typed root resource job authority is required")
+            self._resource_job_authority = authority
+
+    def bind_admitted_job(self, event_handle: RootResourceEventHandle, admission: Any) -> None:
+        """Bind one exact durable root admission object to its retained event."""
+        with self._lock:
+            record = self._events.get(getattr(event_handle, "handle", ""))
+            authority = self._resource_job_authority
+            if (record is None or record.handle is not event_handle or authority is None
+                    or not callable(getattr(authority, "is_root_admission_current", None))):
+                raise AuthorityDenied("resource.admission", "root event or job authority is unavailable")
+            if (getattr(admission, "resource_id", None) != event_handle.resource_id
+                    or getattr(admission, "generation", None) != event_handle.resource_generation
+                    or authority.is_root_admission_current(event_handle, admission) is not True
+                    or event_handle.handle in self._event_admissions):
+                raise AuthorityDenied("resource.admission", "admission is stale, mismatched, or already bound")
+            self._event_admissions[event_handle.handle] = admission
+
+    def resolve_retained_event(self, event_handle: RootResourceEventHandle) -> _RootEventRecord:
+        """Return the exact live root event record to same-process authorities.
+
+        The returned immutable row is not a worker DTO and cannot recreate an
+        event: every caller must present the exact opaque handle object retained
+        by this registry, and the service epoch/lease is checked on each lookup.
+        """
+        if not isinstance(event_handle, RootResourceEventHandle):
+            raise AuthorityDenied("resource.event", "root event handle is invalid")
+        with self._lock:
+            self._prune_locked(self.service.monotonic())
+            record = self._events.get(event_handle.handle)
+            if (record is None or record.handle is not event_handle
+                    or event_handle.authority_epoch != self.service.authority_epoch
+                    or event_handle.expires_monotonic <= self.service.monotonic()):
+                raise AuthorityDenied("resource.event", "root event record is stale or unknown")
+            return record
 
     def register_issued_event(self, proof: RootResourceSourceEventProof, *,
                               issuer: Any) -> RootResourceEventHandle:
@@ -818,7 +1076,13 @@ class RootResourceControllerRegistry:
                                 payload: bytes,
                                 parent_context: Any,
                                 parent_receipts: tuple[Any, ...],
-                                _issuer: object) -> RootResourceEventHandle:
+                                _issuer: object,
+                                event_fields: Mapping[str, Any] | None = None,
+                                raw_payload: bytes | None = None,
+                                raw_observation_handle: str | None = None,
+                                raw_payload_sha256: str | None = None,
+                                replay_key_sha256: str | None = None,
+                                observed_monotonic: float | None = None) -> RootResourceEventHandle:
         """Internal finalizer for ingress adapters after signature/freshness/replay checks.
 
         `_issuer` must be the exact private producer token held by the concrete
@@ -834,8 +1098,24 @@ class RootResourceControllerRegistry:
                 or source_kind not in enrollment.source_policy
                 or source_observer_enrollment_id != enrollment.observer_enrollment_id
                 or not isinstance(payload, bytes) or not 1 <= len(payload) <= enrollment.max_payload_bytes
+                or len(payload) > 1_048_576
                 or not isinstance(parent_receipts, tuple) or not parent_receipts or len(parent_receipts) > 64):
             raise AuthorityDenied("resource.event", "verified event does not join the active selected resource")
+        if raw_payload is not None:
+            if (not isinstance(raw_payload, bytes) or not 1 <= len(raw_payload) <= 1_048_576
+                    or not isinstance(raw_observation_handle, str)
+                    or not _OPAQUE_HANDLE.fullmatch(raw_observation_handle)
+                    or raw_payload_sha256 != hashlib.sha256(raw_payload).hexdigest()
+                    or not isinstance(replay_key_sha256, str)
+                    or not _SHA256.fullmatch(replay_key_sha256)
+                    or isinstance(observed_monotonic, bool)
+                    or not isinstance(observed_monotonic, (int, float))
+                    or not math.isfinite(observed_monotonic)
+                    or observed_monotonic < 0):
+                raise AuthorityDenied("resource.event", "root raw observation capsule is malformed")
+        elif any(value is not None for value in (
+                raw_observation_handle, raw_payload_sha256, replay_key_sha256, observed_monotonic)):
+            raise AuthorityDenied("resource.event", "raw event capsule fields are incomplete")
         selected_spec = self.selected_specs.get(key)
         if selected_spec is None:
             raise AuthorityDenied("resource.event", "root selected source specification is unavailable")
@@ -910,7 +1190,10 @@ class RootResourceControllerRegistry:
             raise AuthorityDenied("resource.event", "verified event lease is stale or unbounded")
         closure_digest = canonical_digest(sorted(
             (receipt.receipt_id, canonical_digest(receipt.claims())) for receipt in parent_receipts))
-        event_fields = _event_fields_from_payload(payload)
+        if event_fields is None:
+            event_fields = _event_fields_from_payload(payload)
+        elif not isinstance(event_fields, Mapping):
+            raise AuthorityDenied("resource.event", "root event fields are not schema validated")
         handle = RootResourceEventHandle(
             handle=secrets.token_urlsafe(32), event_id=event_id,
             resource_id=resource_id, resource_generation=generation,
@@ -930,21 +1213,56 @@ class RootResourceControllerRegistry:
                 raise AuthorityDenied("resource.event_replay", "root event was already admitted")
             if len(self._event_ids_seen) >= _MAX_ROOT_EVENT_IDS_PER_EPOCH:
                 raise AuthorityDenied("resource.event_capacity", "root event epoch reached its replay bound")
+            replay_identity = ((resource_id, generation, replay_key_sha256)
+                               if replay_key_sha256 is not None else None)
+            if replay_identity is not None and replay_identity in self._replay_keys_seen:
+                raise AuthorityDenied("resource.event_replay", "root source replay key was already admitted")
+            retained_size = len(payload) + (len(raw_payload) if raw_payload is not None else 0)
             if (len(self._events) >= _MAX_ROOT_EVENT_COUNT
-                    or self._event_bytes + len(payload) > _MAX_ROOT_EVENT_BYTES):
+                    or self._event_bytes + retained_size > _MAX_ROOT_EVENT_BYTES):
                 raise AuthorityDenied("resource.event_capacity", "bounded root event store is full")
             self._events[handle.handle] = _RootEventRecord(
                 handle, parent_context, parent_receipts, bytes(payload), event_fields,
-                dict(selected_spec), {})
+                dict(selected_spec), {}, raw_payload, raw_observation_handle,
+                raw_payload_sha256, replay_key_sha256, observed_monotonic)
             self._event_ids_seen.add((resource_id, generation, event_id))
-            self._event_bytes += len(payload)
+            if replay_identity is not None:
+                self._replay_keys_seen.add(replay_identity)
+            self._event_bytes += retained_size
         return handle
 
     def issue_resource_job_context(self, root_event_handle: RootResourceEventHandle,
                                    node_id: str, operation: str,
-                                   canonical_payload_sha256: str) -> tuple[Any, Any]:
+                                   canonical_payload_sha256: str, *,
+                                   node_result_closure_handle: str | None = None) -> tuple[Any, Any]:
         """Ask AuthorityService to mint a fresh reduced child grant for a root event."""
         record, enrollment, node, backend = self._resolve_event_node(root_event_handle, node_id)
+        with self._lock:
+            admission = self._event_admissions.get(root_event_handle.handle)
+            job_authority = self._resource_job_authority
+        if (admission is None or job_authority is None
+                or job_authority.is_root_admission_current(root_event_handle, admission) is not True):
+            raise AuthorityDenied("resource.admission", "root event has no current durable job admission")
+        node_result_closure = None
+        if node.depends_on:
+            if (not isinstance(node_result_closure_handle, str)
+                    or _OPAQUE_HANDLE.fullmatch(node_result_closure_handle) is None):
+                raise AuthorityDenied("resource.result_closure", "dependent node requires a root result closure")
+            try:
+                node_result_closure = job_authority.resolve_node_result_closure(
+                    root_event_handle, admission, node_id)
+            except Exception:
+                raise AuthorityDenied("resource.result_closure", "root node result closure is unavailable") from None
+            if getattr(node_result_closure, "closure_handle", None) != node_result_closure_handle:
+                raise AuthorityDenied("resource.result_closure", "result closure handle does not match selected node")
+            try:
+                parent_results = job_authority.resolve_node_result_values(node_result_closure)
+            except Exception:
+                raise AuthorityDenied("resource.result_closure", "root node result values are stale") from None
+        else:
+            if node_result_closure_handle is not None:
+                raise AuthorityDenied("resource.result_closure", "initial node cannot accept a result closure")
+            parent_results = {}
         if (operation != node.effect or operation != backend.operation
                 or operation not in _OPERATIONS_BY_KIND[self._source_controller_kind(record.handle.source_kind)]
                 or not isinstance(canonical_payload_sha256, str)
@@ -957,12 +1275,7 @@ class RootResourceControllerRegistry:
             body = recipe.render(
                 backend=backend, scope_bindings=enrollment.scope_bindings,
                 validators=enrollment.validators, event_fields=record.event_fields,
-                parent_results={
-                    node_id: fields for node_id, value in record.parent_results.items()
-                    if isinstance(value, tuple) and len(value) == 2
-                    for receipt_id, fields in (value,)
-                    if receipt_id in {item.receipt_id for item in record.parent_context.source_receipts}
-                },
+                parent_results=parent_results,
             )
         except Exception:
             raise AuthorityDenied("resource.context", "selected resource body could not be rendered") from None
@@ -983,6 +1296,8 @@ class RootResourceControllerRegistry:
             service_generation_digest=self.service_generation_digest,
             authority_epoch=self.service.authority_epoch,
             issuer_token=self._context_issuer_token,
+            admission_handle=admission,
+            node_result_closure_handle=node_result_closure_handle,
         )
         use_key = (record.handle.handle, node_id)
         with self._lock:
@@ -1040,6 +1355,8 @@ class RootResourceControllerRegistry:
                 return None
             record, enrollment, node, backend = self._resolve_event_node(
                 request.root_event, request.node.node_id)
+            admission = self._event_admissions.get(request.root_event.handle)
+            job_authority = self._resource_job_authority
             if (record.handle is not request.root_event
                     or record.payload != request.event_payload
                     or record.event_fields != request.event_fields
@@ -1049,6 +1366,10 @@ class RootResourceControllerRegistry:
                     or node != request.node or backend != request.backend
                     or self.selected_specs.get((enrollment.resource_id, enrollment.generation))
                        != record.selected_spec):
+                return None
+            if (admission is None or request.admission_handle is not admission
+                    or job_authority is None
+                    or job_authority.is_root_admission_current(request.root_event, admission) is not True):
                 return None
             role = self._select_role(
                 observer_id=record.handle.source_observer_enrollment_id,
@@ -1062,13 +1383,18 @@ class RootResourceControllerRegistry:
             recipe = enrollment.body_recipes.get(node.body_recipe_id)
             if recipe is None:
                 return None
-            parent_result_fields = {
-                parent_node_id: fields
-                for parent_node_id, value in record.parent_results.items()
-                if isinstance(value, tuple) and len(value) == 2
-                for receipt_id, fields in (value,)
-                if receipt_id in {item.receipt_id for item in record.parent_context.source_receipts}
-            }
+            if node.depends_on:
+                if not isinstance(request.node_result_closure_handle, str):
+                    return None
+                closure = job_authority.resolve_node_result_closure(
+                    request.root_event, admission, node.node_id)
+                if getattr(closure, "closure_handle", None) != request.node_result_closure_handle:
+                    return None
+                parent_result_fields = job_authority.resolve_node_result_values(closure)
+            else:
+                if request.node_result_closure_handle is not None:
+                    return None
+                parent_result_fields = {}
             body = recipe.render(
                 backend=backend, scope_bindings=enrollment.scope_bindings,
                 validators=enrollment.validators, event_fields=record.event_fields,
@@ -1080,7 +1406,9 @@ class RootResourceControllerRegistry:
                 return None
             return RootResourceContextReservation(
                 request=request, record=record, enrollment=enrollment, node=node,
-                backend=backend, role=role, controller_proof=request.controller)
+                backend=backend, role=role, controller_proof=request.controller,
+                admission_handle=admission,
+                node_result_closure=(closure if node.depends_on else None))
         except Exception:
             return None
 
@@ -1160,6 +1488,8 @@ class RootResourceControllerRegistry:
             self._used.clear()
             self._pending_context_requests.clear()
             self._event_ids_seen.clear()
+            self._replay_keys_seen.clear()
+            self._event_admissions.clear()
 
     def _prune_locked(self, now: float) -> int:
         expired = [key for key, record in self._events.items()
@@ -1172,5 +1502,7 @@ class RootResourceControllerRegistry:
     def _drop_event_locked(self, key: str) -> None:
         record = self._events.pop(key, None)
         if record is not None:
-            self._event_bytes = max(0, self._event_bytes - len(record.payload))
+            self._event_bytes = max(0, self._event_bytes - len(record.payload)
+                                    - (len(record.raw_payload) if record.raw_payload is not None else 0))
+        self._event_admissions.pop(key, None)
         self._used = {item for item in self._used if item[0] != key}

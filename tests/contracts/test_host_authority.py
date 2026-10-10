@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -489,9 +490,29 @@ class HostAuthorityIPCContracts(unittest.TestCase):
                 self.server_error.append(exc)
         self.acceptor = threading.Thread(target=serve, daemon=True)
         self.acceptor.start()
+        # bind() publishes the socket pathname before serve_unix applies the
+        # enrolled owner, group, and mode. Wait for the complete protected
+        # endpoint contract instead of racing AuthorityClient's strict check.
         deadline = time.monotonic() + 2
-        while not self.socket_path.exists() and time.monotonic() < deadline:
+        ready = False
+        while time.monotonic() < deadline:
+            if self.server_error:
+                self.fail(f"authority fixture failed to start: {self.server_error[0]!r}")
+            try:
+                endpoint = self.socket_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                ready = (
+                    stat.S_ISSOCK(endpoint.st_mode)
+                    and endpoint.st_uid == os.getuid()
+                    and endpoint.st_gid == os.getgid()
+                    and stat.S_IMODE(endpoint.st_mode) == 0o660
+                )
+                if ready:
+                    break
             time.sleep(0.01)
+        self.assertTrue(ready, "authority fixture did not publish a protected socket")
         self.client = AuthorityClient(self.socket_path, server_uid=os.getuid(), timeout=2)
 
     def tearDown(self):
