@@ -1230,6 +1230,140 @@ class NativeInvocationRegistry:
                 expires_monotonic=row.expires_monotonic,
             )
 
+    def resolve_current_invocation_for_effect(
+            self, context: HostContext, authorization: Any, operation: str,
+            target: str, request_digest: str,
+            invocation_handle: str) -> RootNativeToolEffectInvocation:
+        """Revalidate a previously selected effect invocation without consuming it.
+
+        This lookup is for root-owned effect staging/finalization only. The
+        opaque invocation handle is a selector into this registry's retained
+        rows; it does not establish authority. Every signed claim, current
+        peer, loaded package proof, selected action, source receipt, target,
+        and lease is checked again before the current typed record is returned.
+        Unlike ``resolve_invocation_for_effect`` it does not claim the
+        one-use result-correlation bit, so completion validation may repeat it.
+        """
+        from .types import EffectAuthorization
+
+        if (not isinstance(context, HostContext)
+                or not isinstance(authorization, EffectAuthorization)
+                or type(operation) is not str or not operation
+                or type(target) is not str or not target
+                or not isinstance(request_digest, str)
+                or not _SHA256.fullmatch(request_digest)
+                or not self._valid_handle(invocation_handle)):
+            raise AuthorityDenied("native.effect.current", "current invocation lookup is malformed")
+        service = self.service
+        try:
+            binding = service._binding(context.uid)
+            service._verify_context_signature(context)
+            service._verify_grant_signature(authorization)
+            service._assert_current_context(context, binding, context.uid)
+            service._assert_grant_current(authorization, binding, context.uid)
+            from .service import _context_digest
+            if (authorization.context_digest != _context_digest(context)
+                    or authorization.source_receipts != context.source_receipts
+                    or authorization.final_payload_digest != request_digest
+                    or authorization.request_digest != request_digest
+                    or context.final_payload_digest != request_digest
+                    or authorization.operation != operation
+                    or context.operation != operation
+                    or authorization.target != target
+                    or authorization.profile_id != context.profile_id
+                    or authorization.principal_id != context.principal_id
+                    or authorization.uid != context.uid
+                    or authorization.generation != context.generation
+                    or authorization.native_process_identity != context.native_process_identity):
+                raise AuthorityDenied("native.effect.current", "signed effect does not bind the staged request")
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.effect.current", "effect authority is stale or unverifiable") from None
+
+        source_ids = tuple(receipt.receipt_id for receipt in context.source_receipts)
+        if not source_ids or len(source_ids) != len(set(source_ids)):
+            raise AuthorityDenied("native.effect.current", "signed source closure is malformed")
+        with service._lock:
+            by_id: dict[str, str] = {}
+            for handle, receipt in service._source_receipt_handles.items():
+                if receipt.monotonic_expires_at > self.monotonic():
+                    if receipt.receipt_id in by_id:
+                        raise AuthorityDenied("native.effect.current", "source receipt identity is ambiguous")
+                    by_id[receipt.receipt_id] = handle
+        if any(receipt_id not in by_id for receipt_id in source_ids):
+            raise AuthorityDenied("native.effect.current", "signed source closure is no longer retained")
+        source_handles = tuple(by_id[receipt_id] for receipt_id in source_ids)
+
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            row = self._invocations.get(invocation_handle)
+            if row is None:
+                raise AuthorityDenied("native.effect.current", "invocation is no longer retained")
+            response = self._responses.get(row.response_handle)
+            if (response is None or response.turn_handle is None
+                    or row.expires_monotonic <= self.monotonic()
+                    or row.operation != operation or row.bridge.target != target
+                    or row.receipt_handles != source_handles
+                    or row.producer_identity.kernel_uid != context.uid
+                    or row.profile_id != context.profile_id
+                    or row.generation != context.generation):
+                raise AuthorityDenied("native.effect.current", "invocation no longer matches the effect")
+            try:
+                producer = self.process_resolver(
+                    row.producer_pid, row.producer_pidfd,
+                    profile_id=row.profile_id, generation=row.generation)
+                gateway = self.process_resolver(
+                    row.gateway_pid, row.gateway_pidfd,
+                    profile_id=row.bridge.gateway_profile_id,
+                    generation=row.bridge.gateway_generation)
+                proof = self._loaded_proof(
+                    row.observer_id, producer, row.producer_pid, row.producer_pidfd)
+                selected = self.action_resolver(row.bridge, producer, row.tool_name)
+                service._assert_current_context(
+                    context, binding, context.uid, peer_pid=row.producer_pid)
+            except Exception:
+                raise AuthorityDenied("native.effect.current", "current peer or selected action is unavailable") from None
+            if (producer != row.producer_identity or gateway != row.gateway_identity
+                    or proof != row.loaded_package_proof
+                    or service._native_process_identity(row.producer_pid, context.uid)
+                    != context.native_process_identity
+                    or not isinstance(selected, NativeActionSelection)
+                    or (selected.package_id, selected.profile_id, selected.generation,
+                        selected.adapter_id, selected.action_id, selected.operation)
+                    != (row.package_id, row.profile_id, row.generation,
+                        row.adapter_id, row.action_id, operation)
+                    or not self._validate_selection(selected, row.canonical_arguments)
+                    or hashlib.sha256(row.canonical_arguments).hexdigest() != row.arguments_sha256
+                    or not self._native_mcp_peer_current(
+                        row, row.producer_identity.kernel_uid, row.producer_pid,
+                        row.producer_pidfd, None)):
+                raise AuthorityDenied("native.effect.current", "peer, package, or selected action changed")
+            return RootNativeToolEffectInvocation(
+                invocation_handle=row.invocation_handle,
+                observed_call_handle=row.observed_call_handle,
+                response_observation_handle=row.response_handle,
+                response_receipt_handle=response.response_receipt_handle,
+                native_request_handle=response.native_request_handle,
+                turn_handle=response.turn_handle,
+                producer_identity=row.producer_identity,
+                producer_pid=row.producer_pid,
+                profile_id=row.profile_id,
+                generation=row.generation,
+                package_id=row.package_id,
+                native_package_generation=response.native_package_generation,
+                service_generation_digest=row.service_generation_digest,
+                adapter_id=row.adapter_id,
+                action_id=row.action_id,
+                tool_name=row.tool_name,
+                arguments_sha256=row.arguments_sha256,
+                source_receipt_handles=row.receipt_handles,
+                operation=operation,
+                request_digest=request_digest,
+                expires_monotonic=row.expires_monotonic,
+            )
+
     def get_invocation_contexts(self, peer_uid: int, peer_pid: int, peer_pidfd: int,
                                 invocation_handle: str):
         """Return repeatable ancestry for one live invocation; it is not a grant."""
