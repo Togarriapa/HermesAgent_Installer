@@ -17,6 +17,7 @@ from hermes_installer.authority.application_workload_execution import (
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.protected_enrollment import RootJournalSelection
+from hermes_installer.managed_process_custodian import RootApplicationTerminalReceipt
 
 
 class _Invocations:
@@ -74,7 +75,7 @@ def test_owned_fixture_receipt_requires_live_loopback_listener():
             service_generation_digest="a" * 64) is receipt
         with urllib.request.urlopen(receipt.url, timeout=2) as response:
             assert response.status == 200
-            assert response.read(256) == RootOwnedApplicationFixtureServer._BODY
+            assert response.read() == RootOwnedApplicationFixtureServer._BODY
         with pytest.raises(AuthorityDenied, match="stale"):
             server.resolve(receipt.handle, setup_session_id="other",
                 service_generation_digest="a" * 64)
@@ -115,3 +116,24 @@ def test_root_execution_journal_consumes_qualification_once(tmp_path):
     step = journal.resolve_application_step(admission.admission_handle, "graphify-code-fixture:0")
     assert journal.application_step_handle(step) == step.handle
     assert journal.is_application_step_current(step.handle)
+    stdout, stderr = b'{"fixture_state":"passed"}', b""
+    terminal_fields = dict(schema=1, receipt_handle="q" * 32, application_handle="p" * 32,
+        admission_handle=admission.admission_handle, application_id=step.application_id,
+        workload_id=step.workload_id, step_id=step.step_id, sequence=step.sequence,
+        profile_id=step.profile_id, profile_generation=step.profile_generation,
+        service_generation_digest=step.service_generation_digest, operation_id=step.operation_id,
+        request_sha256=step.request_sha256, source_receipt_handle=step.source_receipt_handle,
+        runtime_receipt_handle=step.runtime_receipt_handle, process_id="pidfd-owned",
+        process_generation="g1", process_start_ticks=1, executable_sha256="a" * 64,
+        cgroup_id="cg1", namespace_digest="b" * 64, exit_code=0, stdin_eof=True,
+        stdout_sha256=hashlib.sha256(stdout).hexdigest(), stdout_size_bytes=len(stdout),
+        stderr_sha256=hashlib.sha256(stderr).hexdigest(), stderr_size_bytes=0,
+        output_observation_handle="o" * 32, reaped=True, cancelled=False, timed_out=False,
+        state="completed", issued_monotonic=10.0, expires_monotonic=40.0, signature="sig")
+    terminal = RootApplicationTerminalReceipt(**terminal_fields)
+    journal.retain_application_terminal_for_step(step, terminal)
+    assert journal.resolve_application_step_terminals(admission.admission_handle) == ((step, "q" * 32),)
+    forged = RootApplicationTerminalReceipt(**{**terminal_fields, "receipt_handle": "z" * 32,
+        "runtime_receipt_handle": "x" * 32})
+    with pytest.raises(AuthorityDenied, match="does not bind"):
+        journal.retain_application_terminal_for_step(step, forged)

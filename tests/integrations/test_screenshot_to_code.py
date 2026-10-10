@@ -7,6 +7,7 @@ test never falls back to a hand-written parser or a live provider.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import textwrap
@@ -25,6 +26,50 @@ from hermes_installer.components.screenshot_to_code import (
     review_screenshot_to_code_files,
     validate_vision_route,
 )
+from hermes_installer.components.screenshot_to_code_probe import (
+    ProbeResultError,
+    validate_upstream_events,
+)
+
+
+FIXTURE_IMAGE = Path(__file__).parents[1] / "fixtures" / "screenshot_to_code_probe.png"
+FIXTURE_MANIFEST = FIXTURE_IMAGE.with_suffix(".json")
+
+
+def test_fixed_probe_asset_matches_its_role_manifest():
+    image = FIXTURE_IMAGE.read_bytes()
+    manifest = json.loads(FIXTURE_MANIFEST.read_text(encoding="utf-8"))
+    assert manifest["schema"] == "hermes-screenshot-to-code-fixture-asset-v1"
+    assert manifest["sha256"] == hashlib.sha256(image).hexdigest()
+    assert manifest["size_bytes"] == len(image)
+    assert manifest["dimensions_px"] == {"width": 640, "height": 360}
+    assert manifest["member_roles"] == [
+        "synthetic-input-screenshot", "local-fixture-only", "not-user-content", "not-a-runtime-receipt",
+    ]
+    assert manifest["live_provider_dispatch"] is False
+    assert manifest["metered_budget_default"] == 0
+
+
+def test_strict_fixture_result_requires_generated_code_and_successful_variant():
+    image = FIXTURE_IMAGE.read_bytes()
+    valid = [
+        {"type": "setCode", "value": "<!doctype html><main>fixture</main>", "variantIndex": 0},
+        {"type": "variantComplete", "value": "Variant generation complete", "variantIndex": 0},
+    ]
+    result = validate_upstream_events(valid, fixture_image=image, route_id="openai-gpt-5.5")
+    assert result.evidence_kind == "local-synthetic-fixture-with-mocked-provider-transport"
+    assert result.fixture_image_sha256 == hashlib.sha256(image).hexdigest()
+    assert result.generated_code_sha256 == hashlib.sha256(valid[0]["value"].encode()).hexdigest()
+    assert result.completed_variants == (0,)
+
+    for invalid in (
+        [{"type": "variantComplete", "variantIndex": 0}],
+        [*valid, {"type": "variantError", "variantIndex": 0}],
+        [{"type": "setCode", "value": "ok", "variantIndex": True}, valid[1]],
+        [{"type": "setCode", "value": "ok", "variantIndex": 0, "extra": "unexpected"}, valid[1]],
+    ):
+        with pytest.raises(ProbeResultError):
+            validate_upstream_events(invalid, fixture_image=image, route_id="openai-gpt-5.5")
 
 
 def test_text_only_or_unreviewed_vision_route_is_denied_before_image_processing():
@@ -180,8 +225,9 @@ def test_pinned_upstream_stream_code_pipeline_sends_image_and_returns_generated_
 
         app = FastAPI()
         app.include_router(generate_code.router)
-        # 1x1, locally embedded PNG; no URL, upload server, or fetch target.
-        image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aNioAAAAASUVORK5CYII="
+        # Fixed synthetic local PNG; no URL, upload server, or fetch target.
+        image_bytes = Path(os.environ["FIXTURE_IMAGE_PATH"]).read_bytes()
+        image = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
         request = {
             "generatedCodeConfig": "html_tailwind",
             "inputMode": "image",
@@ -209,16 +255,15 @@ def test_pinned_upstream_stream_code_pipeline_sends_image_and_returns_generated_
             codes = [m.get("value", "") for m in messages if m.get("type") == "setCode"]
             assert any('data-fixture="vision-ok"' in value for value in codes)
             assert any(m.get("type") == "variantComplete" for m in messages)
+            Path(os.environ["FIXTURE_EVENTS_PATH"]).write_text(json.dumps(messages), encoding="utf-8")
         finally:
             for client in clients:
                 import asyncio
                 asyncio.run(client.close())
             transport.close()
     ''')
-    image_bytes = bytes.fromhex(
-        "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
-        "0000000b4944415478da63fcff1f0003030200ef9a362a0000000049454e44ae426082"
-    )
+    image_bytes = FIXTURE_IMAGE.read_bytes()
+    event_path = tmp_path / "upstream-events.json"
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "PYTHONPATH": str(backend),
@@ -227,9 +272,15 @@ def test_pinned_upstream_stream_code_pipeline_sends_image_and_returns_generated_
         "LOCAL_ASSET_DIR": str(tmp_path / "assets"),
         "LOGS_PATH": str(tmp_path / "logs"),
         "FIXTURE_IMAGE_SHA256": hashlib.sha256(image_bytes).hexdigest(),
+        "FIXTURE_IMAGE_PATH": str(FIXTURE_IMAGE),
+        "FIXTURE_EVENTS_PATH": str(event_path),
     }
     result = subprocess.run(
         [str(python), "-c", script], cwd=backend, env=env,
         capture_output=True, text=True, timeout=90,
     )
     assert result.returncode == 0, f"pinned upstream pipeline fixture failed:\n{result.stdout}\n{result.stderr}"
+    upstream_events = json.loads(event_path.read_text(encoding="utf-8"))
+    parsed = validate_upstream_events(upstream_events, fixture_image=image_bytes, route_id="openai-gpt-5.5")
+    assert parsed.source_revision == SOURCE_REVISION
+    assert 'data-fixture="vision-ok"' in parsed.generated_code

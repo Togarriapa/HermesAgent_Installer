@@ -12,16 +12,38 @@ from hermes_installer.components.workloads import Workload, WorkloadScheduler
 class WorkloadSchedulerTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
+        self.hyperframes_temp = tempfile.TemporaryDirectory()
+        self.hyperframes_work = Path(self.hyperframes_temp.name, "work").resolve()
+        self.hyperframes_work.mkdir(mode=0o700)
+        self.hyperframes_fixtures = Path(self.hyperframes_temp.name, "fixtures").resolve()
+        self.hyperframes_fixtures.mkdir(mode=0o700)
 
         def run(invocation):
             self.calls.append(invocation)
             if invocation.component_id == "browser-use":
+                proof = {
+                    "schema_version": 1,
+                    "navigation_url": invocation.argv[2],
+                    "navigation_succeeded": True,
+                    "page_title": "Hermes qualification fixture",
+                    "initial_text": "ready",
+                    "click_succeeded": True,
+                    "interaction_text": "interaction-ok",
+                    "screenshot_format": "png",
+                    "screenshot_bytes": 128,
+                    "screenshot_sha256": "a" * 64,
+                }
                 return {
                     "exit_code": 0,
-                    "stdout": 'HERMES_BROWSER_USE_PROOF={"navigation":true,"interaction":"interaction-ok","screenshot_bytes":128}\n',
+                    "stdout": "HERMES_BROWSER_USE_PROOF=" + json.dumps(proof, separators=(",", ":")) + "\n",
                 }
+            if invocation.component_id == "hyperframes" and invocation.executable.endswith("/bin/hyperframes"):
+                Path(self.hyperframes_work, "rendered.mp4").write_bytes(b"fixture-mp4-proof")
+                return {"exit_code": 0, "stdout": "", "stderr": ""}
             if invocation.executable.endswith("/ffprobe"):
-                return {"exit_code": 0, "stdout": '{"streams":[{"codec_type":"video","codec_name":"h264","width":640,"height":360,"nb_read_frames":"120"}],"format":{"duration":"5.0"}}'}
+                return {"exit_code": 0, "stdout": '{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","width":320,"height":180,"pix_fmt":"yuv420p","avg_frame_rate":"24/1","nb_read_frames":"48"}],"format":{"duration":"2.000000","size":"1234"}}', "stderr": ""}
+            if invocation.executable.endswith("/ffmpeg"):
+                return {"exit_code": 0, "stdout": "#tb 0: 1/24\n#dimensions 0: 320x180\n#stream#, dts,        pts, duration,     size, hash\n0, 12, 12, 1, 86400, 11111111111111111111111111111111\n0, 36, 36, 1, 86400, 22222222222222222222222222222222\n", "stderr": ""}
             return {"exit_code": 0, "output": "fixture-complete"}
 
         self.scheduler = WorkloadScheduler(
@@ -43,8 +65,8 @@ class WorkloadSchedulerTests(unittest.TestCase):
                 "browser-use": "/owned/work/browser",
                 "graphify": "/owned/work/graphify",
                 "graphify-fixture": "/owned/fixtures/graphify",
-                "hyperframes": "/owned/hyperframes",
-                "hyperframes-fixture": "/owned/fixtures/hyperframes",
+                "hyperframes": str(self.hyperframes_work),
+                "hyperframes-fixture": str(self.hyperframes_fixtures),
             },
             memory_budget_mb=2048,
             max_workers=1,
@@ -55,13 +77,15 @@ class WorkloadSchedulerTests(unittest.TestCase):
         result = self.scheduler.execute(Workload(
             "browser-fixture", {"fixture_url": "http://127.0.0.1:8765/fixture"}
         ))
-        self.assertEqual(True, result["navigation"])
-        self.assertEqual("interaction-ok", result["interaction"])
+        self.assertEqual(True, result["navigation_succeeded"])
+        self.assertEqual("interaction-ok", result["interaction_text"])
         invocation = self.calls[0]
         self.assertEqual("/owned/browser/bin/python", invocation.executable)
         self.assertEqual("browser-use", invocation.component_id)
         self.assertEqual("localhost", invocation.network)
-        self.assertIn("chromium_sandbox=True", invocation.argv[2])
+        self.assertTrue(invocation.argv[1].endswith("browser_use_qualification_probe.py"))
+        self.assertEqual("http://127.0.0.1:8765/fixture", invocation.argv[2])
+        self.assertIn("chromium_sandbox=True", Path(invocation.argv[1]).read_text(encoding="utf-8"))
         self.assertEqual(180, invocation.timeout_seconds)
         self.assertEqual(2048, invocation.memory_limit_mb)
         self.assertEqual(Decimal("0"), self.scheduler.metered_spend_usd)
@@ -160,19 +184,25 @@ class WorkloadSchedulerTests(unittest.TestCase):
 
     def test_hyperframes_fixture_is_fixed_private_on_demand_and_unmetered(self):
         result = self.scheduler.execute(Workload("hyperframes-render-fixture"))
-        self.assertEqual(120, result["frames"])
-        self.assertEqual(5.0, result["duration_seconds"])
-        invocation, probe = self.calls
+        self.assertEqual(48, result["media"]["frame_count"])
+        self.assertEqual(2.0, result["media"]["duration_seconds"])
+        self.assertEqual("functional_local_render_passed", result["fixture_state"])
+        self.assertEqual(2, result["distinct_sampled_frames"])
+        invocation, probe, framehash = self.calls
         self.assertEqual("hyperframes", invocation.component_id)
         self.assertEqual("/owned/hyperframes/bin/hyperframes", invocation.executable)
-        self.assertEqual(("render", "-c", "/owned/fixtures/hyperframes/composition.html",
-                          "-o", "/owned/hyperframes/rendered.mp4"), invocation.argv)
+        self.assertEqual(("render", "-c", str(self.hyperframes_fixtures / "composition.html"),
+                          "-o", str(self.hyperframes_work / "rendered.mp4"), "--format", "mp4",
+                          "--fps", "24", "--quality", "draft", "--workers", "1", "--no-browser-gpu"), invocation.argv)
         self.assertEqual("deny", invocation.network)
         self.assertEqual(180, invocation.timeout_seconds)
         self.assertEqual(2048, invocation.memory_limit_mb)
         self.assertEqual("/owned/tools/ffprobe", probe.executable)
-        self.assertIn("/owned/hyperframes/rendered.mp4", probe.argv)
+        self.assertIn(str(self.hyperframes_work / "rendered.mp4"), probe.argv)
+        self.assertEqual("/owned/tools/ffmpeg", framehash.executable)
+        self.assertEqual("deny", framehash.network)
         self.assertEqual(Decimal("0"), self.scheduler.metered_spend_usd)
+        self.assertEqual("fc20eaf85de0fe9bbc63bf4b315892a4fb0934d19819eb8b9450fa5bb7ed6052", result["source_asset_sha256"])
 
     def test_hyperframes_fixture_rejects_caller_paths_and_missing_capabilities(self):
         with self.assertRaisesRegex(ValueError, "parameters do not match"):
@@ -180,8 +210,8 @@ class WorkloadSchedulerTests(unittest.TestCase):
         denied = WorkloadScheduler(
             lambda invocation: self.calls.append(invocation), frozenset(),
             runtime_roots={"hyperframes": "/owned/hyperframes"},
-            work_roots={"hyperframes-fixture": "/owned/fixtures/hyperframes",
-                        "hyperframes": "/owned/hyperframes"},
+            work_roots={"hyperframes-fixture": str(self.hyperframes_fixtures),
+                        "hyperframes": str(self.hyperframes_work)},
             memory_budget_mb=4096,
         )
         with self.assertRaisesRegex(PermissionError, "capability denied"):
@@ -192,19 +222,24 @@ class WorkloadSchedulerTests(unittest.TestCase):
         calls = []
         def run(invocation):
             calls.append(invocation)
+            if invocation.executable.endswith("/bin/hyperframes"):
+                Path(self.hyperframes_work, "rendered.mp4").write_bytes(b"fixture-mp4-proof")
+                return {"exit_code": 0, "stdout": "", "stderr": ""}
             if invocation.executable.endswith("/ffprobe"):
-                return {"exit_code": 0, "stdout": '{"streams":[{"codec_type":"video","codec_name":"h264","width":640,"height":360,"nb_read_frames":"0"}],"format":{"duration":"0"}}'}
-            return {"exit_code": 0}
+                return {"exit_code": 0, "stdout": '{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","width":320,"height":180,"pix_fmt":"yuv420p","avg_frame_rate":"24/1","nb_read_frames":"0"}],"format":{"duration":"0","size":"1234"}}', "stderr": ""}
+            if invocation.executable.endswith("/ffmpeg"):
+                return {"exit_code": 0, "stdout": "", "stderr": ""}
+            return {"exit_code": 0, "stderr": ""}
         scheduler = WorkloadScheduler(
             run, self.scheduler.granted,
             runtime_roots={"hyperframes": "/owned/hyperframes", "ffprobe": "/owned/tools/ffprobe"},
-            work_roots={"hyperframes-fixture": "/owned/fixtures/hyperframes",
-                        "hyperframes": "/owned/hyperframes"},
+            work_roots={"hyperframes-fixture": str(self.hyperframes_fixtures),
+                        "hyperframes": str(self.hyperframes_work)},
             memory_budget_mb=2048,
         )
-        with self.assertRaisesRegex(RuntimeError, "outside fixture bounds"):
+        with self.assertRaisesRegex(RuntimeError, "fixed fixture|unexpected schema"):
             scheduler.execute(Workload("hyperframes-render-fixture"))
-        self.assertEqual(2, len(calls))
+        self.assertEqual(3, len(calls))
 
     def test_graphify_zero_exit_without_fixture_edge_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
