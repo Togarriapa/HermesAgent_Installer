@@ -268,51 +268,17 @@ class RootChannelPeerDeliveryRegistry:
         return result
 
     def publish_captured_event(self, *, channel_ingress_id: str, event_handle: Any) -> int:
-        """Queue one captured root event for its exact selected package peer(s)."""
-        from .resource_source_controllers import RootResourceEventHandle
-        if (not isinstance(channel_ingress_id, str) or not _ID.fullmatch(channel_ingress_id)
-                or type(event_handle) is not RootResourceEventHandle):
-            raise AuthorityDenied("channel.publish", "root captured channel event is malformed")
-        record = self.resource_registry.resolve_retained_event(event_handle)
-        if (record.handle is not event_handle or event_handle.source_kind != "native-input"
-                or not isinstance(record.payload, bytes) or not 1 <= len(record.payload) <= _MAX_EVENT
-                or hashlib.sha256(record.payload).hexdigest() != event_handle.payload_sha256):
-            raise AuthorityDenied("channel.publish", "captured event is no longer current or digest-bound")
-        event_profile = getattr(record.parent_context, "profile_id", None)
-        now = self.monotonic()
-        accepted = 0
-        with self._lock:
-            self._prune_locked(now)
-            for peer in self._peers.values():
-                if (peer.closed or peer.binding.profile_id != event_profile
-                        or channel_ingress_id not in peer.row["allowed_channel_ingress_ids"]
-                        or event_handle.source_observer_enrollment_id not in peer.row["source_observer_enrollment_ids"]):
-                    continue
-                self._revalidate_peer(peer)
-                if event_handle.handle in peer.event_handles:
-                    raise AuthorityDenied("channel.publish", "captured event was already queued for this peer")
-                if (len(peer.pending) >= _MAX_QUEUE
-                        or self._event_bytes + len(record.payload) > _MAX_TOTAL):
-                    raise AuthorityDenied("channel.capacity", "selected channel event queue is full")
-                peer.sequence += 1
-                delivery_handle = secrets.token_urlsafe(32)
-                receipt_handle = secrets.token_urlsafe(32)
-                context_handle = secrets.token_urlsafe(32)
-                delivery = ChannelEventDelivery(
-                    1, delivery_handle, peer.binding.binding_handle, channel_ingress_id,
-                    event_handle.handle, base64.b64encode(record.payload).decode("ascii"),
-                    hashlib.sha256(record.payload).hexdigest(), receipt_handle,
-                    context_handle, peer.sequence,
-                    min(peer.binding.expires_monotonic, event_handle.expires_monotonic,
-                        now + _LEASE),
-                )
-                peer.pending.append((delivery, bytes(record.payload), record))
-                peer.event_handles.add(event_handle.handle)
-                self._event_bytes += len(record.payload)
-                accepted += 1
-        if accepted == 0:
-            raise AuthorityDenied("channel.publish", "no current selected Hermes peer accepts this channel event")
-        return accepted
+        """Fail closed until event-to-peer source/context handles have an issuer.
+
+        A retained event's signed receipt IDs are not native source-delivery
+        handles. The source/context handles in ChannelEventDelivery must be
+        resolved for the exact selected peer and PIDFD by a root-owned,
+        one-use issuer; this registry currently has no such API.
+        """
+        raise AuthorityDenied(
+            "channel.publish",
+            "channel event delivery is unavailable: recipient-bound source and context handle issuance is not installed",
+        )
 
     def take(self, *, peer_uid: int, peer_pid: int, peer_pidfd: int,
              binding_handle: str) -> ChannelEventDelivery | None:

@@ -45,7 +45,7 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
         with self.assertRaises(Exception):
             ChannelEventDelivery.from_wire({**wire, "payload_sha256": "0" * 64})
 
-    def test_bind_and_take_derive_current_peer_and_deliver_once(self):
+    def test_bind_is_peer_derived_and_event_publish_stays_unavailable_without_issued_handles(self):
         uid, pid = 501, 4242
         pidfd, writer = os.pipe()
         os.close(writer)
@@ -137,17 +137,14 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
             try:
                 channel_binding = peer_registry.bind(peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd)
                 self.assertEqual(channel_binding.profile_id, "profile-1")
-                self.assertEqual(peer_registry.publish_captured_event(
-                    channel_ingress_id="ingress-1", event_handle=event), 1)
+                with self.assertRaisesRegex(Exception, "recipient-bound source and context handle issuance"):
+                    peer_registry.publish_captured_event(
+                        channel_ingress_id="ingress-1", event_handle=event)
                 delivery = peer_registry.take(
                     peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
                     binding_handle=channel_binding.binding_handle,
                 )
-                self.assertEqual(delivery.normalized_payload, event_payload)
-                self.assertIsNone(peer_registry.take(
-                    peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
-                    binding_handle=channel_binding.binding_handle,
-                ))
+                self.assertIsNone(delivery)
             finally:
                 peer_registry.close()
                 os.close(pidfd)
