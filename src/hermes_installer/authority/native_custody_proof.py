@@ -560,15 +560,18 @@ def active_native_catalog_resolver(bindings: Any, *,
                     or any(registration_id not in registration_records
                            for registration_id in role.registration_ids)):
                 raise AuthorityDenied("native.package", "source role action or registration join is stale")
-            registrations_for_action = [registration_records[item]
-                                        for item in role.registration_ids
-                                        if item in registration_records
-                                        and any(getattr(binding, "action_binding_id", None)
-                                                == action.action_binding_id
-                                                for binding in getattr(
-                                                    registration_records[item], "action_bindings", ()))]
-            if not registrations_for_action:
-                raise AuthorityDenied("native.package", "selected source action is not registered by its process role")
+            registrations_for_action = tuple(sorted(
+                registration_id for registration_id in role.registration_ids
+                if registration_id in registration_records
+                and any(getattr(binding, "action_binding_id", None) == action.action_binding_id
+                        for binding in getattr(registration_records[registration_id], "action_bindings", ()))
+            ))
+            expected_source_registrations = getattr(observer, "source_registration_ids", ())
+            if (not isinstance(expected_source_registrations, tuple)
+                    or not expected_source_registrations
+                    or tuple(sorted(set(expected_source_registrations))) != expected_source_registrations
+                    or registrations_for_action != expected_source_registrations):
+                raise AuthorityDenied("native.package", "selected source registration/action foreign keys differ")
             registration_ids.update(role.registration_ids)
             action_ids.add(action.action_id)
             role_actions.add((role.role_id, role.role_artifact_id, role.role_sha256, action.action_id))
@@ -1151,18 +1154,6 @@ class RootNativeLoaderObservationStore:
                           now + float(observer.lease_seconds), now + MAX_LAUNCH_LEASE_SECONDS)
             if not issued < expires:
                 raise AuthorityDenied("native.expired", "loaded package proof has no remaining lease")
-            # The private v134 loader wire observes registration IDs, not
-            # action IDs. Keep the older public proof field meaningful by
-            # deriving it only from root-selected role/action bindings after
-            # the exact role registration set has been authenticated above.
-            # This records registered entrypoints, never action success.
-            observed_entrypoint_action_ids = tuple(sorted({
-                action_id for role_id, _artifact_id, _role_sha256, action_id
-                in selection.observer_role_action_bindings
-                if role_id == role.role_id
-            }))
-            if not observed_entrypoint_action_ids:
-                raise AuthorityDenied("native.observer", "loaded role has no selected registered source action")
             proof = LoadedPackageClosureProof(
                 schema=1,
                 proof_id=secrets.token_urlsafe(32),
@@ -1182,7 +1173,10 @@ class RootNativeLoaderObservationStore:
                 loader_role_artifact_id=observer_role_binding[0],
                 loader_role_sha256=observer_role_binding[1],
                 loader_ready_event_id=entry.ready_event_id,
-                observed_entrypoint_action_ids=observed_entrypoint_action_ids,
+                # v134 authenticates registration IDs. Action binding remains
+                # a separate selected catalog join; an old action-named field
+                # must never be populated by relabeling registration claims.
+                observed_entrypoint_action_ids=(),
                 issued_monotonic=issued,
                 expires_monotonic=expires,
                 service_generation_digest=selection.service_generation_digest,

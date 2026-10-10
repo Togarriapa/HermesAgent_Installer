@@ -146,6 +146,7 @@ def _observer(**changes):
         role_sha256=_ROLE,
         native_package_generation="package-generation-1",
         source_action_binding_id="binding.input",
+        source_registration_ids=("registration.input",),
         role_source_receipt_handle="source-receipt-role",
         role_module_name="hermes.plugins.runtime",
         role_closure_member_path="hermes/plugins/runtime.py",
@@ -657,6 +658,7 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.assertEqual(first.schema, 1)
         self.assertEqual(first.loader_ready_event_id, event_id)
         self.assertEqual(first.observed_registration_ids, ("registration.input", "registration.tool"))
+        self.assertEqual(first.observed_entrypoint_action_ids, ())
         self.assertEqual(first, second)
         with self.assertRaises(AuthorityDenied):
             self.store.receive_loader_progress(self.launch_handle, lambda: False)
