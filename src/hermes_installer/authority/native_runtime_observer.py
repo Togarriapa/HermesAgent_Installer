@@ -420,6 +420,8 @@ class RootSelectedHealthOwnerInvocation:
     owner_invocation: RootNativeOwnerOverlayInvocation = field(repr=False, compare=False)
     source_receipt_handles: tuple[str, ...]
     source_receipt_ids: tuple[str, ...]
+    provider_source_receipt_handles: tuple[str, ...]
+    provider_source_receipt_ids: tuple[str, ...]
     _registry: Any = field(repr=False, compare=False)
     _issuer: object = field(repr=False, compare=False)
 
@@ -1432,7 +1434,9 @@ class NativeInvocationRegistry:
                 and row.expires_monotonic > self.monotonic()
             )
         if len(candidates) != 1:
-            raise AuthorityDenied("native.health.invocation", "request has no unique consumed health tool call")
+            code = ("native.health.invocation_pending" if not candidates
+                    else "native.health.invocation_ambiguous")
+            raise AuthorityDenied(code, "request has no unique consumed health tool call")
         row = candidates[0]
         response = row.response
         try:
@@ -1503,12 +1507,30 @@ class NativeInvocationRegistry:
             receipt_ids = tuple(sorted(receipt.receipt_id for receipt in unique_rows))
             if len(receipt_ids) != len(set(receipt_ids)):
                 raise ValueError
+            with self.service._lock:
+                provider_by_handle = {
+                    handle: self.service._source_receipt_handles.get(handle)
+                    for handle in response.receipt_handles
+                }
+            if any(receipt is None for receipt in provider_by_handle.values()):
+                raise ValueError
+            provider_handles = tuple(sorted(
+                response.receipt_handles,
+                key=lambda handle: provider_by_handle[handle].receipt_id,
+            ))
+            provider_ids = tuple(provider_by_handle[handle].receipt_id
+                                  for handle in provider_handles)
+            if (len(provider_by_handle) != len(response.receipt_handles)
+                    or len(provider_ids) != len(set(provider_ids))):
+                raise ValueError
             return RootSelectedHealthOwnerInvocation(
                 request_projection=request_projection,
                 provider_response=response,
                 owner_invocation=row,
                 source_receipt_handles=unique_handles,
                 source_receipt_ids=receipt_ids,
+                provider_source_receipt_handles=provider_handles,
+                provider_source_receipt_ids=provider_ids,
                 _registry=self, _issuer=self._health_selection_issuer,
             )
         except Exception:
@@ -1546,7 +1568,9 @@ class NativeInvocationRegistry:
                 or current.request_projection.observation
                    is not selected.request_projection.observation
                 or current.source_receipt_handles != selected.source_receipt_handles
-                or current.source_receipt_ids != selected.source_receipt_ids):
+                or current.source_receipt_ids != selected.source_receipt_ids
+                or current.provider_source_receipt_handles != selected.provider_source_receipt_handles
+                or current.provider_source_receipt_ids != selected.provider_source_receipt_ids):
             raise AuthorityDenied("native.health.invocation", "current owner call or source ancestry changed")
         return selected
 

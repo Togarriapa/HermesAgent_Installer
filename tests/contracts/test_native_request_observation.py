@@ -184,13 +184,30 @@ class NativeRequestObservationContracts(unittest.TestCase):
         ), selected)
 
         self._record(retry=1)
-        with self.assertRaises(AuthorityDenied):
+        with self.assertRaises(AuthorityDenied) as ambiguous:
             self.registry.resolve_current_health_request_for_input(
                 input_event, live_producer_identity=self.identity, producer_pid=41001,
                 producer_profile_id=self.producer.profile_id,
                 producer_generation="producer-v1",
                 native_package_generation="package-generation-1",
             )
+        self.assertEqual(ambiguous.exception.code, "native.request_health_ambiguous")
+
+    def test_health_request_selector_reports_pending_without_matching_source_parent(self):
+        self._record()
+        from dataclasses import replace
+        input_event = replace(
+            self.input_observer._events["event:input"],
+            source_receipt_handle="x" * 43,
+        )
+        with self.assertRaises(AuthorityDenied) as pending:
+            self.registry.resolve_current_health_request_for_input(
+                input_event, live_producer_identity=self.identity, producer_pid=41001,
+                producer_profile_id=self.producer.profile_id,
+                producer_generation="producer-v1",
+                native_package_generation="package-generation-1",
+            )
+        self.assertEqual(pending.exception.code, "native.request_health_pending")
 
     def test_changed_identity_or_payload_cannot_resolve_request_record(self):
         observation = self._record()
