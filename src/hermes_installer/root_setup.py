@@ -459,13 +459,36 @@ def run_root_setup_action(
             account = _read_target_account_name()
             initial = initial_aggregate.begin_install(account)
             if not (sys.stdin.isatty() and sys.stderr.isatty()):
-                raise RuntimeError("Authentik setup choices require the root controlling terminal")
-            origin = input("Authentik HTTPS origin: ").strip()
-            system_group_id = input("Authentik system group ID: ").strip()
-            recipient_group_id = input("Authentik recipient group ID: ").strip()
-            initial_aggregate.select_initial_identity(
-                initial.compilation_session_handle, https_origin=origin,
-                system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+                raise RuntimeError("Initial capability and identity-domain choices require the root controlling terminal")
+            print("Choose the initial principal domain before entering any credentials.")
+            print("  local: owner-scoped Resources overlay operations; no host or Authentik authority")
+            print("  authentik: selected homelab administration through the protected System-membership path")
+            identity_lane = input("Initial principal [local/authentik]: ").strip().casefold()
+            if identity_lane == "local":
+                print("Select local overlay operations: read, history, write, delete (blank selects none).")
+                operation_text = input("Local operations: ").strip().casefold()
+                operations = tuple(item.strip() for item in operation_text.split(",") if item.strip())
+                operation_ids = {
+                    "read": "resource-overlay-store:tool:resource_overlay_read",
+                    "history": "resource-overlay-store:tool:resource_overlay_history",
+                    "write": "resource-overlay-store:tool:resource_overlay_write",
+                    "delete": "resource-overlay-store:tool:resource_overlay_delete",
+                }
+                if (len(set(operations)) != len(operations)
+                        or any(item not in operation_ids for item in operations)):
+                    raise RuntimeError("Local capability choice must use read, history, write, and/or delete")
+                initial_aggregate.select_initial_local_owner(
+                    initial.compilation_session_handle,
+                    selected_registration_ids=tuple(operation_ids[item] for item in operations))
+            elif identity_lane == "authentik":
+                origin = input("Authentik HTTPS origin: ").strip()
+                system_group_id = input("Authentik system group ID: ").strip()
+                recipient_group_id = input("Authentik recipient group ID: ").strip()
+                initial_aggregate.select_initial_identity(
+                    initial.compilation_session_handle, https_origin=origin,
+                    system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+            else:
+                raise RuntimeError("Initial principal domain must be local or authentik")
             handoff = initial_aggregate.publish_prepared_selection(
                 initial.compilation_session_handle)
             factory, session = initial_aggregate.adopt_prepared_selection(handoff.handoff_handle)

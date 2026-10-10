@@ -1645,6 +1645,7 @@ class RootSetupChoices:
     selected_principal_binding_receipt_handle: str | None
     selected_component_ids: tuple[str, ...]
     owned_adoption_receipt_handles: tuple[str, ...]
+    selected_principal_identity_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1762,6 +1763,7 @@ class RootInitialPublicationHandoff:
     _publication_receipt: Any = field(default=None, repr=False)
     _initial_session: RootInitialCompilationSession | None = field(default=None, repr=False)
     _registry_seal: str = field(default="", repr=False)
+    principal_identity_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -2100,12 +2102,34 @@ class InstalledBootstrapPolicyResolver:
         source_id = doc["source_artifact_id"]
         if source_id != HERMES_SOURCE_ARTIFACT_ID or source_id not in plan_row["allowed_artifact_ids"]:
             _fail("bootstrap policy does not select the pinned official Hermes source")
-        identity_fields = {"service_profile_id", "principal_id", "service_account_name",
-                           "exclusive_group_name", "uid_allocation"}
+        common_identity_fields = {"service_profile_id", "principal_id", "service_account_name",
+                                  "exclusive_group_name", "uid_allocation"}
         identity = doc["identity_policy"]
-        if (not isinstance(identity, dict) or set(identity) != identity_fields
+        if not isinstance(identity, dict):
+            _fail("bootstrap service identity policy is incomplete or unsupported")
+        # Existing untagged Authentik policies have a single unambiguous
+        # legacy principal namespace. Every newly compiled generation carries
+        # the explicit discriminator; local-owner records require their own
+        # binding digest and are never decoded through the Authentik branch.
+        if set(identity) == common_identity_fields and isinstance(identity.get("principal_id"), str) \
+                and identity["principal_id"].startswith("authentik:"):
+            identity = {**identity, "identity_kind": "authentik-subject-v1"}
+        identity_kind = identity.get("identity_kind")
+        if identity_kind == "authentik-subject-v1":
+            expected_identity_fields = common_identity_fields | {"identity_kind"}
+            if not isinstance(identity.get("principal_id"), str) or not identity["principal_id"].startswith("authentik:"):
+                _fail("Authentik identity domain does not match its principal namespace")
+        elif identity_kind == "linux-local-owner-v1":
+            expected_identity_fields = common_identity_fields | {"identity_kind", "owner_binding_sha256"}
+            _validate_sha256(identity.get("owner_binding_sha256"), "Linux local-owner binding")
+            if not isinstance(identity.get("principal_id"), str) or not identity["principal_id"].startswith("linux-local-owner:"):
+                _fail("Linux local-owner identity domain does not match its principal namespace")
+        else:
+            _fail("bootstrap service identity policy has no supported tagged identity domain")
+        identity_fields = expected_identity_fields
+        if (set(identity) != identity_fields
                 or any(not isinstance(identity[key], str) or not _ID.fullmatch(identity[key])
-                       for key in identity_fields)
+                       for key in common_identity_fields | {"identity_kind"})
                 or identity["uid_allocation"] != "root-dedicated-account"
                 or identity["service_account_name"] != identity["exclusive_group_name"]):
             _fail("bootstrap service identity policy is incomplete or unsupported")
@@ -2514,6 +2538,7 @@ class RootInitialCompilationRegistry:
         choice_body = {
             "mode": choices.mode, "target_account_name": choices.target_account_name,
             "selected_principal_binding_receipt_handle": choices.selected_principal_binding_receipt_handle,
+            "selected_principal_identity_kind": choices.selected_principal_identity_kind,
             "selected_component_ids": list(choices.selected_component_ids),
             "owned_adoption_receipt_handles": list(choices.owned_adoption_receipt_handles),
         }
@@ -2541,16 +2566,21 @@ class RootInitialCompilationRegistry:
     def bind_selected_principal(self, stage0_session_handle: str,
                                 principal_receipt_handle: str,
                                 principal_registry: Any) -> RootInitialCompilationSession:
-        """Advance the same stage-zero context after root Authentik selection.
+        """Advance stage zero with one concrete, tagged issuer selection.
 
         The session and transaction IDs remain fixed so the identity and
         principal receipts stay bound to the original root actor observation.
         Only the registry can attach the typed principal receipt to the sealed
         choices and refresh its actor journal record.
         """
-        from .setup_principal import RootSetupPrincipalSelectionRegistry
-        if not isinstance(principal_registry, RootSetupPrincipalSelectionRegistry):
-            raise BootstrapEnrollmentPending("initial policy requires the concrete root principal registry")
+        from .setup_principal import (RootSetupLocalOwnerIdentityRegistry,
+                                      RootSetupPrincipalSelectionRegistry)
+        if isinstance(principal_registry, RootSetupPrincipalSelectionRegistry):
+            identity_kind = "authentik-subject-v1"
+        elif isinstance(principal_registry, RootSetupLocalOwnerIdentityRegistry):
+            identity_kind = "linux-local-owner-v1"
+        else:
+            raise BootstrapEnrollmentPending("initial policy requires one concrete tagged principal issuer")
         session = self.resolve_initial_session(stage0_session_handle)
         if (not isinstance(principal_receipt_handle, str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", principal_receipt_handle)
@@ -2560,10 +2590,12 @@ class RootInitialCompilationRegistry:
             principal_receipt_handle, session.compilation_session_handle,
             session.compilation_transaction_handle, session.plan_sha256)
         choices = replace(session._choices,
-                          selected_principal_binding_receipt_handle=principal_receipt_handle)
+                          selected_principal_binding_receipt_handle=principal_receipt_handle,
+                          selected_principal_identity_kind=identity_kind)
         choice_body = {
             "mode": choices.mode, "target_account_name": choices.target_account_name,
             "selected_principal_binding_receipt_handle": principal_receipt_handle,
+            "selected_principal_identity_kind": identity_kind,
             "selected_component_ids": list(choices.selected_component_ids),
             "owned_adoption_receipt_handles": list(choices.owned_adoption_receipt_handles),
         }
@@ -2987,7 +3019,8 @@ class RootInitialCompilationRegistry:
             receipt.publication_sha256, session.plan_sha256, session.choices_sha256,
             session._choices.selected_principal_binding_receipt_handle,
             compiled.source_receipt_handles, time.monotonic(), session.expires_monotonic,
-            _publication_receipt=receipt, _initial_session=session, _registry_seal=self._seal)
+            _publication_receipt=receipt, _initial_session=session, _registry_seal=self._seal,
+            principal_identity_kind=session._choices.selected_principal_identity_kind)
         self._handoffs[handoff_handle] = {"publication_receipt": receipt,
                                          "publication_receipt_handle": receipt.receipt_handle,
                                          "session": session,
@@ -2998,6 +3031,8 @@ class RootInitialCompilationRegistry:
                                          "choices_sha256": session.choices_sha256,
                                          "principal_selection_receipt_handle":
                                              session._choices.selected_principal_binding_receipt_handle,
+                                         "principal_identity_kind":
+                                             session._choices.selected_principal_identity_kind,
                                          "artifact_receipt_handles": compiled.source_receipt_handles}
         self._publications.pop(publication_handle, None)
         self._sessions.pop(session.compilation_session_handle, None)
@@ -3040,7 +3075,11 @@ class RootInitialCompilationRegistry:
         typed = row["typed"]
         if (not isinstance(typed, RootInitialPublicationHandoff)
                 or not secrets.compare_digest(typed._registry_seal, self._seal)
-                or typed.expires_monotonic <= time.monotonic()):
+                or typed.expires_monotonic <= time.monotonic()
+                or typed.principal_identity_kind not in {"authentik-subject-v1", "linux-local-owner-v1"}
+                or typed._initial_session is None
+                or typed._initial_session._choices.selected_principal_identity_kind
+                   != typed.principal_identity_kind):
             raise BootstrapEnrollmentPending("initial publication handoff is expired or unsealed")
         self.resolve_handoff_for_receipt(typed.publication_receipt_handle)
         return typed
@@ -3068,7 +3107,8 @@ class RootInitialCompilationRegistry:
             handoff.principal_selection_receipt_handle, handoff.artifact_receipt_handles,
             handoff.issued_monotonic, handoff.expires_monotonic,
             normal_session_handle.session_id, authorization.transaction_handle,
-            handoff._publication_receipt, initial, self._seal)
+            handoff._publication_receipt, initial, self._seal,
+            principal_identity_kind=handoff.principal_identity_kind)
         self._handoffs.pop(handoff_handle, None)
         self._adopted_handoffs[normal_session_handle.session_id] = adopted
         return adopted
@@ -3192,6 +3232,11 @@ class RootInitialCompilationRegistry:
         if principal is not None and (not isinstance(principal, str)
                                       or not re.fullmatch(r"[0-9a-f]{64}", principal)):
             raise BootstrapEnrollmentError("selected principal receipt handle is malformed")
+        identity_kind = value.selected_principal_identity_kind
+        if ((principal is None and identity_kind is not None)
+                or (principal is not None and identity_kind not in {
+                    "authentik-subject-v1", "linux-local-owner-v1"})):
+            raise BootstrapEnrollmentError("selected principal requires one explicit identity domain")
         if (not isinstance(value.selected_component_ids, tuple) or len(value.selected_component_ids) > 256
                 or any(not isinstance(item, str) or not _ID.fullmatch(item)
                        for item in value.selected_component_ids)
@@ -3308,7 +3353,9 @@ class RootComposioSetupSelectionAuthority:
                 or not secrets.compare_digest(expected_principal_handle, principal_selection_receipt_handle)):
             raise BootstrapEnrollmentPending("Composio setup authorization requires the currently selected root principal receipt")
         principal = self._resolve_selected_principal(context, principal_selection_receipt_handle)
-        if not isinstance(principal.principal_id, str) or not self._PROJECT.fullmatch(principal.principal_id):
+        if (getattr(principal, "identity_kind", None) != "authentik-subject-v1"
+                or not isinstance(principal.principal_id, str)
+                or not self._PROJECT.fullmatch(principal.principal_id)):
             raise BootstrapEnrollmentPending("selected root principal is malformed")
         try:
             secret = self.vault.resolve_project_reference(
@@ -3931,6 +3978,7 @@ class RootInitialSetupAggregate:
         from .setup_policy_publication import RootSetupPolicyGenerationPublisher
         from .setup_principal import (RootSetupAuthentikIdentityObserver,
                                       RootSetupIdentityIntake,
+                                      RootSetupLocalOwnerIdentityRegistry,
                                       RootSetupPrincipalSelectionRegistry)
         self.release, self.actor, self.root_journal = release, actor, root_journal
         self.initial_registry = RootInitialCompilationRegistry(release, actor, root_journal)
@@ -3943,12 +3991,15 @@ class RootInitialSetupAggregate:
             self.initial_registry, self.identity_intake, self.vault, root_journal)
         self.principal_registry = RootSetupPrincipalSelectionRegistry.from_initial_compilation(
             self.initial_registry, self.identity_observer, capability_selection, root_journal)
+        self.local_owner_registry = RootSetupLocalOwnerIdentityRegistry.from_initial_compilation(
+            self.initial_registry, root_journal)
         self.key_registry = RootAuthorityKeySelectionRegistry.from_installed_release(
             release, self.initial_registry.actor_verifier, root_journal,
             initial_compilation_registry=self.initial_registry)
         self.compiler = RootFirstStagePolicyCompiler.from_installed_release(
             release, actor, initial_compilation_registry=self.initial_registry,
             principal_selection_registry=self.principal_registry,
+            local_owner_identity_registry=self.local_owner_registry,
             authority_key_selection_registry=self.key_registry)
         self.publisher = RootSetupPolicyGenerationPublisher.from_root_setup(
             release, self.initial_registry, root_journal, self.initial_registry)
@@ -3990,6 +4041,20 @@ class RootInitialSetupAggregate:
             session.compilation_session_handle, principal_handle, self.principal_registry)
         return principal_handle
 
+    def select_initial_local_owner(
+            self, session_handle: str, *, selected_registration_ids: tuple[str, ...]
+    ) -> str:
+        """Select only finite owner-overlay rows against the root NSS account."""
+        self._require_open()
+        session = self.initial_registry.resolve_initial_session(session_handle)
+        capability = self.local_owner_registry.select_capabilities(
+            session_handle, selected_registration_ids)
+        principal_handle = self.local_owner_registry.select_principal(
+            session_handle, capability.selection_handle)
+        self.initial_registry.bind_selected_principal(
+            session.compilation_session_handle, principal_handle, self.local_owner_registry)
+        return principal_handle
+
     def publish_prepared_selection(self, session_handle: str) -> RootInitialPublicationHandoff:
         """Compile/publish prepared authority and return the one-use root handoff."""
         self._require_open()
@@ -4011,7 +4076,8 @@ class RootInitialSetupAggregate:
             _authority_key_registry=self.key_registry,
             _initial_principal_registry=self.principal_registry,
             _initial_identity_observer=self.identity_observer,
-            _initial_identity_intake=self.identity_intake)
+            _initial_identity_intake=self.identity_intake,
+            _initial_local_owner_registry=self.local_owner_registry)
         self._transferred = True
         try:
             session = factory.begin_from_initial_publication(handoff_handle)
@@ -4049,6 +4115,7 @@ class RootBootstrapRuntimeFactory:
                  _initial_principal_registry: Any | None = None,
                  _initial_identity_observer: Any | None = None,
                  _initial_identity_intake: Any | None = None,
+                 _initial_local_owner_registry: Any | None = None,
                  _authority_service: Any | None = None):
         if os.getuid() != 0 or os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
             raise BootstrapEnrollmentPending("root bootstrap runtime exists only in the installed Linux root process")
@@ -4093,6 +4160,7 @@ class RootBootstrapRuntimeFactory:
         self._initial_principal_registry = _initial_principal_registry
         self._initial_identity_observer = _initial_identity_observer
         self._initial_identity_intake = _initial_identity_intake
+        self._initial_local_owner_registry = _initial_local_owner_registry
         self.resolver = InstalledBootstrapPolicyResolver(_SELECTION_PATH)
         if _initial_principal_registry is not None:
             from .setup_principal import (
@@ -4113,6 +4181,13 @@ class RootBootstrapRuntimeFactory:
                     or _initial_identity_observer.root_journal != self.resolver.journal_root):
                 raise BootstrapEnrollmentPending(
                     "transferred principal registry and identity observer do not match the held initial setup")
+        if _initial_local_owner_registry is not None:
+            from .setup_principal import RootSetupLocalOwnerIdentityRegistry
+            if (not isinstance(_initial_local_owner_registry, RootSetupLocalOwnerIdentityRegistry)
+                    or _initial_local_owner_registry._registry is not _initial_compilation_registry
+                    or _initial_local_owner_registry._journal != self.resolver.journal_root):
+                raise BootstrapEnrollmentPending(
+                    "transferred local-owner registry does not match the held initial setup")
         # Resolving the catalog authenticates the installed catalog bytes before
         # any root store or session object is constructed.
         try:
@@ -4211,29 +4286,42 @@ class RootBootstrapRuntimeFactory:
         handle = self.session_store.begin_from_initial_publication(handoff_handle)
         try:
             session = self._wrap_live_session(handle)
-            if (self._initial_principal_registry is None
-                    or self._initial_identity_observer is None
-                    or self._initial_identity_intake is None):
-                raise BootstrapEnrollmentPending(
-                    "published setup lacks retained principal and identity adoption dependencies")
-            normal_observer, identity_receipt_handle = self._initial_identity_intake.rebind_published_policy(
-                normal_session_store=self.session_store,
-                normal_session_handle=handle,
-                initial_principal_registry=self._initial_principal_registry,
-                initial_identity_observer=self._initial_identity_observer,
-            )
-            normal_principal_registry, principal_selection_handle = (
-                self._initial_principal_registry.adopt_initial_publication(
+            adopted_handoff = self._initial_compilation_registry.resolve_adopted_handoff(handle)
+            if adopted_handoff.principal_identity_kind == "linux-local-owner-v1":
+                if self._initial_local_owner_registry is None:
+                    raise BootstrapEnrollmentPending(
+                        "published local-owner setup lacks its retained Linux identity registry")
+                normal_registry, principal_handle = (
+                    self._initial_local_owner_registry.adopt_initial_publication(
+                        normal_session_store=self.session_store, normal_session_handle=handle))
+                session._adopted_principal_registry = normal_registry
+                session._adopted_principal_selection_handle = principal_handle
+            elif adopted_handoff.principal_identity_kind == "authentik-subject-v1":
+                if (self._initial_principal_registry is None
+                        or self._initial_identity_observer is None
+                        or self._initial_identity_intake is None):
+                    raise BootstrapEnrollmentPending(
+                        "published Authentik setup lacks retained principal and identity adoption dependencies")
+                normal_observer, identity_receipt_handle = self._initial_identity_intake.rebind_published_policy(
                     normal_session_store=self.session_store,
                     normal_session_handle=handle,
-                    authenticated_identity_receipt_handle=identity_receipt_handle,
-                    normal_identity_resolver=normal_observer,
+                    initial_principal_registry=self._initial_principal_registry,
+                    initial_identity_observer=self._initial_identity_observer,
                 )
-            )
-            session._adopted_identity_observer = normal_observer
-            session._adopted_identity_receipt_handle = identity_receipt_handle
-            session._adopted_principal_registry = normal_principal_registry
-            session._adopted_principal_selection_handle = principal_selection_handle
+                normal_principal_registry, principal_selection_handle = (
+                    self._initial_principal_registry.adopt_initial_publication(
+                        normal_session_store=self.session_store,
+                        normal_session_handle=handle,
+                        authenticated_identity_receipt_handle=identity_receipt_handle,
+                        normal_identity_resolver=normal_observer,
+                    )
+                )
+                session._adopted_identity_observer = normal_observer
+                session._adopted_identity_receipt_handle = identity_receipt_handle
+                session._adopted_principal_registry = normal_principal_registry
+                session._adopted_principal_selection_handle = principal_selection_handle
+            else:
+                raise BootstrapEnrollmentPending("published setup identity domain is unsupported")
             # Re-open the exact stage-zero key receipt and adopt it against the
             # consumed publication handoff. Durable setup choices never use the
             # process-local session seal as a signer.
@@ -4241,7 +4329,6 @@ class RootBootstrapRuntimeFactory:
             if key_registry is None:
                 raise BootstrapEnrollmentPending(
                     "normal setup lacks the transferred stage-zero authority-key registry")
-            adopted_handoff = self._initial_compilation_registry.resolve_adopted_handoff(handle)
             key_receipt = key_registry.resolve_selected_key_for_compilation_session(
                 adopted_handoff.compilation_session_handle)
             signer = key_registry.adopt_for_normal_setup(

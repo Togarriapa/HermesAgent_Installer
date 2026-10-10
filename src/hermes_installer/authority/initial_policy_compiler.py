@@ -378,11 +378,13 @@ class RootFirstStagePolicyCompiler:
     def __init__(self, verified_installer_release_receipt: Any,
                  root_actor_observation: Any, initial_compilation_registry: Any,
                  principal_selection_registry: Any,
+                 local_owner_identity_registry: Any,
                  authority_key_selection_registry: Any):
         from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
         from .bootstrap_runtime_factory import RootInitialCompilationRegistry
         from .enrollment import RootAuthorityKeySelectionRegistry
-        from .setup_principal import RootSetupPrincipalSelectionRegistry
+        from .setup_principal import (RootSetupLocalOwnerIdentityRegistry,
+                                      RootSetupPrincipalSelectionRegistry)
         if not isinstance(verified_installer_release_receipt, VerifiedInstallerReleaseReceipt):
             raise InitialPolicyCompilationError("compiler requires the sealed installed-release receipt")
         if not isinstance(root_actor_observation, RootActorObservation):
@@ -391,6 +393,10 @@ class RootFirstStagePolicyCompiler:
             raise InitialPolicyCompilationError("compiler requires the installed stage-zero registry")
         if not isinstance(principal_selection_registry, RootSetupPrincipalSelectionRegistry):
             raise InitialPolicyCompilationError("compiler requires the root Authentik principal registry")
+        if (not isinstance(local_owner_identity_registry, RootSetupLocalOwnerIdentityRegistry)
+                or local_owner_identity_registry._registry is not initial_compilation_registry
+                or local_owner_identity_registry._journal != initial_compilation_registry.root_journal):
+            raise InitialPolicyCompilationError("compiler requires the separate root local-owner registry")
         if (not isinstance(authority_key_selection_registry, RootAuthorityKeySelectionRegistry)
                 or authority_key_selection_registry.release is not verified_installer_release_receipt
                 or authority_key_selection_registry.initial_compilation_registry is not initial_compilation_registry
@@ -401,6 +407,7 @@ class RootFirstStagePolicyCompiler:
         self._actor = root_actor_observation
         self._registry = initial_compilation_registry
         self._principal_registry = principal_selection_registry
+        self._local_owner_registry = local_owner_identity_registry
         self._key_registry = authority_key_selection_registry
 
     @classmethod
@@ -408,11 +415,13 @@ class RootFirstStagePolicyCompiler:
                                root_actor_observation: Any, *,
                                initial_compilation_registry: Any,
                                principal_selection_registry: Any,
+                               local_owner_identity_registry: Any,
                                authority_key_selection_registry: Any) -> "RootFirstStagePolicyCompiler":
         verified_installer_release_receipt.verify_current()
         root_actor_observation.verify_current(verified_installer_release_receipt)
         return cls(verified_installer_release_receipt, root_actor_observation,
                    initial_compilation_registry, principal_selection_registry,
+                   local_owner_identity_registry,
                    authority_key_selection_registry)
 
     def compile_initial_policy(self, choices: Any) -> "CompiledRootSetupPublication":
@@ -447,9 +456,16 @@ class RootFirstStagePolicyCompiler:
         if principal_handle is None:
             raise InitialPolicyCompilationError(
                 "pending-principal-selection: complete root-authenticated identity selection")
-        selected = self._principal_registry.resolve_selected_principal(
-            principal_handle, session.compilation_session_handle,
-            session.compilation_transaction_handle, session.plan_sha256)
+        if choices.selected_principal_identity_kind == "authentik-subject-v1":
+            selected = self._principal_registry.resolve_selected_principal(
+                principal_handle, session.compilation_session_handle,
+                session.compilation_transaction_handle, session.plan_sha256)
+        elif choices.selected_principal_identity_kind == "linux-local-owner-v1":
+            selected = self._local_owner_registry.resolve_selected_principal(
+                principal_handle, session.compilation_session_handle,
+                session.compilation_transaction_handle, session.plan_sha256)
+        else:
+            raise InitialPolicyCompilationError("initial principal has no explicit supported identity domain")
         from .bootstrap_runtime_factory import InstalledBootstrapPolicyResolver
         def release_bytes(artifact_id: str, expected_sha: str, expected_size: int,
                           expected_path: str) -> tuple[Any, bytes]:
@@ -528,17 +544,21 @@ class RootFirstStagePolicyCompiler:
             generation_id="prepared-" + session.compilation_transaction_handle[:32])
         identity = template_doc["identity"]
         roots_doc = template_doc["roots"]
+        identity_policy = {
+            "identity_kind": choices.selected_principal_identity_kind,
+            "service_profile_id": identity["service_profile_id"],
+            "principal_id": selected.principal_id,
+            "service_account_name": identity["service_account_name"],
+            "exclusive_group_name": identity["exclusive_group_name"],
+            "uid_allocation": identity["uid_allocation"],
+        }
+        if choices.selected_principal_identity_kind == "linux-local-owner-v1":
+            identity_policy["owner_binding_sha256"] = selected.principal_binding_sha256
         policy = {
             "schema": 1,
             "id": _POLICY_ARTIFACT_ID,
             "source_artifact_id": template_doc["source_artifact_id"],
-            "identity_policy": {
-                "service_profile_id": identity["service_profile_id"],
-                "principal_id": selected.principal_id,
-                "service_account_name": identity["service_account_name"],
-                "exclusive_group_name": identity["exclusive_group_name"],
-                "uid_allocation": identity["uid_allocation"],
-            },
+            "identity_policy": identity_policy,
             "root_policy": {
                 "journal_root_id": roots_doc["journal_root_id"],
                 "service_home_root_id": roots_doc["service_home_root_id"],
@@ -636,16 +656,23 @@ class RootFirstStagePolicyCompiler:
         # chain. The principal handle alone binds identity labels/capability
         # namespace, while its Authentik observation handle binds those facts
         # to a fresh current identity read. Neither is a source artifact proof.
-        identity_receipt_handle = selected.identity_receipt_handle
-        principal_receipt_handle = selected.receipt_id
-        if (not isinstance(identity_receipt_handle, str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", identity_receipt_handle)
-                or not isinstance(principal_receipt_handle, str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", principal_receipt_handle)):
-            raise InitialPolicyCompilationError("selected principal lacks its actual identity receipt closure")
+        if choices.selected_principal_identity_kind == "authentik-subject-v1":
+            identity_receipt_handle = selected.identity_receipt_handle
+            principal_receipt_handle = selected.receipt_id
+            current_identity_handles = (identity_receipt_handle, principal_receipt_handle)
+        else:
+            identity_receipt_handle = selected.owner_identity_receipt_handle
+            principal_receipt_handle = selected.receipt_handle
+            capability_handle = selected.capability_selection_handle
+            current_identity_handles = (identity_receipt_handle, capability_handle,
+                                        principal_receipt_handle)
+        if any(not isinstance(handle, str)
+               or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+               for handle in current_identity_handles):
+            raise InitialPolicyCompilationError("selected principal lacks its current typed identity receipt closure")
         return package(
             session, policy_raw, catalog_raw, selection_doc,
-            source_receipt_handles=(identity_receipt_handle, principal_receipt_handle))
+            source_receipt_handles=current_identity_handles)
 
 
 __all__ = ["RootFirstStagePolicyCompiler", "InitialPolicyCompilationError"]
