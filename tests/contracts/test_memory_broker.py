@@ -10,6 +10,8 @@ from hermes_installer.memory.broker import (
     BrokerDenied, BrokerUnavailable, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
     canonical, ROUTE_IDS, build_memory_runtime,
 )
+from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from test_memory_enrollment import record as memory_enrollment_record
 
 
 class Context:
@@ -146,6 +148,87 @@ class MemoryBrokerTests(unittest.TestCase):
                                     "text": "a harmless synthetic fact"}})
         self.assertEqual(response["status"], 503)
         self.assertEqual(ipc.calls, [])
+
+    def test_private_engines_are_bound_to_one_profile_and_exact_private_routes(self):
+        # Synthetic boundary test only: it exercises handler scoping with a
+        # stand-in and does not register or qualify a production engine.
+        first_enrollment = MemoryServiceEnrollment.from_protected_record(memory_enrollment_record())
+        second_record = memory_enrollment_record()
+        second_record.update(
+            target_id="memory-agentmemory:profile-two",
+            profile_id="profile-two", principal_id="principal-two",
+            service_enrollment_id="service-agentmemory-two",
+            service_generation="service-gen-8", namespace_identity="namespace-two",
+            data_root_id="memory-data-agentmemory-two", auth_reference_id="memory-auth-agentmemory-two",
+        )
+        second_record["fixed_project_account_user_scope"].update(
+            project_id="project-two", account_id="account-two", user_id="profile-two")
+        second_record["fixed_route_map"]["agentmemory-search"]["scope_bindings"].update(
+            profile_id="profile-two", service_generation="service-gen-8",
+            backend_project_ref="project-two", backend_agent_ref="profile-two",
+            credential_reference_id="memory-auth-agentmemory-two")
+        second_record["fixed_route_map"]["agentmemory-capture"]["scope_bindings"].update(
+            profile_id="profile-two", service_generation="service-gen-8",
+            backend_project_ref="project-two", backend_agent_ref="profile-two",
+            credential_reference_id="memory-auth-agentmemory-two")
+        second_record["fixed_route_map"]["agentmemory-ready"]["scope_bindings"].update(
+            profile_id="profile-two", service_generation="service-gen-8",
+            backend_project_ref="project-two", backend_agent_ref="profile-two",
+            credential_reference_id="memory-auth-agentmemory-two")
+        for route_id in ("agentmemory-search", "agentmemory-capture", "agentmemory-ready"):
+            second_record["fixed_route_map"][route_id]["credential_reference_id"] = \
+                "memory-auth-agentmemory-two"
+        second_enrollment = MemoryServiceEnrollment.from_protected_record(second_record)
+        first = MemoryTarget.from_enrollment(first_enrollment)
+        second = MemoryTarget.from_enrollment(second_enrollment)
+
+        class Engine:
+            engine_id = "selected-private-engine"
+            route_class = "private-local"
+            private = True
+            route_ids = dict(first_enrollment.private_extraction_embedding_routes)
+
+            def __init__(self):
+                self.calls = []
+
+            def extract(self, **kwargs):
+                self.calls.append(("extract", kwargs["context"].profile_id))
+                return ["synthetic fact"]
+
+            def embed(self, **kwargs):
+                self.calls.append(("embed", kwargs["context"].profile_id))
+                return [[0.25, 0.75] for _ in kwargs["facts"]]
+
+        engine = Engine()
+        handlers = build_memory_handlers(
+            targets={
+                (first.profile_id, first.namespace_id, first.provider): first,
+                (second.profile_id, second.namespace_id, second.provider): second,
+            },
+            owner_state=lambda _profile: ("agentmemory", 4), queue=None, ipc=None,
+            engines={(first.profile_id, first.namespace_id, first.provider): engine},
+            eligibility=lambda *_: True,
+        )
+        response = call(
+            handlers[("memory.extract", "memory:agentmemory:extract")],
+            Context("profile-one", "namespace-one"), "extract",
+            {"schema": 1, "record": {"id": "fixture", "profile": "profile-one",
+             "namespace": "namespace-one", "source": "hermes-session:fixture",
+             "text": "synthetic private fact"}},
+        )
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(json.loads(response["body"])["facts"], ["synthetic fact"])
+        # The same engine cannot service a sibling profile without its own
+        # exact enrollment key, even if the provider and route names match.
+        sibling = call(
+            handlers[("memory.extract", "memory:agentmemory:extract")],
+            Context("profile-two", "namespace-two"), "extract",
+            {"schema": 1, "record": {"id": "fixture-two", "profile": "profile-two",
+             "namespace": "namespace-two", "source": "hermes-session:fixture-two",
+             "text": "sibling private fact"}},
+        )
+        self.assertEqual(sibling["status"], 503)
+        self.assertEqual(engine.calls, [("extract", "profile-one")])
 
     def test_compound_search_records_receive_scope_only_from_root_broker(self):
         class SearchTarget:

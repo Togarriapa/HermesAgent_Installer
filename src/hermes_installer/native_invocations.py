@@ -34,6 +34,10 @@ _MAX_NATIVE_MCP_RESULT_BYTES = 2 * 1024 * 1024
 _MAX_NATIVE_INPUT_BYTES = 1_048_576
 _MAX_TRACKED_INPUT_CONVERSATIONS = 128
 _CURRENT_TOOL_CALL_ID: ContextVar[str | None] = ContextVar("hermes_native_tool_call_id", default=None)
+_CURRENT_NATIVE_TURN_HANDLE: ContextVar[str | None] = ContextVar("hermes_native_turn_handle", default=None)
+_CURRENT_FINAL_RESPONSE: ContextVar[tuple[str, str] | None] = ContextVar(
+    "hermes_native_final_response", default=None,
+)
 _CURRENT_MCP_RESULT: ContextVar[tuple[str, bytes, str] | None] = ContextVar(
     "hermes_native_mcp_result", default=None,
 )
@@ -80,6 +84,10 @@ def read_selected_native_input(stream: Any) -> str:
     any mismatch prevents the first provider request.
     """
     global _initial_input, _initial_input_failed
+    # A second/failed admission must not inherit a previous turn's lexical
+    # completion handles, even if this process unexpectedly stays alive.
+    _CURRENT_NATIVE_TURN_HANDLE.set(None)
+    _CURRENT_FINAL_RESPONSE.set(None)
     with _initial_input_lock:
         _initial_input_failed = True
     try:
@@ -94,10 +102,11 @@ def read_selected_native_input(stream: Any) -> str:
         if delivery is None:
             raise ValueError("native input delivery is pending")
         if isinstance(delivery, Mapping):
-            if set(delivery) != {
+            base_fields = {
                 "schema", "source_receipt_handle", "selected_execution_handle",
                 "input_sha256", "input_size_bytes", "expires_monotonic",
-            }:
+            }
+            if set(delivery) not in (base_fields, base_fields | {"turn_handle"}):
                 raise ValueError("native input delivery shape is invalid")
             schema = delivery["schema"]
             receipt = delivery["source_receipt_handle"]
@@ -105,6 +114,7 @@ def read_selected_native_input(stream: Any) -> str:
             digest = delivery["input_sha256"]
             size = delivery["input_size_bytes"]
             expires = delivery["expires_monotonic"]
+            turn_handle = delivery.get("turn_handle")
         else:
             schema = getattr(delivery, "schema", None)
             receipt = getattr(delivery, "source_receipt_handle", None)
@@ -112,6 +122,7 @@ def read_selected_native_input(stream: Any) -> str:
             digest = getattr(delivery, "input_sha256", None)
             size = getattr(delivery, "input_size_bytes", None)
             expires = getattr(delivery, "expires_monotonic", None)
+            turn_handle = getattr(delivery, "turn_handle", None)
         if (type(schema) is not int or schema != 1
                 or not isinstance(receipt, str) or not _OPAQUE.fullmatch(receipt)
                 or not isinstance(execution, str) or not _OPAQUE.fullmatch(execution)
@@ -119,6 +130,8 @@ def read_selected_native_input(stream: Any) -> str:
                 or type(size) is not int or not 1 <= size <= _MAX_NATIVE_INPUT_BYTES
                 or isinstance(expires, bool) or type(expires) not in (int, float)
                 or not time.monotonic() < float(expires) <= time.monotonic() + 30.0
+                or (turn_handle is not None
+                    and (not isinstance(turn_handle, str) or not _OPAQUE.fullmatch(turn_handle)))
                 or not callable(getattr(stream, "read", None))):
             raise ValueError("native input delivery is invalid or expired")
         raw = stream.read(size + 1)
@@ -131,6 +144,8 @@ def read_selected_native_input(stream: Any) -> str:
                 raise ValueError("another selected input is still active")
             _initial_input = (receipt, digest, size, text, float(expires))
             _initial_input_failed = False
+        _CURRENT_NATIVE_TURN_HANDLE.set(turn_handle)
+        _CURRENT_FINAL_RESPONSE.set(None)
         return text
     except NativeInvocationUnavailable:
         raise
@@ -498,15 +513,34 @@ def _take_root_response_metadata(agent: object, *, response: Any, body: bytes,
 
     if isinstance(metadata, Mapping):
         required = {"producer_context_handle", "tool_call_bindings"}
-        if set(metadata) != required:
+        turn_fields = {"turn_handle", "final_response_delivery_handle"}
+        if set(metadata) not in (required, required | turn_fields):
             raise NativeInvocationUnavailable("root returned malformed provider-response metadata")
         producer = metadata["producer_context_handle"]
         rows = metadata["tool_call_bindings"]
+        turn_handle = metadata.get("turn_handle")
+        final_response_delivery_handle = metadata.get("final_response_delivery_handle")
     else:
         producer = getattr(metadata, "producer_context_handle", None)
         rows = getattr(metadata, "tool_call_bindings", None)
+        turn_handle = getattr(metadata, "turn_handle", None)
+        final_response_delivery_handle = getattr(metadata, "final_response_delivery_handle", None)
     if not isinstance(rows, (tuple, list)):
         raise NativeInvocationUnavailable("root response metadata does not match the captured response")
+    if (turn_handle is not None and
+            (not isinstance(turn_handle, str) or not _OPAQUE.fullmatch(turn_handle))):
+        raise NativeInvocationUnavailable("root response turn handle is malformed")
+    if (final_response_delivery_handle is not None and
+            (not isinstance(final_response_delivery_handle, str)
+             or not _OPAQUE.fullmatch(final_response_delivery_handle))):
+        raise NativeInvocationUnavailable("root final response delivery handle is malformed")
+    active_turn = _CURRENT_NATIVE_TURN_HANDLE.get()
+    if (turn_handle is not None and turn_handle == active_turn
+            and final_response_delivery_handle is not None):
+        _CURRENT_FINAL_RESPONSE.set((turn_handle, final_response_delivery_handle))
+    else:
+        # A non-final/mismatched response cannot complete the active turn.
+        _CURRENT_FINAL_RESPONSE.set(None)
     _install_once_per_provider_response(agent, {
         "producer_context_handle": producer,
         "tool_call_bindings": list(rows),
@@ -564,6 +598,40 @@ def install_provider_response_tool_calls(agent: object, response: object,
         raise NativeInvocationUnavailable("provider response entity could not be read exactly") from None
     _take_root_response_metadata(agent, response=raw_response, body=body,
                                  native_request_handle=native_request_handle)
+
+
+def finish_selected_native_turn(agent: object, terminal_result: object) -> None:
+    """Ask root to finish only from a successful pinned-facade return.
+
+    The return value is never sent. Root validates its retained event closure;
+    this worker-side gate only avoids completion calls for failed turns. Missing
+    v70 DTO/client fields leave capture pending.
+    """
+    turn_handle = _CURRENT_NATIVE_TURN_HANDLE.get()
+    final_response = _CURRENT_FINAL_RESPONSE.get()
+    _CURRENT_FINAL_RESPONSE.set(None)
+    if (not isinstance(terminal_result, Mapping)
+            or terminal_result.get("interrupted") is True
+            or terminal_result.get("failed") is True
+            or turn_handle is None or final_response is None
+            or final_response[0] != turn_handle):
+        return
+    try:
+        from hermes_installer.authority.client import AuthorityClient
+        authority = AuthorityClient.for_current_process(timeout=5.0)
+        finish = getattr(authority, "finish_selected_native_turn", None)
+        if callable(finish):
+            finish(turn_handle, final_response[1])
+    except Exception:
+        # A denied/incomplete root observation stays pending without changing
+        # the actual Hermes response or emitting evidence to the model.
+        return
+
+
+def clear_native_turn_scope() -> None:
+    """Clear delivered turn and response metadata on every facade exit path."""
+    _CURRENT_FINAL_RESPONSE.set(None)
+    _CURRENT_NATIVE_TURN_HANDLE.set(None)
 
 
 def _install_once_per_provider_response(agent: object, metadata: object) -> None:
