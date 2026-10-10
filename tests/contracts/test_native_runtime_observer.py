@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from types import MappingProxyType, ModuleType
 from types import SimpleNamespace

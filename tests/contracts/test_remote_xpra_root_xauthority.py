@@ -26,6 +26,12 @@ class PinnedXpraRootCookieOverlayTests(unittest.TestCase):
             output = Path(temp) / "xpra-overlay"
             receipt = build_pinned_xpra_root_xauthority_overlay(source, output)
             self.assertEqual(receipt.source_commit, XPRA_SOURCE_COMMIT)
+            for digest in (receipt.source_tree_sha256, receipt.transformed_tree_sha256,
+                           receipt.overlay_sha256, receipt.manifest_sha256,
+                           receipt.output_artifact_sha256):
+                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+            self.assertNotEqual(receipt.overlay_sha256, receipt.manifest_sha256)
+            self.assertNotEqual(receipt.transformed_tree_sha256, receipt.output_artifact_sha256)
             self.assertTrue(verify_pinned_xpra_overlay(
                 receipt, artifact_id=OVERLAY_ARTIFACT_ID,
                 expected_overlay_sha256=receipt.overlay_sha256,

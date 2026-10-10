@@ -293,6 +293,18 @@ class RootNativeInputObserver:
             raise AuthorityDenied("native.input.delivery", "source and delivery handles differ")
         return receipt
 
+    def resolve_event_for_source_handle(self, source_receipt_handle: str) -> RootNativeInputEvent:
+        """Resolve one immutable root event without consuming its payload."""
+        if not isinstance(source_receipt_handle, str) or not source_receipt_handle:
+            raise AuthorityDenied("native.input.event", "source receipt handle is malformed")
+        with self._lock:
+            matches = [event for event in self._events.values()
+                       if event.source_receipt_handle == source_receipt_handle
+                       and event.expires_monotonic > self.monotonic()]
+        if len(matches) != 1:
+            raise AuthorityDenied("native.input.event", "source handle has no unique retained input event")
+        return matches[0]
+
     def discard_task_input_observation(self, *, source_receipt_handle: str,
                                       receipt_handle: str | None = None) -> None:
         """Scrub a captured input if task binding fails before custody writes it."""
