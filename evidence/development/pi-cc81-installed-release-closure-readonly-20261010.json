@@ -20,11 +20,18 @@
     "verified_member_count": 5315
   },
   "read_only_invocation": {
-    "environment": "env -i PATH=/usr/bin:/bin",
-    "interpreter": "Python executable from the installed cc81 runtime; absolute path not supplied",
+    "argv": [
+      "/usr/bin/env", "-i", "PATH=/usr/bin:/bin",
+      "/usr/lib/hermes-installer/releases/cc81abffe3cbb1df447889bca269d1e6c0be77ea/runtime/bin/python",
+      "-B", "-I", "-S", "-"
+    ],
+    "interpreter": "/usr/lib/hermes-installer/releases/cc81abffe3cbb1df447889bca269d1e6c0be77ea/runtime/bin/python",
     "flags": ["-B", "-I", "-S", "-"],
-    "stdin_program_summary": "Imported only from the cc81 installed lib/python tree; called InstalledRootReleaseVerifier.verify_installed_release(), then receipt.verify_current(), and closed the receipt in finally.",
-    "stdin_program_digest": null,
+    "stdin_program_summary": "Inserted only the cc81 installed lib/python path in sys.path; called InstalledRootReleaseVerifier.verify_installed_release(), then receipt.verify_current(), and closed the receipt in finally.",
+    "stdin_program_original_path": "/private/tmp/hermes-pi-installed-readonly-stdin-20261010.py",
+    "stdin_program_retained_artifact": "pi-cc81-installed-release-readonly-stdin-20261010.py",
+    "stdin_program_bytes": 641,
+    "stdin_program_sha256": "3f30394b446f66f7b8631713fabc97baf52a138118bcd5f2def72742ca418b4b",
     "timestamp": null,
     "stdout_marker": "PI_INSTALLED_RELEASE_FULL_READONLY_PASS",
     "terminal_outcome": "root prompt returned"
