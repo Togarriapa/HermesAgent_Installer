@@ -454,7 +454,9 @@ class RootPublicInputPermissionRegistry:
                         profile_id=selection.profile_id,
                         profile_generation=self.service.profile_generations.get(selection.profile_id),
                         service_generation_digest=_active_digest(self.bindings))
+        verify_provenance = getattr(self.bindings, "verify_current_public_web_scope_provenance", None)
         if (not isinstance(rows, tuple) or not rows
+                or not callable(verify_provenance)
                 or tuple(sorted(row.enrolled_scope.enrollment_id for row in rows)) != selection.web_scope_ids
                 or any(getattr(row, "service_generation_digest", None) != _active_digest(self.bindings)
                        or type(getattr(row, "enrolled_scope", None)) is not EnrolledPublicWebScope
@@ -463,6 +465,7 @@ class RootPublicInputPermissionRegistry:
                               for name in ("target_selection_handle", "configuration_observation_handle",
                                            "configuration_sha256", "target_contract_artifact_id",
                                            "target_contract_sha256", "target_contract_source_receipt_handle"))
+                       or verify_provenance(row) is not True
                        for row in rows)):
             raise AuthorityDenied("public-permission.scope", "active protected scope rows are absent or malformed")
         return rows
