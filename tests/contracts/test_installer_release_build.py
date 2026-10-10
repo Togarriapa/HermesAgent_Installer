@@ -66,7 +66,7 @@ def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
                           input=body, stdout=subprocess.PIPE, check=True).stdout.decode("ascii").strip()
     # Repeated IDs are valid cat-file requests and drive both pipes beyond
     # their usual capacity while keeping the test's Git object store tiny.
-    result = release_build.RootInstallerDistributionRegistry._git_batch(repository, [blob] * 2048)
+    result = tuple(release_build.RootInstallerDistributionRegistry._git_batch(repository, [blob] * 2048))
     assert len(result) == 2048
     assert all(item == body for item in result)
 

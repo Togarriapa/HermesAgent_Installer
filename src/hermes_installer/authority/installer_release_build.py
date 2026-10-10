@@ -28,7 +28,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, is_dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
 
@@ -555,7 +555,7 @@ class RootInstallerDistributionRegistry:
             raise
 
     @classmethod
-    def _git_batch(cls, repository: Path, object_ids: list[str]) -> tuple[bytes, ...]:
+    def _git_batch(cls, repository: Path, object_ids: list[str]) -> Iterator[bytes]:
         command = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repository),
                    "cat-file", "--batch"]
         environment = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8",
@@ -582,7 +582,6 @@ class RootInstallerDistributionRegistry:
             writer = threading.Thread(target=write_object_ids,
                                       name="installer-git-object-input", daemon=True)
             writer.start()
-            bodies: list[bytes] = []
             total = 0
             for expected in object_ids:
                 header = process.stdout.readline(256)
@@ -596,7 +595,7 @@ class RootInstallerDistributionRegistry:
                 body = _read_exact(process.stdout, size)
                 if process.stdout.read(1) != b"\n":
                     raise InstallerReleaseBuildError("Git source object framing is invalid")
-                bodies.append(body)
+                yield body
             writer.join(timeout=30)
             if writer.is_alive():
                 raise InstallerReleaseBuildError("Git source object input did not finish")
@@ -604,7 +603,6 @@ class RootInstallerDistributionRegistry:
                 raise InstallerReleaseBuildError("Git source object input failed")
             if process.wait(timeout=30) != 0:
                 raise InstallerReleaseBuildError("Git source object export failed")
-            return tuple(bodies)
         except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired):
             if process.poll() is None:
                 process.kill()
