@@ -206,7 +206,8 @@ def _systemd_bind_probe_diagnostics(unit: str, started_utc: str) -> str:
     """Append bounded host/unit evidence only when the kernel probe fails."""
     output = [f"\nBIND_PROBE_DIAGNOSTICS unit={unit} started_utc={started_utc}\n"]
 
-    def capture(label: str, argv: tuple[str, ...], *, limit: int = 4096) -> str:
+    def capture(label: str, argv: tuple[str, ...], *, limit: int = 4096,
+                record: bool = True) -> str:
         try:
             result = subprocess.run(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -221,7 +222,8 @@ def _systemd_bind_probe_diagnostics(unit: str, started_utc: str) -> str:
                 detail = f"<empty; exit={result.returncode}>"
             elif result.returncode:
                 detail += f"\n<exit={result.returncode}>"
-        output.append(f"[{label}]\n{detail}\n")
+        if record:
+            output.append(f"[{label}]\n{detail}\n")
         return detail
 
     capture("uname", ("/usr/bin/uname", "-a"))
@@ -237,18 +239,26 @@ def _systemd_bind_probe_diagnostics(unit: str, started_utc: str) -> str:
     properties = capture(
         "transient-unit-properties",
         ("/usr/bin/systemctl", "show", unit, "--no-pager",
+         "--property=LoadState", "--property=ActiveState", "--property=SubState",
          "--property=ControlGroup", "--property=SocketBindDeny",
          "--property=SocketBindAllow", "--property=Result",
-         "--property=ExecMainStatus"),
+         "--property=ExecMainStatus"), record=False,
     )
-    cgroup = next((line.partition("=")[2] for line in properties.splitlines()
-                   if line.startswith("ControlGroup=")), "")
-    if not cgroup or not cgroup.startswith("/"):
+    properties, cgroup, unloaded_reason = _loaded_transient_unit_properties(properties)
+    if unloaded_reason is not None:
+        output.append(
+            "[transient-unit-properties]\n"
+            f"unavailable ({unloaded_reason})\n"
+        )
+        output.append("[cgroup-bind-attachments]\nunavailable (unit is not loaded)\n")
+    elif not cgroup:
+        output.append(f"[transient-unit-properties]\n{properties}\n")
         output.append(
             "[cgroup-bind-attachments]\n"
-            "unavailable (ControlGroup not reported after --collect)\n"
+            "unavailable (loaded unit has no ControlGroup)\n"
         )
     else:
+        output.append(f"[transient-unit-properties]\n{properties}\n")
         bpftool = next((path for path in (Path("/usr/sbin/bpftool"), Path("/usr/bin/bpftool"))
                         if path.is_file()), None)
         cgroup_path = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
@@ -269,6 +279,60 @@ def _systemd_bind_probe_diagnostics(unit: str, started_utc: str) -> str:
                               "--output=short-iso-precise", "--lines=80"), limit=8192)
     diagnostics = "".join(output)
     return diagnostics[:20_000] + ("\n<diagnostics truncated>\n" if len(diagnostics) > 20_000 else "")
+
+
+def _loaded_transient_unit_properties(raw: str) -> tuple[str, str | None, str | None]:
+    """Return property evidence only when systemd still has the unit loaded."""
+    values = {key: value for line in raw.splitlines()
+              if "=" in line for key, value in (line.split("=", 1),)}
+    load_state = values.get("LoadState")
+    if load_state != "loaded":
+        if load_state:
+            reason = f"LoadState={load_state}; unit was launched with --collect"
+        else:
+            reason = "LoadState was not reported; collected unit state cannot be verified"
+        return "", None, reason
+    control_group = values.get("ControlGroup", "")
+    if not control_group.startswith("/"):
+        control_group = None
+    return raw[:4096], control_group, None
+
+
+class CollectedSystemdUnitDiagnosticTests(unittest.TestCase):
+    def test_loaded_unit_properties_and_cgroup_are_retained(self):
+        raw = "\n".join((
+            "LoadState=loaded", "ActiveState=failed", "SubState=failed",
+            "ControlGroup=/system.slice/hermes-loopback-bind.service",
+            "SocketBindDeny=any", "SocketBindAllow=ipv4:tcp:14500",
+            "Result=exit-code", "ExecMainStatus=31",
+        ))
+        formatted, cgroup, unavailable = _loaded_transient_unit_properties(raw)
+        self.assertIsNone(unavailable)
+        self.assertEqual(cgroup, "/system.slice/hermes-loopback-bind.service")
+        self.assertIn("Result=exit-code", formatted)
+        self.assertIn("ExecMainStatus=31", formatted)
+
+    def test_unloaded_collected_unit_defaults_are_not_reported_as_observations(self):
+        raw = "\n".join((
+            "LoadState=not-found", "ActiveState=inactive", "SubState=dead",
+            "ControlGroup=", "Result=success", "ExecMainStatus=0",
+        ))
+        formatted, cgroup, unavailable = _loaded_transient_unit_properties(raw)
+        self.assertEqual(formatted, "")
+        self.assertIsNone(cgroup)
+        self.assertEqual(
+            unavailable,
+            "LoadState=not-found; unit was launched with --collect",
+        )
+        self.assertNotIn("Result=success", formatted)
+        self.assertNotIn("ExecMainStatus=0", formatted)
+
+    def test_missing_load_state_does_not_trust_unverified_defaults(self):
+        formatted, cgroup, unavailable = _loaded_transient_unit_properties(
+            "Result=success\nExecMainStatus=0\nControlGroup=\n")
+        self.assertEqual(formatted, "")
+        self.assertIsNone(cgroup)
+        self.assertIn("LoadState was not reported", unavailable)
 
 
 @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0 and Path("/usr/sbin/nft").exists(),
