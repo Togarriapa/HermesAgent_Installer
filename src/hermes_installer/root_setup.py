@@ -383,11 +383,15 @@ def _import_v180_native_support_closure() -> None:
 
 def _import_v187_listener_activation_closure() -> None:
     """Load the finite installed daemon/adoption modules before actor capture."""
-    from .authority import daemon, listener_activation, native_worker_endpoint_custody
+    from .authority import (
+        daemon, functional_health_receipt_consumer, listener_activation,
+        native_health_daemon, native_worker_endpoint_custody,
+    )
 
     # The worker and supervisor use the same pinned endpoint implementation;
     # keep these imports explicit so the installed actor sees the full closure.
-    _ = (daemon, listener_activation, native_worker_endpoint_custody)
+    _ = (daemon, listener_activation, native_worker_endpoint_custody,
+         functional_health_receipt_consumer, native_health_daemon)
 
 
 def run_root_setup_action(
