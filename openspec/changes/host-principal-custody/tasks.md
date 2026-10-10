@@ -249,3 +249,7 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T140.1 native source/projection/factory: Consume current held module pin, re-observe exact registration/action/schema source joins and current registration capture; stale source receipts/hash deny.
 
 - [ ] RB-T140.2 web/native integration: Preserve genuine raw receipt/result/media/operation joins and PUBLIC-only egress positive with private ancestry/revocation negatives; actual runtime/account/ARM acceptance remains open.
+
+- [ ] HI-T141.1 finance/native source/projection/factory: Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny.
+
+- [ ] HI-T141.2 finance/native integration: Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim.

@@ -584,3 +584,10 @@ The installer SHALL select all registrations sharing the updated web/voice/epic 
 #### Scenario: Source receipt identifies historical module bytes
 - **WHEN** current selected module SHA differs from the retained registration/action source receipt
 - **THEN** assembly denies the stale join and requires actual current source observation without editing immutable audit evidence
+
+### Requirement: Current bounded finance registration source cohort v141
+The installer SHALL bind the updated financial source module and all its actual registrations to current held source/schema receipts and bounded selected-alias observations; stale inventory or generic backend output SHALL NOT substitute for source/execution authority.
+
+#### Scenario: Root financial read omits selected account alias
+- **WHEN** the read result lacks the actual root-selected alias or violates the closed scalar/UTF8/byte bounds
+- **THEN** the native result is denied without fabricating an alias or promoting backend claims to account/transaction proof
