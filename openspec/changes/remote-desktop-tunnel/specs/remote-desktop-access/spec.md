@@ -622,3 +622,17 @@ The installer SHALL consume the exact held Desktop-specific signed native and li
 #### Scenario: Licensed fixed prepared Linux icons tool
 - **WHEN** the genuine current Desktop packaging issuer retains the exact official 7zip and licensed wasm-vips sources and reviewed owned PNG-only helper with independent offline effect proof
 - **THEN** only the bounded prepared Linux toolset is admitted, preserving notices, source identity, sandbox and complete AppDir observer requirements
+
+
+## ADDED Requirements
+
+### Requirement: Desktop native build direction v251b
+The installer SHALL consume source-only prebuild native manifests and SHALL generate completed native manifests through actual fixed managed build effects, retaining generated native bytes within the observed AppDir as specified by v251b.
+
+#### Scenario: Native output incorrectly required before build
+- **WHEN** prebuild selection requires its own future native tree, non-degraded result or completion receipt
+- **THEN** the selection is denied and uses the v251b source-only prebuild schema without inventing native authority
+
+#### Scenario: Generated native output is independently observed
+- **WHEN** actual fixed native/stage/package effects retain native manifests and complete native bytes within AppDir
+- **THEN** the observer reopens original input provenance and generated ABI/ELF/packaged mappings before native/package receipt issuance, while runtime qualification and missing measured caps remain denied

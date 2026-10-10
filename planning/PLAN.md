@@ -264,3 +264,6 @@ v250: `plans/amendments/2026-10-10-xpra-link-count-correction-v250.md` / `planni
 
 
 v251: `plans/amendments/2026-10-11-official-desktop-native-source-policy-v251.md` / `planning/official-desktop-native-source-policy-v251.json`; RT-T251.1/.2 and VD-T251.3 OPEN. Exact Desktop-specific signed253 package/license/source policy and licensed owned packaging interface; no current runtime receipts, whole-build caps or acceptance inferred.
+
+
+v251b: `plans/amendments/2026-10-11-official-desktop-native-build-direction-v251b.md` / `planning/official-desktop-native-build-direction-v251b.json`; RT-T251b.1/.2 and VD-T251b.3 OPEN. Source-only prebuild versus actually generated observed native AppDir output; no native cycle, fabricated caps or runtime acceptance.

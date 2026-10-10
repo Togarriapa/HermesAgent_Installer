@@ -3839,5 +3839,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_native_build_direction_v251b": {
+    "contract": "planning/official-desktop-native-build-direction-v251b.json",
+    "tasks": {
+      "RT-T251b.1": [
+        "RT-T251.1"
+      ],
+      "RT-T251b.2": [
+        "RT-T251b.1",
+        "RT-T251.2"
+      ],
+      "VD-T251b.3": [
+        "RT-T251b.2",
+        "VD-T251.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

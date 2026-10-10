@@ -1,0 +1,215 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-11-official-desktop-native-build-direction-v251b.md",
+  "extends": [
+    "v240",
+    "v251"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "correction": "v251 complete joined native manifest is generated after actual build, not a prebuild source receipt. Its native-deps.tar and completed native section must not be prerequisites for the same build. Frozen v240/v251 remain unchanged; this append-only direction controls affected input requirements.",
+  "owners": {
+    "native": "luna_desktop_native_inputs",
+    "driver": "luna_official_desktop_runtime"
+  },
+  "prebuild": {
+    "artifact_id": "official-desktop-native-prebuild-inputs-v1",
+    "relative_path": "dependencies/native-prebuild-inputs.json",
+    "schema": 1,
+    "purpose": "root-selected-official-hermes-desktop-native-prebuild-inputs-v1",
+    "fields": [
+      "schema",
+      "purpose",
+      "source_revision",
+      "selection_handle",
+      "choice_handle",
+      "target",
+      "electron",
+      "packages",
+      "compiler",
+      "packaging",
+      "licenses"
+    ],
+    "sections": {
+      "electron": [
+        "version",
+        "abi_sha256",
+        "headers_closure_sha256",
+        "headers_member_ids",
+        "binary_closure_sha256",
+        "binary_member_ids"
+      ],
+      "packages": [
+        "closure_sha256",
+        "rows"
+      ],
+      "package_rows": [
+        "name",
+        "version",
+        "architecture",
+        "origin_id",
+        "filename",
+        "sha256",
+        "size_bytes",
+        "depends",
+        "pre_depends",
+        "release_receipt_handle",
+        "index_receipt_handle",
+        "control_sha256",
+        "license_receipt_handle",
+        "member_id"
+      ],
+      "compiler": [
+        "closure_sha256",
+        "sysroot_member_id"
+      ],
+      "packaging": [
+        "prepared_manifest_sha256",
+        "prepared_member_id",
+        "inputs_closure_sha256",
+        "inputs_member_id"
+      ],
+      "licenses": [
+        "closure_sha256",
+        "receipt_handles"
+      ]
+    },
+    "required_input_paths": [
+      "dependencies/sysroot.tar",
+      "dependencies/native-prebuild-inputs.json",
+      "prepared-packaging/prepared.json",
+      "prepared-packaging/inputs.tar",
+      "electron-headers/SHASUMS256.txt",
+      "electron-headers/node-v40.10.2-headers.tar.gz"
+    ],
+    "not_input_paths": [
+      "dependencies/native-inputs.json",
+      "dependencies/native-deps.tar"
+    ],
+    "proof": "Provider issues current source-only manifests from genuine held signed DEB/sysroot/compiler/control/license/header/source/npm/Electron/toolset receipts, retains originals and reopens each. No native/degraded/tree/output receipt field before effects. Prepared tools are source inputs; fixed future work/native paths are destinations only, never completion proof. If full prepared.json expects generated native proof, generate that joined record inside driver after native effects rather than invent prebuild authority."
+  },
+  "pipeline": [
+    "Resolve current original setup choice/controller/PM/NSS/release and distinct v251 policy/source receipts. Provider builds prebuild manifest and held sources; central seals acyclic member closure and recipe-bound final closure.",
+    "Managed fixed driver verifies prebuild manifest, stages exact source/sysroot/headers/toolsets in fresh manager-owned work root, performs offline locked native rebuild and HUD build with held compiler, then actual upstream stage-native-deps with degraded=false only after real required outputs.",
+    "Driver independently measures generated native stage tree and prepared manifest, feeds actual native result to fixed upstream build/prepared packaging, packages genuine AppDir, adds generated native manifest and retained native stage members, emits unchanged outer output envelope.",
+    "Independent output observer reopens package/native manifests, complete generated tree, packaged native mappings, ABI/ELF closure/source stamp/sandbox evidence and same original input receipts; only then may native/package output receipts be issued. Runtime/backend/renderer/session acceptance is separate and remains unavailable until real proof."
+  ],
+  "work_root": {
+    "path": "/run/hermes-installer/build/work/desktop",
+    "source": "/run/hermes-installer/build/work/desktop/source",
+    "native_stage": "/run/hermes-installer/build/work/desktop/source/apps/desktop/build/native-deps",
+    "packager": "/run/hermes-installer/build/work/desktop/source/apps/desktop/build/packager/linux-arm64",
+    "upstream_appdir": "/run/hermes-installer/build/work/desktop/source/apps/desktop/release/linux-arm64-unpacked",
+    "output": "/run/hermes-installer/build/output/desktop-appdir",
+    "custody": "Manager-owned fresh descriptor-backed work root, deny existing/conflicting/link state; private selected build only. No caller destination/temp alias/ambient paths; journal cancellation and wait for owned build PIDFD death before owned cleanup."
+  },
+  "generated": {
+    "manifest_path": "resources/hermes-installer/native-build.json",
+    "manifest_schema": 1,
+    "manifest_purpose": "root-selected-official-hermes-desktop-native-build-v1",
+    "manifest_fields": [
+      "schema",
+      "purpose",
+      "source_revision",
+      "selection_handle",
+      "choice_handle",
+      "target",
+      "electron",
+      "packages",
+      "compiler",
+      "native",
+      "packaging",
+      "licenses"
+    ],
+    "manifest_sections": {
+      "electron": [
+        "version",
+        "abi_sha256",
+        "headers_closure_sha256",
+        "headers_member_ids",
+        "binary_closure_sha256",
+        "binary_member_ids"
+      ],
+      "packages": [
+        "closure_sha256",
+        "rows"
+      ],
+      "package_rows": [
+        "name",
+        "version",
+        "architecture",
+        "origin_id",
+        "filename",
+        "sha256",
+        "size_bytes",
+        "depends",
+        "pre_depends",
+        "release_receipt_handle",
+        "index_receipt_handle",
+        "control_sha256",
+        "license_receipt_handle",
+        "member_id"
+      ],
+      "compiler": [
+        "closure_sha256",
+        "sysroot_member_id"
+      ],
+      "native": [
+        "source_revision",
+        "target",
+        "tree_closure_sha256",
+        "tree_member_id",
+        "manifest_sha256",
+        "degraded",
+        "required",
+        "node_pty",
+        "hud_modifier"
+      ],
+      "packaging": [
+        "prepared_manifest_sha256",
+        "prepared_member_id",
+        "inputs_closure_sha256",
+        "inputs_member_id"
+      ],
+      "licenses": [
+        "closure_sha256",
+        "receipt_handles"
+      ]
+    },
+    "native_tree_path": "resources/hermes-installer/native-deps",
+    "upstream_manifest": "Exact actual upstream .prepared.json retained under generated native tree; no guessed bytes or schema alias. Observer checks actual upstream source parser and source-current metadata.",
+    "tree_member_id": "official-desktop-native-deps-build-v1",
+    "tree_semantics": "Output member identity only, not a prebuild receipt. native.tree_closure_sha256 canonical measured generated tree facts, native.manifest_sha256 actual retained upstream prepared manifest bytes. Generated native-build.json contains input-only original receipt projections plus these output facts, no own manifest SHA or final package/runtime receipt references.",
+    "closure_rule": "Complete retained native stage tree is measured under fixed AppDir native_tree_path and included in package_members. File/kind/mode/hash/size/owner facts and exact upstream prepared rows must agree, ELF AArch64/link/ABI facts independently rechecked and map to packaged node-pty/HUD outputs. No claimed temporary-tree SHA without retained bytes; unexpected links or sidecars deny.",
+    "outer_output_fields": "Preserve exact v240/v234 Desktop schema fields; package_members includes generated tree/manifests. qualification contains source_revision,native_manifest_path,native_manifest_sha256,native_degraded,runtime_qualified,reason. native_manifest_path is fixed literal; native_manifest_sha256 binds actual canonical manifest bytes without self-reference. No source/output schema hash is invented before committed tested review.",
+    "qualification": "Native degraded=false only from actual required node-pty/HUD effects. Manifest/hash/ELF facts alone do not qualify a renderer/backend/runtime. Original source/output/schema-current joins and final immutable AppDir observation remain mandatory.",
+    "target": "linux-arm64",
+    "native_effect_fields": {
+      "node_pty": [
+        "path",
+        "sha256",
+        "elf_machine",
+        "electron_abi"
+      ],
+      "hud_modifier": [
+        "path",
+        "sha256",
+        "elf_machine"
+      ]
+    },
+    "native_effect_rule": "Paths are fixed source-owned native/package member mappings, not caller paths. Observer independently reopens each against the retained generated tree and final package; ELF machine AArch64 and actual Electron ABI/effect evidence mandatory. Preserve packages and compiler.closure_sha256 sections; no renamed/omitted original input lineage."
+  },
+  "limits": "Existing null whole-build caps remain deny. Phase fixtures/cumulative4GiB measurements are evidence only, not a positive managed plan. No build executes until all approved measured full-pipeline resource/output limits and sealed plan exist; no caps invented here.",
+  "tasks": {
+    "RT-T251b.1": "Implement true prebuild input manifest/provider and remove native generated outputs as source prerequisites, preserving genuine signed/source/current receipt joins.",
+    "RT-T251b.2": "Generate native tree/joined manifest through actual fixed managed driver and independently reopen retained packaged native facts before receipt; no hash-only native completion.",
+    "VD-T251b.3": "Test missing/generated-input cycle, forged native result, absent retained tree, selfhash, ABI/packaged mapping/cancellation/currentness failure and genuine bounded offline ARM64 pipeline; runtime acceptance separate."
+  },
+  "acceptance": "All AC OPEN; no code pins/current native receipts/resource caps or Pi/runtime acceptance."
+}

@@ -254,3 +254,10 @@ Exact contract: `planning/xpra-link-count-correction-v250.json`.
 - [ ] VD-T251.3 Exercise changed signature/index/hash/control/relations/license/links, wrong issuer/role/choice/controller, cancellation, PNG failures and actual managed ARM64 output; genuine runtime/Pi acceptance separately open.
 
 Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all AC OPEN.
+
+
+## v251b Non-circular Desktop native pipeline
+
+- [ ] RT-T251b.1 Implement true prebuild input manifest/provider and remove native generated outputs as source prerequisites, preserving genuine signed/source/current receipt joins.
+- [ ] RT-T251b.2 Generate native tree/joined manifest through actual fixed managed driver and independently reopen retained packaged native facts before receipt; no hash-only native completion.
+- [ ] VD-T251b.3 Test missing/generated-input cycle, forged native result, absent retained tree, selfhash, ABI/packaged mapping/cancellation/currentness failure and genuine bounded offline ARM64 pipeline; runtime acceptance separate.
