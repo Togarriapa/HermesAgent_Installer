@@ -184,12 +184,33 @@ def test_root_tty_private_and_memory_choices_are_distinct_and_current(tmp_path: 
             current_memory_choice = choices.resolve_memory_capture_choice(memory_choice_handle, profile_handle)
             assert choices.is_current_memory_capture_choice(current_memory_choice)
             assert choices.resolve_current_memory_enrollment(memory.service_enrollment_id) is memory
+            # A later explicit TTY choice replaces the prior private-route
+            # choice. The old persistent consent must stop resolving even
+            # though its signed profile row remains on disk.
+            replacement_choice_handle = choices.observe_selected_private_provider_routes(profile_handle)
+            assert replacement_choice_handle and replacement_choice_handle != private_choice_handle
+            replacement_choice = choices.resolve_private_provider_routes_choice(
+                replacement_choice_handle, profile_handle,
+            )
+            assert choices.is_current_private_provider_choice(replacement_choice)
+            try:
+                choices.resolve_private_provider_routes_choice(private_choice_handle, profile_handle)
+            except AuthorityDenied:
+                pass
+            else:
+                raise AssertionError("replaced TTY route choice remained resolvable")
+            try:
+                private_registry.selection_handle_for_current_profile(principal)
+            except AuthorityDenied:
+                pass
+            else:
+                raise AssertionError("replaced root TTY choice left the old consent current")
             os.write(1, b"RESULT:private-and-memory-current\n")
             os._exit(0)
         except BaseException as exc:
             os.write(1, f"FAIL:{type(exc).__name__}:{exc}\n".encode())
             os._exit(1)
-    os.write(master, b"1\n1\n1\n1\n")
+    os.write(master, b"1\n1\n1\n1\n1\n")
     output = bytearray()
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
