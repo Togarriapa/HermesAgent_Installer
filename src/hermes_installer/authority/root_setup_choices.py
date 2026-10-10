@@ -433,6 +433,8 @@ class RootSetupChoiceRegistry:
                 or type(row.get("choice_epoch")) is not int
                 or type(row.get("revocation_epoch")) is not int):
             raise AuthorityDenied("setup-choice.record", "published setup choice row is malformed")
+        if time.time() >= row["setup_deadline_unix"]:
+            raise AuthorityDenied("setup-choice.expired", "expired setup intent cannot be adopted")
         payload = row["choice_payload"]
         profile_id = _choice_profile_id_from_payload(payload, row["purpose"])
         principal_id = payload.get("principal_id")
