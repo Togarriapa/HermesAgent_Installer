@@ -577,6 +577,96 @@
       "consumer": "resolve_selected_patch(patch_receipt_handle,selected_startup)->RootXpraOverlayPatchReceipt; root starter re-resolves actual held transformed artifact/tree/catalog, exact selected enrollment/process/service generation and original lease before fresh selected display start. Custody verifies resulting executable/child artifact closure; cookie/origin registries do not mint this patch proof.",
       "digests": "source_tree_digest and transformed_tree_sha256 are SHA256 of canonical sorted full regular source member rows {path,sha256,size_bytes,executable}; output_artifact_sha256 is exact deterministic output archive bytes SHA256, not tree digest. Overlay source module artifact hash is distinct. No secret cookie in receipt/evidence.",
       "lease": "lease <=600 seconds and <= admitted startup transaction/selection original deadline; renew only by actual root revalidation, no worker prolongation. Actual immutable artifact pin persists after lease, effect proof does not."
+    },
+    "xpra_verified_source_pin": {
+      "schema": 1,
+      "artifact_id": "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea",
+      "source_identity": "Xpra-org/xpra",
+      "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+      "git_tree_sha1": "7d31d0d2f9394d47815cafd4791db3310840781d",
+      "url": "https://codeload.github.com/Xpra-org/xpra/tar.gz/521b0d2e762c770b2641d258b93d23575fa9cbea",
+      "sha256": "20b55586457df5aed8453b0d1b446e4dd954f2027d814f1eb7c0a96227ef1c80",
+      "size_bytes": 13962693,
+      "archive_kind": "tar.gz",
+      "root_prefix": "xpra-521b0d2e762c770b2641d258b93d23575fa9cbea/",
+      "license": "GPL-2.0-or-later source setup.py; COPYING GPL-2.0 text",
+      "source_manifest": {
+        "artifact_id": "xpra-source-manifest-521b0d2e762c770b2641d258b93d23575fa9cbea",
+        "path": "plans/amendments/2026-10-10-xpra-verified-source-pin-v101/source-tree-manifest.json",
+        "sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+        "size_bytes": 427551,
+        "regular_file_count": 2469,
+        "symlink_count": 5,
+        "directory_count": 345,
+        "archive_member_count": 2819,
+        "regular_file_bytes": 28215070,
+        "link_target_bytes": 59,
+        "regular_tree_sha256": "f52b4ce760b86c24a4d6d930f47e58357442a984d9ff2478d7abf338ff48e467"
+      },
+      "limits": {
+        "download_maximum_bytes": 16777216,
+        "expanded_source_maximum_bytes": 67108864,
+        "archive_maximum_members": 4096,
+        "regular_member_maximum_bytes": 8388608,
+        "manifest_maximum_bytes": 1048576
+      },
+      "proof": "Root verifies actual TLS archive bytes/hash/size and every path/mode/content against full committed Git tree manifest; exact measured source excludes .git/untracked/ignored files. ArchiveSHA, Git treeSHA1, full source manifestSHA and regular-only treeSHA are separate domains. Previous10f91b... checkout traversal digest invalid and never accepted. Source manifest is evidence/artifact data, not imported governance.",
+      "allowed_source_links": [
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "packaging/debian/xpra",
+          "path": "debian",
+          "sha256": "a1aef4be57bc54eefaab320b3728f3c0e0f463bc3c7307b1ac4528e2b3f00d4b",
+          "size_bytes": 21
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "sysconfig",
+          "path": "fs/etc/default",
+          "sha256": "ed85312a196268e2240f401f7d8711c4edaad4d43bcfd76ec5f4e19ec8916ee0",
+          "size_bytes": 9
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "xdg-open",
+          "path": "fs/libexec/xpra/gnome-open",
+          "sha256": "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29",
+          "size_bytes": 8
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "xdg-open",
+          "path": "fs/libexec/xpra/gvfs-open",
+          "sha256": "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29",
+          "size_bytes": 8
+        },
+        {
+          "executable": false,
+          "kind": "symlink",
+          "link_target": "../../../docs",
+          "path": "fs/share/doc/xpra",
+          "sha256": "bdc7f46fbdfe68781df25dec18962c3ac2aa93d35c3e04185ecc9ac201c73b35",
+          "size_bytes": 13
+        }
+      ],
+      "link_rules": "Only these exact five original Git mode120000/literal target bytes/hash/size are permitted. Root normalizes target relative to link parent, verifies it stays in exact source root and resolves to verified target file/subtree, no absolute/escaping/cycle/unknown link/hardlink/special inode. Preserve original virtual source manifest/Git proof including links. Before any actual filesystem materialization, compile each selected alias as a regular file or full verified regular target subtree using held verified bytes/modes; no writable filesystem symlink. Compiled alias map and full resulting tree digest are separate source-to-compiled evidence, bounded by expanded limit. An archived source object may preserve exact literal link members as data, but cannot be extracted into a runtime mount using arbitrary tar link semantics. Every execution/mount uses independently verified regular closure. Directory aliases retain all verified target members, no source scope loss.",
+      "transform_profile": {
+        "profile_id": "xpra-root-xauthority-transform-v1",
+        "kind": "fixed-source-transformation",
+        "source_artifact_id": "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea",
+        "source_manifest_artifact_id": "xpra-source-manifest-521b0d2e762c770b2641d258b93d23575fa9cbea",
+        "builder_artifact_id": "installer-module:hermes_installer.remote.xpra_root_xauthority",
+        "builder_pin": "actual current verified installed module SHA and full imported deterministic transform/archive/receipt closure from selected installer release, never pre-registry sample module hash",
+        "recipe_id": "xpra-root-xauthority-overlay-v1",
+        "inputs": "exact existing v69 three patch anchors + full source manifest + selected builder origin; no caller patch/code/argv",
+        "outputs": "root observed actual transformed tree/patch manifest/deterministic non-executable tar, exact required role paths from existing overlay registry. Actual SHA/size observed after successful finite transform; no pre-known output hash. Existing output ID build-output:<actual tarSHA>:file:d comes ONLY from typed held ContentAddressedBuildStore output observation; root derived catalog publication before selected startup.",
+        "limits": "same source/member limits; deterministic output tar<=134217728 bytes; no network/model/optional package install in transformation"
+      },
+      "runtime_boundary": "This source transformation receipt does not prove a compiled Linux ARM64 Xpra executable, dependencies, Xvfb/Xauth sandbox, namespace/network, startup or native Desktop function. Exact actual selected runtime/build/package-set and process/kernel/overlay receipt proof still required before launch; do not use source tar/module version as executable SHA or mark acceptance. Broker owns exact static source catalog row and held derived output publication; remote owner produces actual reviewed transformation receipts."
     }
   },
   "root_selected_lifecycle_authority": "planning/root-selected-service-lifecycle-authority-contract.json; distinct signed root-selected context/authorization, separate actual controller proof; supersedes ordinary worker HostContext relabelling for lifecycle only."

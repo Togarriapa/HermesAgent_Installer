@@ -435,3 +435,5 @@ Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selecte
 Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.
 
 Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.

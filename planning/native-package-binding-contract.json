@@ -748,7 +748,8 @@
       "component_count": 18,
       "operational_projection": false,
       "meaning": "Actual recording register_tool source facts only, never handler execution or selected result/observer/source receipt authority. Null result/source receipts and empty observers stay unqualified; root selected producer resolves actual proofs before executable candidates."
-    }
+    },
+    "toolset_namespace_clarification": "toolset is exact actual register_tool source value; native_server_name is selected transport/ownership namespace label (hermes-installer for nonMCP), distinct from toolset. Patched pre-discovery registration preserves trusted toolset separately from MCP ownership prefix; no schema field renaming/inference. Source-only inventory remains separate, executable index includes only fully proved selected rows; missing required family/tool proof is incomplete coverage, not accepted omission."
   },
   "private_input_recipient_consent": {
     "schema": 1,
