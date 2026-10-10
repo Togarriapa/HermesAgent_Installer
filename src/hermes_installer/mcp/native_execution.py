@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 import secrets
 import time
@@ -57,7 +58,10 @@ def _thaw(value: Any, *, depth: int = 0) -> Any:
 
 
 def _canonical_schema(value: Mapping[str, Any]) -> bytes:
-    return canonical_bytes(_thaw(value))
+    return json.dumps(
+        _thaw(value), sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
 
 
 def _bound_schema(value: Any) -> Mapping[str, Any]:
@@ -261,20 +265,29 @@ class NativeMCPDispatcher:
                 peer_uid, peer_pid, peer_pidfd, invocation, service, operation, target,
                 selection, deadline, cancelled, lineage_handles, binding.mcp_tool_name,
             )
-            if _canonical_schema(selected_schema.get("inputSchema", {})) != _canonical_schema(request_schema):
-                raise MCPError("MCP discovered schema differs from its protected artifact")
-            self._discovery.capture_tools_list(
-                invocation=invocation, peer_uid=peer_uid, peer_pid=peer_pid,
-                peer_pidfd=peer_pidfd, service=service, binding=binding,
-                mcp_generation=self._generations[binding.mcp_enrollment_id],
-                selection=selection,
-                request_payload=discovery_response.request_payload,
-                response_payload=discovery_response.response_payload,
-                response_receipt_handle=discovery_response.source_receipt_handle,
-                context=discovery_response.context,
-                authorization=discovery_response.authorization,
-                parent_receipt_handles=discovery_response.parent_receipt_handles,
-            )
+            for schema_kind, schema_key, expected_schema in (
+                ("arguments", "inputSchema", request_schema),
+                ("result", "outputSchema", result_schema),
+            ):
+                if schema_key not in selected_schema:
+                    raise MCPError(f"MCP selected tool has no {schema_key}")
+                discovered = selected_schema[schema_key]
+                if not isinstance(discovered, Mapping) or (
+                        _canonical_schema(discovered) != _canonical_schema(expected_schema)):
+                    raise MCPError("MCP discovered schema differs from its protected artifact")
+                self._discovery.capture_tools_list(
+                    invocation=invocation, peer_uid=peer_uid, peer_pid=peer_pid,
+                    peer_pidfd=peer_pidfd, service=service, binding=binding,
+                    mcp_generation=self._generations[binding.mcp_enrollment_id],
+                    selection=selection,
+                    request_payload=discovery_response.request_payload,
+                    response_payload=discovery_response.response_payload,
+                    response_receipt_handle=discovery_response.source_receipt_handle,
+                    context=discovery_response.context,
+                    authorization=discovery_response.authorization,
+                    parent_receipt_handles=discovery_response.parent_receipt_handles,
+                    schema_kind=schema_kind,
+                )
             annotations = selected_schema.get("annotations", {})
             if (not isinstance(annotations, Mapping) or annotations.get("readOnlyHint") is not True
                     or annotations.get("destructiveHint") is True):
