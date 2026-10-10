@@ -141,6 +141,12 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         with self.assertRaises(PrivateMemoryEngineUnavailable):
             self._engine(_Dispatcher([]), selected=expired)
 
+        malformed = _Dispatcher([b'{"model":"glm-5.2-fixture","model":"attacker"}'])
+        with self.assertRaises(PrivateMemoryEngineUnavailable):
+            self._engine(malformed).extract(
+                text="private text", context=_context(), timeout=5, cancelled=lambda: False,
+            )
+
     def test_runtime_registry_joins_engine_selection_to_exact_enrollment_or_stays_off(self):
         enrollment = MemoryServiceEnrollment.from_protected_record(enrollment_record())
         target = MemoryTarget.from_enrollment(enrollment)

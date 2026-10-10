@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable, Mapping, Protocol
 
 from hermes_installer.authority.types import HostContext, strict_json_loads
+from hermes_installer.memory.broker import BrokerDenied, BrokerUnavailable
 
 
 MAX_INPUT_BYTES = 1_048_576
@@ -30,7 +31,7 @@ _ROUTE = re.compile(r"[A-Za-z0-9_.:@/-]{1,256}\Z", re.ASCII)
 _MODEL = re.compile(r"[A-Za-z0-9_.:/@+-]{1,256}\Z", re.ASCII)
 
 
-class PrivateMemoryEngineUnavailable(RuntimeError):
+class PrivateMemoryEngineUnavailable(BrokerUnavailable):
     """No current protected private route or bounded compatible response."""
 
 
@@ -119,14 +120,14 @@ class RootPrivateMemoryEngine:
         # source privacy, consent, owner, and effect admission belong to the
         # root provider dispatcher at each attempt, not to adapter assertions.
         if type(context) is not HostContext:
-            raise PermissionError("root-issued host context is required")
+            raise BrokerDenied("root-issued host context is required")
         expected_purpose = "memory-extraction" if action == "extract" else "memory-embedding"
         expected_operation = "memory.extract" if action == "extract" else "memory.embed"
         if context.purpose != expected_purpose or context.operation != expected_operation:
-            raise PermissionError("private memory stage context does not match the selected route action")
+            raise BrokerDenied("private memory stage context does not match the selected route action")
         if (context.profile_id != self._routes.profile_id
                 or context.namespace_id != self._routes.namespace_id):
-            raise PermissionError("private memory route belongs to another profile or namespace")
+            raise BrokerDenied("private memory route belongs to another profile or namespace")
         return _bounded_timeout(timeout, cancelled)
 
     def _dispatch(self, context: HostContext, *, route_id: str, model_id: str,
@@ -143,7 +144,10 @@ class RootPrivateMemoryEngine:
         )
         if not isinstance(raw, bytes) or len(raw) > MAX_RESPONSE_BYTES:
             raise PrivateMemoryEngineUnavailable("private memory endpoint response exceeds its bound")
-        return strict_json_loads(raw.decode("utf-8", errors="strict"))
+        try:
+            return strict_json_loads(raw.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, ValueError):
+            raise PrivateMemoryEngineUnavailable("private memory endpoint returned invalid JSON") from None
 
     def extract(self, *, text: str, context: HostContext, timeout: float,
                 cancelled: Callable[[], bool]) -> list[str]:
