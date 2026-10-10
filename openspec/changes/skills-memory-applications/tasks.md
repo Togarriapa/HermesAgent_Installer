@@ -122,3 +122,11 @@ Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecy
 - [ ] SK-T119.2: factory/active publisher preserve actual same-choice purpose-specific memory service enablement and selected receipt closure linkage.
 
 - [ ] SK-T119.3: test stale/revoked enablement, replaced artifact/process, setup expiry, liveness-versus-semantic distinction, unknown engine/route and private provider denial; actual engine semantics/ARM/account acceptance open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
+
+- [ ] SK-T124.1: factory/choice owner implement actual root TTY configuration producer/retained choice and service-enablement registry; no fictitious existing source.
+
+- [ ] SK-T124.2: enrollment/active compiler add exact lifecycle enablement handle and current post-activation projection from actual selected service/source/runtime receipt closure.
+
+- [ ] SK-T124.3: lifecycle owner consume resolver; test default disabled, false user journal, wrong owner/profile/backend, revoke/service replacement and independence from capture/private consent; actual engine/target acceptance open.

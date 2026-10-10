@@ -79,3 +79,5 @@ Private memory endpoint adapter v108: `plans/amendments/2026-10-10-private-memor
 Preactive application source and qualification consent v117: `plans/amendments/2026-10-10-preactive-application-source-consent-v117.md`; actual setupsource/lock receipts beforeactive and same explicitchoice finite purposeconsent, operational authorization untouched. Existing application/AC12 gates open.
 
 Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecycle-active-closure-v119.md`; existing lifecycle/capture/semantic acceptance obligations remain open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
