@@ -374,6 +374,24 @@ class RootNativeComponentTargetRegistry:
         self._assert_binding_matches_selection(selection)
         return target
 
+    def resolve_current_target_handle(
+            self, target_selection_handle: str
+    ) -> RootPreparedNativeTargetSelection:
+        """Resolve a target by handle using its retained policy binding.
+
+        Scope consumers hold the target receipt handle, not the policy
+        selection handle. Resolve that second handle only from this registry's
+        retained target row; never accept caller-supplied target metadata or a
+        caller-selected policy handle as proof.
+        """
+        target = self._targets.get(target_selection_handle)
+        if target is None or target._seal is not _TARGET_SEAL:
+            raise NativeComponentTargetDenied("native target selection handle is absent or unissued")
+        selection = self._policy_selections.get(target.native_policy_selection_handle)
+        if selection is None:
+            raise NativeComponentTargetDenied("native target has no retained root policy selection")
+        return self.resolve_current_target(target_selection_handle, selection.selection_handle)
+
     def _resolve_policy_selection(self, selection_handle: str) -> Any:
         if not isinstance(selection_handle, str) or not selection_handle:
             raise NativeComponentTargetDenied("native policy selection handle is malformed")
