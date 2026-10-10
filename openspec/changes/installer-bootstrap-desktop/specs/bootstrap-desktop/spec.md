@@ -989,3 +989,17 @@ The installer SHALL observe a current source-only owned fixture lease before acq
 #### Scenario: Prepared custody becomes current
 - **WHEN** the same lease has genuine current source, PM, NSS, roots, task recipe and authenticated fixture runtime bindings
 - **THEN** one-time attachment MAY admit only existing selected effects while preserving original deadlines and cleanup
+### Requirement: Bounded initial pending stage observation
+The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json` to annotate only exact base pending failures at its fixed initial compilation source boundaries, preserving every original authority check and pending exit behavior.
+
+#### Scenario: Actor check fails before compilation begins
+- **WHEN** the current actor check at begin_install raises an exact base pending failure
+- **THEN** the safe formatter emits the fixed actor_current stage and no original exception content
+
+#### Scenario: Nested account diagnostic or hostile pending subclass
+- **WHEN** account resolution is already tagged or a pending subclass supplies arbitrary diagnostic getters
+- **THEN** the outer wrapper leaves the subclass untouched and formatting reads only the exact authorized diagnostic type with a valid catalog stage
+
+#### Scenario: Diagnostic field changed after construction
+- **WHEN** the step is non-string or absent from the finite catalog
+- **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation

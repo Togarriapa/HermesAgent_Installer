@@ -199,3 +199,4 @@ Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-des
 ## v230 Qualification source-before-custody ordering
 
 `planning/qualification-source-before-process-custody-v230.json` resolves the actual handler/lease/source-session construction cycle. HI-T230.1/VD-T230.2 remain open; source-only lease grants no effects, actual prepared custody requires current genuine bindings, and all AC remain open.
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.

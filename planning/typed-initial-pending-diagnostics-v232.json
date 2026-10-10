@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F02",
+    "HI-T149.1",
+    "BD-T203.1",
+    "VD-T203.2"
+  ],
+  "why": "Actual cc81 Pi setup reached the target-account prompt then returned unidentified BootstrapEnrollmentPending. Finite source-boundary diagnostics must include the outer current actor check before initial compilation, without inferring a cause or changing its authority.",
+  "source_context": "Actual committed 88400a8b420fdd3ebd3035cf56c785c04690bb89 callsite audit by source owner. The source leaf and final pins remain pending the coherent v228 committed cohort; this specification approves no future byte hash.",
+  "diagnostic_type": {
+    "module": "hermes_installer.authority.bootstrap_enrollment",
+    "class": "BootstrapPendingStepFailure",
+    "base": "BootstrapEnrollmentPending",
+    "fields": [
+      "step"
+    ],
+    "step_values": [
+      "initial_compilation.actor_current",
+      "initial_compilation.validation",
+      "initial_compilation.account",
+      "initial_compilation.install_mode",
+      "initial_compilation.release_closure",
+      "initial_compilation.template",
+      "initial_compilation.catalog",
+      "initial_compilation.journal",
+      "initial_compilation.actor_write"
+    ],
+    "constructor": "Require exact built-in str and catalog membership. Fixed generic pending base message only; never copy original message, args, path, cause or exception into diagnostic fields."
+  },
+  "call_boundaries": {
+    "initial_compilation.actor_current": [
+      "RootInitialSetupAggregate.begin_install: self._require_open()",
+      "RootInitialCompilationRegistry.__init__: actor.verify_current(release)"
+    ],
+    "initial_compilation.validation": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: _validate_choices(explicit_choices)"
+    ],
+    "initial_compilation.account": [
+      "RootInitialCompilationRegistry._validate_choices: pwd.getpwnam(target account)"
+    ],
+    "initial_compilation.install_mode": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: existing non-install mode rejection"
+    ],
+    "initial_compilation.release_closure": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: _validate_release_closure()"
+    ],
+    "initial_compilation.template": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: _release_file(_TEMPLATE_ID)"
+    ],
+    "initial_compilation.catalog": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: _release_file(_CATALOG_ID)"
+    ],
+    "initial_compilation.journal": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: _root_journal_row() retained in session"
+    ],
+    "initial_compilation.actor_write": [
+      "RootInitialCompilationRegistry.begin_initial_compilation: _write_actor_receipt(session)"
+    ]
+  },
+  "wrapper": "bootstrap_pending_step(step) is a source-internal fixed-callsite context manager. Catch pending exceptions but wrap only type(exc) is BootstrapEnrollmentPending; all subclasses and other exceptions re-raise unchanged. Raise exact BootstrapPendingStepFailure with the fixed stage from None. The explicit non-install mode rejection may construct this exact type directly with install_mode. No source call reorder, retry, recovery, actor/session extension, import masking, state change or new authority. The nested account stage survives the outer validation because the outer wrapper rejects subclasses. Internal _release_file closure failures retain the enclosing template/catalog stage.",
+  "formatter": {
+    "position": "Check type(error) is BootstrapPendingStepFailure before the existing isinstance(BootstrapEnrollmentPending) branch. All other pending subclasses use the existing fixed generic pending output without reading diagnostic fields.",
+    "validation": "Revalidate exact built-in str step and finite catalog membership at formatting time. Mutated/unknown/nonstr step falls back to the existing generic pending output. Do not query fields on subclasses; do not call str/repr/args/cause/context or render traceback.",
+    "output": "A required root-selected setup prerequisite is pending at <fixed step>; rerun the root setup action after resolving it.",
+    "fallback": "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
+  },
+  "unchanged": [
+    "v203 exact RuntimeError wrapper and formatter",
+    "v196 syscall stage/errno formatter",
+    "All original actor/TTY/currentness/publication/source/CAS/account checks and pending exit behavior",
+    "No parser relaxation, TTL widening, renewals, credentials, accounts or runtime enablement"
+  ],
+  "source_paths": [
+    "src/hermes_installer/authority/bootstrap_enrollment.py",
+    "src/hermes_installer/authority/bootstrap_runtime_factory.py",
+    "src/hermes_installer/root_setup.py"
+  ],
+  "failure_tests": [
+    "Exercise every fixed source boundary with exact base pending, preserving failing state and exit; outer actor check and nested account context are covered.",
+    "Secret-looking paths/tokens/control characters in original message/args are absent from output.",
+    "Pending subclass with hostile getters/str/repr is not inspected or reclassified.",
+    "Exact diagnostic with mutated stage type/unknown secret-looking string returns fixed generic pending output.",
+    "RuntimeError, trust subclasses, OSError and compiler pending subclasses preserve prior behavior; no completion/readiness claim from diagnostic."
+  ],
+  "order": [
+    "BD-T232.1 specification then source-owned diagnostic implementation and focused failures",
+    "VD-T232.2 exact committed coherent v228 source review then authorized Luna pin application then candidate verification"
+  ],
+  "tasks": [
+    {
+      "id": "BD-T232.1",
+      "owner": "luna_bootstrap_fd_handoff",
+      "work": "Implement fixed exact pending type, nine boundaries and bounded formatter/failure tests; source-first commit without updating pins."
+    },
+    {
+      "id": "VD-T232.2",
+      "owner": "Sol and root/source integrator",
+      "work": "Review committed coherent source bytes separately under v228 and actual next target diagnostic, preserving cause uncertainty and open acceptance."
+    }
+  ],
+  "acceptance": "All AC01..18 OPEN. No runtime acceptance, candidate readiness, source pin approval or inferred target cause. Frozen baseline and prior amendments unchanged."
+}

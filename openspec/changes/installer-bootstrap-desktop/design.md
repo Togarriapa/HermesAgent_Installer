@@ -307,3 +307,4 @@ Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protec
 ## Qualification ordering v230
 
 Source-owned qualification lease observation precedes source session/PM/NSS/home acquisition; genuine fixture process custody attaches once only after strict current source/runtime/identity/publication bindings. See `planning/qualification-source-before-process-custody-v230.json`. Original guards, deadlines, cleanup and all acceptance remain unchanged.
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md` and `planning/typed-initial-pending-diagnostics-v232.json` govern only nine fixed initial source boundaries and exact-type safe formatting. Actor/currentness and nested account checks remain genuine; no exception contents, TTL/parser changes or source hash approvals. BD-T232.1 → VD-T232.2 remain OPEN, all AC OPEN.
