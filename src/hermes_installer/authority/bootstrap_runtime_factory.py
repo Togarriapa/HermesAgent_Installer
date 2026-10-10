@@ -7407,10 +7407,9 @@ class RootBootstrapSession:
         parent = Path(self._policy.root_policy["service_parent_root"])
         identity = self._identity.ensure()
         data_root = parent / "data"
-        subhomes_root = data_root / "native-profiles"
+        subhomes_root = parent / "native-profiles"
         delegate_home = subhomes_root / resource_profile_id
-        _create_service_root(subhomes_root, identity)
-        _verify_service_root(subhomes_root, identity)
+        _ensure_root_directory(subhomes_root)
         _create_service_root(delegate_home, identity)
         _verify_service_root(delegate_home, identity)
         journal_root = self._factory.resolver.journal_root / "native-materialization" / resource_profile_id
@@ -7548,22 +7547,38 @@ class RootBootstrapSession:
                 self._authorization.transaction_handle,
                 prepared.generation_id,
             )
+            materializer = (self._native_materializer if source_profile_id == "hermes"
+                            else self._native_delegate_materializers.get(source_profile_id))
+            if materializer is None:
+                return None
+            retained = materializer._receipt(crosswalk.materialization_receipt_handle)
+            if (retained.get("state") != "discovered"
+                    or retained.get("service_generation") != prepared.generation_id
+                    or retained.get("protected_enrollment_digest") != prepared.generation_digest
+                    or retained.get("resource_profile_id") != source_profile_id
+                    or retained.get("resources_revision") != crosswalk.source_revision
+                    or retained.get("expires", 0) <= time.monotonic()):
+                return None
             root = Path(self._policy.root_policy["service_parent_root"])
             home = (root / "home" if source_profile_id == "hermes"
-                    else root / "data" / "native-profiles" / source_profile_id)
+                    else root / "native-profiles" / source_profile_id)
             service_identity = self._identity.ensure()
             _verify_service_root(home, service_identity)
             if self._source_handoff is None:
                 return None
-            from ..registry.native_install import NativeInstallError, discover_profile_names
+            from ..registry.native_install import NativeInstallError, discover_and_load_selected
             try:
-                listing = discover_profile_names(
+                current_discovery = discover_and_load_selected(
                     hermes_source=self._source_handoff.source.tree_path,
-                    python=runtime.python_path, hermes_root=home, timeout=20.0,
+                    python=runtime.python_path, hermes_root=home,
+                    profile_id="default", skill_ids=tuple(retained["skill_ids"]),
+                    require_sole_profile=True, timeout=60.0,
                 )
             except NativeInstallError:
                 return None
-            if listing != ("default",):
+            if (current_discovery.profile_id != "default"
+                    or current_discovery.hermes_revision != retained["discovery"]["hermes_revision"]
+                    or current_discovery.content_digests != retained["discovery"]["content_digests"]):
                 return None
             from ..registry.resources_runtime import HermesProfileExecutionTarget
             source = next((row for row in self._resource_profiles.values()
