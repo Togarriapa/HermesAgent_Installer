@@ -310,3 +310,6 @@ Finite native worker mode v188 also resolves the fixed reviewed Hermes -m recipe
 
 
 Committed PM identity v189: `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md` supplies exact independently verified venv executable metadata to the selected native worker parser/runtime consumer, preserving generic static catalog checks and base/venv distinction. No source pin approval or acceptance.
+
+
+Same-worker namespace handshake v190: `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md` fixes schema2 helper-only initial launch, real owned MainPID namespace observation, authenticated namespace gate then actual probes and separate one-use app release. No future namespace/skip/source pin approval.

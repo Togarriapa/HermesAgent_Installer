@@ -819,3 +819,15 @@ The selected native worker SHALL resolve its exact observed committed venv execu
 #### Scenario: Runtime identity not proven
 - **WHEN** observed identity, receipt, current adoption/source, executable or full closure is missing or differs
 - **THEN** startup SHALL deny with no caller identity map or generic static-check waiver
+
+
+### Requirement: Staged same-worker namespace handshake v190
+The manager/helper SHALL implement the exact schema2 protocol in `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md` and observe the actual owned helper namespace before probes and app release.
+
+#### Scenario: Namespace exists only after helper starts
+- **WHEN** the fixed reviewed helper is launched without app imports/input
+- **THEN** root SHALL observe its actual MainPID/PIDFD/unit/cgroup/netns before issuing the authenticated namespace gate
+
+#### Scenario: Missing or changed observed namespace grant
+- **WHEN** gate or peer/source/probe/release evidence is absent, replayed or mismatched
+- **THEN** app start and network lease SHALL deny with verified owned cleanup

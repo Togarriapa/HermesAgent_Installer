@@ -2796,5 +2796,13 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "same_worker_namespace_v190": {
+    "amendment": "plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md",
+    "wire_contract": "planning/same-worker-namespace-handshake-v190.json",
+    "order": "HI-T190.1 \u2192 VD-T190.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }
