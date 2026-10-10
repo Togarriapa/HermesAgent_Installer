@@ -99,3 +99,6 @@ Add actual precommit three-role source member, current core selectors and postpu
 ## Actual official Desktop native inputs v226
 
 Implement bounded official Electron headers/ABI, signed ARM64 compiler/sysroot/runtime dependencies, exact workspace/native preparation and independent AppDir build/qualification under `plans/amendments/2026-10-10-official-desktop-native-build-inputs-v226.md`; missing producers must be implemented. RT-T226.1/.2 and VD-T226.3 OPEN.
+
+
+v225 compiler clarification: append-only schema clarification fixes authority envelope1/service-generations3 placement and disabled absent-member/null digest/zero size without fictional adoption records; existing tasks OPEN.

@@ -282,5 +282,19 @@
     "revoked choice/key/publication and mutated NSS/marker/root",
     "foreign NSS no adoption or deletion",
     "real nft stale lease/cancel/cleanup; Desktop AF_INET denial"
-  ]
+  ],
+  "schema_clarification": "plans/amendments/2026-10-10-current-remote-identity-adoption-v225-schema-clarification.md",
+  "core_placement": "authority.service_generations.remote_service_identity_source_records",
+  "authority_envelope_schema": 1,
+  "service_generation_schema": 3,
+  "schema3_rules": "Exact schema2 field set plus remote_service_identity_source_records. Preserve every schema2 validator/limit and generation_digest canonical algorithm excluding only generation_digest; include new selector rows in digest. Existing schema1/2 supported unchanged for legacy behavior, never v225 active adoption. Strict schema3 list bound1024 and unique current remote/adoption selectors.",
+  "disabled_representation": {
+    "core_source_rows": [],
+    "member": "absent",
+    "descriptor_remote_service_identities": null,
+    "claim_and_receipt_remote_service_identity_source_sha256": null,
+    "claim_and_receipt_remote_service_identity_source_size_bytes": 0,
+    "rule": "Only when no enabled protected remote startup enrollment; getter reports unavailable. No empty source member or fabricated choice/adoption selectors. Closed digest/size fields remain present."
+  },
+  "enabled_representation": "Schema3 source selectors exact enabled remote enrollments; source member and descriptor object mandatory, SHA256 lowercase64 and size1..131072; manifest/receipt/core selectors same digest/size; absent/null/mixed state denies publication and active resolution."
 }

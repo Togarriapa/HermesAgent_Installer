@@ -187,3 +187,6 @@ Current remote identity adoption v225: `plans/amendments/2026-10-10-current-remo
 
 
 Official Desktop native inputs v226: `plans/amendments/2026-10-10-official-desktop-native-build-inputs-v226.md`; RT-T226.1 → RT-T226.2 → VD-T226.3 OPEN. Actual official Electron headers/ABI, signedARM64 compiler/sysroot, exact workspace/native/packaging/AppDir producer and independent sandbox effects; all pins/AC OPEN.
+
+
+v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225-schema-clarification.md`; authority envelope1 / service-generations3 exact schema2+selector rows, disabled absent member/null SHA+0 size; existing tasks/all AC OPEN.

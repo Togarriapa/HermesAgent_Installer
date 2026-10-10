@@ -411,3 +411,15 @@ The installer SHALL implement `planning/official-desktop-native-build-inputs-v22
 #### Scenario: Real AppDir built
 - **WHEN** exact current held inputs yield a full AppDir under fixed offline managed build
 - **THEN** independent observers SHALL verify complete package/native/library/link and actual sandbox-enabled Electron PTY effects while keeping source/build/CAS/materialized/active/Pi acceptance separate
+
+
+### Requirement: Exact remote identity source schema placement
+The installer SHALL preserve authority envelope schema1 and validate service-generations schema3 as exact schema2 plus v225 source selectors, retaining all existing validators and digest coverage.
+
+#### Scenario: Remote disabled or source missing
+- **WHEN** no protected remote startup is enabled
+- **THEN** the source array SHALL be empty, member absent and descriptor null with fixed source SHA null/size0, issuing no adoption receipt
+
+#### Scenario: Enabled source representation incomplete
+- **WHEN** enabled remote publication has missing member or mismatched/null digest/size/core selector fields
+- **THEN** publication and active resolution SHALL deny without inventing empty role or choice records

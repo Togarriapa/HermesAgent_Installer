@@ -107,3 +107,6 @@ Use the exact schemas/APIs in `planning/current-remote-identity-adoption-v225.js
 ## Desktop native source/build closure v226
 
 `planning/official-desktop-native-build-inputs-v226.json` fixes owner registry and retained FD receipt fields. Exact Electron ABI/local headers and signed private sysroot feed offline locked rebuild; prepared native degraded=false and complete original workspace prevent lazy staging fallback. Original prepared dir build produces full independently observed AppDir, ELF/library/PTY/sandbox proof, separate from final runtime/active/target acceptance. No guessed header/dependency/schema pins or ambient Mac/global libraries.
+
+
+v225 schema placement is authority.service_generations schema3, exact schema2 fields/validators plus remote_service_identity_source_records; canonical digest includes selectors. No enabled remote means absent member/descriptor null/SHA null/size0; enabled requires complete matching member/core/descriptor/claim/receipt. Existing1/2 do not issue v225 identity receipts. See append-only v225 schema clarification.

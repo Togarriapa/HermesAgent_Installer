@@ -145,3 +145,6 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 - [ ] `RT-T226.1` Implement actual current official header/native/signedARM64 sysroot source acquisition and held native input registry under v226.
 - [ ] `RT-T226.2` Complete actual offline ElectronABI node-pty/helpers, original workspace typecheck/build and prepared AppDir with independent ELF/PTY/sandbox observer.
 - [ ] `VD-T226.3` Verify real isolated ARM64 build and specified header/ABI/dependency/egress/degraded/currentness/link/sandbox/cancel failures; all target acceptance OPEN.
+
+
+- [ ] `VD-T225.3` Also test exact schema3 placement/legacy validator preservation and disabled absent/null/zero versus enabled complete-member representation; reject mixed states.
