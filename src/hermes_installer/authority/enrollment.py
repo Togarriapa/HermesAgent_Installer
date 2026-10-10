@@ -2402,6 +2402,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             memory_enrollments=memory_enrollments,
             parameter_schemas=service_generations["operation_parameter_schemas"],
             selected_application_runtimes=service_generations["selected_application_runtimes"],
+            native_schema_artifacts=service_generations["native_schema_artifacts"],
+            native_mcp_tool_bindings=service_generations["native_mcp_tool_bindings"],
         )
         generation_profiles = {}
         for service_record in service_generations["service_records"]:
