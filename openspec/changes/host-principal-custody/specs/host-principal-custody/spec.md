@@ -1034,3 +1034,14 @@ The installer SHALL adopt Xpra receipts only through the v198 schema2 signed cur
 
 - **WHEN** any current source/build/selection/signature join is absent, expired or replaced, or only an ACK exists
 - **THEN** startup remains denied or unavailable, with owned incomplete-start cleanup and no fabricated completed active worker proof
+
+### Requirement: Home Assistant root enrollment MC-R0101
+The installer SHALL enroll an existing Home Assistant MCP instance only through current root-held credential/source selection and strict protected publication, allowing reviewed selected-entity reads.
+
+#### Scenario: Dashboard login or generic setup ID exists
+- **WHEN** no actual protected API credential and selected read schema have been verified
+- **THEN** connection remains pending and no worker-created authority or device action is permitted
+
+#### Scenario: Credential is revoked after a successful read
+- **WHEN** reconnect receives unauthorized or revoked credential evidence
+- **THEN** new reads are denied, stale transport handles are retired and HA configuration remains unchanged

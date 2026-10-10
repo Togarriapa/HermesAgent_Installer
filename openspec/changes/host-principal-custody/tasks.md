@@ -425,3 +425,6 @@ Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 s
 
 
 Existing `HI-T197.1`/`HI-T197.2`/`VD-T197.4` remain OPEN and include exact durable overlay adoption and completed-start lifecycle failures in `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; no duplicate task or acceptance claim.
+
+- [ ] MC-R0101.1 HA/factory/vault/compiler/composer: actual root instance credential/source selection, bounded grant discovery/read and strict publication/adoption.
+- [ ] MC-R0101.2 HA: protected transport/vault/publication fixtures, reconnect/revoke/write-denial/TLS/schema/CAS/redaction and separate actual-target evidence.
