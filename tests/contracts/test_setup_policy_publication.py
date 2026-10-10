@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,10 +14,164 @@ from hermes_installer.authority.setup_policy_publication import (
     _receipt_from_record, _verify_active_receipt_descriptor, _restore_compiled_selection,
     _canonical, _sha, POLICY_GENERATIONS, _choice_adoption_from_record,
     _choice_adoption_value, PolicyPublicationReceiptResolver,
+    RootSetupPolicyGenerationPublisher, RootSetupPublicationReceipt, _SEAL,
 )
 
 
 class PolicyPublicationFilesystemTests(unittest.TestCase):
+    def _publisher_for_active_claim(self, compiled, registry):
+        publisher = object.__new__(RootSetupPolicyGenerationPublisher)
+        publisher.registry = registry
+        publisher._active = True
+        publisher.release = SimpleNamespace(
+            verify_current=lambda: None,
+            selected_plan_artifact_id="installer-root-setup-plan-v1",
+            release_commit="1" * 40,
+        )
+        return publisher
+
+    def _active_claim(self, *, duplicate=False):
+        observed, runtime, materialized = ("o" * 64, "r" * 64, "m" * 64)
+        source = (runtime, materialized, runtime) if duplicate else (runtime, materialized)
+        selection = {"catalog_sha256": "e" * 64}
+        return SimpleNamespace(
+            publication_handle="p" * 64, claim_digest="c" * 64,
+            prepared_generation_id="prepared-v1", transaction_handle="t" * 64,
+            expected_service_generation_digest="g" * 64,
+            expected_selection_catalog_sha256=None,
+            compiled_policy_sha256=_sha(b"{}"), compiled_artifact_catalog_sha256=_sha(b"{}"),
+            compiled_selection_sha256=_sha(_canonical(selection)), selection_catalog_sha256="e" * 64,
+            policy_bytes=b"{}", artifact_catalog_bytes=b"{}", selection_document=selection,
+            plan_sha256="f" * 64, plan_artifact_id="installer-root-setup-plan-v1",
+            release_commit="1" * 40, observed_root_receipt_handle=observed,
+            source_receipt_handles=source,
+            runtime_receipt_handles=(runtime,), materialization_receipt_handles=(materialized,),
+            principal_selection_receipt_handle=None, choice_adoptions=(),
+        )
+
+    def _active_receipt(self, claim):
+        source = (claim.observed_root_receipt_handle, *claim.source_receipt_handles)
+        return RootSetupPublicationReceipt(
+            1, "q" * 64, claim.transaction_handle,
+            "installer-bootstrap-policy-generation-v1", "2" * 64,
+            Path("/var/lib/hermes-installer/policy-generations") / ("2" * 64), 1, 2,
+            claim.compiled_policy_sha256, claim.compiled_artifact_catalog_sha256,
+            "3" * 64, "4" * 64, None, "5" * 64, source, "active-committed", _SEAL,
+            claim.publication_handle, claim.claim_digest, claim.prepared_generation_id,
+            claim.expected_service_generation_digest, claim.runtime_receipt_handles,
+            claim.materialization_receipt_handles, (),
+        )
+
+    def test_active_pointer_cas_failure_reconciles_from_durable_journal_without_release(self):
+        claim = self._active_claim()
+        receipt = self._active_receipt(claim)
+        completed = []
+        released = []
+
+        class Registry:
+            def claim_active_policy(self, *_args): return claim
+            def verify_current_active_policy_claim(self, _claim): return _claim
+            def complete_active_publication(self, value): completed.append(value)
+            def release_active_policy(self, value): released.append(value)
+
+        publisher = self._publisher_for_active_claim(claim, Registry())
+        with tempfile.TemporaryDirectory() as tmp:
+            selection = Path(tmp) / "selection.json"
+            journal = Path(tmp) / "publication.json"
+
+            def cas_then_raise(*_args, **_kwargs):
+                selection.write_text(receipt.receipt_handle)
+                journal.write_text(receipt.publication_sha256)
+                raise OSError("injected failure after selection CAS")
+
+            publisher._publish_compiled = cas_then_raise
+
+            def resolve_committed():
+                self.assertEqual(selection.read_text(), receipt.receipt_handle)
+                self.assertEqual(journal.read_text(), receipt.publication_sha256)
+                return receipt
+
+            with patch("hermes_installer.authority.setup_policy_publication._require_root_linux"), \
+                 patch("hermes_installer.authority.setup_policy_publication._validate_compiled_documents"), \
+                 patch.object(PolicyPublicationReceiptResolver, "resolve_current", side_effect=resolve_committed):
+                result = publisher.publish(claim.publication_handle, None)
+
+            self.assertIs(result, receipt)
+            self.assertEqual(completed, [receipt])
+            self.assertEqual(released, [])
+            self.assertEqual(selection.read_text(), receipt.receipt_handle)
+            self.assertEqual(journal.read_text(), receipt.publication_sha256)
+
+    def test_active_completion_failure_retains_effect_and_explicit_recovery_finalizes(self):
+        claim = self._active_claim()
+        receipt = self._active_receipt(claim)
+        completed = []
+        released = []
+
+        class Registry:
+            attempts = 0
+            def claim_active_policy(self, *_args): return claim
+            def verify_current_active_policy_claim(self, _claim): return _claim
+            def complete_active_publication(self, value):
+                self.attempts += 1
+                if self.attempts <= 2:
+                    raise OSError("injected completion journal failure")
+                completed.append(value)
+            def release_active_policy(self, value): released.append(value)
+
+        registry = Registry()
+        publisher = self._publisher_for_active_claim(claim, registry)
+        with tempfile.TemporaryDirectory() as tmp:
+            selection = Path(tmp) / "selection.json"
+            journal = Path(tmp) / "publication.json"
+
+            def commit(*_args, **_kwargs):
+                selection.write_text(receipt.receipt_handle)
+                journal.write_text(receipt.publication_sha256)
+                return receipt
+
+            publisher._publish_compiled = commit
+
+            def resolve_committed():
+                self.assertEqual(selection.read_text(), receipt.receipt_handle)
+                self.assertEqual(journal.read_text(), receipt.publication_sha256)
+                return receipt
+
+            with patch("hermes_installer.authority.setup_policy_publication._require_root_linux"), \
+                 patch("hermes_installer.authority.setup_policy_publication._validate_compiled_documents"), \
+                 patch.object(PolicyPublicationReceiptResolver, "resolve_current", side_effect=resolve_committed):
+                with self.assertRaisesRegex(BootstrapEnrollmentPending, "retained for publication finalization"):
+                    publisher.publish(claim.publication_handle, None)
+                self.assertEqual(released, [])
+                self.assertEqual(completed, [])
+                recovered = publisher.recover_active_publication(claim.publication_handle)
+
+            self.assertIs(recovered, receipt)
+            self.assertEqual(completed, [receipt])
+            self.assertEqual(released, [])
+            self.assertEqual(selection.read_text(), receipt.receipt_handle)
+            self.assertEqual(journal.read_text(), receipt.publication_sha256)
+
+    def test_duplicate_active_source_handle_is_rejected_before_publication(self):
+        claim = self._active_claim(duplicate=True)
+        released = []
+        writes = []
+
+        class Registry:
+            def claim_active_policy(self, *_args): return claim
+            def verify_current_active_policy_claim(self, _claim): return _claim
+            def complete_active_publication(self, _receipt): self.fail("must not complete")
+            def release_active_policy(self, value): released.append(value)
+
+        publisher = self._publisher_for_active_claim(claim, Registry())
+        publisher._publish_compiled = lambda *_args, **_kwargs: writes.append(True)
+        with patch("hermes_installer.authority.setup_policy_publication._require_root_linux"), \
+             patch("hermes_installer.authority.setup_policy_publication._validate_compiled_documents"):
+            with self.assertRaisesRegex(BootstrapEnrollmentError, "canonical unique order"):
+                publisher.publish(claim.publication_handle, None)
+        self.assertEqual(writes, [])
+        self.assertEqual(released, [claim.publication_handle])
+
     def test_generation_install_is_immutable_and_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp) / "generations"
