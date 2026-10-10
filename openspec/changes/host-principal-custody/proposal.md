@@ -219,3 +219,5 @@ Runtime public choice currentness v153: `plans/amendments/2026-10-10-runtime-pub
 Prepared source module layout v154: `plans/amendments/2026-10-10-prepared-source-module-layout-v154.md`; exact source-module members distinct root-imported module and later worker evidence. All AC open.
 
 Runtime choice revocation source v156: `plans/amendments/2026-10-10-runtime-choice-revocation-source-v156.md`; genuine current installed actor/one-use displayed-choice TTY action, no expired setup authority.
+
+Native capture profiles v158: `plans/amendments/2026-10-10-native-capture-profiles-v158.md`; genuine raw root input/result source and exact selected validator/action/role joins, separate presentation evidence.

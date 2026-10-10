@@ -640,3 +640,10 @@ The installer SHALL consume genuine current installed actor and one-use foregrou
 #### Scenario: Revocation request carries caller epoch or expired setup proof
 - **WHEN** no genuine current runtime revocation observation exists
 - **THEN** the registry denies without changing the signed choice or restoring an expired lease
+
+### Requirement: Native capture profiles v158
+The installer SHALL validate raw root-observed result bytes against the exact selected protected result schema before source capture and deliver only genuine current peer-bound handles.
+
+#### Scenario: Worker supplies a ToolMessage without a completed root result
+- **WHEN** no matching current root invocation/result/schema observation exists
+- **THEN** source capture denies and no worker message or generic object schema supplies authority
