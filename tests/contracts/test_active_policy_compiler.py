@@ -44,6 +44,7 @@ def _claim() -> RootActivePolicyCompilationClaim:
     selection = unsigned
     policy = b'{"schema":1}'
     catalog = b'{"schema":1,"artifacts":[],"packages":[]}'
+    authority_core = b'{"schema":1}'
     return RootActivePolicyCompilationClaim(
         schema=2, plan_artifact_id="installer-root-setup-plan-v1", release_commit="a" * 40,
         publication_handle="H" * 43, setup_session_id="S" * 64, transaction_handle="T" * 64,
@@ -60,6 +61,9 @@ def _claim() -> RootActivePolicyCompilationClaim:
         selection_catalog_sha256=selection["catalog_sha256"], issued_monotonic=1.0,
         expires_monotonic=100.0, claim_digest="0" * 64, policy_bytes=policy,
         artifact_catalog_bytes=catalog, selection_document=selection,
+        authority_core_bytes=authority_core,
+        authority_core_sha256=hashlib.sha256(authority_core).hexdigest(),
+        authority_core_size_bytes=len(authority_core), authority_core_schema=1,
         observed_root_receipt_handle="C" * 64,
         _root_journal_root=__import__("pathlib").Path("/var/lib/hermes-installer/authority-journal"),
         _root_setup_session=object(), _reservation_handle="D" * 43, _seal=object(),
@@ -77,6 +81,19 @@ def test_active_claim_hashes_keep_predecessor_and_compiled_selection_domains_sep
     assert manifest["expected_selection_catalog_sha256"] == claim.expected_selection_catalog_sha256
     assert manifest["selection_catalog_sha256"] == claim.selection_catalog_sha256
     assert manifest["choice_adoptions"] == []
+    assert manifest["authority_core_sha256"] == claim.authority_core_sha256
+    assert manifest["authority_core_size_bytes"] == len(claim.authority_core_bytes)
+    assert "authority_core_bytes" not in manifest
+
+
+def test_active_core_bytes_are_hash_and_size_bound_without_entering_claim_manifest():
+    claim = _claim()
+    with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
+        _validate_claim_output_hashes(replace(claim, authority_core_bytes=b'{"schema":2}'))
+    with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
+        _validate_claim_output_hashes(replace(claim, authority_core_size_bytes=claim.authority_core_size_bytes + 1))
+    with pytest.raises(BootstrapEnrollmentPending, match="output bytes changed"):
+        _validate_claim_output_hashes(replace(claim, authority_core_schema=2))
 
 
 def test_active_claim_commits_to_tagged_principal_and_current_namespace_bindings():
@@ -354,7 +371,10 @@ def test_complete_active_publication_accepts_publishers_deduplicated_input_closu
         input_handles, "active-committed", _SEAL, claim.publication_handle,
         claim.claim_digest, claim.prepared_generation_id,
         claim.expected_service_generation_digest, claim.runtime_receipt_handles,
-        claim.materialization_receipt_handles)
+        claim.materialization_receipt_handles,
+        authority_core_sha256=claim.authority_core_sha256,
+        authority_core_size_bytes=claim.authority_core_size_bytes,
+        authority_core_schema=claim.authority_core_schema)
     monkeypatch.setattr(PolicyPublicationReceiptResolver, "verify_current_active_claim",
                         lambda **_kwargs: receipt)
     registry = object.__new__(RootActivePolicyCompilationRegistry)
@@ -425,13 +445,19 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         (original.observed_root_receipt_handle, *source_handles), "active-committed", _SEAL,
         original.publication_handle, original.claim_digest, original.prepared_generation_id,
         original.expected_service_generation_digest, original.runtime_receipt_handles,
-        original.materialization_receipt_handles, ())
+        original.materialization_receipt_handles, (),
+        authority_core_sha256=original.authority_core_sha256,
+        authority_core_size_bytes=original.authority_core_size_bytes,
+        authority_core_schema=original.authority_core_schema)
     persisted_claim = {
         "schema": 1, "publication_handle": original.publication_handle,
         "claim_digest": original.claim_digest, "manifest": manifest,
         "policy_sha256": original.compiled_policy_sha256,
         "artifact_catalog_sha256": original.compiled_artifact_catalog_sha256,
         "selection_sha256": original.compiled_selection_sha256,
+        "authority_core_sha256": original.authority_core_sha256,
+        "authority_core_size_bytes": original.authority_core_size_bytes,
+        "authority_core_schema": original.authority_core_schema,
     }
     state = {
         "schema": 1, "publication_handle": original.publication_handle,
@@ -450,14 +476,22 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "namespace_selection_handle": original.namespace_selection_handle,
         "namespace_binding_sha256": original.namespace_binding_sha256,
         "owner_overlay_adoptions": [],
-        "runtime_receipt_handles": list(original.runtime_receipt_handles),
-        "materialization_receipt_handles": list(original.materialization_receipt_handles),
+            "runtime_receipt_handles": list(original.runtime_receipt_handles),
+            "materialization_receipt_handles": list(original.materialization_receipt_handles),
+            "authority_core_sha256": original.authority_core_sha256,
+            "authority_core_size_bytes": original.authority_core_size_bytes,
+            "authority_core_schema": original.authority_core_schema,
         "publication_receipt_handle": None,
         "issued_monotonic": original.issued_monotonic,
         "expires_monotonic": original.expires_monotonic,
         "state": "claimed",
     }
-    descriptor = {"owner_overlay_adoption_records": [], "inputs": {
+    descriptor = {"authority_core": {
+        "relative_path": "authority/enrollment.json",
+        "sha256": original.authority_core_sha256,
+        "size_bytes": original.authority_core_size_bytes,
+        "authority_schema": original.authority_core_schema,
+    }, "owner_overlay_adoption_records": [], "inputs": {
         "source_receipt_handles": list(source_handles),
         "observed_root_receipt_handle": original.observed_root_receipt_handle,
         "selection_catalog_sha256": original.selection_catalog_sha256,
@@ -475,11 +509,13 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         descriptor, {}, {
             "plans/bootstrap-policy-v1.json": original.policy_bytes,
             "catalog/artifacts.json": original.artifact_catalog_bytes,
+            "authority/enrollment.json": original.authority_core_bytes,
         }))
     monkeypatch.setattr(compiler, "_read_immutable_bytes", lambda path: {
         ".policy": original.policy_bytes,
         ".catalog": original.artifact_catalog_bytes,
         ".selection": _canonical(original.selection_document),
+        ".authority": original.authority_core_bytes,
     }[path.suffix])
     monkeypatch.setattr(compiler, "_read_json", lambda path: (
         persisted_claim if path.name.endswith(".claim.json") else dict(state)))

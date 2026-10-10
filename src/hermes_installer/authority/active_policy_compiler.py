@@ -50,6 +50,17 @@ def _sha(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _parse_canonical_object(raw: bytes, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                           parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    except (UnicodeError, ValueError, json.JSONDecodeError):
+        raise BootstrapEnrollmentPending(f"compiled {label} is not strict JSON") from None
+    if not isinstance(value, dict):
+        raise BootstrapEnrollmentPending(f"compiled {label} is not a JSON object")
+    return value
+
+
 def _ordered_unique_receipt_handles(handles: Sequence[str], label: str) -> tuple[str, ...]:
     """Return one stable receipt order while rejecting malformed source handles."""
     result: list[str] = []
@@ -392,6 +403,9 @@ def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
         "compiled_artifact_catalog_sha256": claim.compiled_artifact_catalog_sha256,
         "compiled_selection_sha256": claim.compiled_selection_sha256,
         "selection_catalog_sha256": claim.selection_catalog_sha256,
+        "authority_core_sha256": claim.authority_core_sha256,
+        "authority_core_size_bytes": claim.authority_core_size_bytes,
+        "authority_core_schema": claim.authority_core_schema,
         "observed_root_receipt_handle": claim.observed_root_receipt_handle,
         "plan_artifact_id": claim.plan_artifact_id,
         "release_commit": claim.release_commit,
@@ -502,6 +516,14 @@ def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> 
             or not isinstance(claim.policy_bytes, bytes) or _sha(claim.policy_bytes) != claim.compiled_policy_sha256
             or not isinstance(claim.artifact_catalog_bytes, bytes)
             or _sha(claim.artifact_catalog_bytes) != claim.compiled_artifact_catalog_sha256
+            or not isinstance(claim.authority_core_bytes, bytes)
+            or not claim.authority_core_bytes
+            or _sha(claim.authority_core_bytes) != claim.authority_core_sha256
+            or len(claim.authority_core_bytes) != claim.authority_core_size_bytes
+            or type(claim.authority_core_schema) is not int
+            or claim.authority_core_schema != 1
+            or _canonical(_parse_canonical_object(claim.authority_core_bytes, "authority core"))
+               != claim.authority_core_bytes
             or not isinstance(claim.selection_document, Mapping)
             or not isinstance(claim.source_receipt_handles, tuple)
             or _ordered_unique_receipt_handles(claim.source_receipt_handles, "active claim")
@@ -576,6 +598,10 @@ class RootActivePolicyCompilationClaim:
     choice_adoptions: tuple[ActiveSetupChoiceProjection, ...] = ()
     role_closure_sha256: str = ""
     owner_overlay_adoptions: tuple[Any, ...] = ()
+    authority_core_bytes: bytes = b""
+    authority_core_sha256: str = ""
+    authority_core_size_bytes: int = 0
+    authority_core_schema: int = 1
 
 
 class RootActivePolicyTemplateResolver:
@@ -1012,6 +1038,10 @@ class RootActivePolicyCompilationRegistry:
             role_closure_sha256=provisional.role_closure_sha256,
             owner_overlay_adoptions=provisional.owner_overlay_adoptions,
         )
+        # Fail before claim journaling or native-output binding if the actual
+        # selected-role authority producer is unavailable. Do not reserve a
+        # consumable active claim around schema-only or guessed core bytes.
+        _validate_claim_output_hashes(claim)
         # Durable claim record reserves the transaction before the publisher can
         # create any generation. Same-transaction replay remains denied until
         # explicit release or committed active state.
@@ -1058,7 +1088,7 @@ class RootActivePolicyCompilationRegistry:
             # retain the precompile reservation; it is never released or
             # reconstructed from caller metadata on a failed compile.
             try:
-                for suffix in (".policy", ".catalog", ".selection", ".claim.json"):
+                for suffix in (".policy", ".catalog", ".selection", ".authority", ".claim.json"):
                     path = self._claim_root / (publication_handle + suffix)
                     try:
                         path.unlink()
@@ -1295,6 +1325,7 @@ class RootActivePolicyCompilationRegistry:
         required_record_fields = {
             "schema", "publication_handle", "claim_digest", "manifest",
             "policy_sha256", "artifact_catalog_sha256", "selection_sha256",
+            "authority_core_sha256", "authority_core_size_bytes", "authority_core_schema",
         }
         manifest = claim_record.get("manifest")
         if (set(claim_record) != required_record_fields or claim_record.get("schema") != 1
@@ -1315,6 +1346,7 @@ class RootActivePolicyCompilationRegistry:
             "precompile_reservation_handle", "role_closure_sha256",
             "compiled_policy_sha256", "compiled_artifact_catalog_sha256",
             "compiled_selection_sha256", "selection_catalog_sha256",
+            "authority_core_sha256", "authority_core_size_bytes", "authority_core_schema",
             "observed_root_receipt_handle", "plan_artifact_id", "release_commit",
             "source_receipt_handles", "choice_adoptions", "issued_monotonic",
             "expires_monotonic",
@@ -1355,6 +1387,9 @@ class RootActivePolicyCompilationRegistry:
             "expected_selection_catalog_sha256": receipt.previous_selection_catalog_sha256,
             "compiled_policy_sha256": receipt.policy_sha256,
             "compiled_artifact_catalog_sha256": receipt.artifact_catalog_sha256,
+            "authority_core_sha256": receipt.authority_core_sha256,
+            "authority_core_size_bytes": receipt.authority_core_size_bytes,
+            "authority_core_schema": receipt.authority_core_schema,
             "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
             "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
         }
@@ -1368,6 +1403,9 @@ class RootActivePolicyCompilationRegistry:
             "policy_sha256": manifest["compiled_policy_sha256"],
             "artifact_catalog_sha256": manifest["compiled_artifact_catalog_sha256"],
             "selection_sha256": manifest["compiled_selection_sha256"],
+            "authority_core_sha256": manifest["authority_core_sha256"],
+            "authority_core_size_bytes": manifest["authority_core_size_bytes"],
+            "authority_core_schema": manifest["authority_core_schema"],
         }
         if claim_record != expected_claim_record:
             raise BootstrapEnrollmentPending("durable compiler output record differs from its manifest")
@@ -1378,10 +1416,22 @@ class RootActivePolicyCompilationRegistry:
         policy = _read_immutable_bytes(prefix.with_suffix(".policy"))
         catalog = _read_immutable_bytes(prefix.with_suffix(".catalog"))
         selection_bytes = _read_immutable_bytes(prefix.with_suffix(".selection"))
+        authority_core = _read_immutable_bytes(prefix.with_suffix(".authority"))
         if (_sha(policy) != manifest["compiled_policy_sha256"]
                 or _sha(catalog) != manifest["compiled_artifact_catalog_sha256"]
-                or _sha(selection_bytes) != manifest["compiled_selection_sha256"]):
+                or _sha(selection_bytes) != manifest["compiled_selection_sha256"]
+                or _sha(authority_core) != manifest["authority_core_sha256"]
+                or len(authority_core) != manifest["authority_core_size_bytes"]):
             raise BootstrapEnrollmentPending("durable compiler output bytes differ from the claim manifest")
+        try:
+            core_document = json.loads(authority_core.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            raise BootstrapEnrollmentPending("durable compiled authority core is malformed") from None
+        if (not isinstance(core_document, dict)
+                or core_document.get("schema") != manifest["authority_core_schema"]
+                or _canonical(core_document) != authority_core):
+            raise BootstrapEnrollmentPending("durable compiled authority core is not canonical")
         try:
             selection = json.loads(selection_bytes.decode("utf-8"), object_pairs_hook=_unique_pairs,
                                    parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
@@ -1403,6 +1453,12 @@ class RootActivePolicyCompilationRegistry:
                 or inputs.get("observed_root_receipt_handle") != observed_handle
                 or inputs.get("selection_catalog_sha256") != manifest["selection_catalog_sha256"]
                 or inputs.get("choice_projections") != manifest.get("choice_adoptions")
+                or descriptor.get("authority_core") != {
+                    "relative_path": "authority/enrollment.json",
+                    "sha256": receipt.authority_core_sha256,
+                    "size_bytes": receipt.authority_core_size_bytes,
+                    "authority_schema": receipt.authority_core_schema,
+                }
                 or any(inputs.get(key) != value for key, value in {
                     "publication_handle": publication_handle,
                     "claim_digest": receipt.claim_digest,
@@ -1413,7 +1469,8 @@ class RootActivePolicyCompilationRegistry:
                     "materialization_receipt_handles": output_handles,
                 }.items())
                 or file_bytes.get("plans/bootstrap-policy-v1.json") != policy
-                or file_bytes.get("catalog/artifacts.json") != catalog):
+                or file_bytes.get("catalog/artifacts.json") != catalog
+                or file_bytes.get("authority/enrollment.json") != authority_core):
             raise BootstrapEnrollmentPending("active descriptor differs from durable compiler inputs")
 
         state_path = self._claim_root / ("transaction-" + receipt.transaction_handle + ".json")
@@ -1436,6 +1493,9 @@ class RootActivePolicyCompilationRegistry:
             "principal_binding_sha256": manifest["principal_binding_sha256"],
             "namespace_selection_handle": manifest["namespace_selection_handle"],
             "namespace_binding_sha256": manifest["namespace_binding_sha256"],
+            "authority_core_sha256": manifest["authority_core_sha256"],
+            "authority_core_size_bytes": manifest["authority_core_size_bytes"],
+            "authority_core_schema": manifest["authority_core_schema"],
             "owner_overlay_adoptions": manifest["owner_overlay_adoptions"],
             "runtime_receipt_handles": runtime_handles,
             "materialization_receipt_handles": output_handles,
@@ -2099,6 +2159,9 @@ class RootActivePolicyCompilationRegistry:
                 "policy_sha256": claim.compiled_policy_sha256,
                 "artifact_catalog_sha256": claim.compiled_artifact_catalog_sha256,
                 "selection_sha256": claim.compiled_selection_sha256,
+                "authority_core_sha256": claim.authority_core_sha256,
+                "authority_core_size_bytes": claim.authority_core_size_bytes,
+                "authority_core_schema": claim.authority_core_schema,
                 "selection_catalog_sha256": claim.selection_catalog_sha256,
                 "observed_root_receipt_handle": claim.observed_root_receipt_handle,
                 "principal_selection_receipt_handle": claim.principal_selection_receipt_handle,
@@ -2121,6 +2184,7 @@ class RootActivePolicyCompilationRegistry:
         self._write_immutable_bytes(prefix.with_suffix(".policy"), claim.policy_bytes)
         self._write_immutable_bytes(prefix.with_suffix(".catalog"), claim.artifact_catalog_bytes)
         self._write_immutable_bytes(prefix.with_suffix(".selection"), selection_bytes)
+        self._write_immutable_bytes(prefix.with_suffix(".authority"), claim.authority_core_bytes)
         _write_json(prefix.with_suffix(".claim.json"), {
             "schema": 1,
             "publication_handle": claim.publication_handle,
@@ -2129,6 +2193,9 @@ class RootActivePolicyCompilationRegistry:
             "policy_sha256": claim.compiled_policy_sha256,
             "artifact_catalog_sha256": claim.compiled_artifact_catalog_sha256,
             "selection_sha256": claim.compiled_selection_sha256,
+            "authority_core_sha256": claim.authority_core_sha256,
+            "authority_core_size_bytes": claim.authority_core_size_bytes,
+            "authority_core_schema": claim.authority_core_schema,
         }, exclusive=True)
 
     def _verify_claim_bundle(self, claim: RootActivePolicyCompilationClaim) -> None:
@@ -2136,12 +2203,16 @@ class RootActivePolicyCompilationRegistry:
         policy = _read_immutable_bytes(prefix.with_suffix(".policy"))
         catalog = _read_immutable_bytes(prefix.with_suffix(".catalog"))
         selection = _read_immutable_bytes(prefix.with_suffix(".selection"))
+        authority_core = _read_immutable_bytes(prefix.with_suffix(".authority"))
         record = _read_json(prefix.with_suffix(".claim.json"))
         expected = {
             "schema": 1, "publication_handle": claim.publication_handle,
             "claim_digest": claim.claim_digest, "manifest": _manifest(claim),
             "policy_sha256": _sha(policy), "artifact_catalog_sha256": _sha(catalog),
             "selection_sha256": _sha(selection),
+            "authority_core_sha256": _sha(authority_core),
+            "authority_core_size_bytes": len(authority_core),
+            "authority_core_schema": claim.authority_core_schema,
         }
         if (policy != claim.policy_bytes or catalog != claim.artifact_catalog_bytes
                 or selection != _canonical(dict(claim.selection_document)) or record != expected):

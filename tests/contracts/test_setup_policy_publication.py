@@ -20,6 +20,34 @@ from hermes_installer.authority.setup_policy_publication import (
 
 
 class PolicyPublicationFilesystemTests(unittest.TestCase):
+    def test_published_core_cannot_be_constructed_from_caller_fields(self):
+        from hermes_installer.authority.setup_policy_publication import RootPublishedAuthorityCore
+        with self.assertRaises(TypeError):
+            RootPublishedAuthorityCore(
+                "r" * 43, "t" * 64, "generation-v1", "a" * 64, "b" * 64,
+                "c" * 64, "d" * 64, "authority/enrollment.json", "e" * 64,
+                12, 1, 1, 2, 3, 4, object(), object(), object())
+
+    def test_published_core_membership_is_object_identity_bound(self):
+        from dataclasses import replace
+        from hermes_installer.authority import setup_policy_publication as publication
+
+        core = publication.RootPublishedAuthorityCore(
+            "r" * 43, "t" * 64, "generation-v1", "a" * 64, "b" * 64,
+            "c" * 64, "d" * 64, "authority/enrollment.json", "e" * 64,
+            12, 1, 1, 2, 3, 4, -1, -1, publication.PolicyPublicationReceiptResolver,
+            publication._AUTHORITY_CORE_SEAL)
+        equal_clone = replace(core)
+        self.assertEqual(core, equal_clone)
+        publication._register_authority_core(core)
+        try:
+            self.assertTrue(publication._is_registered_authority_core(core))
+            self.assertFalse(publication._is_registered_authority_core(equal_clone))
+        finally:
+            reference = publication._AUTHORITY_CORE_MEMBERSHIP.get(id(core))
+            if reference is not None and reference() is core:
+                publication._AUTHORITY_CORE_MEMBERSHIP.pop(id(core), None)
+
     def _publisher_for_active_claim(self, compiled, registry):
         publisher = object.__new__(RootSetupPolicyGenerationPublisher)
         publisher.registry = registry
@@ -42,6 +70,9 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             expected_selection_catalog_sha256=None,
             compiled_policy_sha256=_sha(b"{}"), compiled_artifact_catalog_sha256=_sha(b"{}"),
             compiled_selection_sha256=_sha(_canonical(selection)), selection_catalog_sha256="e" * 64,
+            authority_core_bytes=b'{"schema":1}',
+            authority_core_sha256=_sha(b'{"schema":1}'), authority_core_size_bytes=12,
+            authority_core_schema=1,
             policy_bytes=b"{}", artifact_catalog_bytes=b"{}", selection_document=selection,
             plan_sha256="f" * 64, plan_artifact_id="installer-root-setup-plan-v1",
             release_commit="1" * 40, observed_root_receipt_handle=observed,
@@ -61,6 +92,9 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             claim.publication_handle, claim.claim_digest, claim.prepared_generation_id,
             claim.expected_service_generation_digest, claim.runtime_receipt_handles,
             claim.materialization_receipt_handles, (),
+            authority_core_sha256=claim.authority_core_sha256,
+            authority_core_size_bytes=claim.authority_core_size_bytes,
+            authority_core_schema=claim.authority_core_schema,
         )
 
     def test_active_pointer_cas_failure_reconciles_from_durable_journal_without_release(self):
@@ -264,6 +298,9 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             "service_generation_digest": "2" * 64,
             "runtime_receipt_handles": ["3" * 64],
             "materialization_receipt_handles": ["4" * 64],
+            "authority_core_sha256": "5" * 64,
+            "authority_core_size_bytes": 128,
+            "authority_core_schema": 1,
         }
 
     def test_active_receipt_binds_claim_generation_and_native_receipts(self):
@@ -273,6 +310,10 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             "policy_sha256": receipt.policy_sha256,
             "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
             "selection_sha256": receipt.selection_sha256,
+            "authority_core": {"relative_path": "authority/enrollment.json",
+                               "sha256": receipt.authority_core_sha256,
+                               "size_bytes": receipt.authority_core_size_bytes,
+                               "authority_schema": receipt.authority_core_schema},
             "inputs": {
                 "publication_handle": receipt.publication_handle,
                 "claim_digest": receipt.claim_digest,
@@ -362,6 +403,14 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
         descriptor = {"schema": 2, "policy_sha256": receipt.policy_sha256,
                       "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
                       "selection_sha256": receipt.selection_sha256,
+                      "authority_core": {"relative_path": "authority/enrollment.json",
+                                         "sha256": receipt.authority_core_sha256,
+                                         "size_bytes": receipt.authority_core_size_bytes,
+                                         "authority_schema": receipt.authority_core_schema},
+                      "authority_core": {"relative_path": "authority/enrollment.json",
+                                         "sha256": receipt.authority_core_sha256,
+                                         "size_bytes": receipt.authority_core_size_bytes,
+                                         "authority_schema": receipt.authority_core_schema},
                       "inputs": {
                           "publication_handle": receipt.publication_handle,
                           "claim_digest": receipt.claim_digest,
