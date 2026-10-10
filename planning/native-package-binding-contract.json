@@ -1961,5 +1961,143 @@
       }
     ],
     "acceptance": "All original AC/baseline unchanged. Source role/layout/disclosure producers required; no actual runtime/public target acceptance inferred."
+  },
+  "runtime_public_choice_currentness_v153": {
+    "schema": 1,
+    "requirements": [
+      "HI-T138",
+      "HI-T143",
+      "HI-T149"
+    ],
+    "why": "Runtime public disclosure cannot require live RootBootstrapSession after setup TTL. Adopted choices must recheck original signed row/revocation, not pointer only. Distinct public consent identity and logical recipient need actual source definition.",
+    "durable_adoption": {
+      "source": "Existing RootSetupChoiceRegistry actual signed purpose source row/key/deployment identity and PublishedSetupChoiceAdoption actual committed policy pointer; no process-local seal or irreversible preference.",
+      "adoption_fields_add": [
+        "adopted_at_unix",
+        "source_choice_row_sha256",
+        "choice_epoch",
+        "revocation_epoch",
+        "key_id",
+        "release_deployment_receipt_sha256"
+      ],
+      "admission": "Actual active publisher verifies source choice/current setup/controller/source evidence and setup_deadline_unix at adoption; adopted_at_unix cannot exceed that deadline. Post-CAS outcome/recovery truthful; no expired/unverified source adoption. Original short source/effect snapshot is never extended.",
+      "post_setup": "Explicit committed signed adoption converts source preference to durable selected configuration until current policy replacement/revocation, not a renewed setup effect. setup_deadline_unix remains historical admission boundary, not runtime grant TTL. Runtime preference resolution requires actual current row signature/hash/epoch/source/key/policy generation and active adoption, not live RootBootstrapSession.",
+      "runtime_constructor": "RootSetupChoiceRegistry.from_root_runtime(verified_installer_release,current_active_publication,authority_service,root_journal)->runtime root choice resolver",
+      "resolve": "resolve_current_adopted_choice(selection_handle,expected_purpose,active_publication_receipt)->RootAdoptedSetupChoiceSelection",
+      "resolve_fields": [
+        "selection_handle",
+        "purpose",
+        "consent_id",
+        "source_choice_row_sha256",
+        "choice_epoch",
+        "revocation_epoch",
+        "key_id",
+        "release_deployment_receipt_sha256",
+        "active_publication_receipt_handle",
+        "service_generation_digest",
+        "choice_payload_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "rules": "consent_id nullable only non-consent purpose. Current source row held from protected journal, original signature verified with genuine selected key/current root key custody; exact source payload/current source members and active projection profile/namespace/owner/policy. Current row revoked/missing or epoch/hash mismatch denies even same active pointer. PublishedSetupChoiceAdoption.verify_current delegates this actual resolver; no descriptor-only result.",
+      "revocation": "Authorized current owner/root request causes signed durable epoch/revocation transition in root journal using existing actual authority key finite choice-revocation domain; atomic fsync/current index. Revocation survives restart and invalidates all derived active choice/current receipts. No raw caller epoch, parallel key, arbitrary signing. Owned cleanup remains separate retained PIDFD obligation.",
+      "runtime_grants": "Every effect/input/start/capture projection is fresh nonrenewing <=30s bound current source/consent/policy/runtime; preference has no effect authority. Old receipt expiry remains immutable. Runtime registry uses actual AuthorityService domain verify/sign bridge, never imports private signer or reconstructs new service."
+    },
+    "public_identity": {
+      "consent_id": "Root public choice producer mints a distinct opaque stable consent_id via CSPRNG>=128bits when actual rootTTY public normal configuration is recorded; stores it in signed closed public choice payload and active choice adoption projection. Different from choice_handle/selection_handle/choice_observation_id; caller cannot choose/alias IDs. Reconfiguration/revocation creates genuine signed transition/new consent identity where policy changes.",
+      "recipient": "Source-defined logical recipient for this finite public-free HTTPS read family is exactly public-web. Add literal to public choice/scope source policy, not infer tests/profile. It is a capability route label, not URL/ownership proof; selected target/scopes/current operation and source ceiling still independently verified. No other public provider/memory/paid scope granted. v142 scope recipient must equal this literal for this family."
+    },
+    "runtime_disclosure": {
+      "class": "hermes_installer.authority.public_web_selection.RootPublicInputDisclosureRegistry",
+      "constructor": "from_root_runtime(authority_service,active_bindings,verified_installer_release,current_installed_actor_verifier,foreground_tty_observer,public_choice_registry,native_input_selection_registry,root_journal)",
+      "source": "Actual installed root controller actor/current release/source closure/PIDFD, separately selected native input peer; never relabel root controller as worker. No RootBootstrapSession/_check_live dependency and no setup lease extension.",
+      "tty": "Reuse genuine root_setup._capture_root_tty_proof/_verify_root_tty_proof through source-owned RootRuntimeForegroundTTYObserver adapter. Existing proof verifies Linuxuid/euid0,currentPID/UID/GID/session/pgrp/PIDFD, controllingTTYdev/inode/rdev/foregroundpgrp/original<=60s deadline. Adapter retains actual proof membership/one-use currentness; caller cannot manufacture nonce or TTY proof. No arbitrary code/path/TTY/dev input.",
+      "method": "observe_public_input_disclosure(adopted_public_permission_selection_handle,retained_observed_input_handle,selected_execution_handle,actual_root_tty_disclosure)->RootPublicNativeInputObservation",
+      "checks": "Fresh actual current installed root actor + active selected/adopted public source configuration and distinctconsentID/currentepoch. Actual rootTTY disclosure same original pending input bytesSHA/size/selectedexecution/currentnativepeer/profile/namespace owner, selectedpublicscopes/zero budget. Raw profile/publiclabel/persisted choice cannot classify input. PRIVATE/UNKNOWN ancestry/history/memory/credentials deny; emptyparents only actual new disclosed source v149.",
+      "lease": "Perinput disclosure/permission <=30s and <=originalTTY/input/selectedexecution/source limits. Deadline never renews; after expiration new actual observation required. Runtime adoption preference may survive setup closure but not create input/effect grant. Every dispatch/retry current epoch/source/scope/recipient intersection rechecked."
+    },
+    "tasks": [
+      {
+        "id": "HI-T153.1",
+        "owner": "consent/publisher/enrollment/runtime composer",
+        "work": "Genuine durable adoption/current original source row+signature+epoch/revoke resolver beyond setupTTL, truthful postcommit recovery; no pointer-only verification."
+      },
+      {
+        "id": "HI-T153.2",
+        "owner": "publicTTY/consent/factory/source input",
+        "work": "Runtime disclosure constructor with actual installed actor/oneuse rootTTY source adapter, distinctconsentID signedproducer/public-web source literal; no live setup dependency/private relabel."
+      }
+    ],
+    "acceptance": "Actual source/configuration/observer implementation required, runtime/public/target acceptance and allAC open; baseline unchanged."
+  },
+  "runtime_choice_revocation_source_v156": {
+    "schema": 1,
+    "requirements": [
+      "HI-T143",
+      "HI-T153"
+    ],
+    "why": "Runtime durable choice revocation cannot use expired setup session, caller bool or caller epoch; it needs genuine current installed actor and one-use trusted human action.",
+    "producer": {
+      "owner_module": "hermes_installer.authority.root_setup_choices",
+      "class": "RootRuntimeForegroundTTYObserver",
+      "constructor": "from_root_runtime(verified_installer_release,current_installed_actor_verifier,active_bindings,root_journal)",
+      "method": "observe_adopted_choice_revocation(adopted_choice_selection)->RootObservedAdoptedChoiceRevocation",
+      "source": "Reuse actual root_setup._capture_root_tty_proof/_verify_root_tty_proof, installed root actor/current verified release/MainPID where required, actual active bindings and freshly resolved RootAdoptedSetupChoiceSelection. Observer displays exact purpose/profile/namespace/owner/choice identity/current epoch and asks finite REVOKE action via the genuine foreground root controllingTTY. Retain root-observed response and shown canonical payload digest. No caller-supplied proof/epoch/string confirmation or imported worker input.",
+      "fields": [
+        "schema",
+        "revocation_observation_handle",
+        "selection_handle",
+        "purpose",
+        "consent_id",
+        "source_choice_row_sha256",
+        "choice_epoch",
+        "revocation_epoch",
+        "active_publication_receipt_handle",
+        "service_generation_digest",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "owner_generation",
+        "displayed_payload_sha256",
+        "root_actor_observation_handle",
+        "tty_controller_observation_handle",
+        "action",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "constraints": "schema1; action literal revoke-adopted-choice; consent_id nullable only non-consent purpose. Exact resolved adopted choice profile/namespace/owner from signed payload/current projection, not caller claims. Registry holds actual actor/TTY proof/PIDFD; one-use <=30s and <=original TTY/actor/current choice deadlines. Revalidate actor/TTY foreground/current owner/policy/key/source choice epoch before consume; never renew old observation."
+    },
+    "consumer": {
+      "method": "RootSetupChoiceRegistry.revoke_adopted_choice(revocation_observation_handle)->RootSetupChoiceRevocationReceipt",
+      "constructor": "Existing v153 runtime registry injects genuine foreground_tty_observer; no RootBootstrapSession required.",
+      "checks": "Root-only lookup/consume genuine observer record, re-resolve exact adopted source row and current epochs/current active owner/source/key before signing. The current root actor is separate from selected worker identity. Root journal serializes competing revoke/config changes atomically; stale observation or changed epoch fails. Sign finite persistent choice-revocation domain through actual AuthorityService public facade; do not import private key methods or mint parallel signer.",
+      "receipt_fields": [
+        "schema",
+        "revocation_receipt_handle",
+        "selection_handle",
+        "purpose",
+        "consent_id",
+        "previous_choice_epoch",
+        "previous_revocation_epoch",
+        "revocation_epoch",
+        "source_choice_row_sha256",
+        "revocation_observation_handle",
+        "displayed_payload_sha256",
+        "key_id",
+        "release_deployment_receipt_sha256",
+        "service_generation_digest",
+        "revoked_at_unix",
+        "signature"
+      ],
+      "semantics": "Exactly one monotonic epoch increment on successful transition, idempotent replay only of same committed consumed observation. Atomic fsync signed revoked row/current index; current adoption/permission immediately denies. Durable revocation has no effect lease and no setup lease extension. Retained owned-process cleanup is independently authorized finite custody cleanup, not arbitrary PID signal."
+    },
+    "tasks": [
+      {
+        "id": "HI-T156.1",
+        "owner": "consent/publicTTY/host authority",
+        "work": "Actual installed runtime one-use rootTTY revocation observer and public finite persistent signer facade; signed epoch transition/current adopted choice resolver tests including stale owner/TTY/epoch and restart."
+      }
+    ],
+    "acceptance": "All AC remain open; no runtime revocation evidence inferred from schema; baseline unchanged."
   }
 }
