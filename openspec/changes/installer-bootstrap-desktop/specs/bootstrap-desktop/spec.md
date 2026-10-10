@@ -566,3 +566,10 @@ The system SHALL use the v115 exact root setup build service template and actual
 #### Scenario: First setup lacks active worker profile
 - **WHEN** a valid root prepared transaction selects the finite build
 - **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Scoped pinned runtime asset redirect
+The system SHALL apply only the v116 exact publicCPython artifact redirect policy, enforcing one302 to the exact officialasset authority with TLS, no credential forwarding, redacted signedquery and actual finalsize/hash. All other artifact NoRedirect defaults SHALL remain unchanged.
+
+#### Scenario: Unexpected redirect destination
+- **WHEN** the response redirects to an unlisted authority, protocol, port or a second hop
+- **THEN** acquisition denies without publishing any runtime artifactreceipt.
