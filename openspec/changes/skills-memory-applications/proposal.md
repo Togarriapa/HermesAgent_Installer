@@ -71,3 +71,5 @@ Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-captu
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
 
 Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+Application request source v107: `plans/amendments/2026-10-10-application-request-source-v107.md`; actual finite installer qualification request distinct from absent native application mappings. Existing SK-F03/R0067/R0138/AC12 implementation and acceptance remain open.
