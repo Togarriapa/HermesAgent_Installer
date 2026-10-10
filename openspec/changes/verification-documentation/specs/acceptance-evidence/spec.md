@@ -1130,3 +1130,17 @@ The installer SHALL use planning/official-desktop-build-acquisition-v218.json fo
 #### Scenario: Existing Node bytes selected for Desktop
 - **WHEN** the exact reviewed Node archive is reused by the Desktop builder
 - **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded
+
+
+## ADDED Requirements
+
+### Requirement: Genuine setup HA observation evidence
+The installer SHALL implement v216 root-session-owned signed observation receipts for actual setup HA TLS/request/provider/schema/validated-response effects, with exact retained producer membership and canonical journal custody. It SHALL preserve daemon SourceReceipt/HostContext restrictions and issue no call authority from historical receipt bytes.
+
+#### Scenario: Actual schema precedes functional call
+- **WHEN** genuine tools/list produces a current source-validated retained schema receipt and informed whole-context intent
+- **THEN** only the one-use exact GetLiveContext({}) functional grant may consume it through the real transport and record actual bounded semantic response evidence
+
+#### Scenario: Unrelated daemon receipt or forged observation
+- **WHEN** a caller supplies SourceReceipt names, copied journal JSON, raw result maps or expired schema/signature/context
+- **THEN** no live setup grant/functional receipt is issued and raw secrets/HTTP bodies remain absent from persistent evidence

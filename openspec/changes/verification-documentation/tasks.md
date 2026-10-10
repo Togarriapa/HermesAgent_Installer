@@ -200,3 +200,5 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] BD-T218.1: Implement Desktop-specific selected sourcepolicy/acquisition phase and locked toolchain/dependency/license receipts.
 - [ ] BD-T218.2: Consume held closure in fixed offline209212 rolebuild with native ABI/script proof.
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
+
+- [ ] MC-R0101.5 / MC-R0101.6 (v216): Implement exact live HA setup observation signer/journal/private transport capture, real discovery schema receipt and one-use functional call; verify effects/failures without forged SourceReceipt/HostContext or raw secret/body persistence.

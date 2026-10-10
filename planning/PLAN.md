@@ -160,3 +160,6 @@ Jarvis source-home/live-task correction v214: plans/amendments/2026-10-10-jarvis
 Jarvis source-profile task identity v215: plans/amendments/2026-10-10-jarvis-source-profile-task-identity-v215.md; actualserviceprofile distinctprotectedsourcehome, typedliveadmission, prepared/publishedclaimjoins; existing213tasks/allACOPEN.
 
 OfficialDesktop buildacquisition218: plans/amendments/2026-10-10-official-desktop-build-acquisition-v218.md; BD-T218.1/.2 VD-T218.3 OPEN, dedicatedphase/currentchoice/pinnedNodeElectron/lockednpm noHyperframesalias/allACOPEN.
+
+
+HA v216 plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md refines MC-R0101.5/.6 actual setup observation→schema→functional pipeline; no forged daemon receipt/context, all AC OPEN.

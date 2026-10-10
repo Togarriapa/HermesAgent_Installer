@@ -69,3 +69,6 @@ HA Assist actual resource scope: `plans/amendments/2026-10-10-home-assistant-ass
 
 
 HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md refines actual Core2026.10.0 complete metadata reads and genuine explicitly selected whole GetLiveContext alternative with finite TLS/DNS-pinned WS dependency/credential custody. No HA exposure mutation, metadata/functional/source/enablement evidence separate; all acceptance OPEN.
+
+
+HA setup receipt refinement v216: plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md supplies concrete live root-session signer/journal/transport sink/schema-to-functional-call ownership; setup evidence is distinct from daemon SourceReceipt/HostContext and cannot restore authority. All acceptance OPEN.

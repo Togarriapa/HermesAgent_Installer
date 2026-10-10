@@ -153,3 +153,6 @@ Jarvis214 corrects213 source-home/live-task field split: exact16 published facts
 Jarvis source-profile task identity v215: distinct protected source_profile_id/home_binding_id mapping, actual serviceprofile_id unchanged; typed live admission deadlines/currentgrant and prepared-vs-published16facts in planning/jarvis-source-profile-task-identity-v215.json.
 
 OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/sourceobserver/Node npm Electron/native lockedclosure, no Hyperframesconsent or blanketlifecycle scripts. planning/official-desktop-build-acquisition-v218.json; BD-T218.1/.2 VD-T218.3 OPEN.
+
+
+HA setup receipt refinement v216: plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md supplies concrete live root-session signer/journal/transport sink/schema-to-functional-call ownership; setup evidence is distinct from daemon SourceReceipt/HostContext and cannot restore authority. All acceptance OPEN.
