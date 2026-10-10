@@ -107,11 +107,22 @@ class NativeHealthObserverContracts(unittest.TestCase):
             self.assertEqual(receipt.status, "passed")
             self.assertEqual(receipt.provider_result_event_id, refs["provider-result"])
             self.assertEqual(receipt.tool_result_event_id, refs["tool-result"])
-            self.assertIs(observer.consume_selected_health_receipt(
-                receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id), receipt)
             with self.assertRaises(AuthorityDenied):
                 observer.consume_selected_health_receipt(
-                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id)
+                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
+                    "e" * 64)
+            with self.assertRaises(AuthorityDenied):
+                observer.consume_selected_health_receipt(
+                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
+                    receipt.service_generation_digest, completion_journal=object(),
+                    active_receipt=object())
+            self.assertIs(observer.consume_selected_health_receipt(
+                receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
+                receipt.service_generation_digest), receipt)
+            with self.assertRaises(AuthorityDenied):
+                observer.consume_selected_health_receipt(
+                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
+                    receipt.service_generation_digest)
         finally:
             os.close(fd)
 

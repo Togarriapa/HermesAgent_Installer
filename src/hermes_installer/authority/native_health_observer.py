@@ -303,6 +303,42 @@ class RootCommittedHealthEnrollmentRegistry:
             raise AuthorityDenied("native.health.sources", "health source resolver returned an untyped or unrelated binding")
         return material
 
+    def resolve_current_health_material_for_receipt(
+        self, receipt: Any, active_bindings: Any, verified_installer_release: Any,
+        current_installed_actor_verifier: Any,
+    ) -> RootNativeHealthStartMaterial:
+        """Resolve only the exact committed receipt retained by this registry.
+
+        The receipt is a lookup key, never authority: identity membership in
+        this registry, the setup-store CAS, and the current source resolver are
+        all rechecked before returning its held material.
+        """
+        from .bootstrap_enrollment import EnrollmentReceipt
+        if type(receipt) is not EnrollmentReceipt:
+            raise AuthorityDenied("native.health.commit", "health requires the retained enrollment receipt")
+        with self._lock:
+            matches = tuple(entry for entry in self._entries.values()
+                            if entry.receipt is receipt)
+        if len(matches) != 1 or receipt.expires_monotonic <= self.monotonic():
+            raise AuthorityDenied("native.health.commit", "committed enrollment is not uniquely retained")
+        entry = matches[0]
+        try:
+            verified = self.setup_session_store.verify_committed_receipt(
+                entry.receipt, entry.authorization,
+            )
+            if type(verified) is not type(entry.verified_commit) or verified != entry.verified_commit:
+                raise ValueError("committed transaction changed")
+            material = self.source_material_resolver.resolve_current_health_material(
+                verified, active_bindings, verified_installer_release,
+                current_installed_actor_verifier,
+            )
+        except Exception:
+            raise AuthorityDenied("native.health.sources", "current committed source material is unavailable") from None
+        if (type(material) is not RootNativeHealthStartMaterial
+                or material.verified_commit is not entry.verified_commit):
+            raise AuthorityDenied("native.health.sources", "health source resolver returned unrelated material")
+        return material
+
     def is_current_commit(self, commit: Any) -> bool:
         from .bootstrap_enrollment import VerifiedCommittedEnrollment
         if type(commit) is not VerifiedCommittedEnrollment:
@@ -518,6 +554,21 @@ class RootNativeHealthStartAuthority:
                 or admission.admission_handle != admission_handle or not self.is_current(admission)):
             raise AuthorityDenied("native.health.admission", "health admission is stale or unknown")
         return admission
+
+    def resolve_current_health_admission_for_commit(
+        self, commit: Any,
+    ) -> RootNativeHealthStartAdmission:
+        """Return the unique retained current admission for an exact store proof."""
+        from .bootstrap_enrollment import VerifiedCommittedEnrollment
+        if type(commit) is not VerifiedCommittedEnrollment:
+            raise AuthorityDenied("native.health.admission", "health admission requires a verified committed enrollment")
+        with self._lock:
+            matches = tuple(admission for admission in self._admissions.values()
+                            if admission._verified_commit is commit)
+        current = tuple(admission for admission in matches if self.is_current(admission))
+        if len(current) != 1:
+            raise AuthorityDenied("native.health.admission", "current health admission is absent or ambiguous")
+        return current[0]
 
     def resolve_selected_recipe_binding(self, admission: RootNativeHealthStartAdmission,
                                         role: str, action: str) -> RootSelectedHealthStartBinding:
@@ -1045,19 +1096,33 @@ class RootNativeHealthObserver:
         return receipt
 
     def consume_selected_health_receipt(self, health_receipt_handle: str,
-                                        committed_enrollment_receipt_id: str) -> RootNativeHealthReceipt:
+                                        committed_enrollment_receipt_id: str,
+                                        expected_service_generation_digest: str, *,
+                                        completion_journal: Any | None = None,
+                                        active_receipt: Any | None = None) -> Any:
         if (not _OPAQUE.fullmatch(health_receipt_handle)
-                or not _identifier(committed_enrollment_receipt_id)):
+                or not _identifier(committed_enrollment_receipt_id)
+                or not _SHA256.fullmatch(expected_service_generation_digest)):
             raise AuthorityDenied("native.health.receipt", "health receipt lookup is malformed")
         with self._lock:
             receipt = self._receipts.get(health_receipt_handle)
             if (receipt is None or receipt.health_receipt_handle in self._consumed
                     or self.monotonic() >= receipt.expires_monotonic
                     or receipt.committed_enrollment_receipt_id != committed_enrollment_receipt_id
+                    or receipt.service_generation_digest != expected_service_generation_digest
                     or receipt.status != "passed"):
                 raise AuthorityDenied("native.health.receipt", "health receipt is stale, mismatched, or consumed")
+            completion = receipt
+            if completion_journal is not None:
+                from .functional_health_receipt_consumer import RootFunctionalHealthJournal
+                if (type(completion_journal) is not RootFunctionalHealthJournal
+                        or active_receipt is None):
+                    raise AuthorityDenied("native.health.journal", "health consumption requires the typed completion journal and commit")
+                completion = completion_journal.persist_consumed_receipt(
+                    active_receipt, receipt, expected_service_generation_digest,
+                )
             self._consumed.add(health_receipt_handle)
-            return receipt
+            return completion
 
     def cancel_selected_health(self, health_observation_handle: str) -> None:
         with self._lock:
