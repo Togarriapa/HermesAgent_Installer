@@ -322,8 +322,10 @@ def build_root_native_registration_projection(
                     or _canonical(argument_schema) != _canonical(source.argument_schema)
                     or hashlib.sha256(_canonical(argument_schema)).hexdigest() != source.native_schema_sha256
                     or not any(row["schema_kind"] == "arguments" and row["adapter_id"] == source.adapter_id
+                               and row["action_id"] == source.registration_id
                                for row in schema_rows[argument_id])
                     or not any(row["schema_kind"] == "result" and row["adapter_id"] == source.adapter_id
+                               and row["action_id"] == source.registration_id
                                for row in schema_rows[result_id])):
                 raise ValueError
 
