@@ -1,0 +1,40 @@
+{
+  "evidence_id": "EV-VD-T180.6-VD-T183.5-v228-source-pin-20261010",
+  "requirements": ["VD-T180.6", "VD-T183.5", "BD-T232.1"],
+  "source_review": "planning/jarvis-runtime-source-pin-review-v228.json",
+  "reviewed_source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+  "implementation_scope": {
+    "release_tables": "13 existing source-module digest/size tuples updated in both tables; 3 reviewed module members added in both tables with fixed module role and installed read-only convention",
+    "builder_preloads": [
+      "hermes_installer.authority.durable_pm_runtime",
+      "hermes_installer.authority.native_profile_task_homes",
+      "hermes_installer.authority.selected_startup_intents"
+    ],
+    "artifact_catalog_rows": [
+      "installer-reviewed-source-bootstrap-runtime-factory-v180",
+      "installer-native-hermes-worker-start-adapter-v183",
+      "installer-module:hermes_installer.authority.native_worker_start_recipe",
+      "installer-module:hermes_installer.registry.resource_backends"
+    ],
+    "preserved_reviewed_bytes": [
+      "src/hermes_installer/root_setup.py",
+      "src/hermes_installer/authority/bootstrap_runtime_factory.py"
+    ],
+    "acceptance": "source-pinning and isolated installed-module-origin contract evidence only; all AC01..AC18 and target acceptance remain open"
+  },
+  "validation": {
+    "command": "PYTHONPATH=src /private/tmp/hermes-installer-cohort-py314/bin/python -m pytest -q tests/contracts/test_installer_release.py tests/contracts/test_installer_release_build.py",
+    "result": "73 passed, 11 skipped in 6.35s",
+    "additional": [
+      "npx --no-install openspec status --change installer-bootstrap-desktop --json: planning complete",
+      "npm run validate:specs: 13 passed, 0 failed",
+      "npm run validate:plan: planning coverage pass; runtime acceptance not established",
+      "git diff --check: passed",
+      "review-v228 row consistency check: 13 update rows and 3 new rows align between verifier and builder tables; 4 catalog replacement identities verified"
+    ]
+  },
+  "limitations": [
+    "No Raspberry Pi run or target acceptance is asserted.",
+    "No source-authority/task checkbox or acceptance criterion is marked complete by this evidence."
+  ]
+}

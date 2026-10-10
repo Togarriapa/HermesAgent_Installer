@@ -281,6 +281,9 @@ def test_first_source_actor_preloads_exact_installed_launcher_module_closure():
         "hermes_installer.authority.installer_release",
         "hermes_installer.authority.bootstrap_runtime_factory",
         "hermes_installer.registry.resources_runtime",
+        "hermes_installer.authority.durable_pm_runtime",
+        "hermes_installer.authority.native_profile_task_homes",
+        "hermes_installer.authority.selected_startup_intents",
     ):
         module = sys.modules[name]
         origin = Path(module.__spec__.origin)
@@ -374,15 +377,27 @@ for name, module in tuple(sys.modules.items()):
     shutil.copyfile(path, target)
     captured.add(name)
 assert 'hermes_installer.registry.resources_runtime' in captured
+assert {
+    'hermes_installer.authority.durable_pm_runtime',
+    'hermes_installer.authority.native_profile_task_homes',
+    'hermes_installer.authority.selected_startup_intents',
+} <= captured
 """
     subprocess.run(
         [sys.executable, "-I", "-c", preload_and_stage, str(source_root), str(installed_python)],
         cwd=tmp_path, check=True, capture_output=True, text=True,
     )
     verify_installed = r"""
-import pathlib, sys
+import importlib, pathlib, sys
 installed_root = pathlib.Path(sys.argv[1]).resolve(strict=True)
 sys.path.insert(0, str(installed_root))
+for name in (
+    'hermes_installer.authority.durable_pm_runtime',
+    'hermes_installer.authority.native_profile_task_homes',
+    'hermes_installer.authority.selected_startup_intents',
+):
+    module = importlib.import_module(name)
+    assert pathlib.Path(module.__spec__.origin).resolve(strict=True).is_relative_to(installed_root), name
 from hermes_installer.root_setup import (
     _import_v180_native_support_closure, _import_v187_listener_activation_closure,
 )
