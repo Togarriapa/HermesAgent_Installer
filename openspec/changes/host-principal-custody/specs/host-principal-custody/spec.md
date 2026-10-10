@@ -1230,3 +1230,27 @@ The installer SHALL retain actual service NSS, principal/namespace, PM/native cl
 #### Scenario: Current source receipts join active compilation
 - **WHEN** the prepared catalog is dormant and a selected worker/local policy is complete
 - **THEN** the pure root renderer derives actual service/process/effect rows and keeps the aggregate nonactive until the same current publication and enrollment CAS commit
+
+## ADDED Requirements
+
+### Requirement: Retained oneshot terminal evidence
+The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
+
+#### Scenario: Retained child has exited successfully
+- **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
+- **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
+
+#### Scenario: Active unit is not the retained terminal
+- **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
+- **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority
+
+### Requirement: Genuine selected root service process authority
+The installer SHALL implement planning/root-service-process-authority-lane-v236.json with a separately selected source-reviewed root-service six-operation declaration and exact current typed task/health/control admission issuer. Local owner capabilities SHALL retain their actual selected overlay ceiling, and complete service identity/process rule/currentness/kernel checks SHALL remain mandatory.
+
+#### Scenario: Root admitted worker starts under distinct process policy
+- **WHEN** actual source-selected process declarations and retained root task or health admissions join the current protected worker service/namespace/runtime/home generation
+- **THEN** a fresh one-use root-process proof is consumed before the exact managed worker effect while the local socket user gains no process or unrelated effect capability
+
+#### Scenario: Process source or issuer is incomplete
+- **WHEN** any of the six reviewed operation targets, exact rule/handler/schema joins, current root admission or consumed proof is missing, foreign, altered or stale
+- **THEN** active enrollment/start fails with the exact prerequisite and no fabricated usercaps, relaxed validation, uid0 allow or copied launchproof substitute

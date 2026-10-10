@@ -9,7 +9,6 @@ The requested Pi setup needs fresh/adopted supported arm64 install, official age
 - Implement the full constraints and individual obligations assigned to `installer-bootstrap-desktop` in planning/traceability.json.
 - Deliver component-specific functional/failure tests and account/hardware pending states rather than clone-only completion.
 - Preserve existing data and keep all externally funded/account/device actions within configured scope.
-- Keep release-build retries usable with retained sealed outputs by reserving a conservative selected-input/output bound under the existing aggregate CAS limit; never prune retained outputs to make capacity.
 
 ## Capabilities
 
@@ -298,5 +297,7 @@ Active authority aggregate v231: planning/active-authority-receipt-aggregate-v23
 
 
 v228 exact Jarvis/runtime source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md` and `planning/jarvis-runtime-source-pin-review-v228.json`. Apply only13 measured leaf tuple updates,3 finite held module members/preloads and4 existing catalog rows from frozen8185; preserve corrected nested aliases, structural metadata/no self-pin, and separate source/materialization/fixture/runtime evidence. Existing VD-T180.6/VD-T183.5/VD-T232.2 and all AC OPEN.
+## Retained qualification terminal v233
 
-Predecessor-bound candidate update v235: planning/predecessor-bound-candidate-update-v235.json requires current verified old release admission before exact candidate staging, sealed samecontroller input joins, existing publisher present CAS, durable owned rollback and candidate reexec. Distribution and runtime generation acceptance remain separate. BD-T235.1/LC-T235.2/VD-T235.3 OPEN; all AC OPEN.
+See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.
+Predecessor-bound candidate update v235: planning/predecessor-bound-candidate-update-v235.json requires current verified old release admission before exact candidate staging, sealed samecontroller input joins, existing publisher present CAS, durable owned rollback and candidate reexec. Distribution and runtime generation acceptance remain separate. BD-T235.1/VD-T235.3 OPEN; all AC OPEN.

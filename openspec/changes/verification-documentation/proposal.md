@@ -177,3 +177,6 @@ Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initi
 
 
 v228 exact Jarvis/runtime source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md` and `planning/jarvis-runtime-source-pin-review-v228.json`. Apply only13 measured leaf tuple updates,3 finite held module members/preloads and4 existing catalog rows from frozen8185; preserve corrected nested aliases, structural metadata/no self-pin, and separate source/materialization/fixture/runtime evidence. Existing VD-T180.6/VD-T183.5/VD-T232.2 and all AC OPEN.
+## Retained qualification terminal v233
+
+See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.

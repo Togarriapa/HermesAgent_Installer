@@ -1,0 +1,9 @@
+# v234 Gateway digest and owned network cleanup refinement
+
+Extends v223/v225/v227; baseline R0028/R0035/R0037/R0203/R0204/R0211 and AC13..15 remain unchanged. Frozen amendments and canonical runtime specs are not edited. The exact finite contract is `planning/gateway-digests-owned-network-cleanup-v234.json`.
+
+Actual Gateway config currently derives legacy input closure from recipe bytes, while v227 requires an acyclic member/recipe split. Apply the same member-only config/output projection to Gateway; preserve every other source/wheel/toolchain/output validation. The observer independently binds both member and final recipe-bound input digests. New schema digests await tested committed source review; old schema hashes cannot certify changed fields.
+
+Actual private namespace close calls an active lease verifier that requires an unexpired lease and may stop units on failure. Cleanup after expiry/revocation requires a distinct private removal authority. Before namespace effects, retain the genuine current v225 journal root and reserve durable creation intent. Creator records exclusive pre-bind placeholder identity and actual mount/namespace identities. Only original sealed live custody plus fresh signed nft tool/readback and empty owned members permits exact table/mount/placeholder removal. No active renewal, caller path, foreign kill/flush, or cold seal reconstruction is authorized. Missing proof and partial failure remain durable recovery-pending.
+
+Owners agreed the finite existing-module APIs. RT-T234.1 Gateway digest repair and RT-T234.2 owned cleanup implementation remain open; VD-T234.3 requires meaningful mutation, expiry/revocation, foreign-resource and phase failure tests. Existing 14500/8765 private topology, three identities and Desktop AF_UNIX remain unchanged. This source contract adds no code pins or runtime/Pi acceptance.

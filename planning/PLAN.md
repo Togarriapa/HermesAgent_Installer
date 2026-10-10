@@ -122,8 +122,6 @@ Actual HA Assist resource scope/typed TTY selector: `plans/amendments/2026-10-10
 
 Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
 
-Release-build CAS retry admission under HI-T149.1: reserve twice the selected source bytes plus selected runtime/executable, generated plan and fixed manifest ceiling, serialized by a root-owned lock; preserve prior outputs and the existing 16 GiB cap. Evidence: `evidence/development/EV-VD-T149.1-release-build-cas-reservation-20261010.json`. Raspberry Pi publication/installed-runtime acceptance remains OPEN.
-
 
 Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
 
@@ -205,12 +203,13 @@ Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initi
 Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-bootstrap-fd3-exec-20261010.json`. Python3.14/Linux ARM64 reproduced the CLOEXEC memfd-at-FD3 self-dup failure and verified explicit clear/readback plus sealed descriptor survival across exec. Unit/isolated-container checks pass; actual Pi handoff remains open.
 Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
 
-Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.
-
-BD-T232.1 source-fixture evidence: `evidence/development/EV-BD-T232.1-bootstrap-pending-diagnostics-20261010.json`; target stage/cause unknown, source review and all acceptance remain OPEN.
 Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.
 
 
-v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md`;13 outer leaf tuples +3 exact held module members/preloads +4 existing catalog rows. Source/effect pin application evidence: `evidence/development/EV-VD-T180.6-VD-T183.5-v228-source-pin-20261010.json`. Existing VD-T180.6/VD-T183.5/VD-T232.2 OPEN; coherent full checks and actual runtime evidence pending. All AC OPEN.
+v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md`;13 outer leaf tuples +3 exact held module members/preloads +4 existing catalog rows. Existing VD-T180.6/VD-T183.5/VD-T232.2 OPEN; coherent full checks and actual runtime evidence pending. All AC OPEN.
+## v233 Retained oneshot terminal
 
+`planning/retained-qualification-oneshot-terminal-v233.json` preserves exact active/exited evidence and permits purpose-owned quiescent unit collection only under original current custody. HI-T233.1/VD-T233.2 and all AC remain open. Installed predecessor update remains a separate unimplemented path.
+v234: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` / `planning/gateway-digests-owned-network-cleanup-v234.json`; RT-T234.1 → RT-T234.2 → VD-T234.3 OPEN. Gateway acyclic field correction and original-owned journaled cleanup after expiry/revocation; no new pins/all AC OPEN.
 Existing predecessor candidate update v235: plans/amendments/2026-10-10-predecessor-bound-candidate-update-v235.md; BD-T235.1 → LC-T235.2 → VD-T235.3 OPEN. Exact old release before staging, reviewed candidate inputs, samecontroller sealed transition, present pointer CAS and owned rollback/reexec; distribution/runtime claims separate; all AC OPEN.
+Root service process lane v236: plans/amendments/2026-10-10-root-service-process-authority-lane-v236.md; HI-T236.1 → HI-T236.2 → VD-T236.3 OPEN. Actual source-selected six-operation declaration, separate root binding/current admission/consume, localuser ceiling unchanged, strict6process checks/kernel evidence preserved/allACOPEN.

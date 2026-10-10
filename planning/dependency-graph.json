@@ -3272,19 +3272,6 @@
     },
     "acceptance": "All AC OPEN"
   },
-  "typed_initial_pending_diagnostics_v232": {
-    "contract": "planning/typed-initial-pending-diagnostics-v232.json",
-    "task_dependencies": {
-      "BD-T232.1": [
-        "BD-F02",
-        "HI-T149.1"
-      ],
-      "VD-T232.2": [
-        "BD-T232.1"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "official_remote_role_definition_producer_v222": {
     "contract": "planning/official-remote-role-definition-producer-v222.json",
     "tasks": {
@@ -3467,6 +3454,19 @@
     "owner": "luna_resource_runtime",
     "acceptance": "All AC OPEN"
   },
+  "typed_initial_pending_diagnostics_v232": {
+    "contract": "planning/typed-initial-pending-diagnostics-v232.json",
+    "task_dependencies": {
+      "BD-T232.1": [
+        "BD-F02",
+        "HI-T149.1"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
   "active_authority_receipt_aggregate_v231": {
     "contract": "planning/active-authority-receipt-aggregate-v231.json",
     "changes": [
@@ -3493,19 +3493,81 @@
     "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
     "source_tree": "9928a1ca538d629f778e1823f2867a9646bcad75",
     "task_dependencies": {
-      "VD-T180.6": ["BD-T232.1"],
-      "VD-T183.5": ["VD-T180.6"],
-      "VD-T232.2": ["BD-T232.1"]
+      "VD-T180.6": [
+        "BD-T232.1"
+      ],
+      "VD-T183.5": [
+        "VD-T180.6"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "retained_qualification_oneshot_terminal_v233": {
+    "contract": "planning/retained-qualification-oneshot-terminal-v233.json",
+    "tasks": {
+      "HI-T233.1": [
+        "HI-T197.3",
+        "VD-T217.3"
+      ],
+      "VD-T233.2": [
+        "HI-T233.1"
+      ]
+    },
+    "owner": "luna_linux_task_display_contracts",
+    "acceptance": "All AC OPEN"
+  },
+  "gateway_digests_owned_network_cleanup_v234": {
+    "contract": "planning/gateway-digests-owned-network-cleanup-v234.json",
+    "tasks": {
+      "RT-T234.1": [
+        "RT-T227.3"
+      ],
+      "RT-T234.2": [
+        "RT-T225.2"
+      ],
+      "VD-T234.3": [
+        "RT-T234.1",
+        "RT-T234.2"
+      ]
     },
     "acceptance": "All AC OPEN"
   },
   "predecessor_bound_candidate_update_v235": {
     "contract": "planning/predecessor-bound-candidate-update-v235.json",
     "tasks": {
-      "BD-T235.1": ["BD-T208.1"],
-      "LC-T235.2": ["BD-T235.1", "LC-F03"],
-      "VD-T235.3": ["LC-T235.2"]
+      "BD-T235.1": [
+        "BD-T208.1"
+      ],
+      "LC-T235.2": [
+        "BD-T235.1",
+        "LC-F03"
+      ],
+      "VD-T235.3": [
+        "LC-T235.2"
+      ]
     },
     "acceptance": "All AC01..18 OPEN"
+  },
+  "root_service_process_authority_lane_v236": {
+    "contract": "planning/root-service-process-authority-lane-v236.json",
+    "tasks": {
+      "HI-T236.1": [
+        "HI-T09"
+      ],
+      "HI-T236.2": [
+        "HI-T236.1"
+      ],
+      "VD-T236.3": [
+        "HI-T236.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN",
+    "unblocks": [
+      "HI-T231.1",
+      "BD-T231.2"
+    ]
   }
 }

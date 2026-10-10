@@ -493,10 +493,6 @@ The installer SHALL verify actual selected source, isolated interpreter and curr
 - **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
 - **THEN** privileged release publication remains denied
 
-#### Scenario: Retry while retaining a prior sealed output
-- **WHEN** a selected source/runtime build is retried while a prior sealed output remains in the release build CAS
-- **THEN** the builder serializes capacity reservation, bounds the next output from the selected source/runtime, generated plan and fixed manifest ceiling, retains prior outputs, and never exceeds the existing aggregate CAS limit
-
 ### Requirement: Closed prepared base and reader policy
 The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
 
@@ -1016,6 +1012,7 @@ The installer SHALL consume only the issuer-current v231 active authority aggreg
 - **WHEN** the current sealed aggregate and exact native precompile reservation have been validated
 - **THEN** the compiler binds the real core and distinct crosswalk members without resolving an already published policy to obtain its own inputs
 
+
 ## ADDED Requirements
 
 ### Requirement: Exact Jarvis cohort source closure
@@ -1028,6 +1025,19 @@ The installer SHALL apply the finite source membership and byte tuples in `plann
 #### Scenario: Materialization or direct mount fixture succeeds
 - **WHEN** exact source profiles/skills or isolated bind effects pass
 - **THEN** evidence retains that phase and does not promote task/provider/runtime/Pi acceptance
+
+## ADDED Requirements
+
+### Requirement: Retained oneshot terminal evidence
+The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
+
+#### Scenario: Retained child has exited successfully
+- **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
+- **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
+
+#### Scenario: Active unit is not the retained terminal
+- **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
+- **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority
 
 ### Requirement: Verified predecessor-bound installer candidate update
 The installer SHALL implement planning/predecessor-bound-candidate-update-v235.json using actual current old release and exact candidate source/runtime/build receipts, atomic owned pointer CAS and conditional rollback; candidate distribution publication SHALL remain distinct from verified compatible active runtime update.
