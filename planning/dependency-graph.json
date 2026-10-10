@@ -2351,6 +2351,35 @@
       "RP-T02",
       "RP-T03",
       "RP-T04"
+    ],
+    "HI-T181.1": [],
+    "HI-T181.2": [
+      "HI-T181.1",
+      "HI-T180.3"
+    ],
+    "BD-T181.3": [
+      "HI-T181.1",
+      "HI-T181.2"
+    ],
+    "LC-T181.4": [
+      "BD-T181.3"
+    ],
+    "VD-T181.5": [
+      "HI-T181.2",
+      "BD-T181.3",
+      "LC-T181.4",
+      "HI-T180.5"
+    ],
+    "HI-T182.1": [],
+    "HI-T182.2": [
+      "HI-T182.1"
+    ],
+    "HI-T182.3": [
+      "HI-T182.2",
+      "HI-T180.5"
+    ],
+    "VD-T182.4": [
+      "HI-T182.3"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim. v99: HI-T08 native candidate compilation consumes the source registration projection before HI-T11 dispatch; RB-T08 and MC-F01 retain their existing native/source/schema prerequisite edges. No active-before-assembly dependency introduced. v100: HI-T11 source issuance resolves current purpose-specific private input consent before any provider egress; existing HI-T12/PR-F03 grant checks retain all parent ceilings and current revocation. v101: HI-T09/HI-T13 selected display startup requires measured Xpra source plus actual transform/output/runtime receipts; source pin is not process readiness. v102: prepared source receipt precedes Resources profile selection/native assembly; active publication follows actual PM/materialization output receipts. Dispatch current consent check is non-consuming after ingress. v104: SK-F03 selected runtime qualification probe precedes active application runtime row; actual owned application manager terminal plus artifact validation precedes functional evidence. Existing HI selected launch prerequisites retained.",
@@ -2451,5 +2480,126 @@
       ]
     },
     "fixture_phase_cycle": "HI-T178.2/HI-T179.2 remains open; no fabricated custody helper/source hashes"
+  },
+  "conditional_local_owner_setup_v181": {
+    "amendment": "plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md",
+    "source_parent": "2bb743e6da07d51c6e6f670b4d93b1b335a71af9",
+    "baseline_requirements": [
+      "R0058",
+      "R0060",
+      "R0143"
+    ],
+    "owner": "GPT-6 Luna",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "identity_domains": [
+      "linux-local-owner-v1",
+      "existing-authentik-subject-domain"
+    ],
+    "local_resource_methods": [
+      "read",
+      "history",
+      "write",
+      "delete"
+    ],
+    "scope": "exact selected v172 owner-overlay rows only; text provider separately enrolled; no homelab/recipient/account authority inferred",
+    "tasks": {
+      "HI-T181.1": {
+        "description": "Observe genuine local owner and issue separate typed current principal/snapshot; retain strict Authentik receipt domain.",
+        "depends_on": [],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T181.2": {
+        "description": "Select finite local overlay capabilities and preserve identity domain through active policy/native publication/loaded invocation.",
+        "depends_on": [
+          "HI-T181.1",
+          "HI-T180.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "BD-T181.3": {
+        "description": "Choose selected capabilities before credentials; implement genuine independent fresh local-owner setup entry point.",
+        "depends_on": [
+          "HI-T181.1",
+          "HI-T181.2"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "LC-T181.4": {
+        "description": "Persist configure-later and resume independent readiness without identity-domain or ownership widening.",
+        "depends_on": [
+          "BD-T181.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "VD-T181.5": {
+        "description": "Verify positive loaded local effects and privileged Authentik denial/revocation plus exact source pin handoff.",
+        "depends_on": [
+          "HI-T181.2",
+          "BD-T181.3",
+          "LC-T181.4",
+          "HI-T180.5"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      }
+    },
+    "source_pins": "pending exact committed implementation and Sol review; v180 pin ledger unchanged"
+  },
+  "active_network_generation_owner_v182": {
+    "amendment": "plans/amendments/2026-10-10-active-network-generation-owner-v182.md",
+    "parent_specification": "8aa90d161570e6ee14f15dafe65d1b31fb48621c",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "source_purpose": "native-policy-preparation only for first finite selected-worker lane",
+    "owner_type": "RootActiveNetworkGenerationOwner",
+    "constructor": "from_root_runtime(runtime: RootAuthorityRuntime)",
+    "projection_type": "RootActiveNetworkGenerationProjection",
+    "methods": [
+      "resolve_selected_worker(network_id,profile_id)",
+      "verify_current(projection)",
+      "close()"
+    ],
+    "registry_constructor": "RootActiveNetworkHelperRuntimeRegistry.from_root_runtime(runtime,generation_owner)",
+    "source_pins": "pending exact committed implementation, no uncommitted hash review",
+    "tasks": {
+      "HI-T182.1": {
+        "description": "Compile and publish finite signed-source/network/worker/enrollment projection.",
+        "depends_on": [],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T182.2": {
+        "description": "Own exact post-setup active generation, signed source/revocation and actor/key/journal revalidation.",
+        "depends_on": [
+          "HI-T182.1"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T182.3": {
+        "description": "Consume current active owner projections through helper spawn/stop/release/reload cleanup.",
+        "depends_on": [
+          "HI-T182.2",
+          "HI-T180.5"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "VD-T182.4": {
+        "description": "Exercise post-setup positive and CAS/revocation/kernel/cleanup failures; hand off exact source measurements.",
+        "depends_on": [
+          "HI-T182.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      }
+    }
   }
 }

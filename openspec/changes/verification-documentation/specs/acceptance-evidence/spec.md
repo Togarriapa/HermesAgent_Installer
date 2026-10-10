@@ -703,3 +703,27 @@ The installer SHALL apply only the exact finite reviewed source/member/role mapp
 #### Scenario: Missing or unsupported producer
 - **WHEN** a source/member/role/schema/loaded proof is missing or kernel enforcement permits a forbidden bind
 - **THEN** startup/effect remains unavailable, no network lease or acceptance is issued, and owned cleanup SHALL be verified without weakening negative expectations
+
+
+### Requirement: Conditional Authentik and genuine local owner v181
+The installer SHALL implement the exclusive typed identity domains, finite selected capabilities, independent setup and genuine current producer joins in `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`, preserving R0058/R0060/R0143 and all privileged Authentik/broker requirements.
+
+#### Scenario: Independent selected local capability
+- **WHEN** the installed root setup selects an observed nonroot Linux owner and reviewed local capability rows without Authentik-dependent capabilities
+- **THEN** independent prepared materialization and fully authorized local effects SHALL proceed through current owner/service/profile/view/policy/loaded-worker receipts, while missing provider or account dependencies remain precisely pending
+
+#### Scenario: Privileged dependency absent or identity stale
+- **WHEN** a local principal requests homelab/recipient authority or a current identity, selected effect, loaded proof or required Authentik dependency is missing
+- **THEN** the affected action SHALL deny before effect, preserve independent owned work, and report configure-later/resume without claiming full compliance or synthesizing Authentik authority
+
+
+### Requirement: Concrete active network generation owner v182
+The installer SHALL implement the exact finite compiler projection, post-setup owner and helper manager custody/revalidation lifecycle in `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`, with no bare currentness callback or setup receipt substitution.
+
+#### Scenario: Valid adoption after setup expiry
+- **WHEN** a signed native policy choice was adopted before its original deadline and current active release/actor/key/publication/source/revocation/journal/worker row proofs all match
+- **THEN** only its exact selected helper/worker MAY reach the own-cgroup kernel start barrier, and app release requires fresh current owner and actual enforcement evidence
+
+#### Scenario: Active proof changes or enforcement unavailable
+- **WHEN** revocation/CAS/code/actor/journal/profile currentness changes or a forbidden kernel bind succeeds
+- **THEN** app startup SHALL deny with no network lease, owned cleanup SHALL be verified, and unsupported enforcement SHALL remain unavailable without acceptance

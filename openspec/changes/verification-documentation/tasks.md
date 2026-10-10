@@ -82,3 +82,13 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 - [ ] `HI-T178.5` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
 
 - [ ] `VD-T180.6` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+
+## v181 conditional identity and independent readiness
+
+- [ ] `VD-T181.5` Verify positive loaded local effects and privileged Authentik denial/revocation plus exact source pin handoff. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
+
+
+## v182 active generation custody
+
+- [ ] `VD-T182.4` Exercise post-setup positive and CAS/revocation/kernel/cleanup failures; hand off exact source measurements. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
