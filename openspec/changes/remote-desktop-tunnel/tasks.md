@@ -195,5 +195,12 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 - [ ] RT-T239.1: Retain genuine remote executor terminal proof and implement narrow remote CAS/attestation package issuer.
 - [ ] RT-T239.2: Materialize exact role package through current held data-root custody and issue v209/v202 runtime receipts for v225 adoption.
 - [ ] VD-T239.4: Verify terminal forgery, source/schema/root races, expiry, cross-role and owned rollback failures plus actual pipeline effect; target acceptance separate.
-
 - [ ] RT-T239.3: Issue same-transaction remote enrollment reservation and current source/NSS-derived private-network policy selection; wire exact v202 aggregate and separate v225 kernel lease.
+
+## v240 Measured Desktop headers and managed interface
+
+- [ ] RT-T240.1 Implement exact held headers and truthful upstream commit-build stamp wrapper.
+- [ ] RT-T240.2 Implement fixed Desktop driver and measured plan/output/current receipts.
+- [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
+
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.

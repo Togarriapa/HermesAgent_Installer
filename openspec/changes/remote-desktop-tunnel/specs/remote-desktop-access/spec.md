@@ -517,3 +517,16 @@ The installer SHALL derive the v202 aggregate remote identity and prepared netwo
 #### Scenario: Caller strings are not enrollment proof
 - **WHEN** hostname, supplied IDs or incomplete role/policy evidence replaces the root reservation
 - **THEN** aggregate issuance SHALL deny without creating a runnable network or active identity
+
+## ADDED Requirements
+
+### Requirement: Measured official Desktop build inputs and finite managed plan
+The implementation SHALL use the exact v240 official header/member observations and current source-bound upstream commit-build provenance. The managed Desktop build SHALL use only sealed fixed driver/mount/output recipes and independently measured finite bounds; source/native fixture observations SHALL NOT imply AppDir or runtime acceptance.
+
+#### Scenario: Pending measured plan
+- **WHEN** a resource/output cap, actual driver, current native/packaging receipt or reviewed link policy is absent
+- **THEN** plan issuance and execution SHALL deny without an invented cap or lazy fallback
+
+#### Scenario: Header or stamp mismatch
+- **WHEN** redirect/checksum/member/source revision differs or the stamp is zero/fallback/fake CI or Git
+- **THEN** packaging SHALL remain unavailable and preserve genuine source identity

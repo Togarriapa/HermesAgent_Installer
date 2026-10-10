@@ -144,7 +144,10 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 
 
 ## Remote output receipt pipeline v239
+## v240 Measured Desktop headers and managed interface
 
 See `planning/preactive-remote-build-output-receipts-v239.json`: executor-owned terminal membership precedes exact adapter observation, immutable CAS/attestation and root-held data-root materialization. Only genuine typed proofs mint v209/v202 runtime receipts; v225 owns publication/restart adoption. Existing scopes/deadlines and all AC remain open.
+The v240 exact mount/driver/output contract and canonical member/recipe digest split bind genuine current selected inputs. Null resource/output caps deny; exported upstream commit-build stamp uses exact source receipt revision without fake CI/Git. Header closure and fixture native sandbox observations remain separate from AppDir/current receipts.
 
 The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
