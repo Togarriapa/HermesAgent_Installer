@@ -217,6 +217,9 @@ class SetupPrincipalHTTPContract(unittest.TestCase):
             handoff = SimpleNamespace(
                 normal_setup_session_id=store.record["setup_session_id"],
                 normal_transaction_handle=store.record["transaction_handle"],
+                compilation_session_handle="compile-fixture",
+                compilation_transaction_handle="compile-tx-fixture",
+                plan_sha256="c" * 64,
                 principal_selection_receipt_handle="a" * 64,
             )
 
@@ -229,6 +232,9 @@ class SetupPrincipalHTTPContract(unittest.TestCase):
             class PrincipalRegistry:
                 def _read_selection(self, _handle):
                     return SimpleNamespace(
+                        setup_session_id="compile-fixture",
+                        transaction_handle="compile-tx-fixture",
+                        plan_digest="c" * 64,
                         authentik_subject_id="subject-17",
                         actor_credential_ref="setup-authentik-actor",
                     )
@@ -236,7 +242,8 @@ class SetupPrincipalHTTPContract(unittest.TestCase):
             policy = _policy("https://auth.example.test")
             resolver = principal_module._AdoptedNormalPolicyResolver(
                 store=store, handle=store.handle, initial_registry=InitialRegistry(),
-                principal_registry=PrincipalRegistry(), policy=policy,
+                principal_registry=PrincipalRegistry(),
+                principal_selection_receipt_handle="a" * 64, policy=policy,
                 initial_subject="subject-17", initial_credential_ref="setup-authentik-actor",
                 normal_session_id=store.record["setup_session_id"],
                 normal_transaction_handle=store.record["transaction_handle"],
@@ -253,6 +260,36 @@ class SetupPrincipalHTTPContract(unittest.TestCase):
                 handoff.normal_transaction_handle = "transaction-replaced"
                 with self.assertRaises(BootstrapEnrollmentPending):
                     resolver.resolve_policy_selection(store.handle, resolver.selection_handle)
+
+    def test_namespace_receipt_is_distinct_and_generation_bound(self):
+        import hermes_installer.authority.setup_principal as principal_module
+
+        receipt = principal_module.VerifiedRootNamespaceSelection(
+            1, "a" * 64, "setup-fixture-1", "transaction-fixture-1", "c" * 64,
+            "generation-fixture-1", "d" * 64, "b" * 64,
+            "hermes-agent-native-v1", "hermes-native-fixture", 10.0, 20.0, "seal",
+        )
+        encoded = principal_module._namespace_json(receipt)
+        restored = principal_module._namespace_from_json(encoded, "seal")
+        self.assertEqual(restored, receipt)
+        self.assertNotEqual(restored.receipt_handle, restored.namespace_id)
+        encoded["prepared_generation_digest"] = "e" * 64
+        altered = principal_module._namespace_from_json(encoded, "seal")
+        validator = object.__new__(RootSetupPrincipalSelectionRegistry)
+        validator._seal = "seal"
+        authorization = SimpleNamespace(
+            setup_session_id="setup-fixture-1", transaction_handle="transaction-fixture-1",
+            plan_digest="c" * 64,
+        )
+        principal = SimpleNamespace(
+            receipt_id="b" * 64, service_profile_id="hermes-agent-native-v1",
+            namespace_id="hermes-native-fixture",
+        )
+        with self.assertRaises(BootstrapEnrollmentPending):
+            validator._validate_namespace_receipt(
+                altered, authorization, principal,
+                "generation-fixture-1", "d" * 64,
+            )
 
     def test_fixed_tls_reads_use_current_identity_and_complete_group_hierarchy(self):
         if shutil.which("openssl") is None:
