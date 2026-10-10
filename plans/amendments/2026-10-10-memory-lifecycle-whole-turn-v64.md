@@ -1,0 +1,3 @@
+# Memory lifecycle and whole-turn observation v64
+
+Original SK-T01/HI-T08/HI-T11 requires actual provider lifecycle and complete native-turn capture, distinct from tool invocation. This additive finite source-backed lifecycle selection and root retained turn closure/finish/capture API preserves privacy, consent, no lazy installs and actual backend proof. Pinned Hermes turn_facade primary source reviewed; missing selected engine/runtime/backend artifacts remain exact resumable prerequisites. Also root key registry explicitly depends on actual initial compilation registry, avoiding unverified session text. Baseline and all acceptance unchanged.

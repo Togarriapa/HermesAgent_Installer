@@ -193,3 +193,67 @@ The installer SHALL satisfy this obligation: Use tool allowlists and bounded dis
 #### Scenario: R0162 unavailable or failed prerequisite
 - **WHEN** the server returns revoked authentication, malformed tool schema or exceeds its configured startup/call deadline
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Protected native MCP call binding
+
+Installer-managed native MCP calls SHALL resolve exact observed invocation/name/schema to current enrolled backend/resource and fresh protected MCP effect before bytes.
+
+#### Scenario: Native call mapping mismatch
+- **WHEN** name/schema/resource/package/peer or one-use invocation binding differs
+- **THEN** no MCP effect or credential reaches the unselected backend.
+
+### Requirement: Exact native MCP lexical and configuration mapping
+
+Installer-owned MCP calls SHALL retain exact protected server/tool/schema and same lexical invocation binding while preventing direct worker transport bypass.
+
+#### Scenario: Configured direct transport bypass
+- **WHEN** an installer-owned entry attempts direct worker effects instead of the selected broker
+- **THEN** no MCP bytes or credentials are forwarded.
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.

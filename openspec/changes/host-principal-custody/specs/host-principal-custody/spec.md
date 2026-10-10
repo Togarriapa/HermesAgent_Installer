@@ -257,3 +257,259 @@ The installer SHALL verify native manifest.json against explicit entrypoint_sha2
 #### Scenario: Source manifest digest substitutes native entrypoint pin
 - **WHEN** loader receives wrong digestdomain or callerselected module path
 - **THEN** deny loader activation before imports and retain exact incomplete closure evidence.
+
+### Requirement: Protected lifecycle provision and control
+The installer SHALL derive enrollment provision and finite process control effects from actual trusted root transaction/peer/owned livehandle state, preserve first-snapshot trust provenance and atomic recoverable generation changes, and SHALL not accept worker bearer targets or ready assertions.
+
+#### Scenario: Forged bootstrap intent or stale process control
+- **WHEN** caller supplies unregistered bootstrap intent, claimed roots/identity or stale/sibling control handle
+- **THEN** reject before effects, preserve prior generation/private state and require actual root target/ownership evidence.
+
+### Requirement: Selected backend and actual gateway role bindings
+The installer SHALL resolve protected resource backend/body recipe/action/source/consent scope before each child effect and SHALL verify actual launched gateway role against explicit HI13 protected profile-role association.
+
+#### Scenario: Legacy backend metadata or unobserved gateway role
+- **WHEN** only declared backend/role metadata exists without current root selected effect/actual launch proof
+- **THEN** deny backend/admission before bytes and retain exact incomplete implementation/native evidence.
+
+### Requirement: Protected authority state and selected build mount separation
+The installer SHALL separate UID0 authority journal state from service-writable data, and resolve build paths only from finite protected artifact mount recipes.
+
+#### Scenario: Wrong state owner or caller build path
+- **WHEN** authority state aliases writable service data or a build request supplies an unselected path or mount token
+- **THEN** the root rejects the operation before effects; no fixture or source status proves native completion
+
+### Requirement: Exact protected execution joins
+The installer SHALL resolve each effect from its exact selected active node, scope, observer and setup role joins, with fresh bounded authority and immutable result ancestry.
+
+#### Scenario: Mismatched backend or setup identity
+- **WHEN** a node selects a different backend, an event/result lacks root-observed closure, or runtime tunnel identity requests setup writer/probe authority
+- **THEN** root rejects before effects and preserves pending original acceptance; no caller booleans or consumed grants substitute for proof
+
+### Requirement: Root-observed native invocation ancestry
+The installer SHALL bind native tool and memory invocation ancestry to actual root-observed response/event handles and selected loaded actions, with fresh per-effect authority.
+
+#### Scenario: Worker invents current invocation
+- **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
+- **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
+
+### Requirement: Selected native profile task recipe
+The installer SHALL resolve resource profile tasks through selected protected process recipes and native package bindings, and pass root-constructed task data through bounded stdin only.
+
+#### Scenario: Manifest attempts process selection
+- **WHEN** a resource manifest or worker supplies executable, profile path, argv or reusable parent grant as execution authority
+- **THEN** root rejects and resolves only its selected per-node process binding with a fresh exact child grant
+
+### Requirement: Complete pinned source archive identity
+The installer SHALL verify the complete selected Hermes source archive against exact byte, tree, mode and narrowly enumerated export-normalization evidence before source staging.
+
+#### Scenario: Export identity mismatch
+- **WHEN** an archive has an unknown transformed file, missing member, escaped path or mismatched source/archive identity
+- **THEN** root rejects staging and never substitutes partial source or source-only completion evidence
+
+### Requirement: Actual selected service and runtime provenance
+The installer SHALL bind build service identity to a protected current service enrollment and derive bootstrap executable pins only from actual completed runtime receipts.
+
+#### Scenario: Source hash used as runtime identity
+- **WHEN** a prepared profile substitutes a source archive hash or unjoined output UID for executable/service proof
+- **THEN** root rejects execution publication and retains the original incomplete checkpoint
+
+### Requirement: Root-local setup and journal provenance
+The installer SHALL authenticate initial provision through its installed root-local setup session and transaction-scoped artifact receipts, and resolve authority state from protected root journal selection.
+
+#### Scenario: Worker fabricates bootstrap actor
+- **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
+- **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+### Requirement: Exact selected finite voice recipes
+The installer SHALL verify the actual immutable selected voice workflow recipe and registered primitive handlers while preserving session-specific permission and fresh child authority.
+
+#### Scenario: Recipe bytes available without handler
+- **WHEN** a selected recipe is verified but actual root engine, primitive handler or trusted session permission is missing
+- **THEN** capability remains incomplete and no recipe/fixture status claims native effect success
+
+### Requirement: Separate private setup probe authority
+The installer SHALL authorize private origin probes through a separate root-owned setup binding and exact fresh connector effects, without fabricating public Access sessions or worker profile contexts.
+
+#### Scenario: Setup probe submitted to public issuer
+- **WHEN** a private probe handle or synthetic Access context reaches the public remote connector issuer
+- **THEN** it is rejected, and only the separate root-private exact probe issuer may admit selected local app readiness operations
+
+### Requirement: Native loaded closure observation
+
+The implementation SHALL enforce this protocol. HI-T08 / HI-T09: use planning/protected-runtime-assembly-contract.json native_custody_proof_protocol; immutable mount metadata alone cannot establish readiness, source provenance or action success.
+
+#### Scenario: Missing concrete runtime proof
+- **WHEN** the exact protocol or current kernel/native observations are unavailable
+- **THEN** the affected task remains incomplete and no fixture or mount-only evidence establishes acceptance.
+
+### Requirement: Finite loader progress receiver
+
+The root receiver SHALL enforce native_custody_proof_protocol.progress_wire framing, selected-role custody and ordered finite observations before issuing a loaded closure proof.
+
+#### Scenario: Forged or incomplete loader event
+- **WHEN** progress frames are malformed, stale, replayed or incomplete
+- **THEN** no readiness proof is issued and existing task acceptance remains pending.
+
+### Requirement: Private probe principal and sequence joins
+
+The private probe issuer SHALL resolve the actual protected native PrincipalBinding, separate effect and connector frame sequences, and admit only immutable per-action child probe handles.
+
+#### Scenario: Child action substitution
+- **WHEN** an asset, action, principal or sequence differs from current root selection
+- **THEN** admission is denied before connector bytes.
+
+### Requirement: Root observed initial input closure
+
+The implementation SHALL resolve actual installed release custody and full admitted source receipt closure before issuing native input provenance. Private or unknown sensitivity SHALL remain unchanged absent separate reviewed clearance.
+
+#### Scenario: Digest without source closure
+- **WHEN** only a digest or caller provenance label is available
+- **THEN** no trusted input receipt or admitted native effect is created.
+
+### Requirement: Supported loader and current task controller
+
+The implementation SHALL use the exact named systemd FD transfer and kernel-authenticated loader progress contract, and SHALL distinguish historical source lineage from current verified execution controller.
+
+#### Scenario: Historical capsule mistaken for current peer
+- **WHEN** only serialized source metadata or manager socket credentials are available
+- **THEN** no live producer or loader proof is fabricated.
+
+### Requirement: Protected setup store and bounded probe response
+
+The implementation SHALL resolve the protected setup catalog/store and validate the exact bounded private probe response against current root admission and actual observations.
+
+#### Scenario: Untrusted injected catalog or response
+- **WHEN** selected artifact custody or probe envelope/observation binding differs
+- **THEN** provisioning/readiness cannot be marked complete.
+
+### Requirement: Exact root peer delivery and controller roles
+
+The implementation SHALL use explicit protected observer delivery role joins and actual kernel controller DTOs with exact PIDFD ownership.
+
+#### Scenario: Unenrolled cross-peer selection
+- **WHEN** no exact current observer delivery mapping exists
+- **THEN** cross-peer delivery is denied without target-string inference.
+
+### Requirement: Actual root resource controller enrollment
+
+Root event context issuance SHALL require the exact active daemon/module/observer/backend role record and current kernel identity before fresh child effects.
+
+#### Scenario: Unverified root dispatcher role
+- **WHEN** role/module/kernel/event/body bindings are absent or stale
+- **THEN** no context or child effect is fabricated.
+
+### Requirement: Protected native MCP call binding
+
+Installer-managed native MCP calls SHALL resolve exact observed invocation/name/schema to current enrolled backend/resource and fresh protected MCP effect before bytes.
+
+#### Scenario: Native call mapping mismatch
+- **WHEN** name/schema/resource/package/peer or one-use invocation binding differs
+- **THEN** no MCP effect or credential reaches the unselected backend.
+
+### Requirement: Exact native MCP lexical and configuration mapping
+
+Installer-owned MCP calls SHALL retain exact protected server/tool/schema and same lexical invocation binding while preventing direct worker transport bypass.
+
+#### Scenario: Configured direct transport bypass
+- **WHEN** an installer-owned entry attempts direct worker effects instead of the selected broker
+- **THEN** no MCP bytes or credentials are forwarded.
+
+### Requirement: Actual task native and credential closure
+
+Successful task completion SHALL bind actual native execution receipts and distinct service/resource epochs. Webhook verification SHALL use explicit protected placeholder-to-vault-role mapping.
+
+#### Scenario: Native or credential mapping absence
+- **WHEN** the current exact native or scoped credential join is missing
+- **THEN** no successful task capsule or authenticated webhook event is fabricated.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Finite installed host tool observation
+The system SHALL use the v105 root-only HostToolObservationRegistry and exact measured variant catalog to authenticate installed nft and complete loader/dependency closure against signed distribution package evidence before network effects. It SHALL revalidate held bytes, current installed state, selected generation and lease; source package measurements and Coral package receipts SHALL NOT prove host execution.
+
+#### Scenario: Installed dependency changes
+- **WHEN** a held dependency, installed package state, keyring or selected generation changes or expires
+- **THEN** nft execution and network launch are denied until a fresh valid observation and required kernel probes succeed.
+
+### Requirement: Finite managed Xpra transformation
+The system SHALL execute only the v106 selected empty-parameter Xpra build recipe under actual official PM runtime and pinned installed transform module, retaining original source and distinct regular staging closure. It SHALL require actual managed terminal and dynamic output attestation before overlay publication.
+
+#### Scenario: Archive hash presented as executable identity
+- **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
+- **THEN** build admission or publication is denied.
+
+### Requirement: Exact regular Xpra build topology
+The system SHALL use the v109 source-verified transform module and exact original regular staging directory topology, mount the PM builder executable as a file and publish the archive as non-executable data.
+
+#### Scenario: Missing source topology
+- **WHEN** staging omits a required original manifest directory or changes the selected source links
+- **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Source bounded local registration results
+The system SHALL use exact v110 local handler result envelopes and recursive public JSON limits while preserving untrusted source classification and actual owner CAS controls. It SHALL NOT replace protected passthrough backend result authority with generic object schemas.
+
+#### Scenario: Protected backend schema missing
+- **WHEN** finance, wallet or source-receipt output lacks its actual bounded typed backend result schema
+- **THEN** that executable candidate remains unavailable without omitting the original family acceptance obligation.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.
+
+### Requirement: Actual local schema artifact receipt join
+The system SHALL bind each v112 local result schema ID to exact packaged bytes and actual root source receipt plus installed bounded validator before executable registration. It SHALL preserve pre-active assembly receipt staging distinct from active generation publication.
+
+#### Scenario: Source table presented as receipt
+- **WHEN** a source-reviewed schema table lacks actual packaged artifact and installed validator proof
+- **THEN** executable registration remains unavailable.
+
+### Requirement: Separate protected native action and registration records
+The system SHALL use v113 exact typed action, registration and workflow arrays to join actual source42 Hermes registrations to source61 backend routes, selected schemas/observers/effects and staged installation receipts before atomic active publication. It SHALL preserve original canonical invocation arguments and independent child authorization.
+
+#### Scenario: Multiple actions share one adapter
+- **WHEN** source registrations select multiple reviewed actions under one adapter
+- **THEN** unique action binding IDs preserve each exact route instead of collapsing or inferring action authority from tool names.
+
+### Requirement: Bounded passthrough result data
+The system SHALL wrap source handler passthrough results in the v113 bounded closed tool-result envelope without treating backend data as authority or execution success. Actual operation/account/receipt validation remains required.
+
+#### Scenario: Backend data claims authorization
+- **WHEN** returned JSON contains authority-like or readiness fields
+- **THEN** those fields remain untrusted data and cannot affect authorization or acceptance.
+
+### Requirement: Exact catalog compatible local schema identities
+The system SHALL use the v114 literal catalog-compatible schema/artifact IDs for eight local result schemas without widening static catalog grammar or minting aliases.
+
+#### Scenario: Earlier impossible identity
+- **WHEN** a source row contains the superseded colon artifact ID
+- **THEN** selection fails until the corrected exact source map is used.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.

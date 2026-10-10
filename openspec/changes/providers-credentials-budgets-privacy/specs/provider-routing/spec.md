@@ -261,3 +261,21 @@ The installer SHALL validate strict root-owned package/issuer catalogs and disti
 #### Scenario: Partial hash or unobserved configured issuer
 - **WHEN** policy/module digest is missing or source observer only exists as configuration text
 - **THEN** keep affected native effect unavailable and require actual identity/observer evidence.
+
+### Requirement: Root-observed native invocation ancestry
+The installer SHALL bind native tool and memory invocation ancestry to actual root-observed response/event handles and selected loaded actions, with fresh per-effect authority.
+
+#### Scenario: Worker invents current invocation
+- **WHEN** a worker supplies a forged response/call handle or changes observed action arguments
+- **THEN** root rejects before effects and does not mint source or user provenance from caller assertions
+
+### Requirement: Observed native metadata and bounded composite effects
+The installer SHALL resolve source observers from explicit selected adapter joins and deliver provider metadata only through peer/request/response-bound root lookup; composite effects SHALL preserve exact outer matching and fresh root child authority.
+
+#### Scenario: Composite tool requests an unselected child
+- **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
+- **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.

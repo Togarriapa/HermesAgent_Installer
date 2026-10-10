@@ -593,3 +593,95 @@ The installer SHALL exercise actual pinned screenshot application vision pipelin
 #### Scenario: Source library or lock absent despite adapter inventory
 - **WHEN** only custom protocol/parser or skill metadata exists without actual pinned upstream pipeline execution
 - **THEN** keep R0092/R0093 incomplete and report exact missing source/runtime/model fixture, never claim native functionality.
+
+### Requirement: Pinned source document link preservation
+The installer SHALL preserve original screenshot source Git mode/blob/tree proof and MAY materialize only the exact pinned in-tree document link as verified regular target bytes in separate compiled generation; source and compiled digests SHALL remain distinct.
+
+#### Scenario: Unknown or escaping source link
+- **WHEN** link differs from pinned CLAUDE.md literal AGENTS.md or target is unstable/nonregular/unverified
+- **THEN** reject compiled activation without following link or importing upstream governance, preserve exact source proof and prior generation.
+
+### Requirement: Protected authority state and selected build mount separation
+The installer SHALL separate UID0 authority journal state from service-writable data, and resolve build paths only from finite protected artifact mount recipes.
+
+#### Scenario: Wrong state owner or caller build path
+- **WHEN** authority state aliases writable service data or a build request supplies an unselected path or mount token
+- **THEN** the root rejects the operation before effects; no fixture or source status proves native completion
+
+### Requirement: Immutable source materialization identity
+The installer SHALL retain original source Git link/blob/tree proof and validate compiled regular destination bytes, using either verified immutable source buffers or stable nofollow filesystem source descriptors.
+
+#### Scenario: Immutable buffer copy
+- **WHEN** root compiles the one reviewed pinned document link from verified immutable target bytes
+- **THEN** it verifies retained source content identities and actual owned destination identity without claiming a source inode observation
+
+### Requirement: Root-local setup and journal provenance
+The installer SHALL authenticate initial provision through its installed root-local setup session and transaction-scoped artifact receipts, and resolve authority state from protected root journal selection.
+
+#### Scenario: Worker fabricates bootstrap actor
+- **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
+- **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Source-backed memory lifecycle and whole turn
+The installer SHALL start only source-bound selected memory service recipes and derive whole-turn capture from actual completed root-observed native event closure with current consent and private routing.
+
+#### Scenario: Liveness or tool-only capture substituted
+- **WHEN** only a liveness response or one tool invocation exists
+- **THEN** semantic memory readiness or complete whole-turn capture is not asserted
+
+Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenticated-handle-delivery-v70.md`; existing SK-T01/HI-T08/HI-T11 remain open, authenticated root input/response metadata only, actual whole-turn proof and failure evidence required.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Selected application workload binding v89: `plans/amendments/2026-10-10-selected-application-workload-binding-v89.md`; existing SK-F03/R0067/R0138/AC12 implementation and acceptance obligations remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Source reviewed application request mapping
+The system SHALL preserve original request bytes and use only a reviewed explicit native action projection or the separate v107 finite root installer qualification request to admit an application workload. It SHALL NOT infer a native mapping from application IDs or fixture recipe names.
+
+#### Scenario: Fixture recipe has no native registration
+- **WHEN** a fixture workload has no actual reviewed native registration
+- **THEN** native dispatch denies and the separate qualification flow does not constitute production application acceptance.
+
+### Requirement: Actual distinct private memory capability selection
+The system SHALL use v108 selected owned endpoint/model deployment and private text-generation/embedding capability receipts for the exact memory profile/namespace/provider/owner. It SHALL preserve GLM5.2 extraction, separately enroll an actual embedding model/dimension and enforce bounded source-owned serializers/parsers and fresh private authorization at every retry.
+
+#### Scenario: Only public chat dispatcher exists
+- **WHEN** private endpoint/model or embedding capability proof is absent
+- **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
+
+### Requirement: Preactive application source preparation
+The system SHALL use v117 typed root setup source selections and independently observed full source/lock receipts before active runtime publication without manufacturing a selected active row. Operational application authorization SHALL remain independent.
+
+#### Scenario: Runtime not yet active
+- **WHEN** an actual prepared setup choice selects one fixed source profile
+- **THEN** the source producer verifies/stages its exact pinned source and locks before runtime probing and activation.
+
+### Requirement: Purpose bound qualification consent
+The system SHALL record v117 finite local qualification consent in the same explicit rootTTY workflow choice and resolve current phase snapshots without another routineprompt. It SHALL NOT reuse capture/private-input consent or authorize provider/account effects.
+
+#### Scenario: Qualification attempts provider egress
+- **WHEN** a selected fixture attempts an unrelated endpoint or metered operation
+- **THEN** qualification consent denies that effect.
