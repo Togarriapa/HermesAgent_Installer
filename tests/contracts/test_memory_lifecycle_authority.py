@@ -74,6 +74,16 @@ class MemoryLifecycleBindingTests(unittest.TestCase):
             status.payload()
         bound = status.with_retained_process("root-process-handle")
         self.assertEqual(bound.payload(), b'{"generation":"service-gen-7","process_id":"root-process-handle","schema":1}')
+        stop = MemorySelectedLifecycleActionBinding.resolve(
+            enrollment, FakeCatalog(), action="stop", source_closure_sha256="c" * 64,
+            source_receipt_handles=("receipt-one",),
+        ).with_retained_process("root-process-handle")
+        with self.assertRaises(MemoryLifecycleDenied):
+            stop.payload()
+        self.assertEqual(stop.with_stop_reason("shutdown").payload(),
+            b'{"generation":"service-gen-7","grace_seconds":5,"process_id":"root-process-handle","reason":"shutdown","schema":1}')
+        with self.assertRaises(MemoryLifecycleDenied):
+            stop.with_stop_reason("worker-selected")
 
     def test_catalog_mismatch_and_missing_lifecycle_fail_before_process_resolution(self):
         enrollment = enrolled_agentmemory()

@@ -156,6 +156,7 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
                 ))
                 self.assertEqual(peer_registry.resolve_retained_channel_proof(delivery_proof),
                                  (event, verified_peer))
+                self.assertEqual(peer_registry.sequence_for_retained_channel_proof(delivery_proof), 1)
                 forged = RootChannelInputDelivery(
                     "H" * 43, event.handle, channel_binding.binding_handle,
                     "J" * 43, "K" * 43, delivery_proof.event_payload_sha256,
@@ -165,14 +166,44 @@ class ChannelPeerDeliveryTests(unittest.TestCase):
                 with self.assertRaisesRegex(Exception, "source receipt or native context registration"):
                     peer_registry.publish_issued_delivery(delivery_proof, forged)
                 self.assertTrue(peer_registry.cancel_retained_channel_proof(delivery_proof))
-                with self.assertRaisesRegex(Exception, "recipient-bound source and context handle issuance"):
+                with self.assertRaisesRegex(Exception, "recipient-bound source receipt"):
+                    peer_registry.publish_captured_event(
+                        channel_ingress_id="ingress-1", event_handle=event)
+
+                # Root-service fixture exercises the actual retained-event
+                # producer and queue path; source/context issuance remains
+                # independently enforced by this exact verifier callback.
+                def issue(event_handle, ingress_id, binding):
+                    proof = peer_registry.prove_retained_event_for_peer(event_handle, binding)
+                    issued = RootChannelInputDelivery(
+                        "L" * 43, proof.event_handle, proof.native_binding_handle,
+                        "M" * 43, "N" * 43, proof.event_payload_sha256,
+                        proof._sequence, now[0], proof.expires_monotonic, object(),
+                    )
+                    peer_registry.publish_issued_delivery(proof, issued)
+                    return issued
+
+                service.issue_root_channel_event_delivery = issue
+                service.validate_root_channel_input_delivery = lambda proof, issued: (
+                    proof.event_handle == issued.event_handle
+                    and issued.payload_sha256 == proof.event_payload_sha256
+                )
+                self.assertEqual(peer_registry.publish_captured_event(
+                    channel_ingress_id="ingress-1", event_handle=event), 2)
+                with self.assertRaisesRegex(Exception, "already queued, reserved"):
                     peer_registry.publish_captured_event(
                         channel_ingress_id="ingress-1", event_handle=event)
                 delivery = peer_registry.take(
                     peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
                     binding_handle=channel_binding.binding_handle,
                 )
-                self.assertIsNone(delivery)
+                self.assertEqual(delivery.delivery_handle, "L" * 43)
+                self.assertEqual(delivery.source_receipt_handle, "M" * 43)
+                self.assertEqual(delivery.producer_context_delivery_handle, "N" * 43)
+                self.assertIsNone(peer_registry.take(
+                    peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
+                    binding_handle=channel_binding.binding_handle,
+                ))
             finally:
                 peer_registry.close()
                 os.close(pidfd)
