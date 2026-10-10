@@ -98,3 +98,9 @@ Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retain
 ## v184 exact wire clarification
 
 - [ ] `VD-T184.3` Verify exact parser/roundtrip/hash/FK failures and pre-READY bind vs later effect-proof ordering. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+
+
+## v185 owner observation and proxy
+
+- [ ] `HI-T185.1` Publish and resolve concrete tagged owner registration observer and captured-source schemas. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+- [ ] `HI-T185.2` Bind actual worker proxy/native execute RPC to observed invocation/current one-use local grant and CAS. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
