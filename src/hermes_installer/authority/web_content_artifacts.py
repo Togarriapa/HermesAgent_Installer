@@ -446,6 +446,7 @@ class RootWebContentArtifactRegistry:
                     or request_payload != observation._context_payload
                     or target != authorization.target):
                 raise WebContentArtifactDenied("staged response does not match the consumed effect grant")
+            self._verify_current_invocation(observation)
             self._verify_fd(pending)
             transport = self.transport_receipts.resolve(observation.transport_receipt_handle)
             result = _decode_handler_response(response_body)
@@ -524,6 +525,7 @@ class RootWebContentArtifactRegistry:
                     or completion.expires_monotonic > observation.expires_monotonic):
                 raise WebContentArtifactDenied("root effect completion does not join the retained invocation")
             self._verify_current_effect(observation._context, observation._authorization)
+            self._verify_current_invocation(observation)
             transport = self.transport_receipts.resolve(observation.transport_receipt_handle)
             # The effect result body is retained by the service completion receipt, but the
             # handler row itself is available only in the pending observation's result digest.
@@ -650,6 +652,39 @@ class RootWebContentArtifactRegistry:
                 or context.profile_id != binding.profile_id or context.generation != authorization.generation):
             raise WebContentArtifactDenied("web effect grant is stale or outside its enrolled profile")
 
+    def _verify_current_invocation(
+            self, observation: VerifiedRootWebResponseObservation) -> None:
+        """Revalidate the retained invocation without consuming its one-use effect slot."""
+        registry = getattr(self.service, "native_invocation_registry", None)
+        resolve_current = getattr(registry, "resolve_current_invocation_for_effect", None)
+        if not callable(resolve_current):
+            raise WebContentArtifactDenied("non-consuming current invocation resolver is not assembled")
+        authorization = observation._authorization
+        try:
+            current = resolve_current(
+                observation._context,
+                authorization,
+                authorization.operation,
+                authorization.target,
+                observation.canonical_request_sha256,
+                observation.native_invocation_handle,
+            )
+        except Exception:
+            raise WebContentArtifactDenied("native invocation is no longer current") from None
+        from hermes_installer.authority.native_runtime_observer import RootNativeToolEffectInvocation
+        retained = observation._invocation
+        if (type(current) is not RootNativeToolEffectInvocation
+                or current != retained
+                or current.invocation_handle != observation.native_invocation_handle
+                or current.operation != authorization.operation
+                or current.request_digest != observation.canonical_request_sha256
+                or current.profile_id != observation.profile_id
+                or current.generation != observation.owner_generation
+                or current.service_generation_digest != self.service.service_generation_digest
+                or current.source_receipt_handles != observation.parent_source_receipt_handles
+                or current.expires_monotonic <= self.monotonic()):
+            raise WebContentArtifactDenied("current native invocation differs from the retained source closure")
+
     def _verify_published(self, entry: _Published) -> None:
         obs, receipt = entry.observation, entry.receipt
         if (receipt.expires_monotonic <= self.monotonic()
@@ -657,6 +692,7 @@ class RootWebContentArtifactRegistry:
                 or self._pending_or_published_digest(entry) != obs.body_sha256):
             raise WebContentArtifactDenied("web artifact receipt is expired or stale")
         self._verify_current_effect(obs._context, obs._authorization)
+        self._verify_current_invocation(obs)
         verify_completion = getattr(self.service, "verify_root_effect_completion", None)
         if not callable(verify_completion):
             raise WebContentArtifactDenied("root effect completion verifier is not assembled")
