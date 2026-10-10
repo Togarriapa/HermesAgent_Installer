@@ -1,0 +1,3 @@
+# Private loopback host tool pins v103
+
+Original HI/RT private loopback enforcement needs actual host tool identities. Source owners measured signed official Debian13arm64 and Ubuntu24.04arm64/amd64 nft binary package/source pins; Ubuntu actual executable hashes distinct from package SHA. Literal finite variant artifact here, root actual package/executable/dependency receipt join and fixed namespace-only nft recipes in remote-root-session-bridge-contract.selected_startup.private_loopback_network.host_tool_variants. Debian executable remains pending, not wildcard. No host package/firewall replacement or target install in this planning session. Existing HI-T09/HI-T13 and network task proof remains open, kernel positive/negative required. Baseline unchanged/allACpending.
