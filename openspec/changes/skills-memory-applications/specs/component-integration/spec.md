@@ -809,3 +809,38 @@ The installer SHALL distinguish the container interpreter used in dependency rec
 #### Scenario: Container version matches selected PM version
 - **WHEN** the fixture interpreter reports Python3.14.7
 - **THEN** no PM origin or actual setup environment receipt is inferred from that version match
+
+### Requirement: Selected large toolchain source observation v150
+The installer SHALL obtain Node and Bun source bytes through a finite selected-plan-bound held artifact observation before toolchain extraction.
+
+#### Scenario: Toolchain private CAS has no selected source observation
+- **WHEN** an archive was independently fetched without the actual selected source observer
+- **THEN** it cannot mint a trusted toolchain receipt merely from matching local CAS syntax
+
+### Requirement: Stable private binding and current observation separation v151
+The installer SHALL select private endpoint/model binding IDs before startup and resolve genuine current runtime observations only after actual listener/load/source proof.
+
+#### Scenario: Configured private endpoint has no live process
+- **WHEN** only the protected endpoint binding exists
+- **THEN** no runtime route or deployment receipt is fabricated from that configured identity
+
+### Requirement: Separate finite PEP517 backend closure v152
+The installer SHALL bind project wheel builds to exact separately reviewed backend source/license/CAS receipts rather than claiming absent backend packages belong to the runtime lock.
+
+#### Scenario: Backend adds an undeclared build requirement
+- **WHEN** a backend requests a package outside the selected reviewed offline closure
+- **THEN** the build denies without fetching network packages or widening the original lock and backend table
+
+### Requirement: Toolchain policy member binding v155
+The installer SHALL resolve the selected finite Node/Bun policy from its exact reviewed release member before source acquisition.
+
+#### Scenario: Source policy member is absent from the selected release
+- **WHEN** an otherwise cataloged tool is requested without the reviewed selected policy member
+- **THEN** acquisition denies and no caller artifact ID or invented plan field substitutes for that member proof
+
+### Requirement: Backend source observer v157
+The installer SHALL acquire and observe selected PEP517 backend wheel and embedded license bytes through a separate finite source-policy-bound observer.
+
+#### Scenario: Backend wheel is absent from project runtime lock
+- **WHEN** the exact separately reviewed backend policy selects that source
+- **THEN** the observer verifies actual wheel and license bytes against that policy without fabricating project lock membership or widening Node/Bun acquisition
