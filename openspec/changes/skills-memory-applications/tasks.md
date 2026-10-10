@@ -114,3 +114,27 @@ Application request source v107: `plans/amendments/2026-10-10-application-reques
 Private memory endpoint adapter v108: `plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108.md`; exact distinct private text/embed model/deployment/current consent and bounded protocol producer required. Existing engine lifecycle/semantic memory/acceptance remain open.
 
 Preactive application source and qualification consent v117: `plans/amendments/2026-10-10-preactive-application-source-consent-v117.md`; actual setupsource/lock receipts beforeactive and same explicitchoice finite purposeconsent, operational authorization untouched. Existing application/AC12 gates open.
+
+Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecycle-active-closure-v119.md`; existing lifecycle/capture/semantic acceptance obligations remain open.
+
+- [ ] SK-T119.1: lifecycle authority owner implement active closure prestart registry and current semantic readiness registry; no live setup authorization dependency.
+
+- [ ] SK-T119.2: factory/active publisher preserve actual same-choice purpose-specific memory service enablement and selected receipt closure linkage.
+
+- [ ] SK-T119.3: test stale/revoked enablement, replaced artifact/process, setup expiry, liveness-versus-semantic distinction, unknown engine/route and private provider denial; actual engine semantics/ARM/account acceptance open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
+
+- [ ] SK-T124.1: factory/choice owner implement actual root TTY configuration producer/retained choice and service-enablement registry; no fictitious existing source.
+
+- [ ] SK-T124.2: enrollment/active compiler add exact lifecycle enablement handle and current post-activation projection from actual selected service/source/runtime receipt closure.
+
+- [ ] SK-T124.3: lifecycle owner consume resolver; test default disabled, false user journal, wrong owner/profile/backend, revoke/service replacement and independence from capture/private consent; actual engine/target acceptance open.
+
+Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
+
+- [ ] SK-T125.1: models owner implement actual endpoint/model observation registry from held artifacts/config/runtime/live PIDFD/listener/load evidence and existing provider protocols; no model download or alias-only proof.
+
+- [ ] SK-T125.2: provider/host/factory owner compose typed selected existing-service/model bindings and exact v108 receipt joins; retain unavailable remote/unselected embedding/absent weights facts.
+
+- [ ] SK-T125.3: test wrong alias-to-source mapping, changed config/weights/process/network/boot, false catalog/credential/consent, text-as-embed and probe-only claims; actual weights/ARM/private target/semantic memory acceptance remain open.
