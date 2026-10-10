@@ -6,7 +6,7 @@ from pathlib import Path
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.authority.types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, Sensitivity,
-    canonical_bytes, canonical_digest,
+    RootCompletedNativeTurnPresentation, canonical_bytes, canonical_digest,
 )
 
 
@@ -67,6 +67,28 @@ class AuthorityClientSelectionContracts(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(self.calls[0][1:3], ("package.install", payload))
         self.assertNotIn(b"python", payload)
+
+    def test_native_turn_finish_sends_only_opaque_handles_and_parses_presentation(self):
+        turn_handle = "t" * 32
+        response_handle = "r" * 43
+        calls = []
+        self.client.monotonic = lambda: 10.0
+        self.client._rpc = lambda operation, payload: calls.append((operation, payload)) or {
+            "schema": 1, "receipt_handle": "p" * 43, "turn_handle": turn_handle,
+            "state": "completed", "expires_monotonic": 15.0,
+        }
+        result = self.client.finish_selected_native_turn(turn_handle, response_handle)
+        self.assertIsInstance(result, RootCompletedNativeTurnPresentation)
+        self.assertEqual(calls, [("native.turn.finish", {
+            "schema": 1, "turn_handle": turn_handle,
+            "final_response_delivery_handle": response_handle,
+        })])
+        self.client._rpc = lambda *_args, **_kwargs: {
+            "schema": 1, "receipt_handle": "p" * 43, "turn_handle": "x" * 32,
+            "state": "completed", "expires_monotonic": 15.0,
+        }
+        with self.assertRaises(AuthorityDenied):
+            self.client.finish_selected_native_turn(turn_handle, response_handle)
 
 
 if __name__ == "__main__":

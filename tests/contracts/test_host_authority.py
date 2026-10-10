@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import os
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -488,9 +490,29 @@ class HostAuthorityIPCContracts(unittest.TestCase):
                 self.server_error.append(exc)
         self.acceptor = threading.Thread(target=serve, daemon=True)
         self.acceptor.start()
+        # bind() publishes the socket pathname before serve_unix applies the
+        # enrolled owner, group, and mode. Wait for the complete protected
+        # endpoint contract instead of racing AuthorityClient's strict check.
         deadline = time.monotonic() + 2
-        while not self.socket_path.exists() and time.monotonic() < deadline:
+        ready = False
+        while time.monotonic() < deadline:
+            if self.server_error:
+                self.fail(f"authority fixture failed to start: {self.server_error[0]!r}")
+            try:
+                endpoint = self.socket_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                ready = (
+                    stat.S_ISSOCK(endpoint.st_mode)
+                    and endpoint.st_uid == os.getuid()
+                    and endpoint.st_gid == os.getgid()
+                    and stat.S_IMODE(endpoint.st_mode) == 0o660
+                )
+                if ready:
+                    break
             time.sleep(0.01)
+        self.assertTrue(ready, "authority fixture did not publish a protected socket")
         self.client = AuthorityClient(self.socket_path, server_uid=os.getuid(), timeout=2)
 
     def tearDown(self):
@@ -509,6 +531,25 @@ class HostAuthorityIPCContracts(unittest.TestCase):
             request_digest=digest,
         )
         return context, grant, digest
+
+    def test_native_mcp_dispatch_accepts_safe_content_type_header(self):
+        class Dispatcher:
+            def __init__(self, service):
+                self.service = service
+
+            def dispatch_native_mcp(self, **_kwargs):
+                return {"status": 200, "body": b"{}",
+                        "headers": {"content-type": "application/json"},
+                        "receipt_id": "mcp-receipt"}
+
+        self.service.attach_native_mcp_dispatcher(Dispatcher(self.service))
+        result = self.service._dispatch_native_mcp(
+            os.getuid(), os.getpid(), 0,
+            {"schema": 1, "invocation_handle": "h" * 32,
+             "canonical_arguments_b64": base64.b64encode(b"{}").decode("ascii")},
+            cancelled=lambda: False,
+        )
+        self.assertEqual(result["headers"], {"content-type": "application/json"})
 
     def test_peer_uid_issues_signed_context_and_fixed_broker_performs_effect(self):
         context, grant, digest = self._context_and_grant()
@@ -797,7 +838,7 @@ class NativeEventClientContracts(unittest.TestCase):
                 return NativeResponseMetadata("p" * 40, (NativeToolCallBinding(
                     observed_call_handle="c" * 40, provider_tool_call_id="call_1",
                     tool_name="selected_tool", arguments_sha256="a" * 64,
-                ),))
+                ),), "t" * 40, "f" * 40)
 
         service = AuthorityService(
             signing_key=b"n" * 32, key_id="native-response-take-fixture",
@@ -808,7 +849,10 @@ class NativeEventClientContracts(unittest.TestCase):
                    "response_body_sha256": "b" * 64, "native_request_handle": "r" * 40}
         result = service._dispatch(binding.uid, 123, 8, "native.response.take", request,
                                    cancelled=lambda: False)
-        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings"})
+        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings",
+                                       "turn_handle", "final_response_delivery_handle"})
+        self.assertEqual(result["turn_handle"], "t" * 40)
+        self.assertEqual(result["final_response_delivery_handle"], "f" * 40)
         self.assertEqual(calls, [(binding.uid, 123, 8, "d" * 43, "b" * 64, "r" * 40)])
         client = AuthorityClient(Path("/unused"), server_uid=0)
         requests = []
