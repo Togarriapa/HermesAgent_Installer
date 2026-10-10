@@ -26,6 +26,7 @@ class NativeSourceRoleDeclaration:
     role_id: str
     module_name: str
     closure_member_path: str
+    release_member_path: str
     module_sha256: str
     call_sites: tuple[str, ...]
     source_kinds: tuple[str, ...]
@@ -40,7 +41,8 @@ _ROLE_DECLARATIONS = (
     NativeSourceRoleDeclaration(
         role_id="hermes-native-invocations-v1",
         module_name="hermes_installer.native_invocations",
-        closure_member_path="src/hermes_installer/native_invocations.py",
+        closure_member_path="hermes_installer/native_invocations.py",
+        release_member_path="src/hermes_installer/native_invocations.py",
         module_sha256="78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226",
         call_sites=(
             "read_selected_native_input",
@@ -56,7 +58,8 @@ _ROLE_DECLARATIONS = (
     NativeSourceRoleDeclaration(
         role_id="hermes-native-boundary-v1",
         module_name="hermes_installer.native_boundary",
-        closure_member_path="src/hermes_installer/native_boundary.py",
+        closure_member_path="hermes_installer/native_boundary.py",
+        release_member_path="src/hermes_installer/native_boundary.py",
         module_sha256="ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb",
         call_sites=("prepare_provider_request", "capture_provider_response"),
         source_kinds=("tool-result",),
@@ -157,11 +160,11 @@ class RootNativeSourceDefinitionRegistry:
             raise NativeSourceDefinitionUnavailable("source definition release-member receipt is stale or mismatched")
         role_receipts = []
         for declaration in _ROLE_DECLARATIONS:
-            receipt = by_path.get(declaration.closure_member_path)
+            receipt = by_path.get(declaration.release_member_path)
             if receipt is None:
                 missing.append(declaration.module_name)
                 continue
-            if not self._check_receipt(receipt, declaration.closure_member_path,
+            if not self._check_receipt(receipt, declaration.release_member_path,
                                        declaration.module_sha256):
                 raise NativeSourceDefinitionUnavailable("native source role release member differs from reviewed bytes")
             role_receipts.append(receipt)
