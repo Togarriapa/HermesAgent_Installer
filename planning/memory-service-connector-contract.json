@@ -425,5 +425,75 @@
     "persistence": "Root memory authority_state_root_id selection and owner0 mode0700 nofollow root journal store retains immutable consent record plus mutable revocation/current-owner index under existing transactional protection. Enablement is persistent policy preference, not a long-lived effect grant. Every turn capture resolves actual current consent/owner/service/policy and complete retained turn source closure; then issues fresh per-job BackgroundConsent/context/effect grants bounded by current source/profile/route lease. Persistent opt-in contains no stale source receipts to impersonate later events.",
     "revocation": "Authorized selected owner/root setup revoke atomically increments revocation epoch; current lookup denies immediately; queued/inflight memory reservations and child issuance must recheck epoch before each effect and cancel/wipe payload as existing memory ledger semantics require. Receipt audit retains no transcript or secret. No retroactive erase claim for already committed backend memory without separately authorized delete.",
     "wire": "background_consent_handle is opaque pathless preference lookup only, not SourceReceipt/HostContext/EffectAuthorization. RootMemoryCaptureCoordinator consumes only resolved current registry object plus actual completed turn receipt, never caller consent fields. Authority signature excludes signature field, domain root-memory-capture-consent-v1. Enabled object must resolve current registry state, signature alone cannot bypass revocation."
+  },
+  "private_engine_endpoint_v108": {
+    "schema": 1,
+    "requirements": [
+      "SK-T01",
+      "SK-F02",
+      "SK-F03"
+    ],
+    "source_facts": [
+      "Official vLLM documents distinct chat completions and embeddings APIs; embeddings requires actual embedding model, chat requires text-generation model/chat template. GLM5.2 official model card shows compatible chat endpoint. These API documents are protocol references, not pinned local server/model artifacts or evidence that a private endpoint is configured."
+    ],
+    "sources": [
+      "https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/",
+      "https://huggingface.co/zai-org/GLM-5.2"
+    ],
+    "protocol_artifact": {
+      "artifact_id": "installer-private-memory-compatible-api-v1",
+      "path": "plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108/private-memory-compatible-api-v1.json",
+      "sha256": "0158fa3c3b8dcc6befb008f3b617ca084f0470b05eb9b99f2f12b27735eca2d4",
+      "size_bytes": 2357
+    },
+    "active_key": "private_memory_engine_selections",
+    "row_fields": [
+      "id",
+      "profile_id",
+      "namespace_id",
+      "memory_provider",
+      "memory_owner_generation",
+      "extract_route_id",
+      "embed_route_id",
+      "extraction_served_model_id",
+      "embedding_served_model_id",
+      "embedding_dimensions",
+      "endpoint_selection_receipt_handle",
+      "extraction_model_deployment_receipt_handle",
+      "embedding_model_deployment_receipt_handle",
+      "protocol_artifact_id",
+      "protocol_sha256",
+      "credential_reference_ids",
+      "private_consent_selection_handle",
+      "policy_revision"
+    ],
+    "join": "Digest-covered service_generations private_memory_engine_selections rows, enclosing verified service-generation digest attached outside row. memory_enrollments.private_extraction_embedding_routes.extract/embed exactly equal selected row route IDs. Each route already protected private eligible capability (text-generation vs embedding), exact recipient endpoint/account/credential/current privacy proof and private consent. profile/namespace/provider/owner generation exact current joins, no root-global engines{} fallback.",
+    "selection_source": "Root setup explicit private endpoint selection consumes existing actual provider endpoint ownership/deployment receipt and current eligible route receipt; no caller model ID, dimensions, privacy bool or endpoint declaration can mint readiness. Required extraction model is GLM-5.2 (zai-org/GLM-5.2 or exact served alias bound by actual deployment artifact). Embedding model separately selected actual immutable model/deployment/license/runtime receipt with exact served model+dimensions; no default invented model or GLM embedding substitution. Missing actual model/deployment/ownership/license/ARM proof keeps selection pending. No model/server/package downloads or new metered service provisioning authorized by this protocol refinement.",
+    "owner_modules": {
+      "provider": "hermes_installer.providers.private_memory",
+      "memory": "hermes_installer.memory.private_engine"
+    },
+    "provider_factory": "RootPrivateMemoryRouteResolver.from_root_runtime(bindings,provider_route_registry,private_consent_registry,model_deployment_registry,root_effect_broker).resolve_selected_memory_engine(memory_enrollment_id,owner_generation) -> RootSelectedPrivateMemoryEngineRoutes",
+    "route_dto_fields": [
+      "selection_id",
+      "profile_id",
+      "namespace_id",
+      "memory_provider",
+      "memory_owner_generation",
+      "service_generation_digest",
+      "extract_route_id",
+      "embed_route_id",
+      "extraction_served_model_id",
+      "embedding_served_model_id",
+      "embedding_dimensions",
+      "protocol_sha256",
+      "endpoint_selection_receipt_handle",
+      "extraction_model_deployment_receipt_handle",
+      "embedding_model_deployment_receipt_handle",
+      "expires_monotonic"
+    ],
+    "memory_factory": "RootPrivateMemoryEngine.from_selected_routes(selected_routes,private_provider_dispatcher); engine registry key(profile_id,namespace_id,provider). Implements existing extract(text,context,timeout,cancelled)->list[str], embed(facts,context,timeout,cancelled)->list[list[float]]. Root dispatcher checks actual current job consent/source ancestry/private route capability/model/dimensions/endpoint on EVERY request and retry then fresh effect; extraction output inherits private source closure and embedding does not declassify.",
+    "lifecycle": "Configured external owned endpoint adapter never manages remote server startup. Local engine starts only through exact v64/v80 lifecycle_binding and preinstalled artifact/config/runtime receipts; no unpinned vllm serve, @latest, lazy iii/OpenViking/embedding install or copied LLM secrets. OpenViking /ready remains readiness only; AgentMemory /agentmemory/livez remains liveness only. Selected semantic extraction/retrieval proof is separate.",
+    "status": "Protocol/producer obligations now exact, no private endpoint/model/account currently proven. Original required engine flows/GLM5.2/semantic memory and all18 acceptance stay open."
   }
 }
