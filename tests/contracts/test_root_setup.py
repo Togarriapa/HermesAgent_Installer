@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import errno
 import io
 import importlib
 import os
@@ -27,6 +28,37 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_source_bootstrap_os_diagnostic_is_finite_and_redacts_exception_details(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapSystemCallFailure
+        from hermes_installer.authority.installer_release_build import _bootstrap_os_error_step
+
+        private_path = "/etc/hermes-installer/credentials/provider-token"
+        original = OSError(errno.EACCES, "private diagnostic sentinel", private_path)
+        with self.assertRaises(BootstrapSystemCallFailure) as caught:
+            with _bootstrap_os_error_step("source_cas.materialize"):
+                raise original
+
+        failure = caught.exception
+        self.assertIsInstance(failure, OSError)
+        self.assertEqual(failure.step, "source_cas.materialize")
+        self.assertEqual(failure.errno_name, "EACCES")
+        safe = root_setup._safe_reason(failure)
+        self.assertEqual(safe, "Root setup failed at source_cas.materialize [EACCES].")
+        self.assertNotIn(private_path, safe)
+        self.assertNotIn("private diagnostic sentinel", safe)
+        self.assertNotIn(private_path, str(failure))
+        self.assertNotIn("private diagnostic sentinel", str(failure))
+
+        unknown = BootstrapSystemCallFailure("source_cas.materialize", 987654)
+        self.assertEqual(unknown.errno_name, "UNKNOWN")
+        self.assertNotIn("987654", root_setup._safe_reason(unknown))
+
+        trust_failure = RuntimeError("untrusted detail must remain suppressed")
+        self.assertEqual(
+            root_setup._safe_reason(trust_failure),
+            "Root setup could not verify its required authority (RuntimeError).",
+        )
+
     def test_fixed_authority_daemon_action_is_finite_and_not_tty_dispatched(self) -> None:
         activation_id = "a" * 32
         with patch.object(root_setup, "_require_root_linux") as require_root, \

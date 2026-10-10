@@ -30,10 +30,13 @@ import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, is_dataclass
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
-from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
+from .bootstrap_enrollment import (
+    BootstrapEnrollmentError, BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+)
 from .application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 from .application_effect_source_catalog import (
     APPLICATION_EFFECT_SOURCE_CATALOG_PATH, APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
@@ -435,6 +438,17 @@ class VerifiedInstallerDistributionReceipt:
         self.close()
 
 
+@contextmanager
+def _bootstrap_os_error_step(step: str) -> Iterator[None]:
+    """Replace an OS exception with a finite stage and allowlisted errno only."""
+    try:
+        yield
+    except BootstrapSystemCallFailure:
+        raise
+    except OSError as exc:
+        raise BootstrapSystemCallFailure(step, exc.errno) from None
+
+
 class RootInstallerDistributionRegistry:
     """Instance-local opaque source receipt registry; handles never carry paths."""
 
@@ -456,25 +470,31 @@ class RootInstallerDistributionRegistry:
         """Internal CAS operation used by RootInstallerDistributionSourceCAS."""
         _require_linux_root()
         _validate_git_sha(candidate_git_sha)
-        self._prepare_root()
-        lock_fd = os.open(self._root / ".acquire.lock",
-                          os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with _bootstrap_os_error_step("source_cas.prepare"):
+            self._prepare_root()
+        with _bootstrap_os_error_step("source_cas.lock"):
+            lock_fd = os.open(self._root / ".acquire.lock",
+                              os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
-            info = os.fstat(lock_fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
-                    or stat.S_IMODE(info.st_mode) != 0o600):
-                raise InstallerReleaseBuildError("source CAS acquisition lock custody is invalid")
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            self._clean_incomplete_staging()
-            existing = self._root / candidate_git_sha
-            if existing.exists() or existing.is_symlink():
-                handle, _ = self.resolve_selected(candidate_git_sha)
-                return handle
-            if _tree_byte_usage(self._root) + MAX_SOURCE_TREE_BYTES + 16 * 1024 * 1024 > MAX_SOURCE_CAS_BYTES:
-                raise BootstrapEnrollmentPending("root source CAS has no bounded space for another candidate")
-            return self._acquire_selected_locked(candidate_git_sha)
+            with _bootstrap_os_error_step("source_cas.lock"):
+                info = os.fstat(lock_fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise InstallerReleaseBuildError("source CAS acquisition lock custody is invalid")
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            with _bootstrap_os_error_step("source_cas.inspect"):
+                self._clean_incomplete_staging()
+                existing = self._root / candidate_git_sha
+                if existing.exists() or existing.is_symlink():
+                    handle, _ = self.resolve_selected(candidate_git_sha)
+                    return handle
+                if _tree_byte_usage(self._root) + MAX_SOURCE_TREE_BYTES + 16 * 1024 * 1024 > MAX_SOURCE_CAS_BYTES:
+                    raise BootstrapEnrollmentPending("root source CAS has no bounded space for another candidate")
+            with _bootstrap_os_error_step("source_cas.materialize"):
+                return self._acquire_selected_locked(candidate_git_sha)
         finally:
-            os.close(lock_fd)
+            with _bootstrap_os_error_step("source_cas.lock_release"):
+                os.close(lock_fd)
 
     def _acquire_selected_locked(self, candidate_git_sha: str) -> str:
         _require_linux_root()
@@ -2962,23 +2982,29 @@ def bootstrap_selected_release(choices: object, candidate_selection_registry: ob
     if (not isinstance(choices, RootSetupExplicitChoices)
             or not isinstance(candidate_selection_registry, RootBootstrapCandidateSelectionRegistry)):
         raise TypeError("first-source bootstrap requires the sealed root TTY choice and its registry")
-    selection = candidate_selection_registry.resolve(choices)
+    with _bootstrap_os_error_step("bootstrap.tty_selection"):
+        selection = candidate_selection_registry.resolve(choices)
     journal = candidate_selection_registry
-    source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
-        journal, fixed_source_origin_policy_for_root_bootstrap())
+    with _bootstrap_os_error_step("source_cas.construct"):
+        source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
+            journal, fixed_source_origin_policy_for_root_bootstrap())
     distribution_registry = RootInstallerDistributionRegistry.from_owned_source_CAS(source_cas, journal)
     distribution_handle = source_cas.acquire_selected(selection.candidate_git_sha)
-    source = distribution_registry.resolve(distribution_handle)
+    with _bootstrap_os_error_step("source_cas.resolve"):
+        source = distribution_registry.resolve(distribution_handle)
     if source.candidate_git_sha != selection.candidate_git_sha:
         raise InstallerReleaseBuildError("fixed-origin source CAS does not match the root TTY choice")
     runtime_artifact_registry = RootInstallerRuntimeArtifactRegistry()
     interpreter_registry = RootInstallerInterpreterRegistry.from_owned_source_CAS(
         distribution_registry, journal, runtime_artifact_registry)
-    interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
-    handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
-        distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
-    handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
-    handoff_registry.reexec_selected_bootstrap(handoff)
+    with _bootstrap_os_error_step("installer_runtime.provision"):
+        interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
+    with _bootstrap_os_error_step("bootstrap.handoff"):
+        handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
+            distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
+        handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
+    with _bootstrap_os_error_step("bootstrap.reexec"):
+        handoff_registry.reexec_selected_bootstrap(handoff)
     raise BootstrapEnrollmentPending("isolated source bootstrap exec returned without replacing the current process")
 
 

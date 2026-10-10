@@ -1028,10 +1028,15 @@ def _read_target_account_name() -> str:
 
 
 def _safe_reason(error: BaseException) -> str:
-    from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
+    from .authority.bootstrap_enrollment import (
+        BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+    )
 
     if isinstance(error, BootstrapEnrollmentPending):
         return "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
+    if isinstance(error, BootstrapSystemCallFailure):
+        errno_part = f" [{error.errno_name}]" if error.errno_name != "UNKNOWN" else ""
+        return f"Root setup failed at {error.step}{errno_part}."
     return f"Root setup could not verify its required authority ({type(error).__name__})."
 
 
