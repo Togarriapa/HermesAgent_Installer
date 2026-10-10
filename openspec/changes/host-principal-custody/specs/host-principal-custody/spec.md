@@ -1206,3 +1206,12 @@ The installer SHALL use planning/official-remote-role-definition-producer-v222.j
 #### Scenario: Prepared enrollment has no runnable records
 - **WHEN** initial remote role preparation occurs with empty preparedrecords
 - **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted
+
+## ADDED Requirements
+
+### Requirement: Fresh current published PM runtime for delegate homes
+The installer SHALL use planning/current-published-pm-home-runtime-v221.json to verify currentpublishedPM/home identity through genuinefreshheldbytes without extending setup receipts.
+
+#### Scenario: Setup receipt expires before delegate task
+- **WHEN** the installedcurrentpublication remainsvalid aftersetup expiry or daemonrestart
+- **THEN** the existingcommittedPMresolver reopens currentreceipt/executable/fullclosure and issues fresh typedproof matching exacthomeprojection; oldsetupseal is not restored

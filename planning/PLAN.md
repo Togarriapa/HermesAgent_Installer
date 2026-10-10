@@ -167,3 +167,5 @@ HA v216 plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md refine
 SealedFD3source review220: plans/amendments/2026-10-10-sealed-bootstrap-fd3-source-review-v220.md; structural482source/effectproof only, unchanged211leafpins/authority/TTLs; BD-T208.1/VD-T208.2 target/allACOPEN.
 
 Officialremote roledefinition222: plans/amendments/2026-10-10-official-remote-role-definition-producer-v222.md; RT-T222.1/.2 VD-T222.3 OPEN; exact3roleheldsource/separateidentitytransaction nofutureactiveclaims/allACOPEN.
+
+CurrentpublishedPMhome runtime221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existingfreshresolver exactprojection/FDcustody nooldseal/all207/allACOPEN.
