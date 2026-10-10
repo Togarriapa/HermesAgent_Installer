@@ -286,6 +286,9 @@ class RootResolvedHostTool:
     executable_fd: int = field(repr=False)
     device: int
     inode: int
+    observation_registry: Any = field(default=None, repr=False, compare=False)
+    observation_handle: str = field(default="", repr=False, compare=False)
+    selected_network_key: tuple[str, str, str] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         for name in ("variant_id", "package_name", "version", "distribution", "release",
@@ -323,6 +326,13 @@ class RootResolvedHostTool:
                 or digest.hexdigest() != self.executable_sha256
                 or time.monotonic() >= self.expires_monotonic):
             raise AuthorityDenied("private_network.tool", "selected kernel tool changed after catalog resolution")
+        if self.observation_registry is not None:
+            self.observation_registry.revalidate_current(self.observation_handle, self.selected_network_key)
+
+    def close(self) -> None:
+        if self.executable_fd >= 0:
+            os.close(self.executable_fd)
+            object.__setattr__(self, "executable_fd", -1)
 
     def __repr__(self) -> str:
         return f"RootResolvedHostTool({self.variant_id!r}, <verified>)"
@@ -580,6 +590,10 @@ def create_root_namespace(
     _linux_root()
     if not isinstance(network, PrivateLoopbackNetwork) or not isinstance(nft_tool, RootResolvedHostTool):
         raise TypeError("namespace creation requires protected network and host-tool records")
+    if (nft_tool.observation_registry is not None
+            and nft_tool.selected_network_key != (network.network_id, network.generation,
+                network.service_generation_digest)):
+        raise AuthorityDenied("private_network.tool", "verified nft observation belongs to another selected network")
     nft_tool.verify_current()
     expected_root = Path("/run/hermes-installer/netns")
     if root != expected_root:
@@ -826,6 +840,7 @@ def close_root_network_lease(lease: RootPrivateLoopbackNetworkLease) -> None:
     except OSError:
         raise AuthorityDenied("private_network.teardown", "owned namespace mount path could not be removed") from None
     lease.close_fd()
+    lease.nft_tool.close()
 
 
 def unit_network_properties(member: PrivateLoopbackMember, namespace_path: Path) -> tuple[str, ...]:
