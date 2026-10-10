@@ -188,7 +188,8 @@ class _ProtectedNativeActionResolver:
         return NativeActionSelection(
             package_id=package.package_id, profile_id=package.profile_id,
             generation=package.generation, adapter_id=adapter.adapter_id,
-            action_id=adapter.action_id, validate_arguments=validate_arguments,
+            action_id=adapter.action_id, operation=adapter.operation,
+            validate_arguments=validate_arguments,
         )
 
 
