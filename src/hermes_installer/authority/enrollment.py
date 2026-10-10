@@ -2349,6 +2349,21 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
+    return _parse_protected_enrollment_document(
+        value, vault=vault, artifact_catalog_path=ARTIFACT_CATALOG_PATH,
+        artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
+    )
+
+
+def _parse_protected_enrollment_document(
+        value: Any, *, vault: RootCredentialVault,
+        artifact_catalog_path: Path, artifact_staging_directory: Path,
+) -> ProtectedEnrollment:
+    """Apply the strict core enrollment validators to an already authenticated document.
+
+    Only source-bound root adapters may call this private parser. The ordinary
+    public loader above remains fixed to the production authority path.
+    """
     root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "normalization_policies", "delegations", "service_generations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
@@ -2812,8 +2827,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         key_id, bindings, rules, policy, process_profiles,
         catalogs["provider_enrollments"], catalogs["mcp_services"],
         mcp_bindings, delegations, catalogs["memory_providers"],
-        native_bridges, {}, {}, ARTIFACT_CATALOG_PATH,
-        ARTIFACT_STAGING_DIRECTORY,
+        native_bridges, {}, {}, artifact_catalog_path,
+        artifact_staging_directory,
         service_generations["service_records"],
         service_generations["protected_devices"],
         service_generations["protected_build_records"],
