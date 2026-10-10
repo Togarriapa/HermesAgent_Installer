@@ -310,9 +310,10 @@ class RootSetupChoiceRegistry:
         """Enumerate only exact current signed choices for this live setup.
 
         The publisher/compiler can join the finite retained set to its prepared
-        catalog without reading this registry's private row map. Stale, expired,
-        revoked, or not-yet-reattached choices are omitted; malformed stored
-        signatures still fail closed through `_verify_row`.
+        catalog without reading this registry's private row map. A signed row for
+        this setup session that is revoked, expired, or not reattached is a hard
+        error: omitting it would let the compiler reinterpret stale or withdrawn
+        intent as no choice.
         """
         self._verify_current_setup(current_setup_selection)
         session_handle = self._setup_session_handle_for_selection(current_setup_selection)
@@ -329,11 +330,11 @@ class RootSetupChoiceRegistry:
                 continue
             self._verify_row(row)
             if row.get("revocation_epoch") != 1:
-                continue
-            try:
-                snapshot = self.resolve_current_setup_choice(handle, row["purpose"])
-            except AuthorityDenied:
-                continue
+                raise AuthorityDenied(
+                    "setup-choice.revoked",
+                    "current setup session contains a revoked choice; restart selection explicitly",
+                )
+            snapshot = self.resolve_current_setup_choice(handle, row["purpose"])
             current.append(snapshot)
         return tuple(current)
 
