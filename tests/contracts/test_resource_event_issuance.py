@@ -372,7 +372,7 @@ def test_cron_protocol_event_requires_exact_selected_occurrence_replay_key():
     import hermes_installer.authority.resource_event_issuance as module
 
     issuer, _request, _registry, _service, record = _case()
-    event_id = secrets.token_urlsafe(32)
+    event_id = "E" + secrets.token_urlsafe(32)
     data = module.MappingProxyType({
         "schedule_enrollment_id": "schedule-demo",
         "scheduled_time_unix": 100,
@@ -532,7 +532,7 @@ def test_selected_producer_mints_one_use_proof_only_for_retained_live_ingress_cu
         "schedule_enrollment_id": "schedule-1", "scheduled_time_unix": 100,
     })
     raw_record = object()
-    event_id = secrets.token_urlsafe(32)
+    event_id = "E" + secrets.token_urlsafe(32)
 
     class _Producer:
         def __init__(self):
