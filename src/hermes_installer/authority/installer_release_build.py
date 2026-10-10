@@ -2771,6 +2771,7 @@ def _bootstrap_after_reexec() -> Any:
             or interpreter.runtime_prefix_sha256 != handoff.runtime_closure_sha256
             or interpreter.executable_sha256 != handoff.expected_executable_sha256):
         raise InstallerReleaseBuildError("observed root actor interpreter differs from the consumed handoff")
+    _load_installed_setup_module_closure()
     actor_verifier = RootSourceBootstrapActorVerifier.from_verified_source(
         distribution_registry, interpreter_registry)
     actor = actor_verifier.verify_current(distribution_handle, interpreter_handle)
@@ -2811,6 +2812,29 @@ def _bootstrap_after_reexec() -> Any:
         raise BootstrapEnrollmentPending("installed lifecycle launcher exec returned unexpectedly")
     finally:
         installed.close()
+
+
+def _load_installed_setup_module_closure() -> None:
+    """Load the exact future installed-launcher imports into the observed source closure.
+
+    The first-source actor execs the installed launcher after publishing its
+    release. Importing these fixed modules now lets the normal source actor
+    verifier bind their actual selected SourceCAS bytes into the release, so
+    the installed launcher does not depend on checkout-only Python modules.
+    No setup action is invoked here.
+    """
+    import importlib
+
+    for name in (
+        "hermes_installer.root_setup",
+        "hermes_installer.authority.installer_release",
+        "hermes_installer.authority.bootstrap_runtime_factory",
+    ):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            raise BootstrapEnrollmentPending(
+                "installed root setup module closure is unavailable from selected source") from None
 
 
 def _verify_frozen_baseline(root_fd: int, rows: tuple[DistributionFile, ...]) -> str:

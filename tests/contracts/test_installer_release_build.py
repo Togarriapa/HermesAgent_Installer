@@ -73,6 +73,19 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
+def test_first_source_actor_preloads_exact_installed_launcher_module_closure():
+    release_build._load_installed_setup_module_closure()
+    for name in (
+        "hermes_installer.root_setup",
+        "hermes_installer.authority.installer_release",
+        "hermes_installer.authority.bootstrap_runtime_factory",
+    ):
+        module = sys.modules[name]
+        origin = Path(module.__spec__.origin)
+        assert origin.is_file()
+        assert origin == origin.resolve(strict=True)
+
+
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
 def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
     repository = tmp_path / "repository"
