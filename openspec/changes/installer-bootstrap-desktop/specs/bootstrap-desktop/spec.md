@@ -608,3 +608,10 @@ The installer SHALL dispatch only fixed source-reviewed local qualification suit
 #### Scenario: Qualification caller supplies arbitrary test code or policy JSON
 - **WHEN** input exceeds the finite installed suite selector
 - **THEN** dispatch denies and no actor/session/grant shortcut is created
+
+### Requirement: Qualification root adapter v162
+The installer SHALL isolate fixture publication/session/key authority under the exact observed recipe-owned run root while preserving production constants and source/kernel effect validation.
+
+#### Scenario: Fixture handle is presented to production consumer
+- **WHEN** a qualification session or signed fixture receipt targets production authority
+- **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted
