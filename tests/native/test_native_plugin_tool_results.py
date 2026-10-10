@@ -51,6 +51,7 @@ class NativePluginToolResultTests(unittest.TestCase):
         candidate = candidate.SelectedNativeCandidate(
             "fixture", "fixture-adapter", "fixture.action", MappingProxyType(parameters),
             MappingProxyType({"type": "object"}), digest, (), "hermes-installer", "fixture",
+            "fixture-adapter:tool:fixture", "github", "fixture-adapter", "effect-action",
         )
 
         class Package:
@@ -62,7 +63,7 @@ class NativePluginToolResultTests(unittest.TestCase):
             def _mark_candidate_registered(self, *_args): pass
 
         registered = _NativePluginContextResultAdapter(Context(), Package(), "fixture-adapter").register_tool(
-            "fixture", "hermes-installer", schema, handler,
+            "fixture", "github", schema, handler,
             check_fn="check", requires_env=["FIXTURE"], description="fixture",
             emoji="x", override=True,
         )
@@ -70,6 +71,33 @@ class NativePluginToolResultTests(unittest.TestCase):
         self.assertEqual(registered["requires_env"], ["FIXTURE"])
         self.assertTrue(registered["override"])
         self.assertEqual(registered["handler"]({}), '{"answer":42}')
+
+    def test_proxy_requires_actual_source_toolset(self):
+        from hermes_installer.native_plugin_loader import NativePluginLoadUnavailable
+
+        class Context:
+            def register_tool(self, **kwargs):
+                return kwargs
+
+        parameters = {"type": "object", "properties": {}, "additionalProperties": False}
+        schema = {"name": "fixture", "description": "fixture", "parameters": parameters}
+        candidate = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
+        selected = candidate.SelectedNativeCandidate(
+            "fixture", "fixture-adapter", "fixture.action", MappingProxyType(parameters),
+            MappingProxyType({"type": "object"}), "a" * 64, (), "hermes-installer", "fixture",
+            "fixture-adapter:tool:fixture", "github", "fixture-adapter", "effect-action",
+        )
+
+        class Package:
+            candidate_rows = (selected,)
+            def candidate(self, name):
+                return selected if name == "fixture" else None
+            def _mark_candidate_registered(self, *_args): pass
+
+        proxy = _NativePluginContextResultAdapter(Context(), Package(), "fixture-adapter")
+        with self.assertRaises(NativePluginLoadUnavailable):
+            proxy.register_tool("fixture", "hermes-installer", schema, lambda _args: "ok",
+                                description="fixture")
 
 
 if __name__ == "__main__":

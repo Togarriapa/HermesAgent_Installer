@@ -353,9 +353,12 @@ class ProtectedEnrollmentCatalog:
                  native_packages: list[Mapping[str, Any]] | None = None,
                  source_issuers: tuple[Any, ...] | list[Any] | None = None,
                  memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
-                 parameter_schemas: list[Mapping[str, Any]] | None = None):
+                 parameter_schemas: list[Mapping[str, Any]] | None = None,
+                 selected_application_runtimes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise EnrollmentDenied("protected service enrollment digest is invalid")
         self._records = MappingProxyType(dict(records))
         self.digest = digest
         parsed_native = {}
@@ -387,6 +390,27 @@ class ProtectedEnrollmentCatalog:
                     observer_joins[observer_id] = NativeSourceObserverJoin(issuer, package, adapter)
         self._source_observer_joins = MappingProxyType(observer_joins)
         self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
+        selected_applications: dict[str, Mapping[str, Any]] = {}
+        for raw in selected_application_runtimes or ():
+            if not isinstance(raw, Mapping):
+                raise EnrollmentDenied("selected application runtime record is malformed")
+            application_id = raw.get("application_id")
+            profile_id = raw.get("profile_id")
+            if not isinstance(application_id, str) or not application_id or not isinstance(profile_id, str):
+                raise EnrollmentDenied("selected application runtime identity is malformed")
+            if application_id in selected_applications:
+                raise EnrollmentDenied("selected application runtime is absent or ambiguous")
+            frozen = dict(raw)
+            for field in ("capability_ids", "provider_route_ids", "credential_reference_ids"):
+                values = frozen.get(field)
+                if not isinstance(values, (list, tuple)):
+                    raise EnrollmentDenied("selected application runtime sequence is malformed")
+                frozen[field] = tuple(values)
+            # Keep the active row's field values while freezing finite lists;
+            # the enclosing digest is separate and never enters its own
+            # signed snapshot preimage.
+            selected_applications[application_id] = MappingProxyType(frozen)
+        self._selected_application_runtimes = MappingProxyType(selected_applications)
         parsed_schemas = {}
         for raw in parameter_schemas or []:
             schema = (raw if isinstance(raw, OperationParameterSchema)
@@ -486,7 +510,20 @@ class ProtectedEnrollmentCatalog:
         return cls(records, digest=protected_digest, native_packages=native_packages,
                    source_issuers=source_issuers,
                    memory_enrollments=memory_enrollments,
-                   parameter_schemas=parameter_schemas)
+                   parameter_schemas=parameter_schemas,
+                   selected_application_runtimes=selected_application_runtimes)
+
+    def selected_application_runtime_record(self, application_id: str) -> Mapping[str, Any]:
+        """Return the unique active application row with its snapshot kept separate.
+
+        Callers must also compare ``catalog.digest`` and resolve the row's
+        signed source/runtime receipt handles before execution.
+        """
+        selected = _id(application_id, "selected application ID")
+        row = self._selected_application_runtimes.get(selected)
+        if row is None:
+            raise EnrollmentDenied("selected application runtime is not enrolled")
+        return row
 
     def resolve(self, enrollment_id: str, generation: str) -> HostServiceProfile:
         key = (_id(enrollment_id, "enrollment ID"), _id(generation, "generation"))
@@ -506,6 +543,14 @@ class ProtectedEnrollmentCatalog:
                 or hashlib.sha256(executable.read_bytes()).hexdigest() != profile.executable_sha256):
             raise EnrollmentDenied("enrolled service executable changed or is not executable")
         return profile
+
+    def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
+        """Resolve a unique current service enrollment by its opaque ID."""
+        selected = _id(enrollment_id, "enrollment ID")
+        matches = [profile for profile in self._records.values() if profile.enrollment_id == selected]
+        if len(matches) != 1:
+            raise EnrollmentDenied("service enrollment is absent or ambiguous")
+        return self.resolve(matches[0].enrollment_id, matches[0].generation)
 
     def resolve_profile_generation(self, profile_id: str, generation: str) -> HostServiceProfile:
         selected_profile = _id(profile_id, "service profile ID")
@@ -997,6 +1042,306 @@ class NativeCandidateIndexManifestEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class PrivateLoopbackNetworkEnrollment:
+    """Digest-bound private loopback policy selection; not an enforcement receipt."""
+
+    id: str
+    generation: str
+    namespace_identity: str
+    member_enrollment_ids: tuple[str, ...]
+    listener_bindings: tuple[Mapping[str, Any], ...]
+    client_bindings: tuple[Mapping[str, Any], ...]
+    policy_artifact_id: str
+    policy_sha256: str
+    service_generation_digest: str
+
+    @classmethod
+    def from_protected_record(cls, row: Mapping[str, Any], *, digest: str) -> "PrivateLoopbackNetworkEnrollment":
+        fields = {"id", "generation", "namespace_identity", "member_enrollment_ids",
+                  "listener_bindings", "client_bindings", "policy_artifact_id", "policy_sha256"}
+        if not isinstance(row, Mapping) or set(row) != fields:
+            raise EnrollmentDenied("protected loopback network fields are invalid")
+        def ident(value: Any, label: str) -> str:
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):
+                raise EnrollmentDenied(f"protected loopback {label} is invalid")
+            return value
+        members = row["member_enrollment_ids"]
+        if (not isinstance(members, (list, tuple)) or not 2 <= len(members) <= 32
+                or len(set(members)) != len(members)):
+            raise EnrollmentDenied("protected loopback members are invalid")
+        member_ids = tuple(ident(value, "member enrollment") for value in members)
+        listeners = []
+        for raw in row["listener_bindings"]:
+            if not isinstance(raw, Mapping) or set(raw) != {"enrollment_id", "role", "ipv4", "port"}:
+                raise EnrollmentDenied("protected loopback listener fields are invalid")
+            enrollment_id = ident(raw["enrollment_id"], "listener enrollment")
+            role = ident(raw["role"], "listener role")
+            port = raw["port"]
+            if enrollment_id not in member_ids or raw["ipv4"] != "127.0.0.1" or type(port) is not int or not 1 <= port <= 65535:
+                raise EnrollmentDenied("protected loopback listener binding is invalid")
+            listeners.append(MappingProxyType({"enrollment_id": enrollment_id, "role": role,
+                                               "ipv4": "127.0.0.1", "port": port}))
+        clients = []
+        for raw in row["client_bindings"]:
+            if not isinstance(raw, Mapping) or set(raw) != {"enrollment_id", "listener_enrollment_id", "port"}:
+                raise EnrollmentDenied("protected loopback client fields are invalid")
+            enrollment_id = ident(raw["enrollment_id"], "client enrollment")
+            listener_id = ident(raw["listener_enrollment_id"], "client listener")
+            port = raw["port"]
+            if (enrollment_id not in member_ids or listener_id not in member_ids or enrollment_id == listener_id
+                    or type(port) is not int or not 1 <= port <= 65535
+                    or not any(item["enrollment_id"] == listener_id and item["port"] == port for item in listeners)):
+                raise EnrollmentDenied("protected loopback client binding is invalid")
+            clients.append(MappingProxyType({"enrollment_id": enrollment_id,
+                                             "listener_enrollment_id": listener_id, "port": port}))
+        sha = row["policy_sha256"]
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+            raise EnrollmentDenied("protected loopback policy digest is invalid")
+        return cls(ident(row["id"], "network ID"), ident(row["generation"], "generation"),
+                   ident(row["namespace_identity"], "namespace identity"), member_ids,
+                   tuple(listeners), tuple(clients), ident(row["policy_artifact_id"], "policy artifact"),
+                   sha, digest)
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectedSelectedResourceExecution:
+    """Digest-covered selection metadata, not verified materialized source."""
+
+    resource_id: str
+    resource_kind: str
+    source_revision: str
+    source_manifest_sha256: str
+    resource_generation: str
+    profile_id: str
+    profile_generation: str
+    service_generation_digest: str
+    materialization_receipt_handle: str
+    materialized_member_path: str
+    materialized_member_sha256: str
+    materialized_member_size_bytes: int
+    effective_spec_sha256: str
+    backend_enrollment_id: str
+    operation: str
+    capability: str
+    target_id: str
+    recipient: str | None
+    delegation_id: str | None
+    enabled: bool
+
+    @classmethod
+    def from_protected_record(
+        cls, row: Mapping[str, Any], *, service_generation_digest: str,
+    ) -> "ProtectedSelectedResourceExecution":
+        fields = {
+            "resource_id", "resource_kind", "source_revision", "source_manifest_sha256",
+            "resource_generation", "profile_id", "profile_generation",
+            "materialization_receipt_handle", "materialized_member_path", "materialized_member_sha256",
+            "materialized_member_size_bytes", "effective_spec_sha256", "backend_enrollment_id",
+            "operation", "capability", "target_id", "recipient", "delegation_id", "enabled",
+        }
+        if not isinstance(row, Mapping) or set(row) != fields:
+            raise EnrollmentDenied("protected selected resource execution fields are invalid")
+        if not isinstance(service_generation_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest):
+            raise EnrollmentDenied("selected resource enclosing generation digest is invalid")
+        return cls(**dict(row), service_generation_digest=service_generation_digest)
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedApplicationRuntimeEnrollment:
+    """Digest-covered application selection metadata, not source/runtime proof."""
+
+    record: Mapping[str, Any]
+    service_generation_digest: str
+
+    @classmethod
+    def from_protected_record(
+        cls, row: Mapping[str, Any], *, service_generation_digest: str,
+    ) -> "SelectedApplicationRuntimeEnrollment":
+        fields = {
+            "application_id", "profile_id", "profile_generation", "principal_id", "adapter_id",
+            "source_identity", "source_revision", "source_tree_sha256", "source_generation_receipt_handle",
+            "source_generation_manifest_sha256", "runtime_id", "runtime_receipt_handle",
+            "runtime_manifest_sha256", "lock_sha256", "work_root_id", "data_root_id", "operation_id",
+            "process_start_target", "request_schema_id", "request_schema_sha256", "result_schema_id",
+            "result_validator_artifact_id", "result_validator_sha256", "capability_ids", "provider_route_ids",
+            "credential_reference_ids", "account_eligibility_receipt_handle", "memory_owner_generation",
+            "max_lifetime_seconds", "max_memory_bytes", "max_workers", "metered_budget_usd", "enabled",
+        }
+        if not isinstance(row, Mapping) or set(row) != fields:
+            raise EnrollmentDenied("protected selected application runtime fields are invalid")
+        if (not isinstance(service_generation_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
+            raise EnrollmentDenied("selected application enclosing generation digest is invalid")
+        copied = dict(row)
+        for name in ("capability_ids", "provider_route_ids", "credential_reference_ids"):
+            values = copied.get(name)
+            if not isinstance(values, (list, tuple)):
+                raise EnrollmentDenied(f"selected application {name} must be a finite sequence")
+            copied[name] = tuple(values)
+        return cls(MappingProxyType(copied), service_generation_digest)
+
+    @property
+    def application_id(self) -> str:
+        return self.record["application_id"]
+
+    @property
+    def profile_id(self) -> str:
+        return self.record["profile_id"]
+
+    @property
+    def profile_generation(self) -> str:
+        return self.record["profile_generation"]
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteStartupEnrollment:
+    """Selection-only startup row from the active protected service snapshot."""
+
+    id: str
+    remote_enrollment_id: str
+    display_enrollment_id: str
+    display_generation: str
+    display_operation_id: str
+    gateway_enrollment_id: str
+    gateway_generation: str
+    gateway_operation_id: str
+    desktop_enrollment_id: str
+    desktop_generation: str
+    desktop_operation_id: str
+    network_enrollment_id: str
+    xauthority_mount_id: str
+    xpra_xauthority_overlay_artifact_id: str
+    xpra_xauthority_overlay_sha256: str
+    xpra_xauthority_patch_receipt_handle: str
+    service_generation_digest: str
+
+    @classmethod
+    def from_protected_record(cls, row: Mapping[str, Any], *, digest: str) -> "RemoteStartupEnrollment":
+        fields = {"id", "remote_enrollment_id", "display_enrollment_id", "display_generation",
+                  "display_operation_id", "gateway_enrollment_id", "gateway_generation",
+                  "gateway_operation_id", "desktop_enrollment_id", "desktop_generation",
+                  "desktop_operation_id", "network_enrollment_id", "xauthority_mount_id",
+                  "xpra_xauthority_overlay_artifact_id", "xpra_xauthority_overlay_sha256",
+                  "xpra_xauthority_patch_receipt_handle"}
+        if not isinstance(row, Mapping) or set(row) != fields:
+            raise EnrollmentDenied("protected remote startup fields are invalid")
+        for field in fields - {"xpra_xauthority_overlay_sha256"}:
+            value = row[field]
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):
+                raise EnrollmentDenied(f"protected remote startup {field} is invalid")
+        if row["display_operation_id"] != "native-display-start-v1":
+            raise EnrollmentDenied("protected display operation is not fixed")
+        if row["gateway_operation_id"] != "native-remote-gateway-start-v1":
+            raise EnrollmentDenied("protected gateway operation is not fixed")
+        if row["desktop_operation_id"] != "native-desktop-app-start-v1":
+            raise EnrollmentDenied("protected desktop operation is not fixed")
+        sha = row["xpra_xauthority_overlay_sha256"]
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+            raise EnrollmentDenied("protected Xpra overlay digest is invalid")
+        return cls(**{field: row[field] for field in fields}, service_generation_digest=digest)
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedRemoteStartup:
+    """Current joined startup selection; runtime receipts are still required."""
+
+    startup: RemoteStartupEnrollment
+    remote_session: Any
+    display_service: HostServiceProfile
+    gateway_service: HostServiceProfile
+    desktop_service: HostServiceProfile
+    network: PrivateLoopbackNetworkEnrollment
+    service_generation_digest: str
+    observation: Mapping[str, Any]
+
+    @property
+    def id(self) -> str:
+        return self.startup.id
+
+    @property
+    def remote_enrollment_id(self) -> str:
+        return self.startup.remote_enrollment_id
+
+    @property
+    def display_enrollment_id(self) -> str:
+        return self.startup.display_enrollment_id
+
+    @property
+    def display_generation(self) -> str:
+        return self.startup.display_generation
+
+    @property
+    def display_operation_id(self) -> str:
+        return self.startup.display_operation_id
+
+    @property
+    def gateway_enrollment_id(self) -> str:
+        return self.startup.gateway_enrollment_id
+
+    @property
+    def gateway_generation(self) -> str:
+        return self.startup.gateway_generation
+
+    @property
+    def gateway_operation_id(self) -> str:
+        return self.startup.gateway_operation_id
+
+    @property
+    def desktop_enrollment_id(self) -> str:
+        return self.startup.desktop_enrollment_id
+
+    @property
+    def desktop_generation(self) -> str:
+        return self.startup.desktop_generation
+
+    @property
+    def desktop_operation_id(self) -> str:
+        return self.startup.desktop_operation_id
+
+    @property
+    def network_enrollment_id(self) -> str:
+        return self.startup.network_enrollment_id
+
+    @property
+    def xauthority_mount_id(self) -> str:
+        return self.startup.xauthority_mount_id
+
+    @property
+    def xpra_xauthority_overlay_artifact_id(self) -> str:
+        return self.startup.xpra_xauthority_overlay_artifact_id
+
+    @property
+    def xpra_xauthority_overlay_sha256(self) -> str:
+        return self.startup.xpra_xauthority_overlay_sha256
+
+    @property
+    def xpra_xauthority_patch_receipt_handle(self) -> str:
+        return self.startup.xpra_xauthority_patch_receipt_handle
+
+    @property
+    def native_profile_id(self) -> str:
+        return self.desktop_service.profile_id
+
+    @property
+    def native_generation(self) -> str:
+        return self.desktop_service.generation
+
+    @property
+    def display_name(self) -> str:
+        return self.observation["display_name"]
+
+    @property
+    def xauthority_receipt_handle(self) -> str:
+        return self.observation["xauthority_receipt_handle"]
+
+    @property
+    def xauthority_reader_gid(self) -> int:
+        # This is the already enrolled native Desktop service group. The
+        # receipt registry still verifies the actual cookie inode/mode/group.
+        return self.desktop_service.service_gid
+
+
+@dataclass(frozen=True, slots=True)
 class NativeSourceObserverJoin:
     """Metadata-only source join; it is not a loaded-closure or peer proof."""
 
@@ -1365,7 +1710,7 @@ class FixedBuildOutputSpec:
     relative_path: str
     kind: str
     maximum_bytes: int
-    executable_role: str
+    executable_role: str | None
     target_facts: Mapping[str, Any]
 
 
@@ -1446,7 +1791,9 @@ class FixedBuildProfile:
                     "toolchain_sha256", "builder_artifact_id", "builder_sha256", "argv_recipe", "environment",
                     "max_lifetime_seconds", "output_root_id", "output_root", "output_owner_uid", "output_specs",
                     "build_service_enrollment_id", "build_service_generation"}
-        if set(item) != required or item.get("target_id") not in {"coral-cpython-build:start", "colibri-source-build:start"}:
+        known_targets = {"coral-cpython-build:start", "colibri-source-build:start",
+                         "xpra-root-xauthority-transform:start"}
+        if set(item) != required or item.get("target_id") not in known_targets:
             raise EnrollmentDenied("fixed native build profile is unknown or malformed")
         for name in ("source_sha256", "toolchain_sha256", "builder_sha256"):
             if not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name]):
@@ -1473,7 +1820,8 @@ class FixedBuildProfile:
                     or path.as_posix() != relative or relative in output_specs
                     or not isinstance(kind, str) or kind not in {"file", "tree"} or type(maximum) is not int
                     or not 1 <= maximum <= 2 * 1024**3
-                    or not isinstance(role, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", role)
+                    or (role is not None and (not isinstance(role, str)
+                        or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", role)))
                     or not isinstance(facts, Mapping) or not facts):
                 raise EnrollmentDenied("fixed build output constraints are malformed")
             output_specs[relative] = FixedBuildOutputSpec(
@@ -1487,7 +1835,7 @@ class FixedBuildProfile:
                         "instruction_policy": "actual target compatible ARM64 flags; no x86 default or unmeasured CPUflags",
                     }},
             }
-        else:
+        elif item["target_id"] == "coral-cpython-build:start":
             expected_specs = {
                 "runtime/bin/python3.9": {"kind": "file", "maximum_bytes": 67108864,
                     "executable_role": "coral-cpython39", "target_facts": {
@@ -1499,6 +1847,20 @@ class FixedBuildProfile:
                     "executable_role": "cpython-stdlib-and-extension-closure", "target_facts": {
                         "python_version": "3.9.25", "target": "linux-aarch64",
                         "all_native_extensions": "ELF64EM_AARCH64, actual dependency closure verified",
+                    }},
+            }
+        else:
+            expected_specs = {
+                "xpra-overlay.tar": {"kind": "file", "maximum_bytes": 134217728,
+                    "executable_role": "data", "target_facts": {
+                        "encoding": "deterministic tar emitted by pinned module",
+                        "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+                        "source_manifest_sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+                        "manifest_member": "hermes-installer-xpra-root-xauthority-overlay-v1.json",
+                        "required_observed_facts": [
+                            "source_tree_digest", "transform_module_sha256", "patched_file_sha256s",
+                            "transformed_tree_sha256", "output_archive_sha256", "patch_manifest_sha256",
+                        ],
                     }},
             }
         if set(output_specs) != set(expected_specs) or any(
@@ -1529,7 +1891,8 @@ class FixedBuildProfile:
 class ProtectedBuildCatalog:
     """The only startable hardware build targets and their fixed root recipes."""
 
-    REQUIRED_TARGETS = frozenset({"coral-cpython-build:start", "colibri-source-build:start"})
+    REQUIRED_TARGETS = frozenset({"coral-cpython-build:start", "colibri-source-build:start",
+                                  "xpra-root-xauthority-transform:start"})
 
     def __init__(self, profiles: Mapping[tuple[str, str], FixedBuildProfile], *,
                  service_generation_digest: str = ""):

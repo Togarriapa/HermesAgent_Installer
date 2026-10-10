@@ -21,6 +21,10 @@ import stat
 import sys
 import time
 import base64
+import io
+import tarfile
+import tempfile
+import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
@@ -41,6 +45,7 @@ BUILD_MOUNT_TARGETS = {
 OPERATION_TARGETS = {
     "coral-cpython39-source-build-v1": "coral-cpython-build:start",
     "colibri-source-build-v1": "colibri-source-build:start",
+    "xpra-root-xauthority-transform-v1": "xpra-root-xauthority-transform:start",
 }
 REQUIRED_LIMITS = {
     "PrivateNetwork": "yes", "IPAddressDeny": "0.0.0.0/0 ::/0",
@@ -51,6 +56,15 @@ REQUIRED_LIMITS = {
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False).encode("utf-8")
+
+
+def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 def _sha(value: Any, label: str) -> str:
@@ -175,6 +189,19 @@ class ResolvedBuildInputs:
     output_owner_uid: int
     output_owner_gid: int
     max_lifetime_seconds: int
+    original_source_manifest_sha256: str | None = None
+    source_projection_root: Path | None = None
+    toolchain_projection_root: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _BuildInputTreeFile:
+    path: str
+    sha256: str
+    size_bytes: int
+    executable: bool
+    kind: str = "file"
+    link_target: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,14 +246,15 @@ class BuildOutputSpec:
     relative_path: str
     kind: str
     maximum_bytes: int
-    executable_role: str
+    executable_role: str | None
     target_facts: Mapping[str, Any]
 
     def __post_init__(self) -> None:
         _safe_output_name(self.relative_path)
         if (self.kind not in {"file", "tree"} or type(self.maximum_bytes) is not int
                 or not 1 <= self.maximum_bytes <= MAX_OUTPUT_BYTES
-                or not isinstance(self.executable_role, str) or not self.executable_role
+                or (self.executable_role is not None
+                    and (not isinstance(self.executable_role, str) or not self.executable_role))
                 or not isinstance(self.target_facts, Mapping) or not self.target_facts):
             raise AuthorityDenied("build.output_spec", "protected output constraint is invalid")
 
@@ -511,6 +539,206 @@ class LinuxBuildOutputFactInspector:
         if sys.platform != "linux" or platform.machine().lower() not in {"aarch64", "arm64"}:
             raise AuthorityDenied("build.target", "native Colibri build requires the enrolled Linux ARM64 host")
 
+    @staticmethod
+    def _inspect_xpra_archive(profile: Any, spec: Any, path: Path,
+                              source_tree_files: tuple[Any, ...]) -> Mapping[str, Any]:
+        """Check the finite Xpra transform archive without extracting tar members.
+
+        The source and module observation registry performs the complete
+        independent transform comparison before it issues a usable overlay
+        receipt. This pre-CAS check enforces the enrolled member bounds and
+        facts while keeping untrusted archive links as data.
+        """
+        source_id = "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea"
+        source_sha = "20b55586457df5aed8453b0d1b446e4dd954f2027d814f1eb7c0a96227ef1c80"
+        module_id = "installer-xpra-root-xauthority-transform-module-v1"
+        module_sha256 = "3342afa5311fef5008a35317a526c75b3d1531d21e92d1f8aae87dba38b0a7d1"
+        manifest_name = "hermes-installer-xpra-root-xauthority-overlay-v1.json"
+        source_commit = "521b0d2e762c770b2641d258b93d23575fa9cbea"
+        source_tree = "f52b4ce760b86c24a4d6d930f47e58357442a984d9ff2478d7abf338ff48e467"
+        source_files = {
+            "xpra/scripts/server.py": "40e9ced39617ce7ba26ce26a320e86d3c20944f3cf9ff9e47e459d3180372ead",
+            "xpra/server/subsystem/xvfb.py": "fd1718ad7fb3b905547b86116df241694c9a6c59c4c40e954a38764689201de6",
+            "xpra/x11/vfb_util.py": "9285e8a124384270c92df6338d8e2d0f30da20a47616a4f33f6b79bff6c185d6",
+        }
+        source_links = {
+            "debian": ("packaging/debian/xpra", "a1aef4be57bc54eefaab320b3728f3c0e0f463bc3c7307b1ac4528e2b3f00d4b", 21),
+            "fs/etc/default": ("sysconfig", "ed85312a196268e2240f401f7d8711c4edaad4d43bcfd76ec5f4e19ec8916ee0", 9),
+            "fs/libexec/xpra/gnome-open": ("xdg-open", "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+            "fs/libexec/xpra/gvfs-open": ("xdg-open", "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+            "fs/share/doc/xpra": ("../../../docs", "bdc7f46fbdfe68781df25dec18962c3ac2aa93d35c3e04185ecc9ac201c73b35", 13),
+        }
+        if (profile.target_id != "xpra-root-xauthority-transform:start"
+                or profile.source_artifact_id != source_id or profile.source_sha256 != source_sha
+                or profile.toolchain_artifact_id != module_id
+                or profile.toolchain_sha256 != module_sha256
+                or spec.relative_path != "xpra-overlay.tar" or spec.kind != "file"
+                or spec.executable_role != "data"
+                or spec.maximum_bytes > 134217728):
+            raise AuthorityDenied("build.xpra_profile", "Xpra transform pins differ from reviewed profile")
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size < 1
+                or info.st_size > 134217728
+                or info.st_uid != profile.output_owner_uid):
+            raise AuthorityDenied("build.xpra_output", "Xpra transform archive custody or finite file bound is invalid")
+        archive_digest = ContentAddressedBuildStore._hash_file(path, info.st_size)
+        source_rows: dict[str, dict[str, Any]] = {}
+        try:
+            for row in source_tree_files:
+                relative = row.path
+                if (not isinstance(relative, str) or _safe_output_name(relative) != relative
+                        or getattr(row, "kind", "file") != "file"):
+                    raise ValueError("regular source closure")
+                _sha(row.sha256, "source tree member")
+                if type(row.size_bytes) is not int or row.size_bytes < 0 or type(row.executable) is not bool:
+                    raise ValueError("source tree row")
+                source_rows[relative] = {"path": relative, "sha256": row.sha256,
+                                         "size_bytes": row.size_bytes, "executable": row.executable}
+            if not source_rows or len(source_rows) != len(source_tree_files):
+                raise ValueError("source row set")
+        except (AttributeError, TypeError, ValueError, AuthorityDenied):
+            raise AuthorityDenied("build.xpra_source", "regular-only Xpra source closure is invalid") from None
+
+        def tree_digest(rows: list[dict[str, Any]]) -> str:
+            body = json.dumps(rows, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=True).encode("ascii")
+            return hashlib.sha256(body).hexdigest()
+
+        source_link_rows = []
+        for name, (target, target_sha256, target_size) in source_links.items():
+            target_bytes = target.encode("utf-8")
+            if len(target_bytes) != target_size or hashlib.sha256(target_bytes).hexdigest() != target_sha256:
+                raise AuthorityDenied("build.xpra_source", "pinned Xpra link target bytes differ from the source manifest")
+            resolved_target = PurePosixPath(name).parent.joinpath(target)
+            normalized_target = PurePosixPath(os.path.normpath(resolved_target.as_posix()))
+            if (normalized_target.is_absolute() or ".." in normalized_target.parts
+                    or (normalized_target.as_posix() not in source_rows
+                        and not any(row.startswith(normalized_target.as_posix() + "/") for row in source_rows))):
+                raise AuthorityDenied("build.xpra_source", "pinned Xpra link target is absent from the source manifest")
+            source_link_rows.append({"path": name, "sha256": target_sha256,
+                                     "size_bytes": target_size, "executable": False})
+        if tree_digest(sorted([*source_rows.values(), *source_link_rows], key=lambda row: row["path"])) != source_tree:
+            raise AuthorityDenied("build.xpra_source", "compiled source rows do not match the full reviewed source tree")
+
+        members: dict[str, tarfile.TarInfo] = {}
+        output_rows: list[dict[str, Any]] = []
+        total = 0
+        manifest_bytes = None
+        patched_bytes: dict[str, bytes] = {}
+        try:
+            with path.open("rb") as stream, tarfile.open(fileobj=stream, mode="r:") as archive:
+                rows = archive.getmembers()
+                if not 1 <= len(rows) <= 4000:
+                    raise ValueError("member count")
+                for member in rows:
+                    name = member.name.rstrip("/") if member.isdir() else member.name
+                    if (not name or name.startswith("/") or "\\" in name or "\x00" in name
+                            or any(part in {"", ".", ".."} for part in PurePosixPath(name).parts)
+                            or PurePosixPath(name).as_posix() != name or name in members):
+                        raise ValueError("member name")
+                    if (member.uid != 0 or member.gid != 0 or member.mtime != 0
+                            or member.mode & ~0o777):
+                        raise ValueError("member metadata")
+                    if ((member.isdir() and member.mode != 0o755)
+                            or (member.issym() and member.mode != 0o777)
+                            or (member.isfile() and member.mode not in {0o644, 0o755})):
+                        raise ValueError("member mode")
+                    members[name] = member
+                    if member.isdir():
+                        continue
+                    if member.issym():
+                        pinned_link = source_links.get(name)
+                        if pinned_link is None or pinned_link[0] != member.linkname:
+                            raise ValueError("unexpected link")
+                        _, target_sha256, target_size = pinned_link
+                        output_rows.append({"path": name, "sha256": target_sha256,
+                                            "size_bytes": target_size, "executable": False})
+                        continue
+                    if not member.isfile() or member.islnk() or member.size < 0:
+                        raise ValueError("member type")
+                    if name == manifest_name and member.size > 65536:
+                        raise ValueError("manifest bound")
+                    total += member.size
+                    if total > 160 * 1024 * 1024:
+                        raise ValueError("expanded archive bound")
+                    file_body = archive.extractfile(member)
+                    if file_body is None:
+                        raise ValueError("member body")
+                    digest = hashlib.sha256()
+                    captured = bytearray() if name in source_files or name == manifest_name else None
+                    while chunk := file_body.read(128 * 1024):
+                        digest.update(chunk)
+                        if captured is not None:
+                            captured.extend(chunk)
+                            if len(captured) > 64 * 1024 * 1024:
+                                raise ValueError("protected member bound")
+                    actual_sha = digest.hexdigest()
+                    if name == manifest_name:
+                        manifest_bytes = bytes(captured or b"")
+                        continue
+                    source_row = source_rows.get(name)
+                    if source_row is None:
+                        raise ValueError("unexpected regular file")
+                    row_exec = bool(member.mode & 0o111)
+                    if (member.size != source_row["size_bytes"]
+                            or row_exec != source_row["executable"]):
+                        raise ValueError("source member metadata mismatch")
+                    if name not in source_files and actual_sha != source_row["sha256"]:
+                        raise ValueError("unpatched source bytes changed")
+                    output_rows.append({"path": name, "sha256": actual_sha,
+                                        "size_bytes": member.size, "executable": row_exec})
+                    if name in source_files:
+                        patched_bytes[name] = bytes(captured or b"")
+                    continue
+        except (OSError, tarfile.TarError, ValueError, EOFError):
+            raise AuthorityDenied("build.xpra_archive", "Xpra output archive is malformed or unbounded") from None
+        if manifest_bytes is None:
+            raise AuthorityDenied("build.xpra_manifest", "Xpra output archive lacks its patch manifest")
+        try:
+            manifest = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_unique_object_pairs)
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            raise AuthorityDenied("build.xpra_manifest", "Xpra patch manifest is malformed") from None
+        expected_fields = {"schema", "overlay", "source_commit", "source_tree_sha256", "source_sha256",
+                           "output_sha256", "transformed_tree_sha256", "overlay_sha256"}
+        expected_members = set(source_rows) | set(source_links) | {manifest_name}
+        for relative in tuple(expected_members):
+            parent = PurePosixPath(relative).parent
+            while parent.as_posix() != ".":
+                expected_members.add(parent.as_posix())
+                parent = parent.parent
+        if (not isinstance(manifest, dict) or set(manifest) != expected_fields
+                or manifest.get("schema") != 1
+                or manifest.get("overlay") != "installer-xpra-root-xauthority-overlay-v1"
+                or manifest.get("source_commit") != source_commit
+                or manifest.get("source_tree_sha256") != source_tree
+                or manifest.get("source_sha256") != source_files
+                or not isinstance(manifest.get("output_sha256"), dict)
+                or set(manifest["output_sha256"]) != set(source_files)
+                or not isinstance(manifest.get("transformed_tree_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest["transformed_tree_sha256"])
+                or manifest.get("overlay_sha256") != profile.toolchain_sha256
+                or set(members) != expected_members):
+            raise AuthorityDenied("build.xpra_manifest", "Xpra output manifest does not match enrolled source/module pins")
+        for name, digest in manifest["output_sha256"].items():
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise AuthorityDenied("build.xpra_manifest", "Xpra patched source digest is malformed")
+            body = patched_bytes.get(name)
+            if body is None or hashlib.sha256(body).hexdigest() != digest:
+                raise AuthorityDenied("build.xpra_manifest", "Xpra patched source member differs from its manifest")
+        if tree_digest(sorted(output_rows, key=lambda row: row["path"])) != manifest["transformed_tree_sha256"]:
+            raise AuthorityDenied("build.xpra_manifest", "Xpra output tree digest differs from its archive members")
+        facts = {
+            "source_tree_digest": source_tree,
+            "compiled_source_manifest_sha256": hashlib.sha256(_canonical(
+                sorted(source_rows.values(), key=lambda row: row["path"]))).hexdigest(),
+            "transform_module_sha256": profile.toolchain_sha256,
+            "patched_file_sha256s": dict(manifest["output_sha256"]),
+            "transformed_tree_sha256": manifest["transformed_tree_sha256"],
+            "output_archive_sha256": archive_digest,
+            "patch_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        }
+        return facts
+
     def inspect(self, profile: Any, spec: Any, path: Path) -> Mapping[str, Any]:
         return self._inspect(profile, spec, path, build_result=None, build_inputs=None,
                              cancelled=lambda: False)
@@ -524,6 +752,12 @@ class LinuxBuildOutputFactInspector:
     def _inspect(self, profile: Any, spec: Any, path: Path, *,
                  build_result: ManagedBuildResult | None, build_inputs: ResolvedBuildInputs | None,
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        if spec.relative_path == "xpra-overlay.tar":
+            if build_result is None or build_inputs is None:
+                raise AuthorityDenied("build.xpra_output", "completed managed Xpra build is required")
+            if sys.platform != "linux" or platform.machine().lower() not in {"aarch64", "arm64"}:
+                raise AuthorityDenied("build.target", "Xpra build receipt requires the selected Linux ARM64 host")
+            return self._inspect_xpra_archive(profile, spec, path, build_inputs.source_tree_files)
         sysroot = Path(self.toolchain_root_resolver(profile)).resolve(strict=True)
         if spec.relative_path == "c/colibri":
             self._verify_colibri_recipe(profile)
@@ -937,7 +1171,7 @@ class ContentAddressedBuildStore:
                 if entries[0]["executable"] != expected_exec:
                     raise AuthorityDenied("build.output_role", "native executable mode differs from its enrolled role")
             result[name] = {"kind": spec.kind, "sha256": digest, "size_bytes": bytes_total,
-                            "executable_role": spec.executable_role,
+                            "executable_role": spec.executable_role or "data",
                             "observed_target_facts": dict(observed_facts),
                             "tree_file_manifest_sha256": digest if spec.kind == "tree" else None,
                             "source": base, "members": members, "entries": entries}
@@ -1326,7 +1560,8 @@ class ContentAddressedBuildStore:
             raise AuthorityDenied("build.attestation", "stored receipt does not match current root enrollment")
         for name, output in actual.items():
             spec = specs[name]
-            if (output.kind != spec.kind or output.executable_role != spec.executable_role
+            expected_role = spec.executable_role or "data"
+            if (output.kind != spec.kind or output.executable_role != expected_role
                     or output.size_bytes > spec.maximum_bytes
                     or not ContentAddressedBuildStore._fact_matches(spec.target_facts, output.observed_target_facts)):
                 raise AuthorityDenied("build.attestation", "receipt output facts differ from enrolled constraints")
@@ -1493,7 +1728,15 @@ class RootBuildExecutionService:
                                       enrollment_id=request["enrollment_id"],
                                       operation_id=request["operation_id"],
                                       selection_digest=authorization.request_digest)
-        self._require_live(cancelled, deadline)
+        try:
+            self._require_live(cancelled, deadline)
+        except Exception:
+            self._remove_job_output_root(inputs.output_root, profile.output_owner_uid)
+            if inputs.source_projection_root is not None:
+                self._remove_xpra_source_projection(inputs.source_projection_root)
+            if inputs.toolchain_projection_root is not None:
+                self._remove_xpra_source_projection(inputs.toolchain_projection_root)
+            raise
         started = self.monotonic()
         job_deadline = min(deadline, started + profile.max_lifetime_seconds)
         try:
@@ -1519,6 +1762,184 @@ class RootBuildExecutionService:
                     "receipt_id": attestation.attestation_id}
         finally:
             self._remove_job_output_root(inputs.output_root, profile.output_owner_uid)
+            if inputs.source_projection_root is not None:
+                self._remove_xpra_source_projection(inputs.source_projection_root)
+            if inputs.toolchain_projection_root is not None:
+                self._remove_xpra_source_projection(inputs.toolchain_projection_root)
+
+    def _project_xpra_regular_source(self, source: Any) -> tuple[Path, tuple[Any, ...], str]:
+        """Make the exact v101 regular-file projection used by the fixed Xpra child.
+
+        The catalog has already verified the full archive tree, including its five
+        symlinks. The child receives only regular files; the pinned module restores
+        those five aliases in its private work directory.
+        """
+        expected_manifest = "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63"
+        full_manifest_rows = []
+        for row in sorted(source.tree_files, key=lambda item: item.path):
+            manifest_row = {"path": row.path, "sha256": row.sha256,
+                            "size_bytes": row.size_bytes, "executable": row.executable,
+                            "kind": row.kind}
+            if row.kind == "symlink":
+                manifest_row["link_target"] = row.link_target
+            full_manifest_rows.append(manifest_row)
+        full_manifest_digest = hashlib.sha256(_canonical(full_manifest_rows)).hexdigest()
+        if (source.artifact_id != "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea"
+                or full_manifest_digest != expected_manifest):
+            raise AuthorityDenied("build.xpra_source", "full Xpra source manifest differs from its protected pin")
+        expected_links = {
+            "debian": ("packaging/debian/xpra", "a1aef4be57bc54eefaab320b3728f3c0e0f463bc3c7307b1ac4528e2b3f00d4b", 21),
+            "fs/etc/default": ("sysconfig", "ed85312a196268e2240f401f7d8711c4edaad4d43bcfd76ec5f4e19ec8916ee0", 9),
+            "fs/libexec/xpra/gnome-open": ("xdg-open", "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+            "fs/libexec/xpra/gvfs-open": ("xdg-open", "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+            "fs/share/doc/xpra": ("../../../docs", "bdc7f46fbdfe68781df25dec18962c3ac2aa93d35c3e04185ecc9ac201c73b35", 13),
+        }
+        rows = tuple(sorted((row for row in source.tree_files if row.kind == "file"),
+                            key=lambda item: item.path))
+        links = {row.path: (row.link_target, row.sha256, row.size_bytes)
+                 for row in source.tree_files if row.kind == "symlink"}
+        if links != expected_links or len(rows) + len(links) != len(source.tree_files):
+            raise AuthorityDenied("build.xpra_source", "Xpra source tree does not contain exactly its five pinned aliases")
+        source_root = Path(source.path)
+        ContentAddressedBuildStore._check_owned_directory(source_root, self.expected_uid)
+        for row in rows:
+            file_path = source_root / row.path
+            try:
+                info = file_path.lstat()
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                        or info.st_nlink != 1 or info.st_mode & 0o222 or info.st_size != row.size_bytes):
+                    raise ValueError("source member custody")
+                fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_CLOEXEC", 0))
+                try:
+                    opened = os.fstat(fd)
+                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise ValueError("source member identity changed")
+                    digest = hashlib.sha256()
+                    while block := os.read(fd, 131072):
+                        digest.update(block)
+                finally:
+                    os.close(fd)
+                if digest.hexdigest() != row.sha256:
+                    raise ValueError("source member digest")
+            except (OSError, ValueError):
+                raise AuthorityDenied("build.xpra_source", "full Xpra source member changed during staging") from None
+
+        projection = Path(tempfile.mkdtemp(prefix=".xpra-regular-", dir=self.artifact_staging_root))
+        try:
+            os.chown(projection, self.expected_uid, 0, follow_symlinks=False)
+            directory_names = {"fs/share/doc"}
+            for row in rows:
+                parent = PurePosixPath(row.path).parent
+                while parent.as_posix() != ".":
+                    directory_names.add(parent.as_posix())
+                    parent = parent.parent
+            for directory in sorted(directory_names, key=lambda item: (item.count("/"), item)):
+                target = projection.joinpath(*PurePosixPath(directory).parts)
+                target.mkdir(mode=0o700, parents=True, exist_ok=True)
+            for row in rows:
+                relative = _safe_output_name(row.path)
+                source_file = source_root.joinpath(*PurePosixPath(relative).parts)
+                destination = projection.joinpath(*PurePosixPath(relative).parts)
+                fd_in = os.open(source_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                | getattr(os, "O_CLOEXEC", 0))
+                fd_out = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                                  | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                                  0o555 if row.executable else 0o444)
+                try:
+                    copied = hashlib.sha256()
+                    count = 0
+                    while block := os.read(fd_in, 131072):
+                        count += len(block)
+                        copied.update(block)
+                        view = memoryview(block)
+                        while view:
+                            view = view[os.write(fd_out, view):]
+                    os.fsync(fd_out)
+                    if count != row.size_bytes or copied.hexdigest() != row.sha256:
+                        raise ValueError("copied source changed")
+                finally:
+                    os.close(fd_in)
+                    os.close(fd_out)
+            compiled_manifest = hashlib.sha256(_canonical([
+                {"path": row.path, "sha256": row.sha256, "size_bytes": row.size_bytes,
+                 "executable": row.executable} for row in rows
+            ])).hexdigest()
+            for current, dirs, _ in os.walk(projection, topdown=False, followlinks=False):
+                for directory in dirs:
+                    os.chmod(Path(current) / directory, 0o555, follow_symlinks=False)
+            os.chmod(projection, 0o555, follow_symlinks=False)
+            return projection, rows, compiled_manifest
+        except Exception:
+            self._remove_xpra_source_projection(projection)
+            raise
+
+    def _remove_xpra_source_projection(self, path: Path) -> None:
+        """Remove only the root-created regular projection under the staging root."""
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return
+        if (path.parent != self.artifact_staging_root or not stat.S_ISDIR(info.st_mode)
+                or stat.S_ISLNK(info.st_mode) or info.st_uid != self.expected_uid):
+            raise AuthorityDenied("build.xpra_cleanup", "compiled Xpra source projection custody changed")
+        for current, dirs, files in os.walk(path, topdown=False, followlinks=False):
+            for filename in files:
+                item = Path(current) / filename
+                file_info = item.lstat()
+                if not stat.S_ISREG(file_info.st_mode) or file_info.st_uid != self.expected_uid:
+                    raise AuthorityDenied("build.xpra_cleanup", "compiled Xpra source contains unexpected content")
+                item.chmod(0o600, follow_symlinks=False)
+                item.unlink()
+            for dirname in dirs:
+                item = Path(current) / dirname
+                item.chmod(0o700, follow_symlinks=False)
+                item.rmdir()
+        path.chmod(0o700, follow_symlinks=False)
+        path.rmdir()
+
+    def _project_xpra_toolchain(self, toolchain: Any) -> tuple[Path, tuple[Any, ...], str]:
+        """Mount the pinned module blob as the finite read-only toolchain tree."""
+        expected_id = "installer-xpra-root-xauthority-transform-module-v1"
+        expected_sha = "3342afa5311fef5008a35317a526c75b3d1531d21e92d1f8aae87dba38b0a7d1"
+        path = Path(toolchain.path)
+        try:
+            info = path.lstat()
+            if (toolchain.artifact_id != expected_id or toolchain.sha256 != expected_sha
+                    or not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                    or info.st_nlink != 1 or info.st_mode & 0o222 or info.st_size != 59621):
+                raise ValueError("module pin")
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                while block := stream.read(131072):
+                    digest.update(block)
+            if digest.hexdigest() != expected_sha:
+                raise ValueError("module digest")
+        except (OSError, ValueError):
+            raise AuthorityDenied("build.xpra_toolchain", "pinned transform module is not immutable catalog content") from None
+        root = Path(tempfile.mkdtemp(prefix=".xpra-module-", dir=self.artifact_staging_root))
+        try:
+            os.chown(root, self.expected_uid, 0, follow_symlinks=False)
+            destination = root / "xpra_root_xauthority.py"
+            with path.open("rb") as source_stream:
+                fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o444)
+                try:
+                    while block := source_stream.read(131072):
+                        view = memoryview(block)
+                        while view:
+                            view = view[os.write(fd, view):]
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            os.chmod(root, 0o555, follow_symlinks=False)
+            row = _BuildInputTreeFile("xpra_root_xauthority.py", expected_sha, 59621, False)
+            manifest = hashlib.sha256(_canonical([{"path": row.path, "sha256": row.sha256,
+                "size_bytes": row.size_bytes, "executable": row.executable}])).hexdigest()
+            return root, (row,), manifest
+        except Exception:
+            self._remove_xpra_source_projection(root)
+            raise
 
     def _resolve_inputs(self, profile: Any, *, output_owner_gid: int, enrollment_id: str, operation_id: str,
                         selection_digest: str) -> ResolvedBuildInputs:
@@ -1591,17 +2012,40 @@ class RootBuildExecutionService:
         except Exception:
             self._remove_job_output_root(output, profile.output_owner_uid)
             raise
+        source_root = source.path
+        source_tree_files = tuple(source.tree_files)
+        source_tree_manifest_sha256 = source.tree_manifest_sha256
+        source_projection_root = None
+        original_source_manifest_sha256 = source.tree_manifest_sha256 or None
+        toolchain_root = toolchain.path
+        toolchain_tree_files = tuple(toolchain.tree_files)
+        toolchain_tree_manifest_sha256 = toolchain.tree_manifest_sha256
+        toolchain_projection_root = None
+        if profile.target_id == "xpra-root-xauthority-transform:start":
+            try:
+                source_projection_root, source_tree_files, source_tree_manifest_sha256 = (
+                    self._project_xpra_regular_source(source))
+                source_root = source_projection_root
+                toolchain_projection_root, toolchain_tree_files, toolchain_tree_manifest_sha256 = (
+                    self._project_xpra_toolchain(toolchain))
+                toolchain_root = toolchain_projection_root
+            except Exception:
+                self._remove_job_output_root(output, profile.output_owner_uid)
+                if source_projection_root is not None:
+                    self._remove_xpra_source_projection(source_projection_root)
+                raise
         return ResolvedBuildInputs(
             profile.target_id, profile.generation, profile.service_generation_digest,
             profile.build_service_enrollment_id, profile.build_service_generation,
             enrollment_id, operation_id, selection_digest,
-            source.artifact_id, source.sha256, source.path,
-            tuple(source.tree_files), source.tree_manifest_sha256,
-            toolchain.artifact_id, toolchain.sha256, toolchain.path,
-            tuple(toolchain.tree_files), toolchain.tree_manifest_sha256, builder.artifact_id,
+            source.artifact_id, source.sha256, source_root,
+            source_tree_files, source_tree_manifest_sha256,
+            toolchain.artifact_id, toolchain.sha256, toolchain_root,
+            toolchain_tree_files, toolchain_tree_manifest_sha256, builder.artifact_id,
             builder.sha256, builder.path, argv_recipe, dict(profile.environment),
             output_specs, output, output_root_id,
             profile.output_owner_uid, output_owner_gid, profile.max_lifetime_seconds,
+            original_source_manifest_sha256, source_projection_root, toolchain_projection_root,
         )
 
     @staticmethod

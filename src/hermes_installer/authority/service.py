@@ -251,6 +251,8 @@ class AuthorityService:
         self.native_invocation_registry = native_invocation_registry
         self.native_input_delivery_registry = None
         self.native_turn_observation_registry = None
+        self.private_input_consent_registry = None
+        self.memory_capture_consent_registry = None
         self.native_mcp_dispatcher = None
         self.selected_application_router = None
         self.memory_step_effect_authority = memory_step_effect_authority
@@ -312,6 +314,176 @@ class AuthorityService:
                 or not callable(revoke)):
             raise AuthorityDenied("source.capsule", "root source handle revocation is unavailable")
         return revoke(handle)
+
+    def authorize_completed_memory_turn(
+        self, record: Any, *, enrollment: Any, transcript_sha256: str,
+        background_consent_handle: str, owner_generation: int,
+    ) -> tuple[HostContext, BackgroundConsent]:
+        """Issue a fresh PRIVATE memory-capture context from one retained turn.
+
+        This is a root-only coordinator call. The native turn registry must
+        still retain the exact completion object; the service then verifies
+        the complete signed source-receipt closure and the separate durable
+        capture opt-in before issuing per-job consent.
+        """
+        from ..memory.enrollment import MemoryServiceEnrollment
+        from .native_turn_observation import RootCompletedNativeTurn
+        from .root_memory_capture_consent import RootMemoryCaptureConsent, RootMemoryCaptureConsentRegistry
+
+        turn_registry = self.native_turn_observation_registry
+        consent_registry = self.memory_capture_consent_registry
+        if (type(record) is not RootCompletedNativeTurn
+                or type(enrollment) is not MemoryServiceEnrollment
+                or type(consent_registry) is not RootMemoryCaptureConsentRegistry
+                or turn_registry is None
+                or type(owner_generation) is not int
+                or owner_generation < 1
+                or not isinstance(transcript_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha256)
+                or transcript_sha256 != record.transcript_sha256
+                or not isinstance(background_consent_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", background_consent_handle)):
+            raise AuthorityDenied("memory.turn", "completed-turn capture request is malformed")
+        resolve_turn = getattr(turn_registry, "resolve_completed_turn", None)
+        if (not callable(resolve_turn)
+                or resolve_turn(record.receipt_handle) is not record
+                or record.expires_monotonic <= self.monotonic()
+                or self.service_generation_digest is None
+                or record.service_generation_digest != self.service_generation_digest
+                or record.profile_id != enrollment.profile_id
+                or enrollment.principal_id == ""
+                or enrollment.service_enrollment_id == ""
+                or enrollment.memory_owner_generation != owner_generation
+                or record.process_generation != self.profile_generations.get(record.profile_id)):
+            raise AuthorityDenied("memory.turn", "completed turn or selected memory generation is stale")
+
+        matching_bindings = [binding for binding in self.bindings_by_uid.values()
+                             if binding.profile_id == enrollment.profile_id]
+        if (len(matching_bindings) != 1
+                or matching_bindings[0].principal_id != enrollment.principal_id
+                or matching_bindings[0].namespace_id != enrollment.namespace_identity):
+            raise AuthorityDenied("memory.turn", "selected memory profile has no exact active principal")
+        binding = matching_bindings[0]
+        if (self.memory_owner_state is None
+                or self.memory_owner_state(enrollment.profile_id)
+                != (enrollment.provider, owner_generation)):
+            raise AuthorityDenied("memory.turn", "selected memory owner epoch is no longer active")
+
+        source_receipts = self._resolve_completed_turn_source_closure(record, binding)
+        selected_resolver = getattr(consent_registry, "resolve_selected_memory_binding", None)
+        resolve_consent = getattr(consent_registry, "resolve_capture_consent", None)
+        if not callable(selected_resolver) or not callable(resolve_consent):
+            raise AuthorityDenied("memory.consent", "root capture opt-in resolver is unavailable")
+        selected_memory_binding = selected_resolver(enrollment.service_enrollment_id)
+        if selected_memory_binding is not enrollment:
+            raise AuthorityDenied("memory.consent", "capture opt-in selected another memory enrollment")
+        capture_consent = resolve_consent(
+            background_consent_handle,
+            completed_turn_receipt_handle=record.receipt_handle,
+            selected_memory_binding=selected_memory_binding,
+        )
+        memory_consent_claims = getattr(capture_consent, "claims", None)
+        if (type(capture_consent) is not RootMemoryCaptureConsent
+                or capture_consent.state != "enabled"
+                or capture_consent.profile_id != enrollment.profile_id
+                or capture_consent.principal_id != enrollment.principal_id
+                or capture_consent.namespace_id != enrollment.namespace_identity
+                or capture_consent.service_enrollment_id != enrollment.service_enrollment_id
+                or capture_consent.service_generation != enrollment.service_generation
+                or capture_consent.memory_owner_generation != owner_generation
+                or capture_consent.provider != enrollment.provider
+                or not capture_consent.route_ids
+                or not capture_consent.private_recipient_ids
+                or not set(capture_consent.route_ids).issubset(enrollment.fixed_route_map)
+                or capture_consent.policy_revision != self._policy_revision()
+                or capture_consent.revocation_epoch < 1
+                or not callable(memory_consent_claims)):
+            raise AuthorityDenied("memory.consent", "current capture opt-in does not match selected memory")
+        self._verify_signature(
+            {"domain": "root-memory-capture-consent-v1", **memory_consent_claims()},
+            capture_consent.signature,
+        )
+
+        if not source_receipts or any(
+                receipt.native_process_identity != source_receipts[0].native_process_identity
+                for receipt in source_receipts):
+            raise AuthorityDenied("memory.turn", "turn source closure has no single verified native identity")
+        if len(source_receipts) > 64:
+            raise AuthorityDenied("memory.turn", "verified turn closure exceeds the context receipt bound")
+        lease = min(30.0, record.expires_monotonic - self.monotonic())
+        if lease <= 0:
+            raise AuthorityDenied("memory.turn", "completed-turn capture lease expired")
+        context_wire = self._issue_context(binding.uid, {
+            "purpose": "memory-capture",
+            "intent": f"memory-capture:{enrollment.provider}:{record.turn_handle}",
+            "trace_id": record.turn_handle,
+            "lease_seconds": lease,
+            "source_contexts": [],
+            "source_receipts": [receipt.to_wire() for receipt in source_receipts],
+            "final_payload_digest": transcript_sha256,
+            "operation": "memory.capture",
+        }, inherited_process_identity=source_receipts[0].native_process_identity)
+        context = HostContext.from_wire(context_wire)
+        if context.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}:
+            raise AuthorityDenied("memory.turn", "memory capture context did not retain private sensitivity")
+        job_consent = self.create_background_consent(
+            context, provider_id=enrollment.provider, owner_generation=owner_generation,
+            ttl_seconds=max(1, min(300, int(lease))),
+        )
+        return context, job_consent
+
+    def _resolve_completed_turn_source_closure(
+        self, record: Any, binding: PrincipalBinding,
+    ) -> tuple[SourceReceipt, ...]:
+        """Resolve and authenticate every inner turn receipt plus ancestors."""
+        handles = tuple(dict.fromkeys((
+            record.input_receipt_handle, *record.request_receipt_handles,
+            *record.response_receipt_handles, *record.tool_result_receipt_handles,
+            *record.delegation_receipt_handles,
+        )))
+        if (not handles or len(handles) > 512
+                or any(not isinstance(handle, str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                       for handle in handles)):
+            raise AuthorityDenied("memory.turn", "completed turn has no bounded inner source closure")
+        with self._lock:
+            by_handle = self._source_receipt_handles
+            direct = []
+            for handle in handles:
+                receipt = by_handle.get(handle)
+                if receipt is None:
+                    raise AuthorityDenied("memory.turn", "completed turn source receipt is unavailable")
+                direct.append(receipt)
+            by_id: dict[str, tuple[str, SourceReceipt]] = {}
+            for handle, receipt in by_handle.items():
+                if receipt.receipt_id in by_id:
+                    raise AuthorityDenied("memory.turn", "root source receipt identifiers are ambiguous")
+                by_id[receipt.receipt_id] = (handle, receipt)
+            closure: dict[str, SourceReceipt] = {}
+            pending = list(direct)
+            while pending:
+                receipt = pending.pop()
+                if receipt.receipt_id in closure:
+                    continue
+                closure[receipt.receipt_id] = receipt
+                if len(closure) > 512:
+                    raise AuthorityDenied("memory.turn", "completed turn source closure exceeds its bound")
+                for parent_id in receipt.parent_receipt_ids:
+                    parent = by_id.get(parent_id)
+                    if parent is None:
+                        raise AuthorityDenied("memory.turn", "completed turn ancestor receipt is unavailable")
+                    pending.append(parent[1])
+        expected_digest = canonical_digest(sorted(closure))
+        if expected_digest != record.parent_closure_digest:
+            raise AuthorityDenied("memory.turn", "completed turn receipt closure digest changed")
+        result = tuple(closure[key] for key in sorted(closure))
+        for receipt in result:
+            self._verify_source_receipt(receipt, binding)
+            if (receipt.profile_id != record.profile_id
+                    or receipt.process_generation != record.process_generation
+                    or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}):
+                raise AuthorityDenied("memory.turn", "completed turn receipt is bound to another profile or generation")
+        return result
 
     def resolve_retained_source_receipt(
         self, handle: Any, *, payload_digest: str,
@@ -461,6 +633,26 @@ class AuthorityService:
                 or not callable(getattr(registry, "finish_selected_native_turn", None))):
             raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
         self.native_turn_observation_registry = registry
+
+    def attach_private_input_consent_registry(self, registry: Any) -> None:
+        """Attach the root-held private-egress consent registry exactly once."""
+        from .root_private_input_consent import RootPrivateInputConsentRegistry
+
+        if (self.private_input_consent_registry is not None
+                or type(registry) is not RootPrivateInputConsentRegistry
+                or registry.service is not self):
+            raise AuthorityDenied("consent.attach", "root private-input consent registry is invalid")
+        self.private_input_consent_registry = registry
+
+    def attach_memory_capture_consent_registry(self, registry: Any) -> None:
+        """Attach the separate persistent memory-capture opt-in registry."""
+        from .root_memory_capture_consent import RootMemoryCaptureConsentRegistry
+
+        if (self.memory_capture_consent_registry is not None
+                or type(registry) is not RootMemoryCaptureConsentRegistry
+                or registry.service is not self):
+            raise AuthorityDenied("consent.attach", "root memory-capture consent registry is invalid")
+        self.memory_capture_consent_registry = registry
 
     def root_display_receipt_signer(self) -> Any:
         """Return the in-process, domain-separated signer used by Xauthority receipts."""
@@ -1540,6 +1732,84 @@ class AuthorityService:
         return replace(receipt, signature=self._sign(receipt.claims()))
 
     def issue_observed_source(self, observation: Any) -> Any:
+        """Issue a source receipt for ordinary observed sources only.
+
+        Selected native input has a separate consent-bearing issuer below;
+        permitting it through this generic path would discard the recipient
+        ceiling derived from its selected profile choice.
+        """
+        if getattr(observation, "selected_execution", None) is not None:
+            raise AuthorityDenied("source.native_input", "selected input requires private-consent issuance")
+        return self._issue_observed_source(observation, selected_input_consent=None)
+
+    def issue_selected_input_source(self, observation: Any) -> Any:
+        """Mint selected native-input provenance with its private-route ceiling.
+
+        Consent is resolved from the root-derived selection handle and the
+        exact retained input proof. The generic source issuer cannot mint this
+        receipt, and no worker chooses recipients or increases the budget.
+        """
+        from .source_observers import VerifiedSourceObservation
+
+        registry = self.private_input_consent_registry
+        selected = getattr(observation, "selected_execution", None)
+        consent_handle = getattr(observation, "private_consent_selection_handle", None)
+        if (type(observation) is not VerifiedSourceObservation or selected is None
+                or observation.source_kind != "native-input"
+                or consent_handle is not None
+                and (not isinstance(consent_handle, str) or registry is None)):
+            raise AuthorityDenied("source.native_input", "selected input binding is unavailable")
+        if consent_handle is None:
+            if self.source_observer_registry is None:
+                raise AuthorityDenied("source.native_input", "root selected-input registry is unavailable")
+            return self._issue_observed_source(
+                observation, selected_input_consent=None, selected_input=True)
+        resolve = getattr(registry, "resolve_for_selected_input", None)
+        if not callable(resolve):
+            raise AuthorityDenied("source.native_input", "root private-input consent resolver is unavailable")
+        consent = resolve(consent_handle, observed_input_proof=observation,
+                          selected_input_binding=selected)
+        from .root_private_input_consent import RootPrivateInputConsent
+        if (type(consent) is not RootPrivateInputConsent
+                or consent.selection_handle != consent_handle
+                or consent.input_observation_handle != observation.proof_nonce
+                or consent.retained_input_selection_handle != selected.selection_handle
+                or consent.profile_id != observation.profile_id
+                or consent.principal_id != observation.principal_id
+                or consent.namespace_id != observation.namespace_id
+                or consent.profile_generation != observation.generation
+                or consent.service_generation_digest != self.service_generation_digest
+                or not set(consent.provider_route_ids).issubset(observation.private_provider_route_ids)
+                or not consent.private_recipient_ids
+                or consent.additional_metered_budget_usd != 0.0
+                or consent.policy_revision != self._policy_revision()
+                or consent.expires_monotonic <= self.monotonic()
+                or consent.issued_monotonic > self.monotonic()):
+            raise AuthorityDenied("source.native_input", "current private-input consent does not match selected input")
+        self._verify_signature({"domain": "root-private-input-consent-v1", **consent.claims()},
+                               consent.signature)
+        handle = self._issue_observed_source(
+            observation, selected_input_consent=consent, selected_input=True)
+        try:
+            from .source_observers import SourceReceiptHandle
+            if type(handle) is not SourceReceiptHandle:
+                raise AuthorityDenied("source.native_input", "private input issuer returned an invalid receipt handle")
+            retain = getattr(self.source_observer_registry, "retain_selected_input_consent", None)
+            if not callable(retain):
+                raise AuthorityDenied("source.native_input", "selected-input consent retention is unavailable")
+            retain(observation, selected, handle, consent)
+        except AuthorityDenied:
+            with self._lock:
+                self._source_receipt_handles.pop(str(handle), None)
+            raise
+        except Exception:
+            with self._lock:
+                self._source_receipt_handles.pop(str(handle), None)
+            raise AuthorityDenied("source.native_input", "selected-input consent association failed") from None
+        return handle
+
+    def _issue_observed_source(self, observation: Any, *, selected_input_consent: Any,
+                               selected_input: bool = False) -> Any:
         """Sign and retain one receipt from the root-only observer registry.
 
         This accepts the proof DTO produced after an enrolled source observer
@@ -1553,8 +1823,14 @@ class AuthorityService:
         if not isinstance(observation, VerifiedSourceObservation):
             raise AuthorityDenied("source.observation", "only a root observer proof can issue source evidence")
         registry = self.source_observer_registry
-        consume_proof = getattr(registry, "consume_observation_proof", None)
-        if not callable(consume_proof) or consume_proof(observation) is not True:
+        if selected_input:
+            consume_proof = getattr(registry, "consume_selected_input_observation", None)
+            proof_ok = (callable(consume_proof)
+                        and consume_proof(observation, observation.selected_execution) is True)
+        else:
+            consume_proof = getattr(registry, "consume_observation_proof", None)
+            proof_ok = callable(consume_proof) and consume_proof(observation) is True
+        if not proof_ok:
             raise AuthorityDenied("source.observation", "proof is not issued by the active root source registry")
         context = observation.parent_context
         now = self.monotonic()
@@ -1676,8 +1952,17 @@ class AuthorityService:
             origin_id=observation.origin_id,
             payload=observation.payload_bytes, ttl_seconds=ttl,
         )
+        recipient_ceiling = (frozenset() if selected_input_consent is None
+                             else frozenset(selected_input_consent.private_recipient_ids))
+        if selected_input_consent is not None:
+            parent_ceilings = [frozenset(item.recipient_ceiling) for item in observation.parent_receipts]
+            if parent_ceilings:
+                allowed = frozenset.intersection(*parent_ceilings)
+                if not recipient_ceiling.issubset(allowed):
+                    raise AuthorityDenied("source.ceiling", "private consent exceeds a verified parent recipient ceiling")
         receipt = replace(
-            receipt, parent_receipt_ids=tuple(sorted(parent_ids)), signature="pending",
+            receipt, parent_receipt_ids=tuple(sorted(parent_ids)),
+            recipient_ceiling=recipient_ceiling, signature="pending",
         )
         receipt = replace(receipt, signature=self._sign(receipt.claims()))
         handle = SourceReceiptHandle(secrets.token_urlsafe(32))

@@ -144,3 +144,14 @@ or timer claims cannot enter this path. A producer without a concrete native
 provenance verifier and the root registry's pre-event custody proof remains
 unavailable. HTTP and audio channel inputs use distinct v40 typed selection
 and observation proofs; they cannot reuse Telegram/Discord or webhook proof.
+
+The selected webhook adapter preserves the exact signed HTTP body separately
+from the parsed protocol fields. It checks the selected GitHub/registry event
+schema and root-selected repository scope before claiming a durable replay key
+bound to resource ID, resource generation, and delivery ID. The returned
+object is retained by identity and can be consumed once by its issuer-registered
+per-route producer while a matching live ingress-controller PIDFD proof is in
+force. The issuer, not this adapter, mints the v67 source proof and canonical
+event envelope. `accept_request` alone still does not create a source receipt,
+admit a job, or dispatch a task; production requires root composition to attach
+the selected bindings, issuer, custody registry, and durable replay store.
