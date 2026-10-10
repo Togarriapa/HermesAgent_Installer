@@ -456,6 +456,10 @@ class FixedServiceConnectorContracts(unittest.TestCase):
         authority = SetupProbeConnectorAuthority(
             resolve_binding=resolve, hi12=hi12, boot_epoch=lambda: "fixture-boot",
             advance_sequence=advance)
+        ledger_capability = SimpleNamespace(
+            gateway_identity_digest="f" * 64, native_enrollment_id="enrollment:fixture",
+            session_id="setup-probe:nonce-fixture", issued_monotonic=now - 0.01,
+            expires_monotonic=now + 4.0)
 
         self.http_response_mode = True
 
@@ -475,6 +479,7 @@ class FixedServiceConnectorContracts(unittest.TestCase):
             self.connector, catalog=Catalog(), process_manager=ProcessManager(),
             probe_authority=authority, resolve_probe_connector_binding=resolve,
             resolve_probe_asset_path=lambda binding, selected: path if selected == asset_id else (_ for _ in ()).throw(ValueError()),
+            verify_observer_capability=lambda cap: cap is ledger_capability,
         )
         denied_hi12, _denied_service = make_hi12(omit_open=True)
         denied_authority = SetupProbeConnectorAuthority(
@@ -484,8 +489,14 @@ class FixedServiceConnectorContracts(unittest.TestCase):
             self.connector, catalog=Catalog(), process_manager=ProcessManager(),
             probe_authority=denied_authority, resolve_probe_connector_binding=resolve,
             resolve_probe_asset_path=lambda binding, selected: path if selected == asset_id else (_ for _ in ()).throw(ValueError()),
+            verify_observer_capability=lambda cap: cap is ledger_capability,
         )
         try:
+            from hermes_installer.service_connector import RemoteProbeByteSnapshot
+            zero = backend.snapshot_remote_probe_bytes(ledger_capability)
+            self.assertEqual(zero, RemoteProbeByteSnapshot(0, 0, 0, 0))
+            with self.assertRaises(AuthorityDenied):
+                backend.snapshot_remote_probe_bytes(SimpleNamespace())
             with self.assertRaises(AuthorityDenied):
                 backend.read_asset(handle, "4" * 64, "GET", peer_uid=1234,
                                    peer_pid=os.getpid(), peer_pidfd=self.pidfd)
@@ -493,6 +504,8 @@ class FixedServiceConnectorContracts(unittest.TestCase):
             with self.assertRaises(AuthorityDenied):
                 denied_backend.read_asset(handle, asset_id, "GET", peer_uid=1234,
                                           peer_pid=os.getpid(), peer_pidfd=self.pidfd)
+            self.assertEqual(backend.snapshot_remote_probe_bytes(ledger_capability), zero,
+                             "asset and HI12 denials must leave root counters unchanged")
             self.assertFalse(self.received, "a denied HI12 open must not connect to the service socket")
             result = backend.read_asset(handle, asset_id, "GET", peer_uid=1234,
                                         peer_pid=os.getpid(), peer_pidfd=self.pidfd)
@@ -500,6 +513,11 @@ class FixedServiceConnectorContracts(unittest.TestCase):
             self.assertEqual(len(service._nonces), 4,
                              "open/write/read/close each spend a real AuthorityService HI12 nonce")
             self.assertTrue(bytes(self.received).startswith(b"GET /client/index.html HTTP/1.1\r\nHost: 127.0.0.1:"))
+            snapshot = backend.snapshot_remote_probe_bytes(ledger_capability)
+            self.assertEqual(snapshot.write_bytes, len(self.received))
+            self.assertGreaterEqual(snapshot.read_bytes, len(b"HTTP/1.1 200 OK"))
+            self.assertEqual(snapshot.open_effects, 1)
+            self.assertGreaterEqual(snapshot.frame_effects, 3)
             self.assertFalse(self.connector._streams)
         finally:
             self.http_response_mode = False

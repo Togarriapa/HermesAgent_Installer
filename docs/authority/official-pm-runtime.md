@@ -1,0 +1,9 @@
+# Official PM-managed Hermes Python runtime
+
+The first root installer stage selects only the official Hermes source commit `7085fbf7753266fc4943c55ac04926186bc90005`, its byte-identical `pm/lock.json`, and the platform-selected official PM `uv` and base Python artifacts. The base Python is a PM bootstrap only. The application interpreter is accepted only after pinned `python -m pm.cli install` commits its own dependency environment and `pm.environments.committed_venv(project_root)` selects that environment.
+
+`RootPMRuntimeProvisioner.provision_selected` accepts setup-scoped opaque receipts, never paths, URLs, package names, or command arguments. It refreshes the root session and prepared-generation joins, validates source and lock receipts against the catalog, fetches the fixed official toolchain roles, runs PM with a bounded private environment, and verifies the exact selected venv executable with a short managed process. Failure deletes the uncommitted runtime generation. It does not change a host Python and does not claim that package sync establishes native hardware or service health.
+
+`RootPMRuntimeReceiptRegistry` atomically publishes a mode-0600, path-free receipt. It binds source/lock/tool pins, PM outcome, selected feature list, runtime closure-relative location, executable digest/device/inode/owner/mode, and observed CPython version/cache tag/SOABI/machine. Root native materialization receives only the opaque runtime handle. Immediately before use, the resolver checks the setup transaction and generation guard, re-observes the executable, and returns its private `Path`; no caller-supplied interpreter path or host fallback is supported.
+
+The repository checkout’s Linux ARM64/glibc catalog pins are not qualification of other platforms. The development macOS checkout cannot run the privileged first-install workflow; tests use isolated temporary receipt roots and substitution/current-generation failure cases.

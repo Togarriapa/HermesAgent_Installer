@@ -56,6 +56,26 @@ class ProviderResponseMetadata:
 
     producer_context_handle: str
     tool_call_bindings: tuple[Any, ...]
+    # Provider tool dispatch is not itself a completed native conversation
+    # turn. Keep the turn join explicit and absent until that observer exists.
+    turn_handle: str | None = None
+    final_response_delivery_handle: str | None = None
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "producer_context_handle": self.producer_context_handle,
+            "tool_call_bindings": [
+                {
+                    "observed_call_handle": item.observed_call_handle,
+                    "provider_tool_call_id": item.provider_tool_call_id,
+                    "tool_name": item.tool_name,
+                    "arguments_sha256": item.arguments_sha256,
+                }
+                for item in self.tool_call_bindings
+            ],
+            "turn_handle": self.turn_handle,
+            "final_response_delivery_handle": self.final_response_delivery_handle,
+        }
 
 
 @dataclass(frozen=True, slots=True)

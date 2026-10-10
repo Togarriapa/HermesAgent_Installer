@@ -17,8 +17,13 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
+import time
 from collections.abc import Mapping
 from typing import Any, Protocol
+
+from .composio_catalog_transport import (
+    COMPOSIO_CATALOG_POLICY_ID, COMPOSIO_CATALOG_POLICY_SHA256,
+)
 
 
 class ComposioTriggerSetupUnavailable(RuntimeError):
@@ -28,11 +33,13 @@ class ComposioTriggerSetupUnavailable(RuntimeError):
 _API_ROOT = "/api/v3.1/triggers_types"
 _VERSION = re.compile(r"[0-9]{8}_[0-9]{2}\Z")
 _SLUG = re.compile(r"[A-Z][A-Z0-9_]{0,127}\Z")
-_REF = re.compile(r"vault://[A-Za-z0-9][A-Za-z0-9_./:-]{2,255}\Z")
-_MAX_PAGES = 20
+_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\Z")
+_MAX_PAGES = 10
 _MAX_ROWS = 500
+_MAX_PAGE_SIZE = 50
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _MAX_SCHEMA_BYTES = 256 * 1024
+_MAX_DEADLINE_SECONDS = 30.0
 
 
 class RootComposioGet(Protocol):
@@ -65,12 +72,17 @@ class ComposioTriggerCatalogReceipt:
     selected_slug: str
     schema_sha256: str
     catalog_sha256: str
+    source_exchange_receipt_handles: tuple[str, ...] = ()
+    request_policy_artifact_id: str = COMPOSIO_CATALOG_POLICY_ID
+    request_policy_sha256: str = COMPOSIO_CATALOG_POLICY_SHA256
     source: str = "composio-v3.1-authenticated-trigger-catalog"
     status: str = "discovered-not-configured"
 
 
 def _json_bytes(value: object, *, maximum: int) -> bytes:
     try:
+        if isinstance(value, Mapping):
+            value = dict(value)
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
                               ensure_ascii=False, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError, RecursionError):
@@ -82,6 +94,18 @@ def _json_bytes(value: object, *, maximum: int) -> bytes:
 
 def _sha(value: object, *, maximum: int = _MAX_SCHEMA_BYTES) -> str:
     return hashlib.sha256(_json_bytes(value, maximum=maximum)).hexdigest()
+
+
+def _schema_sha(value: object) -> str:
+    """Match the root reader's canonical normalized-row digest exactly."""
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False).encode("ascii")
+    except (TypeError, ValueError, RecursionError):
+        raise ComposioTriggerSetupUnavailable("Composio trigger schema is not finite canonical JSON") from None
+    if len(encoded) > _MAX_SCHEMA_BYTES:
+        raise ComposioTriggerSetupUnavailable("Composio trigger schema exceeds the 256 KiB bound")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _required_text(value: object, pattern: re.Pattern[str], what: str) -> str:
@@ -115,15 +139,17 @@ def _parse_trigger(row: object, *, toolkit_version: str) -> ComposioTriggerType:
         raise ComposioTriggerSetupUnavailable("Composio trigger instructions are invalid")
     schema_projection = {
         "slug": slug, "name": name, "description": description,
-        "instructions": instructions,
         "type": trigger_type, "toolkit": {"slug": "whatsapp", "version": version},
         "config": config, "payload": payload,
-        "requires_webhook_endpoint_setup": row.get("requires_webhook_endpoint_setup"),
     }
-    digest = _sha(schema_projection)
+    if "instructions" in row:
+        schema_projection["instructions"] = instructions
     requires_webhook = row.get("requires_webhook_endpoint_setup")
     if requires_webhook is not None and type(requires_webhook) is not bool:
         raise ComposioTriggerSetupUnavailable("Composio webhook requirement field is invalid")
+    if "requires_webhook_endpoint_setup" in row:
+        schema_projection["requires_webhook_endpoint_setup"] = requires_webhook
+    digest = _schema_sha(schema_projection)
     return ComposioTriggerType(slug, name, description, trigger_type, "whatsapp", version,
                                dict(config), dict(payload), requires_webhook, digest)
 
@@ -132,19 +158,56 @@ class ComposioWhatsAppTriggerDiscovery:
     """Discover and re-fetch one user-selected trigger from the exact manifest pin."""
 
     def __init__(self, broker: RootComposioGet, *, credential_reference_id: str,
-                 toolkit_version: str):
+                 toolkit_version: str, monotonic: Any = time.monotonic):
         if not callable(getattr(broker, "get_json", None)):
             raise ValueError("root fixed-origin Composio GET broker is required")
         if not isinstance(credential_reference_id, str) or not _REF.fullmatch(credential_reference_id):
             raise ValueError("protected Composio project credential reference is required")
         if not isinstance(toolkit_version, str) or not _VERSION.fullmatch(toolkit_version):
             raise ValueError("exact pinned Composio WhatsApp toolkit version is required")
+        if not callable(monotonic):
+            raise ValueError("monotonic deadline source is required")
         self._broker = broker
         self._credential_reference_id = credential_reference_id
         self._toolkit_version = toolkit_version
+        self._monotonic = monotonic
+        self._source_receipts: list[str] = []
+        self._catalog_rows: tuple[ComposioTriggerType, ...] | None = None
+
+    def _get_json(self, *, path: str, query: Mapping[str, Any], deadline: float) -> Mapping[str, Any]:
+        remaining = deadline - self._monotonic()
+        if remaining <= 0:
+            raise ComposioTriggerSetupUnavailable("Composio trigger discovery exceeded its 30-second deadline")
+        try:
+            result = self._broker.get_json(
+                path=path, query=query,
+                credential_reference_id=self._credential_reference_id,
+                usage="composio-trigger-discovery",
+                max_response_bytes=_MAX_RESPONSE_BYTES,
+                timeout_seconds=min(_MAX_DEADLINE_SECONDS, remaining))
+            exchange_handle = getattr(result, "exchange_receipt_handle", None)
+            if exchange_handle is not None:
+                if (not isinstance(exchange_handle, str) or not exchange_handle
+                        or exchange_handle in self._source_receipts):
+                    raise ComposioTriggerSetupUnavailable(
+                        "root Composio exchange receipt handle is invalid or replayed")
+                self._source_receipts.append(exchange_handle)
+            return result
+        except ComposioTriggerSetupUnavailable:
+            raise
+        except Exception:
+            raise ComposioTriggerSetupUnavailable(
+                "authenticated Composio trigger discovery failed; account remains unconfigured") from None
 
     def discover(self) -> tuple[ComposioTriggerType, ...]:
         """Read all pages at the exact toolkit version, without guessing a slug."""
+        if self._catalog_rows is not None:
+            return self._catalog_rows
+        self._source_receipts = []
+        self._catalog_rows = self._discover(deadline=self._monotonic() + _MAX_DEADLINE_SECONDS)
+        return self._catalog_rows
+
+    def _discover(self, *, deadline: float) -> tuple[ComposioTriggerType, ...]:
         cursor: str | None = None
         rows: list[ComposioTriggerType] = []
         seen_cursors: set[str] = set()
@@ -152,22 +215,14 @@ class ComposioWhatsAppTriggerDiscovery:
             query: dict[str, Any] = {
                 "toolkit_slugs": ["whatsapp"],
                 "toolkit_versions": {"whatsapp": self._toolkit_version},
-                "limit": 50,
+                "limit": _MAX_PAGE_SIZE,
             }
             if cursor is not None:
                 query["cursor"] = cursor
-            try:
-                page = self._broker.get_json(
-                    path=_API_ROOT, query=query,
-                    credential_reference_id=self._credential_reference_id,
-                    usage="composio-trigger-discovery",
-                    max_response_bytes=_MAX_RESPONSE_BYTES, timeout_seconds=10.0)
-            except Exception:
-                raise ComposioTriggerSetupUnavailable(
-                    "authenticated Composio trigger discovery failed; account remains unconfigured") from None
+            page = self._get_json(path=_API_ROOT, query=query, deadline=deadline)
             _json_bytes(page, maximum=_MAX_RESPONSE_BYTES)
             items = page.get("items") if isinstance(page, Mapping) else None
-            if not isinstance(items, list) or len(items) > 50:
+            if not isinstance(items, list) or len(items) > _MAX_PAGE_SIZE:
                 raise ComposioTriggerSetupUnavailable("Composio trigger catalog page is malformed")
             for item in items:
                 parsed = _parse_trigger(item, toolkit_version=self._toolkit_version)
@@ -191,27 +246,31 @@ class ComposioWhatsAppTriggerDiscovery:
         return tuple(rows)
 
     def select(self, selected_slug: str) -> tuple[ComposioTriggerType, ComposioTriggerCatalogReceipt]:
-        """Confirm a displayed catalog choice against a fresh exact-version GET."""
+        """Confirm a displayed catalog choice against a fresh exact-version detail GET."""
         selected_slug = _required_text(selected_slug, _SLUG, "selected trigger slug")
-        catalog = self.discover()
+        deadline = self._monotonic() + _MAX_DEADLINE_SECONDS
+        if self._catalog_rows is None:
+            self._source_receipts = []
+            self._catalog_rows = self._discover(deadline=deadline)
+        catalog = self._catalog_rows
         selected = next((item for item in catalog if item.slug == selected_slug), None)
         if selected is None:
             raise ComposioTriggerSetupUnavailable("selected trigger is not in the pinned WhatsApp catalog")
-        try:
-            raw = self._broker.get_json(
-                path=f"{_API_ROOT}/{selected_slug}",
-                query={"toolkit_versions": {"whatsapp": self._toolkit_version}},
-                credential_reference_id=self._credential_reference_id,
-                usage="composio-trigger-discovery",
-                max_response_bytes=_MAX_RESPONSE_BYTES, timeout_seconds=10.0)
-        except Exception:
-            raise ComposioTriggerSetupUnavailable("selected Composio trigger schema could not be revalidated") from None
+        raw = self._get_json(
+            path=f"{_API_ROOT}/{selected_slug}",
+            query={"toolkit_versions": {"whatsapp": self._toolkit_version}},
+            deadline=deadline)
         _json_bytes(raw, maximum=_MAX_RESPONSE_BYTES)
         confirmed = _parse_trigger(raw, toolkit_version=self._toolkit_version)
         if confirmed.slug != selected.slug or confirmed.schema_sha256 != selected.schema_sha256:
             raise ComposioTriggerSetupUnavailable("Composio trigger schema changed during setup; rediscover")
-        catalog_digest = _sha([(item.slug, item.schema_sha256) for item in catalog], maximum=_MAX_RESPONSE_BYTES)
+        exchange_handles = tuple(self._source_receipts)
+        catalog_digest = _sha({
+            "rows": [(item.slug, item.schema_sha256) for item in catalog],
+            "source_exchange_receipt_handles": exchange_handles,
+        }, maximum=_MAX_RESPONSE_BYTES)
         receipt = ComposioTriggerCatalogReceipt(
             toolkit_version=self._toolkit_version, selected_slug=selected.slug,
-            schema_sha256=selected.schema_sha256, catalog_sha256=catalog_digest)
+            schema_sha256=selected.schema_sha256, catalog_sha256=catalog_digest,
+            source_exchange_receipt_handles=exchange_handles)
         return confirmed, receipt

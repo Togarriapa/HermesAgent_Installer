@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 import time
+import hashlib
+import json
 from dataclasses import dataclass
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
@@ -41,12 +43,18 @@ class _RegistrationContext:
 
     def register_tool(self, name, toolset, schema, handler, **_kwargs):
         self.tools[name] = (toolset, schema, handler)
+        return True
 
 
 class _SelectedAdapter:
     def register(self, context, runtime_context):
-        context.register_tool("selected_tool", "selected", {"type": "object"},
-                              lambda: runtime_context.plugin_effects.invoke())
+        context.register_tool(
+            "selected_tool", "hermes-installer",
+            {"name": "selected_tool", "description": "Selected tool",
+             "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+            lambda: runtime_context.plugin_effects.invoke(),
+            description="Selected tool",
+        )
 
 
 class _PluginManagerFixture:
@@ -107,24 +115,76 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
 
     def test_pinned_manager_registers_only_selected_adapter_and_trusted_context(self):
         from hermes_installer.native_plugin_loader import (
-            SelectedNativeAdapter, SelectedNativePackage, predeclare_selected_native_package,
+            SelectedNativeAdapter, SelectedNativePackage, _canonical,
+            _parse_native_candidate_index, predeclare_selected_native_package,
         )
         from hermes_installer.registry.resources_runtime import (
             NativePluginRuntimeContext, ResourceIdentity,
         )
 
         digest = "a" * 64
+        argument_schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        result_schema = {"type": "object", "additionalProperties": True}
+        canonical_schema = json.dumps(
+            argument_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        effect = SimpleNamespace(adapter_id="adapter-a", action_id="action-a")
+        selection = SimpleNamespace(
+            package_id="package-a", profile_id="profile-a", generation="generation-a",
+            compiled_closure_sha256=digest, resolver_digest="b" * 64,
+            adapter_rows=(effect,), _require_live=lambda: None,
+            manifest_digest_for_adapter=lambda _adapter_id: digest,
+            resolve=lambda adapter_id, action_id: effect
+            if (adapter_id, action_id) == ("adapter-a", "action-a") else None,
+        )
+        registration_id = "adapter-a:tool:selected_tool"
+        registration = {
+            "registration_id": registration_id,
+            "native_tool_name": "selected_tool", "native_server_name": "hermes-installer",
+            "toolset": "hermes-installer", "family": "adapter-a", "adapter_id": "adapter-a",
+            "argument_schema": argument_schema, "result_schema": result_schema,
+            "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
+            "registration_source_artifact_id": "artifact-adapter-a-source",
+            "registration_source_sha256": digest,
+            "registration_source_receipt_handle": "r" * 40,
+            "handler_kind": "effect-action", "handler_id": "handler-selected-tool",
+            "selector_fields": [],
+            "action_bindings": [{
+                "selector_values": {}, "action_id": "action-a",
+                "argument_projection": [], "workflow_id": None,
+            }],
+            "observer_enrollment_ids": ["observer-a"],
+        }
+        registrations = [registration]
+        index = {
+            "schema": 1, "package_id": "package-a", "profile_id": "profile-a",
+            "generation": "generation-a", "resolver_sha256": "b" * 64,
+            "candidates": [{
+                "native_tool_name": "selected_tool", "adapter_id": "adapter-a",
+                "action_id": "action-a", "argument_schema": argument_schema,
+                "result_schema": result_schema,
+                "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
+                "observer_enrollment_ids": ["observer-a"],
+                "native_server_name": "hermes-installer", "description": "Selected tool",
+                "registration_id": registration_id, "toolset": "hermes-installer",
+                "family": "adapter-a", "handler_kind": "effect-action",
+            }],
+            "registration_projection_sha256": hashlib.sha256(_canonical(registrations)).hexdigest(),
+            "registrations": registrations,
+        }
+        candidate_rows = _parse_native_candidate_index(
+            _canonical(index), selected=selection,
+            manifest=MappingProxyType({
+                "adapters": [{"adapter_id": "adapter-a", "action_ids": ["action-a"]}],
+                "closure_files": [{"sha256": digest}],
+            }),
+        )
         module = ModuleType("fixture_selected_adapter")
         adapter = _SelectedAdapter()
         selected = SelectedNativeAdapter("adapter-a", module, "register", ("selected_tool",),
                                          digest, adapter.register)
-        selection = SimpleNamespace(
-            package_id="package-a", profile_id="profile-a", generation="generation-a",
-            compiled_closure_sha256=digest, _require_live=lambda: None,
-            manifest_digest_for_adapter=lambda _adapter_id: digest,
-        )
         package = SelectedNativePackage(selection, __import__("pathlib").Path("/fixture"),
-                                        digest, {"adapter-a": selected})
+                                        digest, {"adapter-a": selected}, candidate_rows=candidate_rows)
         effects = SimpleNamespace(invoke=lambda: "root-brokered")
         base_context = NativePluginRuntimeContext(
             identity=ResourceIdentity("adapter-a", "plugins", "1", "selected", "rev", digest),
