@@ -218,3 +218,6 @@ Root process proof joins236b: plans/amendments/2026-10-10-root-service-process-p
 
 Cold root process custody236b: plans/amendments/2026-10-10-root-service-process-cold-source-custody-v236b.md and planning/root-service-process-cold-source-custody-v236b.json; source verification before strict parser, genuine dormant runtime revalidation before effects. HI-T236.1/.2/VD-T236.3 and all AC OPEN.
 v237: `plans/amendments/2026-10-10-preactive-native-build-manager-composition-v237.md` / `planning/preactive-native-build-manager-composition-v237.json`; RT-T237.1/.2 and VD-T237.3 OPEN. Genuine preactive native manager chain breaks active-profile cycle; exact root controller sequence and owned partial-creation clarification; no pins/all AC OPEN.
+
+
+v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `planning/xpra-native-source-policy-v238.json`; RT-T238.1/.2 and VD-T238.3 OPEN. Concrete399DEB/8Python bounded signed-source policy+keyring tuples, exact dependency/license edges; acquisition only/no native runtime/Pi acceptance.
