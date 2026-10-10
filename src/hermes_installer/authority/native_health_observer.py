@@ -1896,7 +1896,7 @@ class RootNativeHealthObserver:
         self._observations: dict[str, _HealthObservation] = {}
         self._receipts: dict[str, RootNativeHealthReceipt] = {}
         self._receipt_runs: dict[str, tuple[RootSelectedNativeHealthRun,
-                                            Mapping[str, RootNativeHealthEvent], str, str]] = {}
+                                            Mapping[str, RootNativeHealthEvent], str, str, Any]] = {}
         self._consumed: set[str] = set()
         self._consumption_tickets: dict[str, _RootHealthConsumptionTicket] = {}
         self._consumption_seal = object()
@@ -2271,6 +2271,7 @@ class RootNativeHealthObserver:
                 run, MappingProxyType({event.event_id: event for event in ordered_events}),
                 health_observation_handle,
                 proof_digest,
+                observation.completed_terminal_proof,
             )
         return receipt
 
@@ -2280,13 +2281,14 @@ class RootNativeHealthObserver:
             ) -> tuple[RootNativeHealthReceipt, RootSelectedNativeHealthRun,
                        Mapping[str, RootNativeHealthEvent], str]:
         """Resolve the observer-issued receipt and its exact retained run/events."""
+        from hermes_installer.managed_process_custodian import RootCompletedSelectedHealthTerminalProof
         with self._lock:
             receipt = self._receipts.get(health_receipt_handle)
             retained = self._receipt_runs.get(health_receipt_handle)
             if (receipt is None or retained is None or health_receipt_handle in self._consumed
                     or self.monotonic() >= receipt.expires_monotonic):
                 raise AuthorityDenied("native.health.receipt", "daemon health receipt is absent, expired, or consumed")
-            run, events, _observation_handle, proof_digest = retained
+            run, events, observation_handle, proof_digest, terminal_proof = retained
             if (type(proof) is not RootDaemonCommittedHealthProof
                     or type(admission) is not RootNativeHealthStartAdmission
                     or admission.authority_branch != "daemon-committed"
@@ -2315,9 +2317,24 @@ class RootNativeHealthObserver:
                     or run.provider_required != admission._source_material.health_provider_required
                     or any(type(event) is not RootNativeHealthEvent for event in events.values())):
                 raise AuthorityDenied("native.health.receipt_binding", "passed receipt differs from the exact daemon admission/run")
-            if (any(event.expires_monotonic <= self.monotonic()
-                           or self.event_resolver(_observation_handle, event.event_id) is not event
-                           for event in events.values())):
+            try:
+                if (type(terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                        or self.terminal_proof_resolver is None
+                        or self.terminal_proof_resolver(
+                            terminal_proof.control_handle,
+                            terminal_proof.terminal_receipt.terminal_receipt_handle,
+                        ) is not terminal_proof
+                        or terminal_proof.is_current() is not True):
+                    raise AuthorityDenied(
+                        "native.health.current", "completed manager terminal proof is no longer current")
+                event_resolver = self.completed_event_resolver
+                if event_resolver is None or any(
+                        event.expires_monotonic <= self.monotonic()
+                        or event_resolver(observation_handle, event.event_id, terminal_proof) is not event
+                        for event in events.values()):
+                    raise AuthorityDenied(
+                        "native.health.current", "retained native event ancestry is no longer current")
+            except Exception:
                 raise AuthorityDenied("native.health.current", "retained native event ancestry is no longer current")
             return receipt, run, events, proof_digest
 
