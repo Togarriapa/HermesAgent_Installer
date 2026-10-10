@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import stat
 import time
@@ -554,6 +555,296 @@ class _ProfileBoundOverlay:
 
     def delete(self, record_id: str, *, expected_revision: str) -> str:
         return self.store.delete(self.profile_id, record_id, expected_revision=expected_revision)
+
+
+class RootAnchoredProfileOverlayView:
+    """CAS view whose every overlay filesystem operation stays under a held root FD.
+
+    This is reserved for the root-owned native profile overlay custody path. The
+    ordinary ``ResourceOverlayStore`` remains pathname based for its existing
+    installer-owned roots. A live root resolver must still revalidate the
+    selected path/inodes before each effect; this class prevents an intervening
+    ancestor rename or symlink from redirecting that effect elsewhere.
+    """
+
+    _PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    _RECORD = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
+    _MAX_VALUE = 1_048_576
+    _DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+
+    def __init__(self, view_root_fd: int, profile_id: str, journal: Any):
+        if (os.geteuid() != 0 or type(view_root_fd) is not int or view_root_fd < 0
+                or not self._PROFILE.fullmatch(profile_id)):
+            raise ResourceRuntimeError("root-anchored overlay view selection is invalid")
+        info = os.fstat(view_root_fd)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise ResourceRuntimeError("root-anchored overlay descriptor has unsafe custody")
+        marker_fd = os.open(".hermes-installer-owned", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=view_root_fd)
+        try:
+            marker_info = os.fstat(marker_fd)
+            marker = os.read(marker_fd, 64)
+        finally:
+            os.close(marker_fd)
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
+                or stat.S_IMODE(marker_info.st_mode) != 0o600 or marker != b"schema=1\n"):
+            raise ResourceRuntimeError("root-anchored overlay marker is invalid")
+        self._view_root_fd = view_root_fd
+        self.profile_id = profile_id
+        self.journal = journal
+
+    @classmethod
+    def _parts(cls, profile_id: str, record_id: str) -> tuple[str, ...]:
+        if not cls._PROFILE.fullmatch(profile_id) or not cls._RECORD.fullmatch(record_id):
+            raise ResourceRuntimeError("overlay profile or record identity is invalid")
+        return "resource-overlays", profile_id, record_id
+
+    @staticmethod
+    def _check_directory(fd: int) -> None:
+        info = os.fstat(fd)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise ResourceRuntimeError("root-anchored overlay directory has unsafe custody")
+
+    def _open_dir(self, parts: tuple[str, ...], *, create: bool = False) -> int:
+        current = os.dup(self._view_root_fd)
+        try:
+            for part in parts:
+                if create:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=current)
+                        os.fsync(current)
+                    except FileExistsError:
+                        pass
+                child = os.open(part, self._DIR_FLAGS, dir_fd=current)
+                try:
+                    self._check_directory(child)
+                except Exception:
+                    os.close(child)
+                    raise
+                os.close(current)
+                current = child
+            result = current
+            current = -1
+            return result
+        except OSError:
+            raise ResourceRuntimeError("root-anchored overlay directory cannot be opened safely") from None
+        finally:
+            if current >= 0:
+                os.close(current)
+
+    def _read_json(self, directories: tuple[str, ...], name: str) -> dict[str, Any] | None:
+        try:
+            parent = self._open_dir(directories)
+        except ResourceRuntimeError:
+            # Missing descendants are normal for a read; any other unsafe
+            # condition remains a denial.
+            probe = os.dup(self._view_root_fd)
+            try:
+                for part in directories:
+                    try:
+                        child = os.open(part, self._DIR_FLAGS, dir_fd=probe)
+                    except FileNotFoundError:
+                        return None
+                    os.close(probe)
+                    probe = child
+                self._check_directory(probe)
+            except OSError:
+                raise ResourceRuntimeError("root-anchored overlay directory cannot be opened safely") from None
+            finally:
+                os.close(probe)
+            raise
+        try:
+            try:
+                descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), dir_fd=parent)
+            except FileNotFoundError:
+                return None
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077
+                    or info.st_size > self._MAX_VALUE + 4096):
+                os.close(descriptor)
+                raise ResourceRuntimeError("overlay revision file has unsafe ownership or mode")
+            try:
+                payload = bytearray()
+                while len(payload) <= self._MAX_VALUE + 4096:
+                    chunk = os.read(descriptor, min(65536, self._MAX_VALUE + 4097 - len(payload)))
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+            finally:
+                os.close(descriptor)
+            value = json.loads(payload)
+            if not isinstance(value, dict):
+                raise ValueError
+            return value
+        except ResourceRuntimeError:
+            raise
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            raise ResourceRuntimeError("root-anchored overlay revision file is invalid") from None
+        finally:
+            os.close(parent)
+
+    def _write_json(self, directories: tuple[str, ...], name: str, value: Mapping[str, Any]) -> None:
+        parent = self._open_dir(directories, create=True)
+        temp = f".{name}.{secrets.token_hex(8)}.tmp"
+        descriptor = -1
+        try:
+            descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=parent)
+            data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.fchmod(descriptor, 0o600)
+            os.replace(temp, name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        except OSError:
+            raise ResourceRuntimeError("root-anchored overlay revision write failed") from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temp, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+            os.close(parent)
+
+    def _current(self, record_id: str) -> OverlayValue | None:
+        base = self._parts(self.profile_id, record_id)
+        pointer = self._read_json(base, "current.json")
+        if pointer is None:
+            return None
+        revision = pointer.get("revision")
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+            raise ResourceRuntimeError("overlay current pointer is malformed")
+        value = self._read_json(base + ("revisions",), f"{revision}.json")
+        if (value is None or value.get("profile_id") != self.profile_id or value.get("record_id") != record_id
+                or value.get("revision") != revision or type(value.get("deleted")) is not bool):
+            raise ResourceRuntimeError("overlay current revision is missing or mismatched")
+        try:
+            import base64
+            content = base64.b64decode(value.get("value", ""), validate=True)
+        except Exception:
+            raise ResourceRuntimeError("overlay current revision content is malformed") from None
+        if len(content) > self._MAX_VALUE or hashlib.sha256(content + bytes([value["deleted"]])).hexdigest() != revision:
+            raise ResourceRuntimeError("overlay current revision digest does not match")
+        return OverlayValue(self.profile_id, record_id, revision, content, value["deleted"])
+
+    def read(self, record_id: str) -> OverlayValue | None:
+        self._parts(self.profile_id, record_id)
+        value = self._current(record_id)
+        return None if value is None or value.deleted else value
+
+    def _lock(self) -> int:
+        descriptor = os.open("resource-overlays.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=self._view_root_fd)
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077):
+            os.close(descriptor)
+            raise ResourceRuntimeError("root-anchored overlay lock has unsafe custody")
+        import fcntl
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError:
+            os.close(descriptor)
+            raise ResourceRuntimeError("root-anchored overlay lock failed") from None
+        return descriptor
+
+    @staticmethod
+    def _unlock(descriptor: int) -> None:
+        import fcntl
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+    def _write_revision(self, record_id: str, revision: str, value: Mapping[str, Any]) -> None:
+        base = self._parts(self.profile_id, record_id)
+        relative = base + ("revisions",)
+        existing = self._read_json(relative, f"{revision}.json")
+        if existing is not None:
+            if existing != dict(value):
+                raise ResourceRuntimeError("overlay revision is immutable and its stored content conflicts")
+            return
+        self._write_json(relative, f"{revision}.json", value)
+
+    def write(self, record_id: str, value: bytes, *, expected_revision: str | None) -> str:
+        self._parts(self.profile_id, record_id)
+        key = f"resource-overlay:{self.profile_id}:{record_id}"
+        if not isinstance(value, bytes) or len(value) > self._MAX_VALUE:
+            raise ResourceRuntimeError("overlay value must be bytes no larger than one MiB")
+        lock = self._lock()
+        try:
+            current = self._current(record_id)
+            if (current.revision if current is not None else None) != expected_revision:
+                raise ResourceRuntimeError("overlay compare-and-swap revision does not match")
+            revision = hashlib.sha256(value + b"\0").hexdigest()
+            import base64
+            self.journal.checkpoint(key, "overlay_write_prepared", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            self._write_revision(record_id, revision, {"profile_id": self.profile_id, "record_id": record_id, "revision": revision, "deleted": False, "value": base64.b64encode(value).decode("ascii")})
+            self._write_json(self._parts(self.profile_id, record_id), "current.json", {"revision": revision})
+            self.journal.checkpoint(key, "overlay_revision_written", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            return revision
+        finally:
+            self._unlock(lock)
+
+    def history(self, record_id: str) -> tuple[str, ...]:
+        base = self._parts(self.profile_id, record_id) + ("revisions",)
+        try:
+            directory = self._open_dir(base)
+        except ResourceRuntimeError:
+            probe = os.dup(self._view_root_fd)
+            try:
+                for part in base:
+                    try:
+                        child = os.open(part, self._DIR_FLAGS, dir_fd=probe)
+                    except FileNotFoundError:
+                        return ()
+                    os.close(probe)
+                    probe = child
+                self._check_directory(probe)
+            except OSError:
+                raise ResourceRuntimeError("root-anchored overlay history directory is unsafe") from None
+            finally:
+                os.close(probe)
+            raise
+        try:
+            names = os.listdir(directory)
+        finally:
+            os.close(directory)
+        revisions = []
+        for name in names:
+            if not re.fullmatch(r"[0-9a-f]{64}\.json", name):
+                raise ResourceRuntimeError("overlay revision directory contains an unexpected entry")
+            revision = name[:-5]
+            value = self._read_json(base, name)
+            if (value is None or value.get("profile_id") != self.profile_id or value.get("record_id") != record_id
+                    or value.get("revision") != revision or type(value.get("deleted")) is not bool):
+                raise ResourceRuntimeError("overlay history contains a mismatched revision")
+            import base64
+            try:
+                content = base64.b64decode(value.get("value", ""), validate=True)
+            except Exception:
+                raise ResourceRuntimeError("overlay history contains malformed content") from None
+            if len(content) > self._MAX_VALUE or hashlib.sha256(content + bytes([value["deleted"]])).hexdigest() != revision:
+                raise ResourceRuntimeError("overlay history content digest does not match")
+            revisions.append(revision)
+        return tuple(sorted(revisions))
+
+    def delete(self, record_id: str, *, expected_revision: str) -> str:
+        self._parts(self.profile_id, record_id)
+        key = f"resource-overlay:{self.profile_id}:{record_id}"
+        lock = self._lock()
+        try:
+            current = self._current(record_id)
+            if current is None or current.deleted or current.revision != expected_revision:
+                raise ResourceRuntimeError("overlay compare-and-swap revision does not match")
+            revision = hashlib.sha256(current.value + b"\1").hexdigest()
+            import base64
+            self.journal.checkpoint(key, "overlay_delete_prepared", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            self._write_revision(record_id, revision, {"profile_id": self.profile_id, "record_id": record_id, "revision": revision, "deleted": True, "value": base64.b64encode(current.value).decode("ascii")})
+            self._write_json(self._parts(self.profile_id, record_id), "current.json", {"revision": revision})
+            self.journal.checkpoint(key, "overlay_tombstoned", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            return revision
+        finally:
+            self._unlock(lock)
 
 
 def create_native_plugin_handler(adapter_id: str,
