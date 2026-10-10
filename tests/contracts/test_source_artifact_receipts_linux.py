@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec, TreeFile
+from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec, TreeFile, load_protected_catalog
 from hermes_installer.authority import artifacts as derivation
 from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
 from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
@@ -29,6 +29,47 @@ from hermes_installer.protected_enrollment import ProtectedRootJournalCatalog, R
 
 
 class RootSchemaDerivationLinuxTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
+                         "requires isolated Linux root-owned catalog fixture")
+    def test_pinned_xpra_source_catalog_has_exact_full_tree_and_link_rows(self):
+        with tempfile.TemporaryDirectory(prefix="hermes-xpra-catalog-", dir="/var/lib") as temporary:
+            root = Path(temporary)
+            os.chmod(root, 0o700)
+            catalog_path = root / "artifact-catalog.json"
+            shutil.copyfile(
+                Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json",
+                catalog_path,
+            )
+            os.chmod(catalog_path, 0o600)
+            catalog = load_protected_catalog(catalog_path, expected_uid=0)
+            spec = catalog._artifact(
+                "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea",
+                "20b55586457df5aed8453b0d1b446e4dd954f2027d814f1eb7c0a96227ef1c80",
+            )
+            self.assertEqual(spec.version, "521b0d2e762c770b2641d258b93d23575fa9cbea")
+            self.assertEqual(spec.source_url,
+                             "https://codeload.github.com/Xpra-org/xpra/tar.gz/"
+                             "521b0d2e762c770b2641d258b93d23575fa9cbea")
+            self.assertEqual((spec.size_bytes, spec.max_bytes, spec.max_tree_bytes),
+                             (13962693, 16777216, 67108864))
+            self.assertEqual((len(spec.tree_files), sum(row.kind == "file" for row in spec.tree_files),
+                              sum(row.kind == "symlink" for row in spec.tree_files)), (2474, 2469, 5))
+            self.assertEqual(spec.tree_manifest_sha256,
+                             "f52b4ce760b86c24a4d6d930f47e58357442a984d9ff2478d7abf338ff48e467")
+            self.assertEqual({(row.path, row.link_target, row.sha256, row.size_bytes)
+                              for row in spec.tree_files if row.kind == "symlink"}, {
+                ("debian", "packaging/debian/xpra",
+                 "a1aef4be57bc54eefaab320b3728f3c0e0f463bc3c7307b1ac4528e2b3f00d4b", 21),
+                ("fs/etc/default", "sysconfig",
+                 "ed85312a196268e2240f401f7d8711c4edaad4d43bcfd76ec5f4e19ec8916ee0", 9),
+                ("fs/libexec/xpra/gnome-open", "xdg-open",
+                 "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+                ("fs/libexec/xpra/gvfs-open", "xdg-open",
+                 "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+                ("fs/share/doc/xpra", "../../../docs",
+                 "bdc7f46fbdfe68781df25dec18962c3ac2aa93d35c3e04185ecc9ac201c73b35", 13),
+            })
+
     @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
                          "requires isolated Linux root-owned fixture")
     def test_package_member_derivation_requires_current_active_receipt_closure(self):
@@ -172,6 +213,8 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
             held_tree = observer.observe(source.artifact_id, source.sha256, materialize_tree=True)
             try:
                 self.assertTrue(observer.verify_current(held_tree))
+                self.assertEqual(held_tree.tree_files, source_tree)
+                self.assertEqual(held_tree.tree_manifest_sha256, source.tree_manifest_sha256)
                 member_fd = held_tree.open_member("schemas/arguments.json", observer=observer)
                 try:
                     self.assertEqual(os.read(member_fd, len(schema)), schema)
