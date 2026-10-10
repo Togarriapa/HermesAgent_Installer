@@ -208,7 +208,7 @@ Financial alias source bound v121: `plans/amendments/2026-10-10-financial-alias-
 
 Native process role association v123: `plans/amendments/2026-10-10-native-process-role-association-v123.md`; actual role/source/loaded observer joins and acceptance remain open.
 
-- [x] HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.
+- [ ] HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.
 
 - [ ] HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.
 
@@ -317,3 +317,11 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T170.1 Factory/native/compiler: exact existing five role/kind pairs and unknown-role negatives.
 
 - [ ] HI-T171.1 Native/MCP/source/broker/policy: actual tools/list request/result witness capture before derivation, current source/peer/schema and wrong-method negatives.
+
+- [ ] HI-T172.1 Local/native/enrollment/factory/observer: genuine owner view/target/current source operations, separate row parser/FKs/grants/root result witness and exact pending coverage.
+
+- [ ] HI-T173.1 Resource runtime/controller/enrollment: implement genuine fixed fixture source generation, native materialization/discovery receipt and strict current projection.
+
+- [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.
+
+- [ ] SK-T175.1 Broker/factory/execution/wiring/custody: enroll exact effect sources, derive finite stage admissions, observe actual terminal/semantic/cleanup receipts.

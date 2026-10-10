@@ -858,3 +858,10 @@ The installer SHALL bind the regular environment interpreter to actual held PM e
 #### Scenario: Script requests ambient interpreter
 - **WHEN** installed script depends on /usr/bin/env or an unrelated interpreter path
 - **THEN** materialization denies until exact selected interpreter normalization is verified
+
+### Requirement: Application effect sources v175
+The installer SHALL admit only the source-reviewed fixed qualification effect stages and separately verify runtime ABI.
+
+#### Scenario: Hyperframes qualification runs
+- **WHEN** the selected fixed Hyperframes effect recipe is admitted
+- **THEN** exactly render, ffprobe and framehash stages are allowed with one-use linked grants and actual cleanup evidence
