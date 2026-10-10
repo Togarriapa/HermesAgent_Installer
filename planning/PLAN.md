@@ -143,3 +143,5 @@ Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observa
 Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
 
 Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md; exact26cf/root_setup sole leaf, BD-T208.1/VD-T208.2 application/tests/targetOPEN; no widercohort/allACOPEN.
+
+Jarvis selected task home custody v213: plans/amendments/2026-10-10-jarvis-selected-task-home-custody-v213.md; RB-T213.1/HI-T213.2/VD-T213.3 OPEN; actualheldhome currenttaskgrant fixed/hermes, all208/soleJarvis preserved/allACOPEN.

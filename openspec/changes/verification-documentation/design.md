@@ -154,3 +154,7 @@ Raspberry Pi vendor dependency refinement v207: plans/amendments/2026-10-10-rasp
 Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation after slow acquisition, same original controller/action/source/runtime joins, unchanged60s proof TTL and one-use transition. planning/bootstrap-handoff-tty-reconfirmation-v208.json; BD-T208.1/VD-T208.2 OPEN.
 
 Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replacement in planning/bootstrap-handoff-reconfirmation-source-review-v211.json; all other source rows unchanged, no wider runtime cohort. BD-T208.1/VD-T208.2 pin application/unexcluded checks/target evidence OPEN.
+
+Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.

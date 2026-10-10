@@ -457,3 +457,16 @@ The installer SHALL provide Jarvis as the sole user-facing default profile while
 #### Scenario: Existing unowned identity conflicts
 - **WHEN** migration encounters an unowned Jarvis identity or modified owned state
 - **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
+
+## ADDED Requirements
+
+### Requirement: Current selected Jarvis delegate home custody
+The installer SHALL bind each protected selected delegate task to its current held owned home through planning/jarvis-selected-task-home-custody-v213.json and the existing consumed task effect grant.
+
+#### Scenario: Root discovers inaccessible delegate home
+- **WHEN** root discovery succeeds but serviceUID cannot traverse private host ancestors
+- **THEN** custody mounts only the held selected home at fixed/hermes and verifies actual unprivileged native load without loosening root permissions or granting primary rights
+
+#### Scenario: Home or authorization changes
+- **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
+- **THEN** task start fails closed and sibling/primary homes remain inaccessible

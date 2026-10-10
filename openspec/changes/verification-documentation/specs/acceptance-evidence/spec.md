@@ -1076,3 +1076,16 @@ The installer SHALL apply only the root_setup source tuple in planning/bootstrap
 #### Scenario: Previous root setup source pin differs
 - **WHEN** the previous expected tuple rejects committed reconfirmation bytes
 - **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Current selected Jarvis delegate home custody
+The installer SHALL bind each protected selected delegate task to its current held owned home through planning/jarvis-selected-task-home-custody-v213.json and the existing consumed task effect grant.
+
+#### Scenario: Root discovers inaccessible delegate home
+- **WHEN** root discovery succeeds but serviceUID cannot traverse private host ancestors
+- **THEN** custody mounts only the held selected home at fixed/hermes and verifies actual unprivileged native load without loosening root permissions or granting primary rights
+
+#### Scenario: Home or authorization changes
+- **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
+- **THEN** task start fails closed and sibling/primary homes remain inaccessible
