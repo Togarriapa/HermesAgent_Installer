@@ -171,6 +171,7 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
     receipt_fields = set(RootNativeHealthReceipt.__dataclass_fields__)
     event_fields = set(RootNativeHealthEvent.__dataclass_fields__)
     if (not isinstance(receipt_body, dict) or set(receipt_body) != receipt_fields
+            or type(receipt_body.get("schema")) is not int
             or not isinstance(receipt_sha, str) or not _HEX64.fullmatch(receipt_sha)
             or receipt_sha != _digest(receipt_body)
             or not isinstance(proof_rows, list) or not 5 <= len(proof_rows) <= 6):
@@ -215,7 +216,6 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
         raise ValueError("completion row differs from the retained original health receipt")
 
     events: list[RootNativeHealthEvent] = []
-    encoded_rows: list[dict[str, Any]] = []
     for raw in proof_rows:
         if not isinstance(raw, dict) or set(raw) != event_fields:
             raise ValueError("health event proof row differs from the exact event schema")
@@ -255,8 +255,9 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
                     event.provider_result_reference, event.invocation_handle,
                     event.terminal_status))):
             raise ValueError("health event proof row has invalid typed values")
+        if event.event_kind != "tool-result" and event.result_bytes is not None:
+            raise ValueError("only the exact tool-result event may carry result bytes")
         events.append(event)
-        encoded_rows.append(raw)
     if ([row.event_id for row in events] != sorted(row.event_id for row in events)
             or len({row.event_id for row in events}) != len(events)):
         raise ValueError("health event proof rows are duplicated or not canonically ordered")
@@ -289,6 +290,7 @@ def _validate_health_receipt_evidence(value: Mapping[str, Any],
             or result.result_schema_id != receipt.result_schema_id
             or not isinstance(result.result_bytes, bytes)
             or hashlib.sha256(result.result_bytes).hexdigest() != receipt.result_sha256
+            or result.invocation_handle != invocation.invocation_handle
             or terminal.event_kind != "terminal" or terminal.terminal_status != "succeeded"
             or terminal.cleanup_verified is not True):
         raise ValueError("health event proof does not join the original receipt or terminal")
