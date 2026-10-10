@@ -91,7 +91,8 @@ class RootNativePolicyConfigurationChoice:
             self.selected_worker_recipe_records,
         )
         object.__setattr__(self, "selected_worker_recipe_records", tuple(
-            MappingProxyType(dict(row)) for row in self.selected_worker_recipe_records))
+            _freeze_worker_json(_plain_worker_json(row))
+            for row in self.selected_worker_recipe_records))
 
 
 def _issue_root_native_policy_configuration_choice(**values: Any) -> RootNativePolicyConfigurationChoice:
@@ -146,7 +147,8 @@ class RootNativePolicyPreparationSelection:
             self.selected_worker_recipe_records,
         )
         object.__setattr__(self, "selected_worker_recipe_records", tuple(
-            MappingProxyType(dict(row)) for row in self.selected_worker_recipe_records))
+            _freeze_worker_json(_plain_worker_json(row))
+            for row in self.selected_worker_recipe_records))
 
 
 @dataclass(frozen=True, slots=True)
@@ -855,7 +857,7 @@ def _choice_payload(choice: RootNativePolicyConfigurationChoice) -> dict[str, An
         "issued_monotonic", "expires_monotonic", "revocation_epoch")}
     for name, value in tuple(payload.items()):
         if type(value) is tuple:
-            payload[name] = [dict(item) if isinstance(item, Mapping) else item for item in value]
+            payload[name] = [_plain_worker_json(item) for item in value]
     return payload
 
 
@@ -874,7 +876,7 @@ def _selection_payload(selection: RootNativePolicyPreparationSelection) -> dict[
         "setup_choice_selection_handle", "choice_payload_sha256", "controller_binding_handle",
         "choice_epoch", "issued_monotonic", "expires_monotonic", "revocation_epoch")}
     payload["selected_worker_recipe_records"] = [
-        dict(row) for row in selection.selected_worker_recipe_records]
+        _plain_worker_json(row) for row in selection.selected_worker_recipe_records]
     return payload
 
 
@@ -902,7 +904,8 @@ def _selection_matches_choice_payload(selection: RootNativePolicyPreparationSele
         "selected_owner_overlay_registration_ids": list(selection.selected_owner_overlay_registration_ids),
         "selected_worker_recipe_handles": list(selection.selected_worker_recipe_handles),
         "selected_worker_recipe_digests": list(selection.selected_worker_recipe_digests),
-        "selected_worker_recipe_records": [dict(row) for row in selection.selected_worker_recipe_records],
+        "selected_worker_recipe_records": [
+            _plain_worker_json(row) for row in selection.selected_worker_recipe_records],
         "controller_binding_handle": selection.controller_binding_handle,
         "private_input_consent_selection_handle": selection.private_input_consent_selection_handle,
     }
@@ -927,8 +930,28 @@ def _validate_worker_recipe_selection(
                 or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
                 or not isinstance(row, Mapping)
                 or row.get("receipt_handle") != handle
-                or hashlib.sha256(_canonical(dict(row))).hexdigest() != digest):
+                or hashlib.sha256(_canonical(_plain_worker_json(row))).hexdigest() != digest):
             raise NativePolicyPreparationDenied("selected worker recipe digest or projection is invalid")
+
+
+def _plain_worker_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise NativePolicyPreparationDenied("worker recipe projection has a non-text key")
+        return {key: _plain_worker_json(item) for key, item in value.items()}
+    if type(value) in (tuple, list):
+        return [_plain_worker_json(item) for item in value]
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    raise NativePolicyPreparationDenied("worker recipe projection is not canonical JSON data")
+
+
+def _freeze_worker_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_worker_json(item) for key, item in value.items()})
+    if type(value) is list:
+        return tuple(_freeze_worker_json(item) for item in value)
+    return value
 
 
 def _source_coverage(selection: RootNativePolicyPreparationSelection,

@@ -68,7 +68,8 @@ def test_configuration_choice_is_sealed_and_finite() -> None:
 def test_signed_worker_recipe_selection_is_paired_and_digest_bound() -> None:
     recipe = {"receipt_handle": "r" * 32, "recipe_id": "native-owner-overlay-worker-v1",
               "network_role": "af-unix", "allowed_bind_port": None,
-              "allowed_connect_port": None}
+              "allowed_connect_port": None,
+              "source_receipt_handles": ["s" * 32]}
     digest = hashlib.sha256(_canonical(recipe)).hexdigest()
     choice = _issue_root_native_policy_configuration_choice(
         **{name: getattr(_choice(), name) for name in _choice().__dataclass_fields__
@@ -80,6 +81,9 @@ def test_signed_worker_recipe_selection_is_paired_and_digest_bound() -> None:
     )
     assert _choice_payload(choice)["selected_worker_recipe_records"] == [recipe]
     assert choice.selected_worker_recipe_handles == ("r" * 32,)
+    assert choice.selected_worker_recipe_records[0]["source_receipt_handles"] == ("s" * 32,)
+    with pytest.raises(TypeError):
+        choice.selected_worker_recipe_records[0]["recipe_id"] = "substituted"
 
     with pytest.raises(NativePolicyPreparationDenied, match="digest or projection"):
         _issue_root_native_policy_configuration_choice(
