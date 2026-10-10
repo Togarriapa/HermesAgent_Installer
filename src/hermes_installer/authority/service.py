@@ -235,6 +235,11 @@ class AuthorityService:
         self.monotonic = monotonic
         self.wall_clock = wall_clock
         self.profile_generations = dict(profile_generations or {})
+        # Keep the exact root-loaded activation snapshot. Consent producers may
+        # resolve an active profile by identifier, but must never provide a
+        # PrincipalBinding (or enrollment row) of their own.
+        self._active_binding_snapshot = dict(self.bindings_by_uid)
+        self._active_profile_generation_snapshot = dict(self.profile_generations)
         # Bind every context/receipt/grant to this daemon epoch. The signing
         # key intentionally survives service restarts, but replay tables do
         # not; changing this host-derived enrollment digest makes old signed
@@ -255,6 +260,8 @@ class AuthorityService:
         self.memory_capture_consent_registry = None
         self.native_mcp_dispatcher = None
         self.selected_application_router = None
+        self.private_memory_route_resolver = None
+        self.private_memory_job_queue = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
         self.resource_job_authority = None
@@ -269,6 +276,7 @@ class AuthorityService:
                 and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
             raise ValueError("active service generation digest is invalid")
         self.service_generation_digest = service_generation_digest
+        self.root_runtime_bindings = None
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -298,6 +306,244 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def attach_root_runtime_bindings(self, bindings: Any) -> None:
+        """Attach the exact typed root composition used to resolve active rows."""
+        from .runtime_bindings import RootRuntimeBindings
+
+        if (self.root_runtime_bindings is not None
+                or type(bindings) is not RootRuntimeBindings
+                or getattr(getattr(bindings, "enrollment_catalog", None), "digest", None)
+                != self.service_generation_digest
+                or (self.process_effect_handler is not None
+                    and bindings.process_manager is not self.process_effect_handler)
+                or len(bindings.protected_principal_bindings) != len(self.bindings_by_uid)
+                or any(all(item is not current for item in bindings.protected_principal_bindings)
+                       for current in self.bindings_by_uid.values())):
+            raise AuthorityDenied("authority.composition", "root runtime binding is not this active protected generation")
+        self.root_runtime_bindings = bindings
+
+    def attach_private_memory_effect_runtime(self, job_queue: Any, route_resolver: Any) -> None:
+        """Attach the root-owned queue and protected private-route resolver once."""
+        from hermes_installer.memory.broker import DurableMemoryQueue, ProfiledMemoryJobResolver
+        from hermes_installer.providers.private_memory import RootPrivateMemoryRouteResolver
+
+        if (self.private_memory_job_queue is not None or self.private_memory_route_resolver is not None
+                or type(job_queue) not in (DurableMemoryQueue, ProfiledMemoryJobResolver)
+                or type(route_resolver) is not RootPrivateMemoryRouteResolver
+                or getattr(route_resolver, "effect_broker", None) is not self
+                or getattr(route_resolver, "bindings", None) is not self.root_runtime_bindings
+                or self.root_runtime_bindings is None
+                or not callable(getattr(job_queue, "resolve_active_job", None))
+                or not callable(getattr(job_queue, "is_current", None))):
+            raise AuthorityDenied("memory.provider", "root private memory effect runtime is not this active composition")
+        self.private_memory_job_queue = job_queue
+        self.private_memory_route_resolver = route_resolver
+
+    def dispatch_private_memory_model(self, job_handle: str, payload: bytes, timeout: float,
+                                      cancelled: Callable[[], bool]) -> bytes:
+        """Dispatch one selected private memory model attempt through HI12.
+
+        The worker-facing memory engine supplies only its opaque durable job
+        handle and canonical body. All source, consent, route, target and model
+        bindings are resolved again here from root-owned registries.
+        """
+        import base64
+        import hashlib
+        from hermes_installer.memory.broker import MemoryJobAuthorityRecord
+        from hermes_installer.providers.private_memory import PrivateMemoryDispatchSelection
+
+        queue = self.private_memory_job_queue
+        resolver = self.private_memory_route_resolver
+        if (queue is None or resolver is None or not isinstance(job_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", job_handle)
+                or not isinstance(payload, bytes) or not payload or len(payload) > 1_114_112
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 120
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("memory.provider", "private memory effect inputs are invalid or unavailable")
+        try:
+            record = queue.resolve_active_job(job_handle, now=self.monotonic())
+            if type(record) is not MemoryJobAuthorityRecord or record.job_handle != job_handle:
+                raise AuthorityDenied("memory.provider", "active durable memory job proof is invalid")
+            source_wire = self._decode_wire(record.source_context_wire, "memory source context")
+            source = HostContext.from_wire(source_wire)
+            self._verify_context_signature(source)
+            if (source.profile_id != record.profile_id or source.namespace_id != record.namespace_id
+                    or source.lineage_hash != record.source_closure_sha256
+                    or tuple(receipt.receipt_id for receipt in source.source_receipts)
+                       != record.source_receipt_handles):
+                raise AuthorityDenied("memory.provider", "durable source identity is inconsistent")
+            consent_wire = self._decode_wire(record.consent_wire, "memory background consent")
+            if (not isinstance(consent_wire, dict)
+                    or consent_wire.get("consent_id") != record.consent_id):
+                raise AuthorityDenied("memory.provider", "durable background consent identity is inconsistent")
+            parsed = strict_json_loads(payload.decode("utf-8", errors="strict"))
+            if not isinstance(parsed, Mapping):
+                raise AuthorityDenied("memory.provider", "private model request must be a canonical object")
+            if canonical_bytes(parsed) != payload or not isinstance(parsed.get("model"), str):
+                raise AuthorityDenied("memory.provider", "private model request is not canonical or model-bound")
+            selected = resolver.resolve_dispatch_selection(job_handle, payload)
+            if type(selected) is not PrivateMemoryDispatchSelection:
+                raise AuthorityDenied("memory.provider", "protected private dispatch selection is invalid")
+            action = selected.action
+            route_capability = "text-generation" if action == "extract" else "embedding"
+            memory_enrollment = self.root_runtime_bindings.resolve_memory_enrollment(
+                selected.memory_enrollment_id,
+                service_generation_digest=self.service_generation_digest,
+            )
+            capture_claims = consent_wire
+            required_capture_fields = {
+                "capture_consent_handle", "capture_consent_receipt_handle", "capture_consent_id",
+                "capture_consent_revocation_epoch", "capture_consent_policy_revision",
+                "completed_turn_receipt_handle",
+            }
+            if not required_capture_fields.issubset(capture_claims):
+                raise AuthorityDenied("memory.provider", "durable job lacks persistent capture opt-in linkage")
+
+            def capture_opt_in_is_current() -> bool:
+                try:
+                    from .root_memory_capture_consent import (
+                        RootMemoryCaptureConsent, RootMemoryCaptureConsentRegistry,
+                    )
+                    registry = self.memory_capture_consent_registry
+                    if type(registry) is not RootMemoryCaptureConsentRegistry:
+                        return False
+                    current = registry.resolve_capture_consent(
+                        capture_claims["capture_consent_handle"],
+                        completed_turn_receipt_handle=capture_claims["completed_turn_receipt_handle"],
+                        selected_memory_binding=memory_enrollment,
+                    )
+                    return (type(current) is RootMemoryCaptureConsent
+                            and current.state == "enabled"
+                            and current.receipt_handle == capture_claims["capture_consent_receipt_handle"]
+                            and current.consent_id == capture_claims["capture_consent_id"]
+                            and current.revocation_epoch == capture_claims["capture_consent_revocation_epoch"]
+                            and current.policy_revision == capture_claims["capture_consent_policy_revision"]
+                            and current.profile_id == record.profile_id
+                            and current.namespace_id == record.namespace_id
+                            and current.principal_id == source.principal_id
+                            and current.provider == record.provider
+                            and current.memory_owner_generation == record.owner_generation
+                            and current.revocation_epoch > 0)
+                except Exception:
+                    return False
+
+            if (action not in {"extract", "embed"}
+                    or selected.purpose != ("memory-extraction" if action == "extract" else "memory-embedding")
+                    or selected.stage_operation != f"memory.{action}"
+                    or selected.operation != "provider.dispatch"
+                    or selected.capability != "provider-inference"
+                    or selected.selected.profile_id != record.profile_id
+                    or selected.selected.namespace_id != record.namespace_id
+                    or selected.selected.memory_provider != record.provider
+                    or selected.selected.memory_owner_generation != record.owner_generation
+                    or selected.selected.service_generation_digest != self.service_generation_digest
+                    or selected.memory_enrollment_id != memory_enrollment.service_enrollment_id
+                    or memory_enrollment.profile_id != record.profile_id
+                    or memory_enrollment.namespace_identity != record.namespace_id
+                    or memory_enrollment.provider != record.provider
+                    or memory_enrollment.memory_owner_generation != record.owner_generation
+                    or selected.route.recipient_id != selected.recipient
+                    or selected.route.effect_target != selected.target
+                    or selected.route.additional_metered_budget_usd != 0
+                    or selected.route.capability != route_capability
+                    or selected.deployment.served_model_id != parsed["model"]
+                    or selected.deployment.capability != route_capability
+                    or selected.selected.expires_monotonic <= self.monotonic()
+                    or not resolver.is_current(selected.selected)
+                    or not capture_opt_in_is_current()):
+                raise AuthorityDenied("memory.provider", "current private job, route, deployment or budget does not join")
+            binding = self._binding(source.uid)
+            if (binding.profile_id != record.profile_id or binding.namespace_id != record.namespace_id
+                    or record.provider != selected.selected.memory_provider
+                    or self.memory_owner_state is None
+                    or self.memory_owner_state(record.profile_id) != (record.provider, record.owner_generation)):
+                raise AuthorityDenied("memory.provider", "current memory owner or source principal changed")
+            stage_context = self.context_for_job(
+                record.source_context_wire, record.consent_wire, provider_id=record.provider,
+                owner_generation=record.owner_generation, action=action,
+                lease_seconds=min(30.0, max(0.1, record.lease_until - self.monotonic())),
+                final_payload_digest=hashlib.sha256(payload).hexdigest(),
+            )
+            if (stage_context.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}
+                    or stage_context.profile_id != record.profile_id
+                    or stage_context.namespace_id != record.namespace_id
+                    or tuple(receipt.receipt_id for receipt in stage_context.source_receipts)
+                       != record.source_receipt_handles):
+                raise AuthorityDenied("memory.provider", "fresh source-derived context lost private ancestry")
+            child_wire = self._issue_context(source.uid, {
+                "purpose": selected.purpose,
+                "intent": f"private-memory-provider:{record.provider}:{action}:{record.source_closure_sha256}",
+                "trace_id": stage_context.trace_id,
+                "lease_seconds": min(30.0, max(0.1, record.lease_until - self.monotonic())),
+                "source_contexts": [stage_context.to_wire()],
+                "final_payload_digest": hashlib.sha256(payload).hexdigest(),
+                "operation": "provider.dispatch",
+            }, allow_expired_sources=True,
+               inherited_process_identity=source.native_process_identity)
+            context = HostContext.from_wire(child_wire)
+            rule = self.rules.get((selected.capability, "provider.dispatch", selected.target))
+            if (rule is None or rule.recipient != selected.recipient
+                    or (rule.operation, rule.target) not in self.handlers
+                    or selected.capability not in binding.capabilities
+                    or not self.policy.allow_effect(context=context, rule=rule,
+                                                   request_digest=hashlib.sha256(payload).hexdigest(),
+                                                   retry_index=record.attempt - 1)):
+                raise AuthorityDenied("memory.provider", "selected private provider effect is not enrolled")
+            digest = hashlib.sha256(payload).hexdigest()
+            authorization = self._authorize_effect(source.uid, {
+                "context": context.to_wire(), "capability": selected.capability,
+                "target": selected.target, "recipient": selected.recipient,
+                "request_digest": digest, "retry_index": record.attempt - 1,
+            })
+            remaining = min(float(timeout), record.lease_until - self.monotonic(),
+                             selected.selected.expires_monotonic - self.monotonic(),
+                             context.monotonic_expires_at - self.monotonic())
+            if (remaining <= 0 or cancelled() or not queue.is_current(record, now=self.monotonic())
+                    or not resolver.is_current(selected.selected)):
+                raise AuthorityDenied("memory.provider", "private model attempt expired or was revoked before dispatch")
+
+            def still_current() -> bool:
+                try:
+                    if cancelled() or not queue.is_current(record, now=self.monotonic()):
+                        return False
+                    if self.memory_owner_state is None or self.memory_owner_state(record.profile_id) != (
+                            record.provider, record.owner_generation):
+                        return False
+                    if not resolver.is_current(selected.selected):
+                        return False
+                    if not capture_opt_in_is_current():
+                        return False
+                    current_context = self.context_for_job(
+                        record.source_context_wire, record.consent_wire, provider_id=record.provider,
+                        owner_generation=record.owner_generation, action=action,
+                        lease_seconds=min(30.0, max(0.1, record.lease_until - self.monotonic())),
+                        final_payload_digest=digest,
+                    )
+                    return (current_context.lineage_hash == record.source_closure_sha256
+                            and current_context.profile_id == context.profile_id
+                            and current_context.namespace_id == context.namespace_id)
+                except Exception:
+                    return False
+
+            if not still_current():
+                raise AuthorityDenied("memory.provider", "private model source or consent became stale")
+            result = self._perform_effect(source.uid, os.getpid(), {
+                "authorization": authorization, "operation": "provider.dispatch",
+                "payload": base64.b64encode(payload).decode("ascii"), "timeout": remaining,
+            }, cancelled=lambda: not still_current(), enforce_peer_identity=False)
+            body = base64.b64decode(result["body"], validate=True)
+            if len(body) > 2_097_152:
+                raise AuthorityDenied("memory.provider", "private model response exceeded its fixed bound")
+            if not still_current():
+                raise AuthorityDenied("memory.provider", "private model result arrived after job or consent revocation")
+            return body
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("memory.provider", "active durable job or signed source closure is invalid") from None
+
 
     def revoke_source_handle(self, handle: Any) -> bool:
         """Revoke and scrub one root-retained source handle in-process only.
@@ -429,6 +675,9 @@ class AuthorityService:
         job_consent = self.create_background_consent(
             context, provider_id=enrollment.provider, owner_generation=owner_generation,
             ttl_seconds=max(1, min(300, int(lease))),
+            capture_consent=capture_consent,
+            capture_consent_handle=background_consent_handle,
+            completed_turn_receipt_handle=record.receipt_handle,
         )
         return context, job_consent
 
@@ -2694,6 +2943,63 @@ class AuthorityService:
             raise AuthorityDenied("principal.unenrolled", "kernel peer UID has no enrolled profile")
         return binding
 
+    def resolve_current_active_principal_binding(self, profile_id: str) -> PrincipalBinding:
+        """Resolve a profile selector only against this daemon's protected activation.
+
+        Root TTY/setup choice registries use this in-process lookup while minting
+        current profile-choice receipts. The profile ID is only a selector: the
+        caller cannot supply identity fields, a PrincipalBinding, a filesystem
+        path, or an enrollment row. A prepared setup generation is not active
+        because it has no service generation digest and no enrolled binding.
+        """
+        if (not isinstance(profile_id, str) or not 1 <= len(profile_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in profile_id)):
+            raise AuthorityDenied("principal.selection", "active profile selector is malformed")
+        digest = self.service_generation_digest
+        if digest is None or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise AuthorityDenied("principal.selection", "no committed active service generation is loaded")
+        if (set(self.bindings_by_uid) != set(self._active_binding_snapshot)
+                or any(self.bindings_by_uid.get(uid) is not binding
+                       for uid, binding in self._active_binding_snapshot.items())
+                or self.profile_generations != self._active_profile_generation_snapshot):
+            raise AuthorityDenied("principal.selection", "protected active enrollment changed after service construction")
+        generation = self.profile_generations.get(profile_id)
+        if not isinstance(generation, str) or not generation:
+            raise AuthorityDenied("principal.selection", "profile has no active protected generation")
+        matches = [binding for binding in self._active_binding_snapshot.values()
+                   if type(binding) is PrincipalBinding and binding.profile_id == profile_id]
+        if len(matches) != 1:
+            raise AuthorityDenied("principal.selection", "active profile has no unique protected principal binding")
+        binding = matches[0]
+        if (self.bindings_by_uid.get(binding.uid) is not binding
+                or binding.uid <= 0 or not binding.principal_id or not binding.namespace_id):
+            raise AuthorityDenied("principal.selection", "active principal binding is no longer current")
+        runtime = getattr(self, "root_runtime_bindings", None)
+        from .runtime_bindings import RootRuntimeBindings
+        catalog = getattr(runtime, "enrollment_catalog", None)
+        if (type(runtime) is not RootRuntimeBindings
+                or catalog is None or getattr(catalog, "digest", None) != digest
+                or not callable(getattr(catalog, "resolve_profile_generation", None))):
+            raise AuthorityDenied("principal.selection", "active protected service catalog is unavailable")
+        try:
+            selected = catalog.resolve_profile_generation(profile_id, generation)
+        except Exception:
+            raise AuthorityDenied("principal.selection", "profile generation is not in the active protected catalog") from None
+        if (getattr(selected, "profile_id", None) != binding.profile_id
+                or getattr(selected, "generation", None) != generation
+                or getattr(selected, "service_uid", None) != binding.uid
+                or getattr(selected, "principal_id", None) != binding.principal_id
+                or getattr(selected, "namespace_identity", None) != binding.namespace_id):
+            raise AuthorityDenied("principal.selection", "active service row differs from the protected principal binding")
+        return binding
+
+    def current_authority_policy_revision(self) -> str:
+        """Return the current root policy revision for in-process choice receipts."""
+        revision = self._policy_revision()
+        if not isinstance(revision, str) or not revision:
+            raise AuthorityDenied("policy.selection", "active root policy revision is unavailable")
+        return revision
+
     def _issue_context(self, uid: int, payload: Any, *, allow_expired_sources: bool = False,
                        peer_pid: int | None = None,
                        inherited_process_identity: str | None = None) -> dict[str, Any]:
@@ -2822,7 +3128,10 @@ class AuthorityService:
         return HostContext(**{**context.__dict__, "signature": signature}).to_wire() if hasattr(context, "__dict__") else self._signed_context(context, signature)
 
     def create_background_consent(self, context: HostContext, *, provider_id: str,
-                                  owner_generation: int, ttl_seconds: int = 300) -> BackgroundConsent:
+                                  owner_generation: int, ttl_seconds: int = 300,
+                                  capture_consent: Any | None = None,
+                                  capture_consent_handle: str | None = None,
+                                  completed_turn_receipt_handle: str | None = None) -> BackgroundConsent:
         """Issue source-bound consent for fixed automatic memory stages.
 
         Intended only for the root-owned memory enqueue handler. The user
@@ -2863,6 +3172,30 @@ class AuthorityService:
             "allowed_actions": ["extract", "embed", "capture"],
             "issued_at_unix": now, "expires_at_unix": now + ttl_seconds,
         }
+        if any(value is not None for value in (
+                capture_consent, capture_consent_handle, completed_turn_receipt_handle)):
+            from .root_memory_capture_consent import RootMemoryCaptureConsent
+            if (type(capture_consent) is not RootMemoryCaptureConsent
+                    or not isinstance(capture_consent_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", capture_consent_handle)
+                    or not isinstance(completed_turn_receipt_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", completed_turn_receipt_handle)
+                    or capture_consent.state != "enabled"
+                    or capture_consent.profile_id != context.profile_id
+                    or capture_consent.namespace_id != context.namespace_id
+                    or capture_consent.principal_id != context.principal_id
+                    or capture_consent.provider != provider_id
+                    or capture_consent.memory_owner_generation != owner_generation
+                    or capture_consent.revocation_epoch < 1):
+                raise AuthorityDenied("memory.consent", "persistent capture opt-in binding is invalid")
+            claims.update({
+                "capture_consent_handle": capture_consent_handle,
+                "capture_consent_receipt_handle": capture_consent.receipt_handle,
+                "capture_consent_id": capture_consent.consent_id,
+                "capture_consent_revocation_epoch": capture_consent.revocation_epoch,
+                "capture_consent_policy_revision": capture_consent.policy_revision,
+                "completed_turn_receipt_handle": completed_turn_receipt_handle,
+            })
         return BackgroundConsent(claims, self._sign(claims))
 
     def context_for_job(self, source_context_wire: bytes | Mapping[str, Any],
@@ -2879,7 +3212,11 @@ class AuthorityService:
         expected = {"kind", "consent_id", "source_context_digest", "principal_id", "profile_id",
                     "namespace_id", "uid", "provider_id", "owner_generation", "policy_revision",
                     "allowed_actions", "issued_at_unix", "expires_at_unix"}
-        if set(consent) != expected or not isinstance(signature, str):
+        capture_fields = {"capture_consent_handle", "capture_consent_receipt_handle",
+                          "capture_consent_id", "capture_consent_revocation_epoch",
+                          "capture_consent_policy_revision", "completed_turn_receipt_handle"}
+        if (set(consent) not in (expected, expected | capture_fields)
+                or not isinstance(signature, str)):
             raise AuthorityDenied("memory.consent", "background consent schema is invalid")
         self._verify_signature(consent, signature)
         source_context = HostContext.from_wire(source)
