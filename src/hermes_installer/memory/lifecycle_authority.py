@@ -63,6 +63,7 @@ class MemorySelectedLifecycleActionBinding:
     service_profile: Any = field(repr=False, compare=False)
     process_operation: Any = field(repr=False, compare=False)
     _process_id: str | None = field(default=None, repr=False, compare=False)
+    _stop_reason: str | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def resolve(cls, enrollment: MemoryServiceEnrollment, service_catalog: Any,
@@ -164,6 +165,10 @@ class MemorySelectedLifecycleActionBinding:
                 raise MemoryLifecycleDenied("selected process handle is no longer retained")
             value = {"schema": 1, "process_id": self._process_id,
                      "generation": self.generation}
+            if self.action == "stop":
+                if self._stop_reason not in {"cancel", "shutdown", "rollback"}:
+                    raise MemoryLifecycleDenied("stop requires a root-selected cancellation reason")
+                value.update(reason=self._stop_reason, grace_seconds=5)
         return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def with_retained_process(self, process_id: str) -> "MemorySelectedLifecycleActionBinding":
@@ -172,6 +177,12 @@ class MemorySelectedLifecycleActionBinding:
                 or not process_id or len(process_id) > 256):
             raise MemoryLifecycleDenied("root-retained selected process identity is required")
         return replace(self, _process_id=process_id)
+
+    def with_stop_reason(self, reason: str) -> "MemorySelectedLifecycleActionBinding":
+        """Bind one finite root-selected stop reason to the stop payload."""
+        if self.action != "stop" or reason not in {"cancel", "shutdown", "rollback"}:
+            raise MemoryLifecycleDenied("stop reason is not one of the root-selected fixed reasons")
+        return replace(self, _stop_reason=reason)
 
     def __repr__(self) -> str:
         return f"MemorySelectedLifecycleActionBinding(role={self.role!r}, action={self.action!r}, <root-private>)"
@@ -358,12 +369,17 @@ class RootVerifiedMemoryLifecycleAdmission:
         except Exception:
             return False
 
-    def action(self, action: str, *, now: float | None = None) -> MemorySelectedLifecycleActionBinding:
+    def action(self, action: str, *, now: float | None = None,
+               reason: str | None = None) -> MemorySelectedLifecycleActionBinding:
         if action not in _ACTIONS or not self.is_current(now=now):
             raise MemoryLifecycleDenied("memory service lifecycle admission is stale or action is invalid")
         binding = self.action_bindings.get(action)
         if binding is None:
             raise MemoryLifecycleDenied("memory lifecycle action is not selected")
+        if action == "stop":
+            binding = binding.with_stop_reason(reason or "shutdown")
+        elif reason is not None:
+            raise MemoryLifecycleDenied("a stop reason is valid only for the stop action")
         return binding
 
     def __repr__(self) -> str:
@@ -408,6 +424,21 @@ class RootMemoryServiceLifecycle:
             self._admissions[admission.admission_handle] = admission
             self._restart_uses[admission.admission_handle] = 0
 
+    def release_admission(self, handle: str) -> None:
+        """Release one finite root-only admission after its effect completes."""
+        if not isinstance(handle, str) or not _OPAQUE.fullmatch(handle):
+            raise MemoryLifecycleDenied("memory lifecycle admission handle is malformed")
+        with self._lock:
+            admission = self._admissions.pop(handle, None)
+            self._process_ids.pop(handle, None)
+            self._restart_uses.pop(handle, None)
+            self._start_used.discard(handle)
+            self._stopped.discard(handle)
+        if type(admission) is RootVerifiedMemoryLifecycleAdmission:
+            close = getattr(admission._controller_lease, "close", None)
+            if callable(close):
+                close()
+
     def resolve_admission(self, handle: str) -> RootVerifiedMemoryLifecycleAdmission:
         if not isinstance(handle, str) or not _OPAQUE.fullmatch(handle):
             raise MemoryLifecycleDenied("root memory lifecycle admission handle is malformed")
@@ -447,10 +478,22 @@ class RootMemoryServiceLifecycle:
         verified = self.authority_service.consume_root_selected_service_effect(
             grant, admission, binding.service_profile, payload,
         )
+        # The signed effect authorizes exactly one short-lived action. Custody
+        # separately retains this sealed lifecycle admission's original service
+        # deadline and the root controller's actual PIDFD proof; grant expiry
+        # must not truncate a successfully supervised service lifetime.
+        controller_proof = admission._controller_lease
+
+        def effect_cancelled() -> bool:
+            return (not admission.is_current(now=self.monotonic())
+                    or cancelled is not None and cancelled())
+
         return self.custody.perform_root_selected_service_effect(
             binding.service_profile, verified, payload,
+            memory_admission=admission,
+            controller_proof=controller_proof,
             timeout=min(float(timeout), max(0.001, admission.original_deadline - self.monotonic())),
-            cancelled=cancelled,
+            cancelled=effect_cancelled,
         )
 
     def start_selected_memory(self, handle: str, *, timeout: float = 30.0,
@@ -487,14 +530,15 @@ class RootMemoryServiceLifecycle:
         binding = admission.action("status", now=self.monotonic()).with_retained_process(process_id)
         return self._effect(admission, binding, timeout=timeout, cancelled=cancelled)
 
-    def stop_selected_memory(self, handle: str, *, timeout: float = 30.0,
+    def stop_selected_memory(self, handle: str, *, reason: str = "shutdown", timeout: float = 30.0,
                              cancelled: Callable[[], bool] | None = None) -> Any:
         admission = self.resolve_admission(handle)
         with self._lock:
             process_id = self._process_ids.get(handle)
         if process_id is None:
             raise MemoryLifecycleDenied("memory service has no root-retained process start receipt")
-        binding = admission.action("stop", now=self.monotonic()).with_retained_process(process_id)
+        binding = (admission.action("stop", now=self.monotonic(), reason=reason)
+                   .with_retained_process(process_id))
         receipt = self._effect(admission, binding, timeout=timeout, cancelled=cancelled)
         with self._lock:
             self._process_ids.pop(handle, None)

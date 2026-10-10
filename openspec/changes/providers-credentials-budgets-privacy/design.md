@@ -66,3 +66,7 @@ Native observer/delivery/composite v9: plans/amendments/2026-10-09-native-observ
 Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
 
 Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+Public input/web permission v138: `plans/amendments/2026-10-10-public-input-web-permission-v138.md`; actual PUBLIC input plus purpose-specific finite scope permission, zero budget and per-retry currentness; no private consent widening or profile-based classification. All AC remain open.
+
+Concrete bootstrap/source/public disclosure v149: `plans/amendments/2026-10-10-runtime-member-role-public-disclosure-v149.md`; exact runtime member layout, prepared held source distinct live import, genuine per-input public disclosure. All AC open.

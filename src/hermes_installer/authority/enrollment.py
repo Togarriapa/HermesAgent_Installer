@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
+import math
 import os
 import re
 import secrets
 import stat
+import sys
+import time
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +36,753 @@ ARTIFACT_CATALOG_PATH = Path("/etc/hermes-installer/artifact-catalog.json")
 ARTIFACT_STAGING_DIRECTORY = Path("/var/lib/hermes-installer/artifacts")
 MAX_CONFIG_BYTES = 8 * 1_048_576
 MAX_CREDENTIAL_BYTES = 16_384
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootAuthorityKeyReceipt:
+    schema: int
+    receipt_handle: str
+    key_id: str
+    algorithm: str
+    key_device: int
+    key_inode: int
+    key_uid: int
+    key_mode: int
+    release_receipt_handle: str
+    initial_compilation_session_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _issuer_seal: str
+
+
+_SETUP_CHOICE_PURPOSES = frozenset({
+    "memory-service-enablement", "memory-capture-configuration", "private-input-routes",
+    "public-free-web-read", "existing-model-selection", "native-policy-preparation",
+    "application-qualification",
+})
+_SETUP_CHOICE_DOMAIN = b"hermes-installer.setup-choice.v1\0"
+
+
+class RootSetupChoiceSigner:
+    """Purpose-bounded signer over the already selected authority key."""
+    def __init__(self, issuer: "RootAuthorityKeySelectionRegistry", *, key_fd: int,
+                 session_handle: Any, key_id: str, key_device: int, key_inode: int,
+                 key_digest: str, adoption_record: Mapping[str, Any]):
+        self._issuer, self._key_fd = issuer, key_fd
+        self._session_handle, self.key_id = session_handle, key_id
+        self._key_device, self._key_inode = key_device, key_inode
+        self._key_digest, self._adoption_record = key_digest, dict(adoption_record)
+
+    def sign_choice(self, purpose: str, canonical_record_bytes: bytes) -> str:
+        key = self._current_key(purpose, canonical_record_bytes)
+        try:
+            message = _setup_choice_message(purpose, canonical_record_bytes)
+            return hmac.new(key, message, hashlib.sha256).hexdigest()
+        finally:
+            key = b""
+
+    def verify_choice(self, purpose: str, canonical_record_bytes: bytes,
+                      signature: str) -> bool:
+        if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            return False
+        expected = self.sign_choice(purpose, canonical_record_bytes)
+        return hmac.compare_digest(expected, signature)
+
+    def _current_key(self, purpose: str, record: bytes) -> bytes:
+        if purpose not in _SETUP_CHOICE_PURPOSES or not isinstance(record, bytes) or len(record) > 1_048_576:
+            raise AuthorityDenied("setup.choice", "setup choice purpose or canonical record is invalid")
+        self._issuer._verify_normal_choice_signer(self)
+        info = os.fstat(self._key_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_dev != self._key_device or info.st_ino != self._key_inode):
+            raise AuthorityDenied("setup.choice", "selected setup key descriptor custody changed")
+        raw = os.pread(self._key_fd, 33, 0)
+        if len(raw) != 32 or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), self._key_digest):
+            raise AuthorityDenied("setup.choice", "selected setup key continuity changed")
+        return raw
+
+
+def _setup_choice_message(purpose: str, record: bytes) -> bytes:
+    if purpose not in _SETUP_CHOICE_PURPOSES or not isinstance(record, bytes) or len(record) > 1_048_576:
+        raise AuthorityDenied("setup.choice", "setup choice purpose or canonical record is invalid")
+    return _SETUP_CHOICE_DOMAIN + purpose.encode("ascii") + b"\0" + record
+
+
+def _normal_choice_binding(record: Mapping[str, Any]) -> bytes:
+    return b"hermes-installer.normal-setup-choice-signer.v1\0" + json.dumps(
+        dict(record), sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")
+
+
+class RootAuthorityKeySelectionRegistry:
+    """Bind a root-selected nonsecret key ID to the existing root HMAC key."""
+
+    selection_path = Path("/etc/hermes-installer/authority-key-selection.json")
+    private_root_name = "authority-key-receipts"
+
+    def __init__(self, release: Any, actor_verifier: Any, root_journal: Path,
+                 *, initial_compilation_registry: Any):
+        from .installer_release import VerifiedInstallerReleaseReceipt
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry
+        if (not isinstance(release, VerifiedInstallerReleaseReceipt)
+                or not callable(getattr(actor_verifier, "verify_current", None))
+                or not isinstance(root_journal, Path)
+                or root_journal != Path("/var/lib/hermes-installer/authority-journal")):
+            raise ValueError("root authority key selection dependencies are incomplete")
+        if (not isinstance(initial_compilation_registry, RootInitialCompilationRegistry)
+                or initial_compilation_registry.release is not release
+                or initial_compilation_registry.root_journal != root_journal
+                or initial_compilation_registry.actor_verifier is not actor_verifier):
+            raise ValueError("authority key selection stage-zero registry does not match its installed release")
+        self.release, self.actor_verifier, self.root_journal = release, actor_verifier, root_journal
+        self.initial_compilation_registry = initial_compilation_registry
+        self._seal = secrets.token_hex(32)
+        self._receipts: dict[str, RootAuthorityKeyReceipt] = {}
+        self._key_fds: dict[str, int] = {}
+        self._key_digests: dict[str, str] = {}
+        self._receipt_handles_by_session: dict[str, str] = {}
+        self._normal_signers: dict[str, RootSetupChoiceSigner] = {}
+
+    @classmethod
+    def from_installed_release(cls, verified_release: Any, installed_actor_verifier: Any,
+                               root_journal: Path, *,
+                               initial_compilation_registry: Any
+                               ) -> "RootAuthorityKeySelectionRegistry":
+        return cls(verified_release, installed_actor_verifier, root_journal,
+                   initial_compilation_registry=initial_compilation_registry)
+
+    def ensure_selected_key(self, initial_compilation_session_handle: str) -> RootAuthorityKeyReceipt:
+        session = self._resolve_stage0(initial_compilation_session_handle)
+        if os.geteuid() != 0 or not sys.platform.startswith("linux"):
+            raise AuthorityDenied("key.enrollment", "authority key selection requires installed Linux root")
+        self._verify_key_parent()
+        active_key_id = self._active_key_id()
+        key_present = _path_exists_nofollow(AUTHORITY_KEY_PATH)
+        if not key_present and active_key_id is not None:
+            raise AuthorityDenied("key.selection", "active authority key ID exists without its signing key")
+        if not key_present:
+            # Creation is exclusive, journaled as the first-install case, and
+            # never repairs or overwrites an existing key.
+            marker_path = self.root_journal / self.private_root_name / "first-install.json"
+            if (_path_exists_nofollow(marker_path)
+                    and self._first_install_marker(session) is None):
+                raise AuthorityDenied("key.selection", "another initial key-creation transaction needs root reconciliation")
+            self._write_first_install_marker(session, None, None, None, state="creating")
+            create_authority_signing_key(expected_uid=0)
+            created = True
+        else:
+            created = False
+        fd, info, raw = self._open_key()
+        try:
+            prior = self._read_selection()
+            if prior is not None:
+                if (prior["key_device"] != info.st_dev or prior["key_inode"] != info.st_ino
+                        or prior["key_id"] != active_key_id and active_key_id is not None):
+                    raise AuthorityDenied("key.selection", "existing authority key selection conflicts with the installed key")
+                key_id = prior["key_id"]
+                receipt_handle = (prior["receipt_handle"] if prior["initial_compilation_session_handle"]
+                                  == session.compilation_session_handle else secrets.token_hex(32))
+                issued = (prior["issued_monotonic"] if receipt_handle == prior["receipt_handle"]
+                          else time.monotonic())
+            elif active_key_id is not None:
+                key_id = active_key_id
+                receipt_handle = secrets.token_hex(32)
+                issued = time.monotonic()
+            else:
+                first_install = self._first_install_marker(session)
+                if not (created or first_install is not None):
+                    raise AuthorityDenied("key.selection", "existing signing key has no verified active key ID or first-install journal")
+                key_id = (first_install.get("key_id") if first_install is not None
+                          and first_install.get("state") == "created" else None)
+                if not isinstance(key_id, str) or not re.fullmatch(r"authority-key-[0-9a-f]{32}", key_id):
+                    key_id = "authority-key-" + secrets.token_hex(16)
+                receipt_handle = secrets.token_hex(32)
+                issued = time.monotonic()
+                self._write_first_install_marker(session, info, receipt_handle, key_id, state="created")
+            expires = min(float(session.expires_monotonic), issued + 300.0)
+            if expires <= time.monotonic():
+                raise AuthorityDenied("key.selection", "initial compilation session expired")
+            receipt = RootAuthorityKeyReceipt(
+                1, receipt_handle, key_id, "HMAC-SHA256", info.st_dev, info.st_ino,
+                0, 0o600, session.verified_release_receipt_handle,
+                session.compilation_session_handle, issued, expires, self._seal,
+            )
+            self._persist_selection(receipt)
+            self._persist_private_binding(receipt, hashlib.sha256(raw).hexdigest())
+            old_fd = self._key_fds.pop(receipt_handle, None)
+            if old_fd is not None:
+                os.close(old_fd)
+            self._receipts[receipt_handle] = receipt
+            self._key_fds[receipt_handle] = fd
+            self._key_digests[receipt_handle] = hashlib.sha256(raw).hexdigest()
+            self._receipt_handles_by_session[session.compilation_session_handle] = receipt_handle
+            fd = -1
+            return receipt
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            raw = b""
+
+    def resolve_selected_key_for_compilation_session(
+        self, compilation_session_handle: str,
+    ) -> RootAuthorityKeyReceipt:
+        """Return the live typed key receipt issued for this exact stage-zero session."""
+        session = self._resolve_stage0(compilation_session_handle)
+        handle = self._receipt_handles_by_session.get(session.compilation_session_handle)
+        if not isinstance(handle, str):
+            raise AuthorityDenied("key.selection", "no root authority key receipt was issued for this setup")
+        return self.resolve_selected_key(handle, session.compilation_session_handle)
+
+    def adopt_for_normal_setup(
+        self, key_receipt_handle: str, initial_compilation_session_handle: str,
+        normal_setup_session_handle: Any, prepared_publication_handoff_handle: str,
+    ) -> RootSetupChoiceSigner:
+        from .bootstrap_enrollment import RootSetupSessionHandle, RootSetupSessionStore
+        if not isinstance(normal_setup_session_handle, RootSetupSessionHandle):
+            raise AuthorityDenied("setup.choice", "normal setup adoption requires its root session handle")
+        stage0 = self._resolve_stage0(initial_compilation_session_handle)
+        receipt = self.resolve_selected_key(key_receipt_handle, initial_compilation_session_handle)
+        store = getattr(self.initial_compilation_registry, "_session_store", None)
+        if not isinstance(store, RootSetupSessionStore):
+            raise AuthorityDenied("setup.choice", "normal root setup store is not adopted")
+        live = store._live(normal_setup_session_handle)
+        proof = store._proof(live)
+        try:
+            handoff = self.initial_compilation_registry.resolve_adopted_handoff(normal_setup_session_handle)
+        except Exception:
+            raise AuthorityDenied("setup.choice", "normal session has no current publication handoff") from None
+        if (handoff.handoff_handle != prepared_publication_handoff_handle
+                or handoff.compilation_session_handle != stage0.compilation_session_handle
+                or handoff.compilation_transaction_handle != stage0.compilation_transaction_handle
+                or handoff.plan_sha256 != stage0.plan_sha256
+                or handoff.publication_receipt_handle == ""
+                or handoff.normal_transaction_handle != proof.transaction_handle
+                or receipt.initial_compilation_session_handle != stage0.compilation_session_handle
+                or receipt.release_receipt_handle != stage0.verified_release_receipt_handle):
+            raise AuthorityDenied("setup.choice", "selected key receipt and publication handoff do not join")
+        self.initial_compilation_registry.actor.verify_current(self.release)
+        plan = store.plan_resolver.resolve(proof.plan_artifact_id)
+        store.actor_verifier.verify_current(plan)
+        signer = self._mint_normal_signer(receipt, normal_setup_session_handle, proof, handoff)
+        return signer
+
+    def resolve_normal_setup_choice_signer(self, normal_setup_session_handle: Any) -> RootSetupChoiceSigner:
+        from .bootstrap_enrollment import RootSetupSessionHandle, RootSetupSessionStore
+        if not isinstance(normal_setup_session_handle, RootSetupSessionHandle):
+            raise AuthorityDenied("setup.choice", "normal setup choice signer requires its root session handle")
+        store = getattr(self.initial_compilation_registry, "_session_store", None)
+        if not isinstance(store, RootSetupSessionStore):
+            raise AuthorityDenied("setup.choice", "normal root setup store is unavailable")
+        live = store._live(normal_setup_session_handle)
+        proof = store._proof(live)
+        try:
+            handoff = self.initial_compilation_registry.resolve_adopted_handoff(normal_setup_session_handle)
+        except Exception:
+            raise AuthorityDenied("setup.choice", "normal session publication adoption is stale") from None
+        path = self._normal_signer_path(normal_setup_session_handle.session_id)
+        try:
+            row = json.loads(_read_root_selection_bytes(path, 16_384).decode("ascii"),
+                             object_pairs_hook=_unique_pairs)
+        except Exception:
+            raise AuthorityDenied("setup.choice", "normal setup key signer receipt is unavailable") from None
+        record = self._validate_normal_signer_record(row, proof, handoff)
+        fd, info, raw = self._open_key()
+        try:
+            digest = hashlib.sha256(raw).hexdigest()
+            binding_hmac = record.pop("binding_hmac")
+            selection = self._read_selection()
+            private_binding = json.loads(_read_root_selection_bytes(
+                self.root_journal / self.private_root_name / f"{record['key_receipt_handle']}.json",
+                4096).decode("ascii"), object_pairs_hook=_unique_pairs)
+            if (info.st_dev != record["key_device"] or info.st_ino != record["key_inode"]
+                    or digest != record["key_sha256"] or selection is None
+                    or selection["key_id"] != record["key_id"]
+                    or selection["receipt_handle"] != record["key_receipt_handle"]
+                    or selection["initial_compilation_session_handle"] != record["compilation_session_handle"]
+                    or selection["key_device"] != info.st_dev or selection["key_inode"] != info.st_ino
+                    or selection["release_receipt_handle"] != record["release_receipt_handle"]
+                    or private_binding != {"schema": 1, "receipt_handle": record["key_receipt_handle"],
+                                           "key_device": info.st_dev, "key_inode": info.st_ino,
+                                           "key_sha256": digest}):
+                raise AuthorityDenied("setup.choice", "selected authority key changed after setup adoption")
+            expected = hmac.new(raw, _normal_choice_binding(record), hashlib.sha256).hexdigest()
+            if not secrets.compare_digest(expected, binding_hmac):
+                raise AuthorityDenied("setup.choice", "normal setup choice signer binding is invalid")
+            plan = store.plan_resolver.resolve(proof.plan_artifact_id)
+            store.actor_verifier.verify_current(plan)
+            self.initial_compilation_registry.actor.verify_current(self.release)
+            signer = RootSetupChoiceSigner(self, key_fd=fd, session_handle=normal_setup_session_handle,
+                                           key_id=record["key_id"], key_device=info.st_dev,
+                                           key_inode=info.st_ino, key_digest=digest, adoption_record=record)
+            self._normal_signers[normal_setup_session_handle.session_id] = signer
+            fd = -1
+            return signer
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            raw = b""
+
+    def _mint_normal_signer(self, receipt: RootAuthorityKeyReceipt, handle: Any,
+                            proof: Any, handoff: Any) -> RootSetupChoiceSigner:
+        key_fd = self._key_fds.get(receipt.receipt_handle)
+        digest = self._key_digests.get(receipt.receipt_handle)
+        if key_fd is None or digest is None:
+            raise AuthorityDenied("setup.choice", "stage-zero selected key descriptor is unavailable")
+        # Adoption can be retried after the durable rename succeeded but before
+        # the caller observed success. Re-resolve the exact record rather than
+        # replacing it with a fresh timestamp/HMAC or treating it as a conflict.
+        path = self._normal_signer_path(handle.session_id)
+        if _path_exists_nofollow(path):
+            cached = self._normal_signers.get(handle.session_id)
+            if cached is not None:
+                self._verify_normal_choice_signer(cached)
+                if (cached._adoption_record.get("key_receipt_handle") != receipt.receipt_handle
+                        or cached.key_id != receipt.key_id or cached._key_device != receipt.key_device
+                        or cached._key_inode != receipt.key_inode or cached._key_digest != digest):
+                    raise AuthorityDenied("setup.choice", "durable normal setup signer belongs to another key adoption")
+                return cached
+            signer = self.resolve_normal_setup_choice_signer(handle)
+            if (signer._adoption_record.get("key_receipt_handle") != receipt.receipt_handle
+                    or signer.key_id != receipt.key_id
+                    or signer._key_device != receipt.key_device
+                    or signer._key_inode != receipt.key_inode
+                    or signer._key_digest != digest):
+                os.close(signer._key_fd)
+                self._normal_signers.pop(handle.session_id, None)
+                raise AuthorityDenied("setup.choice", "durable normal setup signer belongs to another key adoption")
+            return signer
+        record = {"schema": 1, "normal_setup_session_id": handle.session_id,
+                  "normal_transaction_handle": proof.transaction_handle,
+                  "normal_plan_digest": proof.plan_digest,
+                  "compilation_session_handle": handoff.compilation_session_handle,
+                  "compilation_transaction_handle": handoff.compilation_transaction_handle,
+                  "publication_handoff_handle": handoff.handoff_handle,
+                  "publication_receipt_handle": handoff.publication_receipt_handle,
+                  "publication_sha256": handoff.publication_sha256,
+                  "release_receipt_handle": receipt.release_receipt_handle,
+                  "key_id": receipt.key_id, "key_device": receipt.key_device,
+                  "key_inode": receipt.key_inode, "key_sha256": digest,
+                  "key_receipt_handle": receipt.receipt_handle,
+                  "issued_unix": time.time(), "setup_deadline_unix": time.time() +
+                  max(0.0, proof.expires_monotonic - time.monotonic())}
+        _write_root_selection(path, {**record, "binding_hmac": hmac.new(
+            os.pread(key_fd, 32, 0), _normal_choice_binding(record), hashlib.sha256).hexdigest()},
+            exclusive=True)
+        signer = RootSetupChoiceSigner(self, key_fd=os.dup(key_fd), session_handle=handle,
+                                       key_id=receipt.key_id, key_device=receipt.key_device,
+                                       key_inode=receipt.key_inode, key_digest=digest,
+                                       adoption_record=record)
+        self._normal_signers[handle.session_id] = signer
+        return signer
+
+    def _verify_normal_choice_signer(self, signer: RootSetupChoiceSigner) -> None:
+        from .bootstrap_enrollment import RootSetupSessionStore
+        store = getattr(self.initial_compilation_registry, "_session_store", None)
+        if not isinstance(store, RootSetupSessionStore):
+            raise AuthorityDenied("setup.choice", "normal root setup store is unavailable")
+        live = store._live(signer._session_handle)
+        proof = store._proof(live)
+        handoff = self.initial_compilation_registry.resolve_adopted_handoff(signer._session_handle)
+        current = self._normal_signers.get(signer._session_handle.session_id)
+        if (current is not signer
+                or signer._adoption_record.get("normal_transaction_handle") != proof.transaction_handle
+                or signer._adoption_record.get("publication_handoff_handle") != handoff.handoff_handle):
+            raise AuthorityDenied("setup.choice", "normal setup choice signer is revoked or stale")
+        try:
+            durable = json.loads(_read_root_selection_bytes(
+                self._normal_signer_path(signer._session_handle.session_id), 16_384).decode("ascii"),
+                object_pairs_hook=_unique_pairs)
+        except Exception:
+            raise AuthorityDenied("setup.choice", "durable normal setup signer record is unavailable") from None
+        record = self._validate_normal_signer_record(durable, proof, handoff)
+        binding = record.pop("binding_hmac")
+        fd, info, raw = self._open_key()
+        try:
+            expected = hmac.new(raw, _normal_choice_binding(record), hashlib.sha256).hexdigest()
+            if (not secrets.compare_digest(binding, expected)
+                    or record != signer._adoption_record
+                    or record["key_id"] != signer.key_id):
+                raise AuthorityDenied("setup.choice", "durable normal setup signer binding changed")
+            selection = self._read_selection()
+            private_binding = json.loads(_read_root_selection_bytes(
+                self.root_journal / self.private_root_name / f"{record['key_receipt_handle']}.json",
+                4096).decode("ascii"), object_pairs_hook=_unique_pairs)
+            if (selection is None or selection["key_id"] != record["key_id"]
+                    or selection["receipt_handle"] != record["key_receipt_handle"]
+                    or selection["initial_compilation_session_handle"] != record["compilation_session_handle"]
+                    or selection["key_device"] != record["key_device"]
+                    or selection["key_inode"] != record["key_inode"]
+                    or selection["release_receipt_handle"] != record["release_receipt_handle"]
+                    or private_binding != {"schema": 1, "receipt_handle": record["key_receipt_handle"],
+                                           "key_device": record["key_device"],
+                                           "key_inode": record["key_inode"],
+                                           "key_sha256": record["key_sha256"]}):
+                raise AuthorityDenied("setup.choice", "selected setup key receipt continuity changed")
+        finally:
+            os.close(fd)
+            raw = b""
+        plan = store.plan_resolver.resolve(proof.plan_artifact_id)
+        store.actor_verifier.verify_current(plan)
+        self.initial_compilation_registry.actor.verify_current(self.release)
+        fresh_fd, info, raw = self._open_key()
+        try:
+            if (info.st_dev != signer._key_device or info.st_ino != signer._key_inode
+                    or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), signer._key_digest)):
+                raise AuthorityDenied("setup.choice", "selected setup key has changed")
+        finally:
+            os.close(fresh_fd)
+            raw = b""
+
+    def _normal_signer_path(self, session_id: str) -> Path:
+        if not isinstance(session_id, str) or not re.fullmatch(r"setup-[0-9a-f]{32}", session_id):
+            raise AuthorityDenied("setup.choice", "normal setup session ID is malformed")
+        return self.root_journal / self.private_root_name / (
+            "normal-" + hashlib.sha256(session_id.encode("ascii")).hexdigest() + ".json")
+
+    def _validate_normal_signer_record(self, row: Any, proof: Any, handoff: Any) -> dict[str, Any]:
+        release_receipt_handle = self._release_receipt_handle_for_handoff(handoff)
+        fields = {"schema", "normal_setup_session_id", "normal_transaction_handle", "normal_plan_digest",
+                  "compilation_session_handle", "compilation_transaction_handle", "publication_handoff_handle",
+                  "publication_receipt_handle", "publication_sha256", "release_receipt_handle", "key_id",
+                  "key_device", "key_inode", "key_sha256", "key_receipt_handle",
+                  "issued_unix", "setup_deadline_unix", "binding_hmac"}
+        if (not isinstance(row, dict) or set(row) != fields or row.get("schema") != 1
+                or row.get("normal_setup_session_id") != proof.setup_session_id
+                or row.get("normal_transaction_handle") != proof.transaction_handle
+                or row.get("normal_plan_digest") != proof.plan_digest
+                or row.get("publication_handoff_handle") != handoff.handoff_handle
+                or row.get("compilation_session_handle") != handoff.compilation_session_handle
+                or row.get("publication_sha256") != handoff.publication_sha256
+                or row.get("publication_receipt_handle") != handoff.publication_receipt_handle
+                or row.get("release_receipt_handle") != release_receipt_handle
+                or not re.fullmatch(r"authority-key-[0-9a-f]{32}", str(row.get("key_id")))
+                or type(row.get("key_device")) is not int or type(row.get("key_inode")) is not int
+                or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("key_sha256")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("key_receipt_handle")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("binding_hmac")))
+                or type(row.get("issued_unix")) not in (int, float)
+                or type(row.get("setup_deadline_unix")) not in (int, float)
+                or not math.isfinite(row["issued_unix"])
+                or not math.isfinite(row["setup_deadline_unix"])
+                or row["setup_deadline_unix"] <= time.time()
+                or row["issued_unix"] > time.time()):
+            raise AuthorityDenied("setup.choice", "normal setup signer record does not match current handoff")
+        return row
+
+    def _release_receipt_handle_for_handoff(self, handoff: Any) -> str:
+        """Resolve the exact registry-issued release handle carried by the adopted session."""
+        from .bootstrap_runtime_factory import RootInitialCompilationSession, RootInitialPublicationHandoff
+        initial = getattr(handoff, "_initial_session", None)
+        if (not isinstance(handoff, RootInitialPublicationHandoff)
+                or not isinstance(initial, RootInitialCompilationSession)
+                or initial._release is not self.release
+                or initial._actor is not self.initial_compilation_registry.actor
+                or handoff._registry_seal != getattr(self.initial_compilation_registry, "_seal", None)
+                or initial.compilation_session_handle != handoff.compilation_session_handle
+                or initial.compilation_transaction_handle != handoff.compilation_transaction_handle
+                or not isinstance(initial.verified_release_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", initial.verified_release_receipt_handle)):
+            raise AuthorityDenied("setup.choice", "publication handoff lacks its current verified release receipt")
+        try:
+            self.release.verify_current()
+        except Exception:
+            raise AuthorityDenied("setup.choice", "selected installer release is no longer current") from None
+        return initial.verified_release_receipt_handle
+
+    def resolve_selected_key(self, receipt_handle: str,
+                             initial_compilation_session_handle: str) -> RootAuthorityKeyReceipt:
+        session = self._resolve_stage0(initial_compilation_session_handle)
+        receipt = self._receipts.get(receipt_handle)
+        if (receipt is None or not secrets.compare_digest(receipt._issuer_seal, self._seal)
+                or receipt.expires_monotonic <= time.monotonic()
+                or receipt.initial_compilation_session_handle != session.compilation_session_handle
+                or receipt.release_receipt_handle != session.verified_release_receipt_handle):
+            raise AuthorityDenied("key.selection", "root authority key receipt is absent or stale")
+        fd = self._key_fds.get(receipt_handle)
+        if fd is None:
+            raise AuthorityDenied("key.selection", "root authority key continuity handle is absent")
+        info = os.fstat(fd)
+        current_fd, path_info, raw = self._open_key()
+        try:
+            if (info.st_dev != receipt.key_device or info.st_ino != receipt.key_inode
+                    or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600
+                    or path_info.st_dev != receipt.key_device or path_info.st_ino != receipt.key_inode
+                    or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(),
+                                                  self._key_digests[receipt_handle])):
+                raise AuthorityDenied("key.selection", "root authority signing key custody changed")
+            self._verify_private_binding(receipt, self._key_digests[receipt_handle])
+            self._verify_selection(receipt)
+            return receipt
+        finally:
+            os.close(current_fd)
+            raw = b""
+
+    def _resolve_stage0(self, handle: str) -> Any:
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry, RootInitialCompilationSession
+        if os.geteuid() != 0 or not isinstance(handle, str) or not re.fullmatch(r"[0-9a-f]{64}", handle):
+            raise AuthorityDenied("key.selection", "authority key selection requires a live root stage-zero handle")
+        # The installed actor verifier is also the stage-zero registry's actor.
+        # Resolve through a root registry supplied by the caller's release object.
+        registry = self.initial_compilation_registry
+        if not isinstance(registry, RootInitialCompilationRegistry):
+            raise AuthorityDenied("key.selection", "verified release is not bound to the root stage-zero registry")
+        session = registry.resolve_initial_session(handle)
+        if not isinstance(session, RootInitialCompilationSession):
+            raise AuthorityDenied("key.selection", "root stage-zero session is malformed")
+        registry.verify_initial_session(session)
+        if session._release is not self.release or session._actor is not registry.actor:
+            raise AuthorityDenied("key.selection", "stage-zero session belongs to a different verified release")
+        plan = registry.resolve_setup_plan(session)
+        self.actor_verifier.verify_current(plan)
+        return session
+
+    def _verify_key_parent(self) -> None:
+        _secure_path(AUTHORITY_KEY_PATH.parent / "placeholder", expected_uid=0, allow_missing_leaf=True)
+        _ensure_root_private_dir(self.root_journal / self.private_root_name)
+
+    def _open_key(self):
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(AUTHORITY_KEY_PATH, flags)
+            info = os.fstat(fd)
+            path_info = AUTHORITY_KEY_PATH.lstat()
+            raw = os.read(fd, 33)
+        except OSError:
+            raise AuthorityDenied("key.selection", "authority signing key is unavailable") from None
+        if (stat.S_ISLNK(path_info.st_mode) or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600
+                or path_info.st_dev != info.st_dev or path_info.st_ino != info.st_ino
+                or len(raw) != 32 or os.read(fd, 1)):
+            os.close(fd)
+            raise AuthorityDenied("key.selection", "authority signing key custody is invalid")
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd, info, raw
+
+    def _active_key_id(self) -> str | None:
+        if not _path_exists_nofollow(AUTHORITY_CONFIG_PATH):
+            return None
+        protected = load_protected_enrollment()
+        return protected.key_id
+
+    def _read_selection(self) -> dict[str, Any] | None:
+        if not _path_exists_nofollow(self.selection_path):
+            return None
+        raw = _read_root_selection_bytes(self.selection_path, 16_384)
+        try:
+            row = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+        except (ValueError, UnicodeError):
+            raise AuthorityDenied("key.selection", "authority key selection file is malformed") from None
+        return _validate_root_key_selection(row)
+
+    def _persist_selection(self, receipt: RootAuthorityKeyReceipt) -> None:
+        document = {"schema": 1, "receipt_handle": receipt.receipt_handle,
+                    "key_id": receipt.key_id, "algorithm": receipt.algorithm,
+                    "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+                    "key_uid": 0, "key_mode": 0o600,
+                    "release_receipt_handle": receipt.release_receipt_handle,
+                    "initial_compilation_session_handle": receipt.initial_compilation_session_handle,
+                    "issued_monotonic": receipt.issued_monotonic,
+                    "expires_monotonic": receipt.expires_monotonic}
+        _write_root_selection(self.selection_path, document)
+
+    def _persist_private_binding(self, receipt: RootAuthorityKeyReceipt, digest: str) -> None:
+        root = self.root_journal / self.private_root_name
+        _ensure_root_private_dir(root)
+        _write_root_selection(root / f"{receipt.receipt_handle}.json", {
+            "schema": 1, "receipt_handle": receipt.receipt_handle,
+            "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+            "key_sha256": digest,
+        }, exclusive=True)
+
+    def _verify_private_binding(self, receipt: RootAuthorityKeyReceipt, digest: str) -> None:
+        root = self.root_journal / self.private_root_name
+        try:
+            row = json.loads(_read_root_selection_bytes(root / f"{receipt.receipt_handle}.json",
+                                                        4096).decode(),
+                             object_pairs_hook=_unique_pairs)
+        except Exception:
+            raise AuthorityDenied("key.selection", "private root key continuity record is absent") from None
+        if row != {"schema": 1, "receipt_handle": receipt.receipt_handle,
+                   "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+                   "key_sha256": digest}:
+            raise AuthorityDenied("key.selection", "private root key continuity record changed")
+
+    def _verify_selection(self, receipt: RootAuthorityKeyReceipt) -> None:
+        row = self._read_selection()
+        if row is None or row != {
+            "schema": 1, "receipt_handle": receipt.receipt_handle,
+            "key_id": receipt.key_id, "algorithm": receipt.algorithm,
+            "key_device": receipt.key_device, "key_inode": receipt.key_inode,
+            "key_uid": 0, "key_mode": 0o600,
+            "release_receipt_handle": receipt.release_receipt_handle,
+            "initial_compilation_session_handle": receipt.initial_compilation_session_handle,
+            "issued_monotonic": receipt.issued_monotonic,
+            "expires_monotonic": receipt.expires_monotonic,
+        }:
+            raise AuthorityDenied("key.selection", "authority key selection changed")
+
+    def _write_first_install_marker(self, session: Any, info: os.stat_result | None,
+                                    receipt_handle: str | None, key_id: str | None,
+                                    *, state: str) -> None:
+        root = self.root_journal / self.private_root_name
+        _ensure_root_private_dir(root)
+        _write_root_selection(root / "first-install.json", {
+            "schema": 1, "receipt_handle": receipt_handle,
+            "initial_compilation_session_handle": session.compilation_session_handle,
+            "key_id": key_id,
+            "key_device": None if info is None else info.st_dev,
+            "key_inode": None if info is None else info.st_ino,
+            "state": state,
+        })
+
+    def _first_install_marker(self, session: Any) -> dict[str, Any] | None:
+        path = self.root_journal / self.private_root_name / "first-install.json"
+        if not _path_exists_nofollow(path):
+            return None
+        row = json.loads(_read_root_selection_bytes(path, 4096).decode(),
+                         object_pairs_hook=_unique_pairs)
+        expected = {"schema", "receipt_handle", "initial_compilation_session_handle",
+                    "key_id", "key_device", "key_inode", "state"}
+        if (not isinstance(row, dict) or set(row) != expected
+                or type(row.get("schema")) is not int or row.get("schema") != 1
+                or row.get("initial_compilation_session_handle") != session.compilation_session_handle
+                or row.get("state") not in {"creating", "created"}):
+            return None
+        if row["state"] == "creating":
+            if any(row.get(key) is not None for key in ("receipt_handle", "key_id", "key_device", "key_inode")):
+                raise AuthorityDenied("key.selection", "initial key creation journal is malformed")
+        elif (not isinstance(row.get("receipt_handle"), str)
+              or not re.fullmatch(r"[0-9a-f]{64}", row["receipt_handle"])
+              or not isinstance(row.get("key_id"), str)
+              or not re.fullmatch(r"authority-key-[0-9a-f]{32}", row["key_id"])
+              or type(row.get("key_device")) is not int or row["key_device"] < 0
+              or type(row.get("key_inode")) is not int or row["key_inode"] <= 0):
+            raise AuthorityDenied("key.selection", "completed initial key creation journal is malformed")
+        return row
+
+
+def _path_exists_nofollow(path: Path) -> bool:
+    try:
+        path.lstat()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _validate_root_key_selection(row: Any) -> dict[str, Any]:
+    fields = {"schema", "receipt_handle", "key_id", "algorithm", "key_device", "key_inode",
+              "key_uid", "key_mode", "release_receipt_handle", "initial_compilation_session_handle",
+              "issued_monotonic", "expires_monotonic"}
+    if (not isinstance(row, dict) or set(row) != fields or type(row.get("schema")) is not int
+            or row.get("schema") != 1 or not isinstance(row.get("receipt_handle"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", row["receipt_handle"])
+            or not isinstance(row.get("key_id"), str)
+            or not re.fullmatch(r"authority-key-[0-9a-f]{32}", row["key_id"])
+            or row.get("algorithm") != "HMAC-SHA256"
+            or type(row.get("key_device")) is not int or row["key_device"] < 0
+            or type(row.get("key_inode")) is not int or row["key_inode"] <= 0
+            or type(row.get("key_uid")) is not int or row["key_uid"] != 0
+            or type(row.get("key_mode")) is not int or row["key_mode"] != 0o600
+            or not isinstance(row.get("release_receipt_handle"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", row["release_receipt_handle"])
+            or not isinstance(row.get("initial_compilation_session_handle"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", row["initial_compilation_session_handle"])
+            or type(row.get("issued_monotonic")) not in (int, float)
+            or type(row.get("expires_monotonic")) not in (int, float)
+            or not math.isfinite(row["issued_monotonic"])
+            or not math.isfinite(row["expires_monotonic"])
+            or row["expires_monotonic"] <= row["issued_monotonic"]):
+        raise AuthorityDenied("key.selection", "authority key selection fields are malformed")
+    return row
+
+
+def _read_root_selection_bytes(path: Path, maximum: int) -> bytes:
+    data = read_protected_file(path, expected_uid=0, maximum=maximum)
+    info = path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600):
+        raise AuthorityDenied("key.selection", "root authority key receipt custody is invalid")
+    return data
+
+
+def _ensure_root_private_dir(path: Path) -> None:
+    if (path != Path("/var/lib/hermes-installer/authority-journal/authority-key-receipts")
+            or os.geteuid() != 0):
+        raise AuthorityDenied("key.selection", "private authority key journal path is not selected")
+    try:
+        path.mkdir(mode=0o700)
+        os.chown(path, 0, 0)
+        fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except FileExistsError:
+        pass
+    except OSError:
+        raise AuthorityDenied("key.selection", "private authority key journal could not be created") from None
+    info = path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+        raise AuthorityDenied("key.selection", "private authority key journal custody is invalid")
+
+
+def _write_root_selection(path: Path, document: Mapping[str, Any], *, exclusive: bool = False) -> None:
+    selection = Path("/etc/hermes-installer/authority-key-selection.json")
+    private = Path("/var/lib/hermes-installer/authority-journal/authority-key-receipts")
+    private_child = (path.parent == private
+                     and (path.name == "first-install.json"
+                          or bool(re.fullmatch(r"[0-9a-f]{64}\.json", path.name))
+                          or bool(re.fullmatch(r"normal-[0-9a-f]{64}\.json", path.name))))
+    if os.geteuid() != 0 or (path != selection and not private_child):
+        raise AuthorityDenied("key.selection", "authority key receipt destination is not selected")
+    _secure_path(path.parent / "placeholder", expected_uid=0, allow_missing_leaf=True)
+    _secure_path(path, expected_uid=0, allow_missing_leaf=True)
+    payload = json.dumps(dict(document), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    if len(payload) > 16_384:
+        raise AuthorityDenied("key.selection", "authority key selection exceeds its size bound")
+    if _path_exists_nofollow(path):
+        existing = path.lstat()
+        if (stat.S_ISLNK(existing.st_mode) or not stat.S_ISREG(existing.st_mode)
+                or existing.st_uid != 0 or existing.st_gid != 0
+                or stat.S_IMODE(existing.st_mode) != 0o600):
+            raise AuthorityDenied("key.selection", "existing authority key selection custody is invalid")
+        current = read_protected_file(path, expected_uid=0, maximum=16_384)
+        if current == payload:
+            return
+        if exclusive:
+            raise AuthorityDenied("key.selection", "private authority key receipt already exists")
+    temporary = path.with_name("." + path.name + "." + secrets.token_hex(8) + ".tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(temporary, flags, 0o600)
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(payload):
+                offset += os.write(fd, payload[offset:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if _path_exists_nofollow(path):
+            os.replace(temporary, path)
+        else:
+            os.rename(temporary, path)
+        parent_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                            getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError:
+        raise AuthorityDenied("key.selection", "authority key selection update failed") from None
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _secure_path(path: Path, *, expected_uid: int, allow_missing_leaf: bool = False) -> None:
@@ -361,6 +1112,7 @@ class SourceIssuerRecord:
     observer_enrollment_id: str
     source_action_ids: tuple[str, ...]
     private_provider_route_ids: tuple[str, ...] = ()
+    public_web_scope_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,6 +1167,9 @@ class ProtectedEnrollment:
     private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_model_selection_records: tuple[Mapping[str, Any], ...] = ()
+    public_web_scope_records: tuple[Mapping[str, Any], ...] = ()
 
 
 _SOURCE_ACTIONS_BY_CHANNEL = {
@@ -438,7 +1193,9 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
                 "generation", "observer_enrollment_id", "source_action_ids"}
     channels = set(_SOURCE_ACTIONS_BY_CHANNEL)
     for row in value:
-        if not isinstance(row, dict) or set(row) not in (required, required | {"private_provider_route_ids"}):
+        optional_fields = {"private_provider_route_ids", "public_web_scope_ids"}
+        if (not isinstance(row, dict) or not required.issubset(row)
+                or set(row) - required - optional_fields):
             raise AuthorityDenied("enrollment.source", "protected source issuer fields are invalid")
         item = row
         channel = _read_id(item["issuer_channel_id"], "issuer channel")
@@ -451,6 +1208,7 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
         actions = item["source_action_ids"]
         parents = item["allowed_parent_channels"]
         private_routes = item.get("private_provider_route_ids", [])
+        public_scopes = item.get("public_web_scope_ids", [])
         if (channel not in channels or not isinstance(role_sha, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", role_sha)
                 or not isinstance(actions, list) or not actions or len(actions) > 16
@@ -462,16 +1220,23 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
                 or len(parents) != len(set(parents))
                 or not isinstance(private_routes, list) or len(private_routes) > 64
                 or any(not isinstance(route, str) for route in private_routes)
-                or len(private_routes) != len(set(private_routes))):
+                or len(private_routes) != len(set(private_routes))
+                or not isinstance(public_scopes, list) or len(public_scopes) > 32
+                or any(not isinstance(scope, str) for scope in public_scopes)
+                or len(public_scopes) != len(set(public_scopes))
+                or public_scopes != sorted(public_scopes)):
             raise AuthorityDenied("enrollment.source", "protected source issuer row is malformed")
         for route in private_routes:
             _read_id(route, "source private provider route")
+        for scope in public_scopes:
+            _read_id(scope, "source public web scope")
         if observer_id in seen_ids:
             raise AuthorityDenied("enrollment.source", "protected source issuer is duplicated")
         seen_ids.add(observer_id)
         result.append(SourceIssuerRecord(
             channel, profile, role_artifact, role_sha, capture_schema,
             tuple(parents), generation, observer_id, tuple(actions), tuple(private_routes),
+            tuple(public_scopes),
         ))
     return tuple(result)
 
@@ -651,6 +1416,8 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "remote_startup_enrollments", "private_loopback_networks",
             "selected_resource_executions",
             "selected_application_runtimes",
+            "private_memory_endpoint_selections", "private_memory_model_selections",
+            "public_web_scopes",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
     if type(item["schema"]) is not int or item["schema"] != 1:
@@ -670,12 +1437,48 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "source_issuers", "native_mcp_tool_bindings",
                    "resource_controller_roles", "remote_observation_enrollments",
                    "remote_startup_enrollments", "private_loopback_networks",
-                   "selected_resource_executions", "selected_application_runtimes")
+                   "selected_resource_executions", "selected_application_runtimes",
+                   "private_memory_endpoint_selections", "private_memory_model_selections",
+                   "public_web_scopes")
     for name in list_fields:
         rows = item[name]
         if (not isinstance(rows, list) or len(rows) > 1024
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
+    # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
+    try:
+        from hermes_installer.protected_enrollment import (
+            RootSelectedPrivateMemoryEndpointBinding,
+            RootSelectedPrivateMemoryModelBinding,
+            RootSelectedPublicWebScope,
+        )
+        endpoints = {}
+        for row in item["private_memory_endpoint_selections"]:
+            selected = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            if selected.binding_id in endpoints:
+                raise ValueError("duplicate endpoint binding ID")
+            endpoints[selected.binding_id] = selected
+        models = set()
+        for row in item["private_memory_model_selections"]:
+            selected = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            if selected.binding_id in models or selected.endpoint_binding_id not in endpoints:
+                raise ValueError("duplicate model binding or unknown endpoint foreign key")
+            models.add(selected.binding_id)
+        public_scopes = []
+        for row in item["public_web_scopes"]:
+            selected = RootSelectedPublicWebScope.from_protected_record(
+                row, service_generation_digest=digest,
+            )
+            public_scopes.append(selected.enrollment_id)
+        if public_scopes != sorted(set(public_scopes)):
+            raise ValueError("public web scopes are duplicated or unsorted")
+    except (ImportError, AttributeError, KeyError, TypeError, ValueError, PermissionError) as exc:
+        raise AuthorityDenied("enrollment.generation", "protected selection catalog is invalid") from exc
     native_schema_records = _parse_native_schema_artifact_records(item["native_schema_artifacts"])
     composio_channel_records = _parse_composio_channel_enrollment_records(
         item["composio_channel_enrollments"],
@@ -1982,6 +2785,11 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             memory_enrollments=memory_enrollments,
             parameter_schemas=service_generations["operation_parameter_schemas"],
             selected_application_runtimes=service_generations["selected_application_runtimes"],
+            native_schema_artifacts=service_generations["native_schema_artifacts"],
+            native_mcp_tool_bindings=service_generations["native_mcp_tool_bindings"],
+            private_memory_endpoint_selections=service_generations["private_memory_endpoint_selections"],
+            private_memory_model_selections=service_generations["private_memory_model_selections"],
+            public_web_scopes=service_generations["public_web_scopes"],
         )
         generation_profiles = {}
         for service_record in service_generations["service_records"]:
@@ -2031,6 +2839,9 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_loopback_networks"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_resource_executions"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_application_runtimes"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_endpoint_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["public_web_scopes"]),
     )
 
 

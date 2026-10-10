@@ -1,0 +1,3 @@
+# Memory lifecycle active closure v119
+
+Original SK-T01/SK-F02/SK01/HI-T03 lifecycle joins: selected service enablement is recorded by its existing explicit installer choice, distinct from capture opt-in. Persistent active prestart closure is resolved from actual selected process recipe/artifact/config/runtime receipts, not expired setup authorization. Fresh semantic readiness binds real selected provider operations; liveness is never extraction/retrieval proof. No lazy install/model download, source/identity substitution or acceptance promotion. Exact fields/tasks are adjacent JSON; baseline frozen.

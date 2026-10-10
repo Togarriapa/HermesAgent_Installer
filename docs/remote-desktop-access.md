@@ -10,6 +10,10 @@ The loopback gateway allows only the pinned HTML5 client entrypoint, bundled Jav
 
 The setup management token is setup-only. Runtime cloudflared reads a dedicated tunnel token from a protected file; neither token enters command-line arguments, process environment, logs, evidence, or Desktop profile files. Disable, rollback, and uninstall reconcile resource IDs from the journal and remove only resources created by the installer.
 
+The root setup-readiness probe performs four fixed, bounded unauthenticated loopback requests: the client bootstrap asset, arbitrary backend path, shell path and whole-desktop path. It inspects the selected gateway PID's actual Linux TCP listener in its network namespace and requires its only TCP listener to be the catalog-selected `127.0.0.1` port. Each denial is bound to request/response digests and unchanged root HI07/HI12 byte/effect snapshots authorized by a root-signed, one-use probe capability; gateway response flags and response-body length do not prove a denial-before-connector result. If that root ledger capability or snapshot seam is unavailable, readiness stays unavailable. The probe is private to root setup and never exposes a public JWT bypass.
+
+The native-window observer supports a catalog-selected local Linux X11 display with XRes 1.2 local-client-PID support. It reads the Xauthority cookie from the exact protected file identity, checks the X server's Unix-socket peer PID/UID against current root process custody, enumerates the bounded descendant window tree through XQueryTree, and uses XRes server-reported local client PIDs. Each PID is opened as a live pidfd and resolved through the root active profile/generation, cgroup and official executable digest. Titles, classes and `_NET_WM_PID` are ignored as identity. A pixel tile of at most 64x64 from the selected app window is hashed in memory and immediately discarded. Wayland, remote/TCP X11, missing XRes/PIDFD/procfs proof, an unrelated mapped window, or an unbound WebSocket stream remains unavailable; no whole-display fallback is accepted. The API behavior is based on the [X-Resource client-ID interface](https://xcb.freedesktop.org/manual/group__XCB__Res__API.html) and [Xlib window-tree interface](https://www.x.org/releases/X11R7.5/doc/libX11/libX11.html). These code paths and controlled fixtures do not establish native-window proof on the Pi; that remains a target acceptance step.
+
 ## State and evidence
 
 Configured means explicit hostname, zone, allowed emails, management secret reference, and a distinct policy-read token reference validate. `access_ready` is a resumable setup checkpoint and does not imply a live tunnel. Pending account means API permissions or Zero Trust enrollment are missing. Pending target means live Pi/account behavior remains unverified. Active requires Access, verifier, and origin readiness followed by ordered route activation. Code fixtures do not prove Pi acceptance.
@@ -32,6 +36,8 @@ The executable implementation and signed JWT/policy/connector negative tests are
 Fresh Access membership checks use a second least-privilege credential scoped to read the installer-owned Access application, all its policies, the exact OTP provider, and account metadata needed for those reads. This is distinct from setup-management credentials. It is resolved only inside a dedicated non-root custodian process; the browser gateway has no resolver, token reference, or Cloudflare API credential. The custodian's persisted JSON contains only journaled resource IDs, the fixed issuer and JWKS, email set, audience tag, credential reference, socket path and numeric service identities. Config is a service-owned private regular file. The gateway and custodian have different UIDs; the AF_UNIX socket is service-owned, non-world-accessible, and authenticated with Linux peer credentials. Parent directories reject symlinks, foreign ownership, and group/world write access. The root authority accepts only the fixed HI13 admit/challenge/renew/close and remote connector operations. Its protected enrollment selects the issuer, audience, JWKS origin, allowlist reference, policy-verifier enrollment, gateway/Desktop generations and route IDs; caller payloads cannot choose a principal, profile, connector target, lease or credential reference.
 
 An exact current-policy decision requires repeated bounded reads of the same application, complete bounded policy set and selected OTP provider. Resolver, API, cancellation or time-bound failure denies. The runtime lock contains only the dedicated component environment. The separate CI fixture lock targets x86-64 Python 3.13 and is test-only; it does not replace the hash-pinned ARM64 Python 3.14 runtime lock or prove Pi readiness.
+
+The remote-security CI job runs contract fixtures with `unittest` discovery and installs only its pinned JWT, cryptography, HTTP and WebSocket test dependencies. Its Xpra source fixture uses the repository root emitted by `git archive` and checks the complete regular-file, directory, executable-mode and five approved symlink-target closure before expanding aliases. This job contributes fixture evidence for AC13–AC15; passing it does not satisfy their separate Cloudflare-account or Pi-target acceptance evidence.
 
 Host startup and shutdown still require the installer-owned systemd/cgroup supervisor and native service acceptance. A fixture UID exchange proves the Linux peer-credential boundary only; it is not proof of systemd custody, Pi identity, Access-policy propagation, Desktop sandbox, or Xpra process/window confinement.
 # Root tunnel credential and origin readiness
@@ -60,19 +66,17 @@ cgroup, namespaces and mount. A separate setup transaction binds the current
 setup process, selected tunnel response, dedicated writer role and probe role;
 its one-use origin-probe handle expires within 30 seconds. The root client
 connects only to the active catalog's private AF_UNIX socket, verifies the
-gateway peer PID/UID/GID, and sends three bounded per-action commands, each
-with a fresh immutable child handle: pinned asset GET, pinned asset HEAD, and
-WebSocket attach. The gateway returns measured bytes, status and digests; its
-response cannot set readiness booleans. The root joins those results with
-separately root-observed loopback listener and denial-route facts plus a
-native-window observation bound to the selected Desktop PIDFD and WebSocket
-stream. Missing boundary/window observers, a stale proof, or an unexpected
-route response leaves readiness unavailable. Root registers its own signed
-probe receipt only after all joins pass. Receipts expire within 30 seconds and
-must pass root signature, selection, digest and expiry checks at the activation
-boundary. The isolated loopback/AF_UNIX fixture proves byte-level protocol
-behavior; it does not prove production observers, connector custody, or target
-readiness.
+gateway peer PID/UID/GID, and sends a fixed selection plus challenge and digest.
+The private gateway operation must collect the exact HTTP asset, WebSocket and
+native-window observations from its selected app-only connector and deny
+unauthenticated, arbitrary, shell and whole-host routes. The root verifies the
+challenge echoes and registers its own signed probe receipt before issuing
+readiness. Neither endpoint-provided booleans nor a live PID alone satisfy the
+check. Receipts expire after 30 seconds and must pass root signature, selection,
+digest and expiry checks at the activation boundary. Until the root HI12 setup
+probe connector and native-window observer are assembled, readiness remains
+unavailable; the isolated loopback/AF_UNIX fixture proves protocol behavior,
+not production connector or target readiness.
 
 Fixture evidence exercises private file effects, collision refusal, signed
 receipt validation and real isolated loopback socket exchanges. It does not

@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec, TreeFile
+from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec, TreeFile, load_protected_catalog
 from hermes_installer.authority import artifacts as derivation
 from hermes_installer.authority.artifacts import RootSchemaDerivationReceiptRegistry
 from hermes_installer.authority.bootstrap_enrollment import RootArtifactReceiptRegistry
@@ -21,11 +21,121 @@ from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.setup_policy_publication import (
     PolicyPublicationReceiptResolver, RootSetupPublicationReceipt,
 )
-from hermes_installer.authority.source_artifact_receipts import build_root_schema_receipt_runtime
+from hermes_installer.authority.source_artifact_receipts import (
+    RootCatalogArtifactObserver, SourceArtifactReceiptDenied,
+    build_root_schema_receipt_runtime,
+)
 from hermes_installer.protected_enrollment import ProtectedRootJournalCatalog, RootJournalSelection
 
 
 class RootSchemaDerivationLinuxTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
+                         "requires isolated Linux root-owned catalog fixture")
+    def test_pinned_xpra_source_catalog_has_exact_full_tree_and_link_rows(self):
+        with tempfile.TemporaryDirectory(prefix="hermes-xpra-catalog-", dir="/var/lib") as temporary:
+            root = Path(temporary)
+            os.chmod(root, 0o700)
+            catalog_path = root / "artifact-catalog.json"
+            shutil.copyfile(
+                Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json",
+                catalog_path,
+            )
+            os.chmod(catalog_path, 0o600)
+            catalog = load_protected_catalog(catalog_path, expected_uid=0)
+            spec = catalog._artifact(
+                "xpra-source-521b0d2e762c770b2641d258b93d23575fa9cbea",
+                "20b55586457df5aed8453b0d1b446e4dd954f2027d814f1eb7c0a96227ef1c80",
+            )
+            self.assertEqual(spec.version, "521b0d2e762c770b2641d258b93d23575fa9cbea")
+            self.assertEqual(spec.source_url,
+                             "https://codeload.github.com/Xpra-org/xpra/tar.gz/"
+                             "521b0d2e762c770b2641d258b93d23575fa9cbea")
+            self.assertEqual((spec.size_bytes, spec.max_bytes, spec.max_tree_bytes),
+                             (13962693, 16777216, 67108864))
+            self.assertEqual((len(spec.tree_files), sum(row.kind == "file" for row in spec.tree_files),
+                              sum(row.kind == "symlink" for row in spec.tree_files)), (2474, 2469, 5))
+            self.assertEqual(spec.tree_manifest_sha256,
+                             "f52b4ce760b86c24a4d6d930f47e58357442a984d9ff2478d7abf338ff48e467")
+            self.assertEqual({(row.path, row.link_target, row.sha256, row.size_bytes)
+                              for row in spec.tree_files if row.kind == "symlink"}, {
+                ("debian", "packaging/debian/xpra",
+                 "a1aef4be57bc54eefaab320b3728f3c0e0f463bc3c7307b1ac4528e2b3f00d4b", 21),
+                ("fs/etc/default", "sysconfig",
+                 "ed85312a196268e2240f401f7d8711c4edaad4d43bcfd76ec5f4e19ec8916ee0", 9),
+                ("fs/libexec/xpra/gnome-open", "xdg-open",
+                 "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+                ("fs/libexec/xpra/gvfs-open", "xdg-open",
+                 "cdb8bb17173e1db8bf5dad2247fbe8be8d8c82e076cb465a471482387f521a29", 8),
+                ("fs/share/doc/xpra", "../../../docs",
+                 "bdc7f46fbdfe68781df25dec18962c3ac2aa93d35c3e04185ecc9ac201c73b35", 13),
+            })
+
+    @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
+                         "requires isolated Linux root-owned fixture")
+    def test_glm_source_blobs_are_observed_only_from_exact_root_catalog_cas(self):
+        repo = Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory(prefix="hermes-glm-source-", dir="/var/lib") as temporary:
+            base = Path(temporary)
+            os.chmod(base, 0o700)
+            catalog_path = base / "artifact-catalog.json"
+            catalog_path.write_bytes((repo / "src/hermes_installer/authority/artifact-catalog.json").read_bytes())
+            os.chmod(catalog_path, 0o600)
+            catalog = load_protected_catalog(catalog_path, expected_uid=0)
+            staging = base / "staging"
+            staging.mkdir(mode=0o700)
+            expected = {
+                "glm52-artifact-metadata-v1": (
+                    "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+                    "planning/glm52-artifact-metadata.json"),
+                "glm52-upstream-mit-license-cf457fa": (
+                    "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+                    "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt"),
+                "glm52-quantized-readme-6bbb01e": (
+                    "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+                    "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md"),
+            }
+            for artifact_id, (digest, relative_path) in expected.items():
+                body = (repo / relative_path).read_bytes()
+                spec = catalog._artifact(artifact_id, digest)
+                self.assertEqual((spec.size_bytes, spec.max_bytes, spec.archive_format, spec.tree_files),
+                                 (len(body), len(body), None, ()))
+                target = staging / "objects" / artifact_id / digest / spec.filename
+                target.parent.mkdir(mode=0o700, parents=True)
+                target.write_bytes(body)
+                os.chmod(target, 0o444)
+            bindings = RootRuntimeBindings(
+                enrollment_catalog=SimpleNamespace(digest="a" * 64), build_catalog=None,
+                device_catalog=None, process_manager=None, effect_handlers={}, native_bridges={},
+                artifact_catalog=catalog, build_store=None, service_connector=None,
+            )
+            enrollment = SimpleNamespace(protected_enrollment_digest="a" * 64,
+                                         artifact_staging_directory=staging)
+            observer = RootCatalogArtifactObserver.from_root_runtime(bindings, enrollment)
+            observations = []
+            try:
+                for artifact_id, (digest, relative_path) in expected.items():
+                    observation = observer.observe(artifact_id, digest)
+                    observations.append(observation)
+                    self.assertTrue(observer.verify_current(observation))
+                    source = (repo / relative_path).read_bytes()
+                    fd = observation.open_blob()
+                    try:
+                        actual = os.read(fd, len(source) + 1)
+                    finally:
+                        os.close(fd)
+                    self.assertEqual(actual, source)
+                    self.assertEqual((observation.artifact_id, observation.sha256,
+                                      observation.size_bytes), (artifact_id, digest, len(source)))
+                first = observations[0]
+                staged = staging / "objects" / first.artifact_id / first.sha256 / catalog.artifacts[first.artifact_id].filename
+                with staged.open("r+b") as output:
+                    output.write(b"X")
+                with self.assertRaises(SourceArtifactReceiptDenied):
+                    observer.verify_current(first)
+            finally:
+                for observation in observations:
+                    observation.close()
+
     @unittest.skipUnless(platform.system() == "Linux" and os.geteuid() == 0,
                          "requires isolated Linux root-owned fixture")
     def test_package_member_derivation_requires_current_active_receipt_closure(self):
@@ -92,7 +202,8 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
                 "sha256": child.sha256, "schema_kind": "arguments",
                 "native_package_id": "package-demo", "native_package_generation": "generation-1",
                 "adapter_id": "adapter-demo", "action_id": "action-demo",
-                "source_receipt_handle": "pending-schema-receipt-handle-000000000000000000000000000000000000",
+                "source_receipt_handle": parent, "size_bytes": len(schema),
+                "derivation_receipt_handle": None,
             }
             package = SimpleNamespace(
                 generation="generation-1", profile_id="profile-demo",
@@ -142,13 +253,69 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
             registry = source_runtime.derivations
             self.assertIs(source_runtime.artifact_receipts.catalog, catalog)
             self.assertEqual(source_runtime.artifact_receipts.root, receipt_root)
+            dynamic_schema = b'{"additionalProperties":false,"type":"object"}'
+            dynamic_sha = hashlib.sha256(dynamic_schema).hexdigest()
+            dynamic_id = f"native-mcp-schema:{dynamic_sha}"
+            registry._write_derived_schema(dynamic_id, dynamic_sha, dynamic_schema)
+            self.assertEqual(
+                registry._read_derived_schema(dynamic_id, dynamic_sha, len(dynamic_schema)),
+                dynamic_schema,
+            )
+            with self.assertRaises(derivation.SchemaDerivationDenied):
+                registry._write_derived_schema("native-mcp-schema:" + "0" * 64,
+                                                "0" * 64, dynamic_schema)
+            external_schema = b'{"$ref":"https://invalid.example/schema.json"}'
+            external_sha = hashlib.sha256(external_schema).hexdigest()
+            with self.assertRaises(derivation.SchemaDerivationDenied):
+                registry._write_derived_schema(
+                    f"native-mcp-schema:{external_sha}", external_sha, external_schema,
+                )
+            dynamic_path = journal_dir / "derived-schemas" / f"{dynamic_sha}.json"
+            os.chmod(dynamic_path, 0o644)
+            with self.assertRaises(derivation.SchemaDerivationDenied):
+                registry._read_derived_schema(dynamic_id, dynamic_sha, len(dynamic_schema))
+            os.chmod(dynamic_path, 0o444)
+            observer = RootCatalogArtifactObserver.from_root_runtime(bindings, enrollment)
+            held_tree = observer.observe(source.artifact_id, source.sha256, materialize_tree=True)
+            try:
+                self.assertTrue(observer.verify_current(held_tree))
+                self.assertEqual(held_tree.tree_files, source_tree)
+                self.assertEqual(held_tree.tree_manifest_sha256, source.tree_manifest_sha256)
+                member_fd = held_tree.open_member("schemas/arguments.json", observer=observer)
+                try:
+                    self.assertEqual(os.read(member_fd, len(schema)), schema)
+                    os.fchmod(member_fd, 0o644)
+                    with self.assertRaises(SourceArtifactReceiptDenied):
+                        observer.verify_current(held_tree)
+                    os.fchmod(member_fd, 0o444)
+                finally:
+                    os.close(member_fd)
+                self.assertTrue(observer.verify_current(held_tree))
+                os.fchmod(held_tree._fd, 0o755)
+                unexpected_fd = os.open(
+                    "unexpected.bin", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                    0o600, dir_fd=held_tree._fd,
+                )
+                try:
+                    os.write(unexpected_fd, b"unlisted")
+                finally:
+                    os.close(unexpected_fd)
+                os.fchmod(held_tree._fd, 0o555)
+                with self.assertRaises(SourceArtifactReceiptDenied):
+                    observer.verify_current(held_tree)
+                os.fchmod(held_tree._fd, 0o755)
+                os.unlink("unexpected.bin", dir_fd=held_tree._fd)
+                os.fchmod(held_tree._fd, 0o555)
+                self.assertTrue(observer.verify_current(held_tree))
+            finally:
+                held_tree.close()
             with mock.patch.object(derivation, "_active_publication_with_parent", lambda _handle: object()):
                 observation = registry.observe_packaged_schema(
                     schema_record=schema_row, parent_receipt_handle=parent,
                 )
                 handle = registry.mint_schema_artifact(observation)
 
-            schema_row["source_receipt_handle"] = handle
+            schema_row["derivation_receipt_handle"] = handle
             active = self._publication(journal_dir, generation, (parent, handle))
             unlisted_parent = self._publication(journal_dir, generation, (handle,))
             with mock.patch.object(PolicyPublicationReceiptResolver, "resolve_current",
@@ -172,6 +339,39 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
                     handle, artifact_id=child.artifact_id, artifact_sha256=child.sha256,
                     size_bytes=len(schema), service_generation_digest=generation,
                 )
+                from hermes_installer.authority.source_artifact_receipts import (
+                    RootSourceArtifactReceiptVerifier,
+                )
+                verifier = RootSourceArtifactReceiptVerifier.from_root_runtime(
+                    bindings, registry, expected_uid=0,
+                )
+                identity = {
+                    "schema_id": schema_row["id"], "sha256": child.sha256,
+                    "schema_kind": "arguments", "native_package_id": "package-demo",
+                    "native_package_generation": "generation-1", "adapter_id": "adapter-demo",
+                    "action_id": "action-demo",
+                }
+                self.assertTrue(verifier.verify_source_receipt(parent, identity))
+                with self.assertRaises(SourceArtifactReceiptDenied):
+                    verifier.verify_source_receipt(handle, identity)
+                from hermes_installer.mcp.native_dispatch import NativeMCPToolBinding
+                selected_binding = NativeMCPToolBinding(
+                    id="action-demo", profile_id="profile-demo", process_generation="generation-1",
+                    native_package_id="package-demo", native_package_generation="generation-1",
+                    native_server_name="fixture", native_tool_name="fixture.schema",
+                    native_schema_sha256="a" * 64, mcp_enrollment_id="fixture",
+                    mcp_generation="generation-1", mcp_tool_name="fixture.schema",
+                    request_schema_id=schema_row["id"], result_schema_id="schema-result",
+                    effect_operation="mcp.request", effect_target="mcp:fixture:http",
+                    capability="mcp:fixture:read", recipient=None, scope_bindings=(),
+                    handler_artifact_id="adapter-demo", handler_artifact_sha256="a" * 64,
+                )
+                derived = registry.resolve_schema_artifact(
+                    handle, selected_binding=selected_binding, schema_role="arguments",
+                )
+                self.assertEqual(derived.canonical_schema_bytes, schema)
+                self.assertEqual(derived.source_receipt_handle, parent)
+                self.assertEqual(derived.derivation_receipt_handle, handle)
                 self.assertEqual(receipt.source_kind, "packaged-schema")
                 self.assertEqual(receipt.source_member_path, "schemas/arguments.json")
                 self.assertEqual(receipt.parent_receipt_handles, (parent,))

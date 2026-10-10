@@ -1209,5 +1209,286 @@
     "owner_gid": 0,
     "mode": 448,
     "resolve": "RootBootstrapSession resolves actual selected held root_journal_roots installer-authority-journal-v1 row (root0/0700/no-follow/dev/inode), securely creates/holds fixed child pm-runtimes, passes its private Path to RootPMRuntimeProvisioner and SAME RootPMRuntimeReceiptRegistry only. No user runtime_root/argv/env/path. Existing provisioner root generation child pm-<root random32hex> and receipts storage remain bounded current transaction; stage source/officialPM tool/env actual receipts re-opened/currentness checked. Artifact input store remains separate bootstrap-artifacts selection; service HERMES_HOME remains selected service_parent_root/home, not this provisioning scratch. Official committed PM venv executable resolved from actual receipt, never system Python or guessed source venv."
+  },
+  "pinned_runtime_redirect_v116": {
+    "schema": 1,
+    "artifact_ids": [
+      "installer-bootstrap-cpython314-linux-arm64",
+      "hermes-pm-python314-linux-arm64"
+    ],
+    "initial_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only.tar.gz",
+    "sha256": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+    "size_bytes": 95628137,
+    "maximum_download_bytes": 100663296,
+    "redirect_policy": {
+      "maximum_hops": 1,
+      "allowed_status_codes": [
+        302
+      ],
+      "initial_authority": "github.com",
+      "destination_authority": "release-assets.githubusercontent.com",
+      "scheme": "https",
+      "port": 443,
+      "reject": [
+        "userinfo",
+        "fragment",
+        "non-ASCII or ambiguous hostname",
+        "trailing-dot hostname",
+        "HTTP downgrade",
+        "other hostname/subdomain",
+        "non443port",
+        "second redirect",
+        "missing malformed oversizedLocation",
+        "callerprovided URL/headers"
+      ],
+      "max_location_bytes": 8192,
+      "tls": "Verify certificate and hostname separately at both connections; no insecure/ambient proxy bypass. Resolve fixed exact initial URL only; parse Location with standard URLparser and enforce exact normalized hostname, HTTPS and port before any destination request. No host suffix/wildcard match. Final asset path/query originate only that authenticated first response, never stored as future fixed URL.",
+      "headers": "Public GET only, no Authorization/Cookie/Proxy-Authorization/clientcredential/referrer headers; no credential jar/netrc. Reconstruct destination request with only fixed public downloader headers. Never forward incoming/caller headers or tokens.",
+      "logging": "Signed asset query and raw Location are redacted from logs/argv/evidence/exceptions. Retain origin/destination host, status and SHA256 of raw Location privately if needed; final signedURL is ephemeral retrieval transport, not artifact identity.",
+      "integrity": "Count actual final body bounded; exact final size95628137 and SHA30f1... required before root CAS publication/receipt/extraction. Validate Content-Length if provided but actual bytecount+digest authoritative. Interrupted/short/overlong/hashmismatch deleted privatepartial, no artifactreceipt. Existing expansion/time/storage bounds and stage-only trust/reexec rules unchanged."
+    },
+    "default": "All other artifact downloads keep NoRedirect unless another exact source artifact has separately reviewed policy. No blanket curl -L or unrestricted library auto-follow. This scoped policy applies only exact ID+URL+SHA+size match, not every GitHub asset or catalog entry.",
+    "implementation_owner": "luna_release_build_input: fixed _download_pinned finite policy; normal publicartifact downloader may reuse exact policy only for the same pinned original source row, no grant/authority expansion. Tests exercise actual observed302 and controlled failure redirects/hashes without installing runtime on developmentMac.",
+    "evidence": "Parent actual published c2304767 ARM64 bootstrap source/PyYAML proof passed, runtime exact officialGitHubURL returned302 to release-assets.githubusercontent.com. Isolated bounded follow retrieved exact95628137byteasset; no installedruntime claimed. Officialrelease tag20260901 read successfully, assetpage itself loadingfailure; receipt pin remains prior verified catalog SHA/size, not webpage inference.",
+    "requirements": [
+      "HI-T01",
+      "HI-T08",
+      "installer-bootstrap-desktop"
+    ],
+    "acceptance": "Download/code correction only, actual isolated interpreter/reexec/setup/runtime/nativeall18/physicaltargetacceptance pending. Frozenbaseline unchanged."
+  },
+  "pinned_pyyaml_wheel_members_v131": {
+    "schema": 1,
+    "id": "pinned-pyyaml-wheel-members-v131",
+    "baseline_requirements": [
+      "official isolated installer bootstrap",
+      "HI-T03",
+      "AC01"
+    ],
+    "artifact_id": "installer-bootstrap-pyyaml603-cp314-linux-arm64",
+    "sha256": "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7",
+    "size_bytes": 766454,
+    "additional_exact_members": [
+      "_yaml/",
+      "_yaml/__init__.py"
+    ],
+    "rule": "Only this exact already pinned PyYAML 6.0.3 cp314 ARM64 wheel may materialize its compatibility package _yaml/__init__.py alongside yaml/ and exact pyyaml-6.0.3.dist-info/. No other _yaml descendants, dependency, version, wheel or source are authorized. All 28 measured archive members remain checked against actual immutable wheel bytes and RECORD, safe path/type/size/duplicate rules. Directory entries are structural, never scripts or executable hooks. Preserve existing isolated site root and actual yaml import/extension architecture probe.",
+    "evidence": "Release owner observed exact existing SHA/size from actual root bootstrap, 28 wheel members, including _yaml/ and _yaml/__init__.py; extraction previously rejected that pinned compatibility package. This is source extraction correction, not installed runtime or acceptance proof.",
+    "tasks": [
+      "HI-T131.1 release builder: exact compatibility-member extraction and negative member/path/type/RECORD tests; no global package install or online resolution"
+    ],
+    "status": "implementation and target acceptance pending"
+  },
+  "setup_selector_private_profile_v133": {
+    "schema": 1,
+    "requirements": [
+      "HI-T03",
+      "SK-F02",
+      "SK-T01",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "why": "Actual setup choice exact-compares ephemeral principal/namespace receipt IDs after long source/runtime phases. v124 also asks a distinct private profile selection without an issuer. v91 already supplies exact owner-private native profile/namespace source; create a genuine purpose selection from it, not Resources or namespace alias.",
+    "identity_owner": "hermes_installer.authority.setup_principal.RootSetupPrincipalSelectionRegistry",
+    "principal_selector_type": "RootSetupPrincipalSelector",
+    "principal_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "principal_id",
+      "authentik_subject_id",
+      "username",
+      "email",
+      "authentik_policy_selection_handle",
+      "policy_selection_sha256",
+      "policy_revision",
+      "direct_group_ids",
+      "effective_group_ids",
+      "system_member",
+      "service_profile_id",
+      "reviewed_capability_map_sha256",
+      "selected_capability_ceiling",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "namespace_selector_type": "RootSetupNamespaceSelector",
+    "namespace_selector_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_handle",
+      "principal_binding_sha256",
+      "target_profile_id",
+      "namespace_id",
+      "namespace_policy",
+      "binding_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "selector_API": [
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_principal_selector(normal_session_store,normal_session_handle)->RootSetupPrincipalSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_adopted_namespace_selector(normal_session_store,normal_session_handle)->RootSetupNamespaceSelector",
+      "RootSetupPrincipalSelectionRegistry.resolve_current_setup_identity(principal_selection_handle,namespace_selection_handle,normal_session_handle)->RootCurrentSetupIdentitySnapshot"
+    ],
+    "snapshot_type": "RootCurrentSetupIdentitySnapshot",
+    "snapshot_fields": [
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_binding_sha256",
+      "namespace_binding_sha256",
+      "principal",
+      "namespace",
+      "identity_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "selector_semantics": "Selectors are root-retained immutable setup intent, bound actual adopted current subject and v30 fixed service profile/v91 private namespace source through current normal session deadline only. They confer no authority, no proof that Authentik is currently valid, no System/action permission or persistent receipt lease. Actual policy/vault references remain root-only. Every phase resolves current actual TLS Authentik identity against held selected policy and same subject/email/groups/System/policy/profile/namespace/capability ceiling; change/revocation/unknown response denies rather than auto-widens or silently adopts another subject. Current setup/controller/plan/prepared predecessor must match. New boot/session requires explicit verified adoption linkage/current actor, not saved monotonic lease revival.",
+    "fresh_semantics": "principal and namespace are existing VerifiedRootSetupPrincipalSelection and VerifiedRootNamespaceSelection CURRENT authority snapshots, each <=30s and <=all actual evidence/session deadlines; namespace.principal_selection_receipt_id equals same returned pair principal.receipt_id. Expired snapshots are never extended/reused as authority. Re-observe actual identity before each authorization/phase resolution, issue a new fresh pair or retain a still-current same-evidence pair only within original lease. Returning pair atomically prevents convenience getters independently minting inconsistent IDs. Stable selector binding hashes/IDs remain unchanged. Root snapshot binds real newly observed identity receipt and current selected effect source; no ambient permission.",
+    "consumer_correction": "RootBootstrapSession exposes resolve_adopted_principal_selector/resolve_adopted_namespace_selector and resolve_current_setup_identity() root-only. Root TTY application/memory/model/profile choices and their source/runtime selections add principal_selection_handle and namespace_selection_handle, comparing stable registry membership+binding digest. Existing *_selection_receipt_handle fields refer only actual snapshot evidence for the current phase; initial choice may retain them as historical evidence but never exact-equal a newly refreshed receipt ID or treat history current. Source receipt/probe/admission phases resolve fresh pair using stable selectors before effects/minting and maintain currentness during live effect leases. This is explicit v117/v124/v127/v130 field refinement, not a blanket validator bypass.",
+    "activation": "Prepared capability ceiling remains v91 empty. Active effect selection requires separate verified active publication/current rules and fresh active principal binding, never upgrading a prepared selector into worker effect authority. Purpose intent can project only exact same subject/profile/namespace through verified publication handoff with independent actual selected source/operation/account/consent checks.",
+    "private_profile": {
+      "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "registry": "RootPrivateProfileSelectionRegistry",
+      "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_journal)",
+      "choice_type": "RootPrivateProfileSelection",
+      "choice_API": "RootBootstrapSession.observe_private_profile_selection(purpose)->RootPrivateProfileSelection; internal root TTY configuration transaction only. Allowed purposes memory-service-enablement and existing-model-selection. May be recorded in SAME explicit v124 enablement or v127 existing-model choice, no additional repeated approval prompt. No caller profile/namespace/receipt/boolean authority.",
+      "choice_fields": [
+        "selection_handle",
+        "choice_observation_id",
+        "setup_session_id",
+        "transaction_handle",
+        "plan_sha256",
+        "prepared_generation_id",
+        "prepared_generation_digest",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_binding_sha256",
+        "namespace_binding_sha256",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "purpose",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "source_template_receipt_handles",
+        "reviewed_capability_map_sha256",
+        "controller_binding_handle",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic",
+        "revocation_epoch"
+      ],
+      "source": "Resolve actual adopted principal/service_profile_id hermes-agent-native-v1 and independent namespace through current pair/stable selectors, verified installed v30 installer-bootstrap-compiler-template-v1 and v91 installer-reviewed-native-capability-map-v1 (SHA41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565). Namespace policy exactly per-selected-principal-native-profile-v1 and namespace ID v91 SHA recipe; rederive/validate, not caller input. The semantic private-purpose receipt is newly minted from these actual sources/current choice; it is distinct from namespace and Resources selection, although profile ID correctly remains the same native service profile. No phantom private OS/profile ID, no Resources identity reuse.",
+      "private_constraints": "privacy_classification=private; public_egress_allowed=false; additional_metered_budget_usd=0 for this purpose-scoped selection. Enforces owner-private selected namespace and no public/metered fallback for memory/model purpose. Does not globally relabel every tool in the native profile or authorize any new route. Capture opt-in, private input/provider egress consent, service-start enablement and model ownership/loading proofs remain independently required. No account/license/endpoint/model availability inferred.",
+      "resolver_API": "RootPrivateProfileSelectionRegistry.resolve_current_private_profile(selection_handle,purpose)->VerifiedRootPrivateProfileSelection",
+      "snapshot_fields": [
+        "receipt_handle",
+        "selection_handle",
+        "purpose",
+        "principal_selection_handle",
+        "namespace_selection_handle",
+        "principal_selection_receipt_handle",
+        "namespace_selection_receipt_handle",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "namespace_policy",
+        "privacy_classification",
+        "public_egress_allowed",
+        "additional_metered_budget_usd",
+        "selection_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "currentness": "Non-consuming resolver verifies exact registry membership/purpose/source/choice/controller/session/prepared binding/revocation and obtains current setup identity pair; <=30s private-purpose snapshot with actual new principal/namespace receipt IDs. Intent is persistent only through session deadline. Disable/selectionchange invalidates purpose projection; no persistent intent alone is start/capture/egress permission.",
+      "consumers": "v124 RootSelectedMemoryServiceEnablementChoice adds private_profile_selection_handle, principal_selection_handle, namespace_selection_handle; historical *_receipt_handle fields remain evidence only. Current phase resolves VerifiedRootPrivateProfileSelection before issuing enablement snapshot. v127 existing-model directory selection adds same stable selector handles and private_profile_selection_handle; source observer privately opens genuine root TTY selected held directory separately, never substitutes profile/namespace receipt for directory/root FD. Active publication projects exact private-purpose choice to actual owner/profile/namespace/generation only with actual enrollment/source/runtime receipts."
+    },
+    "tasks": [
+      "HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests",
+      "SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease",
+      "SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies"
+    ],
+    "status": "All original scope and AC open; no baseline edit, live account/weights/endpoint effect or privileged Mac install."
+  },
+  "runtime_member_role_v149": {
+    "schema": 1,
+    "requirements": [
+      "HI-T33",
+      "HI-T62",
+      "HI-T76",
+      "HI-T123",
+      "HI-T137",
+      "HI-T138"
+    ],
+    "why": "Actual runtime closure files were mislabeled interpreter despite unique interpreter path; prepared worker module proof wrongly required root-actor imports; first public input needs genuine per-input disclosure, not public profile or empty parent bypass.",
+    "runtime_layout": {
+      "role": "runtime-member",
+      "addition": "Append finite release manifest role runtime-member, existing interpreter role unchanged and unique.",
+      "interpreter": "Only runtime/bin/python with roles exactly [interpreter]; actual selected interpreter bytes/held FD. No stdlib/library/package file assigned interpreter.",
+      "members": "Every other selected verified isolated installer runtime closure regular member maps runtime/<exact normalized runtime-relative path>, roles exactly [runtime-member]. No filename/suffix inference or arbitrary runtime directory sweep. Must be exact retained VerifiedInstallerInterpreterReceipt.files/actual runtime closure manifest selected by v76, executable/root/stdlib/PyYAML receipts; source digest never executable proof.",
+      "bounds": "Existing <=50000 release rows/portable unique normalized nofollow relative paths, no dot/dotdot/symlink/hardlink/special files. Mode0555 only actual selected executable member mode, otherwise0444. Root0/no untrusted writable ancestors; full actual hash/size/member closure validated before publication and every held release resolve. Manifest includes all runtime members, excludes unselected caches/bytecode/local files.",
+      "producer_verifier": "RootInstalledReleaseBuilder emits runtime-member rows, InstalledRootReleaseVerifier fixed role validator accepts only exact runtime/ prefix and declared selected interpreter closure membership; fails if unique interpreter absent/duplicated, mixed roles or undeclared runtime files. Preserve actual isolated stdlib/shared-library/dependency import origins; role alone proves no executed origin."
+    },
+    "prepared_role_source": {
+      "type": "hermes_installer.authority.bootstrap_runtime_factory.RootPreparedReleaseMemberReceipt",
+      "semantics": "Actual source-defined held-release membership/bytes only, distinct existing RootReleaseModuleReceipt (current root actor imported origin) and later LoadedNativePackageProof/loaded_process_roles (actual worker import/PIDFD). Do not require root actor to import native_invocations/native_boundary worker source to prepare role definitions.",
+      "fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256",
+        "size_bytes",
+        "release_commit",
+        "deployment_receipt_sha256",
+        "source_receipt_handle",
+        "setup_session_id",
+        "prepared_generation_id"
+      ],
+      "issuer": "RootSelectedInstallationBinding.resolve_prepared_native_process_role_member(native_policy_preparation_handle,role_id)->RootPreparedReleaseMemberReceipt; current source-defined exact v137 role module/member descriptor chooses artifact, not caller path.",
+      "checks": "Current genuine setup/controller/principal/source-definition adapter and selected release/plan/prepared generation. Exact reviewed role descriptor artifact/path/SHA/size held release row roles[module] or actual reviewed source role; securely reopen release member through held release FD, compute bytes SHA and retain genuine registry handle. No imported-origin assertion in this type. read_current revalidates same release/member/source/session.",
+      "later": "Assembler v134 serializes exact source-defined process_role_records/digest. After active publication, custody independently joins genuine selected role/source receipts to actual mounted closure and authenticated loaded_process_roles import paths/dev/inode/hash with current worker PIDFD/mount/cgroup/profile/package generations. Prepared held member proof never substitutes live import/source receipt. Root definition adapter itself remains current actual imported RootReleaseModuleReceipt where root code executes it."
+    },
+    "public_first_input": {
+      "owner": "root public input permission registry + genuine root TTY/native input source observer",
+      "persistent": "v138 normal configuration signed durable public-free-web-read choice selects exact v142 scopes; configuration alone never classifies input or grants egress.",
+      "method": "RootPublicInputPermissionRegistry.observe_public_input_disclosure(public_permission_selection_handle,retained_observed_input_handle,selected_execution_handle,actual_root_tty_disclosure)->RootPublicNativeInputObservation",
+      "order": [
+        "Root observer retains exact actual new input bytes/hash/size and selected native execution/current peer/profile/process/package generation/source origin in a pending non-authority record; no SourceReceipt PUBLIC ceiling issued yet.",
+        "Trusted foreground root TTY presents exact bounded disclosure of that new input and selected public web destination scope/zero budget; user explicitly identifies this own new input as PUBLIC for public-free web-read. No default/bool/worker label; receipt binds input SHA/size/selection/peer and genuine TTY/controller observation.",
+        "Root observer/permission registry verifies same retained bytes, current selected source/peer, actual TTY subject/private namespace/current source origin and ancestry. Any PRIVATE/UNKNOWN parent, history/memory/credential/imported attachment remains denied; user disclosure does not relabel existing private source. Empty parents only permitted for this genuinely observed fresh disclosed public input, not caller omission.",
+        "Registry issues sealed RootPublicNativeInputObservation with source choice/disclosure/input binding, then existing resolve_for_selected_input yields current <=30s public permission and source issuer mints actual source receipt through same selected input ancestry. Every dispatch/retry current resolver rechecks epoch/scope/selection/source."
+      ],
+      "fields": "Existing v138 public input observation plus disclosure_observation_handle,disclosure_sha256,retained_observed_input_handle,input_sha256,input_size_bytes,selected_execution_handle,tty_controller_observation_handle. All root registry membership/currentness, exact existing selected input handles not caller claims.",
+      "failure": "No actual foreground per-input disclosure or source proof => no PUBLIC receipt/egress. Persistent public choice/private consent/profile/captured worker flag cannot bypass. No public model/memory export or paid route."
+    },
+    "tasks": [
+      {
+        "id": "HI-T149.1",
+        "owner": "release builder/verifier",
+        "work": "Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance."
+      },
+      {
+        "id": "HI-T149.2",
+        "owner": "factory/source observer/native custody",
+        "work": "Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies."
+      },
+      {
+        "id": "HI-T149.3",
+        "owner": "public permission/factory/source input",
+        "work": "Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny."
+      }
+    ],
+    "acceptance": "All original AC/baseline unchanged. Source role/layout/disclosure producers required; no actual runtime/public target acceptance inferred."
   }
 }

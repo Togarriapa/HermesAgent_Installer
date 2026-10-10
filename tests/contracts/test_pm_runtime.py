@@ -15,6 +15,16 @@ class SessionStore:
         return object()
 
 
+class SetupSession:
+    def __init__(self):
+        from types import SimpleNamespace
+        self._factory = SimpleNamespace(session_store=SessionStore())
+        self._handle = object()
+        self._last_receipt = None
+    def _check_live(self):
+        return None
+
+
 def _receipt(root: Path, *, runtime_sha=None):
     handle = "H" * 48
     generation = "pm-" + "a" * 32
@@ -71,7 +81,7 @@ def _registry(monkeypatch, root, guard=lambda transaction, generation: True):
     monkeypatch.setattr(Path, "lstat", owned_lstat)
     monkeypatch.setattr(pm_runtime, "_observe_runtime", lambda path, expected_uid, expected_root: _identity(path, _REC))
     return pm_runtime.RootPMRuntimeReceiptRegistry(
-        runtime_root=root, session_store=SessionStore(), current_guard=guard,
+        runtime_root=root, setup_session=SetupSession(), current_guard=guard,
         monotonic=lambda: 50.0)
 
 

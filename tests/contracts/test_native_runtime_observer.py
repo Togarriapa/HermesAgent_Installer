@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import hashlib
+import json
 import time
 from dataclasses import dataclass
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
@@ -41,12 +43,17 @@ class _RegistrationContext:
 
     def register_tool(self, name, toolset, schema, handler, **_kwargs):
         self.tools[name] = (toolset, schema, handler)
+        return True
 
 
 class _SelectedAdapter:
     def register(self, context, runtime_context):
-        context.register_tool("selected_tool", "selected", {"type": "object"},
-                              lambda: runtime_context.plugin_effects.invoke())
+        context.register_tool(
+            "selected_tool", "hermes-installer",
+            {"type": "object", "properties": {}, "additionalProperties": False},
+            lambda: runtime_context.plugin_effects.invoke(),
+            description="Selected tool",
+        )
 
 
 class _PluginManagerFixture:
@@ -79,7 +86,6 @@ def _authorization(context):
         uid=context.uid, generation=context.generation,
         native_process_identity=context.native_process_identity,
         source_receipts=context.source_receipts,
-        request_digest=None,
     )
 
 
@@ -107,24 +113,80 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
 
     def test_pinned_manager_registers_only_selected_adapter_and_trusted_context(self):
         from hermes_installer.native_plugin_loader import (
-            SelectedNativeAdapter, SelectedNativePackage, predeclare_selected_native_package,
+            SelectedNativeAdapter, SelectedNativePackage, _canonical,
+            _parse_native_candidate_index, predeclare_selected_native_package,
         )
         from hermes_installer.registry.resources_runtime import (
             NativePluginRuntimeContext, ResourceIdentity,
         )
 
         digest = "a" * 64
+        argument_schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        result_schema = {"type": "object", "additionalProperties": True}
+        canonical_schema = json.dumps(
+            argument_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        effect = SimpleNamespace(adapter_id="adapter-a", action_id="action-a")
+        selection = SimpleNamespace(
+            package_id="package-a", profile_id="profile-a", generation="generation-a",
+            compiled_closure_sha256=digest, resolver_digest="b" * 64,
+            adapter_rows=(effect,), _require_live=lambda: None,
+            manifest_digest_for_adapter=lambda _adapter_id: digest,
+            resolve=lambda adapter_id, action_id: effect
+            if (adapter_id, action_id) == ("adapter-a", "action-a") else None,
+        )
+        registration_id = "adapter-a:tool:selected_tool"
+        registration = {
+            "registration_id": registration_id,
+            "native_tool_name": "selected_tool", "native_server_name": "hermes-installer",
+            "toolset": "hermes-installer", "family": "adapter-a", "adapter_id": "adapter-a",
+            "argument_schema_id": "schema.adapter-a.args", "result_schema_id": "schema.adapter-a.result",
+            "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
+            "registration_source_artifact_id": "artifact-adapter-a-source",
+            "registration_source_sha256": digest,
+            "registration_source_receipt_handle": "r" * 40,
+            "handler_kind": "effect-action", "handler_id": "handler-selected-tool",
+            "selector_fields": [],
+            "action_bindings": [{
+                "selector_values": {}, "action_binding_id": "adapter-a:action:action-a",
+                "argument_projection": [], "workflow_id": None,
+            }],
+            "observer_enrollment_ids": ["observer-a"],
+            "generation": "generation-a",
+        }
+        registrations = [registration]
+        index = {
+            "schema": 1, "package_id": "package-a", "profile_id": "profile-a",
+            "generation": "generation-a", "resolver_sha256": "b" * 64,
+            "candidates": [{
+                "native_tool_name": "selected_tool", "adapter_id": "adapter-a",
+                "action_id": "action-a", "argument_schema": argument_schema,
+                "result_schema": result_schema,
+                "native_schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
+                "observer_enrollment_ids": ["observer-a"],
+                "native_server_name": "hermes-installer", "description": "Selected tool",
+                "registration_id": registration_id, "toolset": "hermes-installer",
+                "family": "adapter-a", "handler_kind": "effect-action",
+            }],
+            "registration_projection_sha256": hashlib.sha256(_canonical(registrations)).hexdigest(),
+            "registrations": registrations,
+        }
+        candidate_rows = _parse_native_candidate_index(
+            _canonical(index), selected=selection,
+            manifest=MappingProxyType({
+                "adapters": [{"adapter_id": "adapter-a", "action_ids": ["action-a"]}],
+                "closure_files": [{
+                    "relative_path": "adapter-a.py", "sha256": digest,
+                    "size_bytes": 1, "mode": 0o444,
+                }],
+            }),
+        )
         module = ModuleType("fixture_selected_adapter")
         adapter = _SelectedAdapter()
         selected = SelectedNativeAdapter("adapter-a", module, "register", ("selected_tool",),
                                          digest, adapter.register)
-        selection = SimpleNamespace(
-            package_id="package-a", profile_id="profile-a", generation="generation-a",
-            compiled_closure_sha256=digest, _require_live=lambda: None,
-            manifest_digest_for_adapter=lambda _adapter_id: digest,
-        )
         package = SelectedNativePackage(selection, __import__("pathlib").Path("/fixture"),
-                                        digest, {"adapter-a": selected})
+                                        digest, {"adapter-a": selected}, candidate_rows=candidate_rows)
         effects = SimpleNamespace(invoke=lambda: "root-brokered")
         base_context = NativePluginRuntimeContext(
             identity=ResourceIdentity("adapter-a", "plugins", "1", "selected", "rev", digest),
@@ -185,7 +247,8 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             generation="generation-a", package_id="package-a",
             native_package_generation="package-generation-a",
             service_generation_digest="a" * 64, adapter_id="adapter-a",
-            action_id="action-a", tool_name="selected_tool",
+            action_id="action-a", registration_id="registration-a",
+            tool_name="selected_tool",
             arguments_sha256="b" * 64, source_receipt_handles=("r" * 40,),
             operation="plugin.resource-overlay-store.write", request_digest=digest,
             expires_monotonic=time.monotonic() + 30.0,
@@ -308,7 +371,12 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             producer_pid=123, producer_pidfd=456, gateway_identity=gateway,
             gateway_pid=124, gateway_pidfd=457, observer_id="observer",
             package_id="package", profile_id="profile-a", generation="generation-a",
-            loaded_package_proof="proof", expires_monotonic=20.0, calls={},
+            native_package_generation="package-generation-a", loaded_package_proof="proof",
+            expires_monotonic=20.0, calls={}, request_context=SimpleNamespace(),
+            authorization=SimpleNamespace(retry_index=0), target="provider://fixed",
+            recipient="provider:fixed", request_digest="a" * 64, retry_index=0,
+            response_status=200, response_headers={}, response_bytes=body,
+            response_receipt_handle="s" * 43,
         )
         registry._responses = {response.handle: response}
         registry._deliveries = {response.delivery_handle: response}
@@ -389,6 +457,92 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
                      purpose="native-hermes-chat", intent="x")
 
+    def test_selected_action_requires_exact_process_role_registration_foreign_keys(self):
+        observer_id = "observer.provider.result"
+        action_binding_id = "adapter:action:read"
+        registration_id = "registration.tool.read"
+        action = SimpleNamespace(
+            adapter_id="adapter", action_id="read", operation="plugin.adapter.read",
+            generation="package-generation", action_binding_id=action_binding_id,
+        )
+        registration = SimpleNamespace(
+            registration_id=registration_id, generation="package-generation",
+            adapter_id="adapter",
+            action_bindings=(SimpleNamespace(action_binding_id=action_binding_id),),
+        )
+        role = SimpleNamespace(
+            package_id="package", native_package_generation="package-generation",
+            profile_id="profile", profile_generation="process-generation",
+            observer_enrollment_ids=(observer_id,), action_binding_ids=(action_binding_id,),
+            registration_ids=(registration_id,), workflow_ids=(),
+        )
+        package = SimpleNamespace(
+            package_id="package", generation="package-generation",
+            profile_id="profile", profile_generation="process-generation",
+            action_records={action_binding_id: action}, process_role_records={"role": role},
+            registration_records={registration_id: registration}, workflow_records={},
+        )
+        observer = SimpleNamespace(
+            observer_enrollment_id=observer_id, role_id="role", package_id="package",
+            native_package_generation="package-generation", profile_id="profile",
+            generation="process-generation", source_registration_ids=("registration.input",),
+        )
+        selection = NativeActionSelection(
+            package_id="package", profile_id="profile", generation="process-generation",
+            package_generation="package-generation",
+            adapter_id="adapter", action_id="read", registration_id=registration_id,
+            operation="plugin.adapter.read", validate_arguments=lambda _args: True,
+        )
+        join = NativeInvocationRegistry._selected_action_registration_ids
+        self.assertEqual(join(observer=observer, package=package, selection=selection), (registration_id,))
+        closure_observer = SimpleNamespace(source_registration_ids=("registration.input",))
+        closure_proof = SimpleNamespace(observed_registration_ids=(
+            "registration.input", registration_id,
+        ))
+        self.assertEqual(NativeInvocationRegistry._require_observed_registrations(
+            closure_observer, closure_proof,
+        ), frozenset({"registration.input", registration_id}))
+        with self.assertRaises(AuthorityDenied):
+            NativeInvocationRegistry._require_observed_registrations(
+                closure_observer, SimpleNamespace(observed_registration_ids=(registration_id,)),
+            )
+        with self.assertRaises(AuthorityDenied):
+            NativeInvocationRegistry._require_observed_registrations(
+                closure_observer, SimpleNamespace(observed_registration_ids=()),
+            )
+
+        from copy import deepcopy
+        invalid_cases = []
+        wrong_profile = deepcopy(package)
+        wrong_profile.process_role_records["role"].profile_generation = "old-process-generation"
+        invalid_cases.append((observer, wrong_profile, selection))
+        wrong_action_binding = deepcopy(package)
+        wrong_action_binding.process_role_records["role"].action_binding_ids = ("other:action",)
+        invalid_cases.append((observer, wrong_action_binding, selection))
+        wrong_registration_action = deepcopy(package)
+        wrong_registration_action.registration_records[registration_id].action_bindings = (
+            SimpleNamespace(action_binding_id="other:action"),
+        )
+        invalid_cases.append((observer, wrong_registration_action, selection))
+        wrong_registration_generation = deepcopy(package)
+        wrong_registration_generation.registration_records[registration_id].generation = "old-package"
+        invalid_cases.append((observer, wrong_registration_generation, selection))
+        wrong_selected_package_generation = NativeActionSelection(
+            package_id="package", profile_id="profile", generation="process-generation",
+            package_generation="stale-package-generation", adapter_id="adapter",
+            action_id="read", registration_id=registration_id,
+            operation="plugin.adapter.read", validate_arguments=lambda _args: True,
+        )
+        invalid_cases.append((observer, package, wrong_selected_package_generation))
+        missing_role_registration = deepcopy(package)
+        missing_role_registration.process_role_records["role"].registration_ids = ()
+        invalid_cases.append((observer, missing_role_registration, selection))
+        for candidate_observer, candidate_package, candidate_selection in invalid_cases:
+            with self.subTest(package=candidate_package):
+                with self.assertRaises(AuthorityDenied):
+                    join(observer=candidate_observer, package=candidate_package,
+                         selection=candidate_selection)
+
     def test_native_mcp_invocation_is_root_consumed_once_and_revalidated(self):
         import hashlib
         import threading
@@ -397,23 +551,51 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         identity = SimpleNamespace(kernel_uid=2001, profile_id="profile-a", generation="generation-a")
         gateway_identity = SimpleNamespace(kernel_uid=0, profile_id="gateway", generation="gateway-gen")
         bridge = SimpleNamespace(gateway_profile_id="gateway", gateway_generation="gateway-gen")
-        proof = object()
-        observer = SimpleNamespace(observer_enrollment_id="observer-id")
+        proof = SimpleNamespace(observed_registration_ids=("registration.native.mcp",))
+        observer = SimpleNamespace(
+            observer_enrollment_id="observer-id", role_id="role", package_id="package-a",
+            native_package_generation="package-generation-a", profile_id="profile-a",
+            generation="generation-a", source_registration_ids=("registration.native.mcp",),
+        )
         receipt = SimpleNamespace(profile_id="profile-a", process_generation="generation-a",
                                   uid=2001, monotonic_expires_at=30.0)
         service = SimpleNamespace(service_generation_digest="c" * 64,
                                   _source_receipt_handles={"receipt-handle": receipt},
                                   _lock=threading.RLock())
+        action_record = SimpleNamespace(
+            adapter_id="hermes-installer.native-mcp-dispatch.v1", action_id="mcp-row-a",
+            operation="mcp.request", generation="package-generation-a",
+            action_binding_id="binding.mcp",
+        )
+        registration = SimpleNamespace(
+            registration_id="registration.native.mcp", generation="package-generation-a",
+            adapter_id="hermes-installer.native-mcp-dispatch.v1",
+            action_bindings=(SimpleNamespace(action_binding_id="binding.mcp"),),
+        )
+        role = SimpleNamespace(
+            package_id="package-a", native_package_generation="package-generation-a",
+            profile_id="profile-a", profile_generation="generation-a",
+            observer_enrollment_ids=("observer-id",), action_binding_ids=("binding.mcp",),
+            registration_ids=("registration.native.mcp",), workflow_ids=(),
+        )
+        package = SimpleNamespace(
+            package_id="package-a", generation="package-generation-a",
+            profile_id="profile-a", profile_generation="generation-a",
+            action_records={"action": action_record}, process_role_records={"role": role},
+            registration_records={"registration.native.mcp": registration}, workflow_records={},
+        )
         source_observers = SimpleNamespace(
             observers={"observer-id": observer},
-            _resolve_package_role=lambda _observer: (object(), object()),
+            _resolve_package_role=lambda _observer: (package, role),
             _resolve_loaded_package_proof=lambda *args, **kwargs: proof,
         )
         args = b'{"city":"Lisbon"}'
         digest = hashlib.sha256(args).hexdigest()
         action = NativeActionSelection("package-a", "profile-a", "generation-a",
+                                       "package-generation-a",
                                        "hermes-installer.native-mcp-dispatch.v1",
-                                       "mcp-row-a", lambda value: value == args)
+                                       "mcp-row-a", "registration.native.mcp",
+                                       "mcp.request", lambda value: value == args)
         registry = object.__new__(NativeInvocationRegistry)
         registry.service = service
         registry.source_observers = source_observers
@@ -436,11 +618,14 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             producer_identity=identity, producer_pid=41, producer_pidfd=141,
             gateway_identity=gateway_identity, gateway_pid=51, gateway_pidfd=151,
             package_id="package-a", profile_id="profile-a", generation="generation-a",
+            package_generation="package-generation-a",
             adapter_id="hermes-installer.native-mcp-dispatch.v1", action_id="mcp-row-a",
+            registration_id="registration.native.mcp",
             tool_name="weather.lookup", arguments_sha256=digest,
             parent_closure_digest="d" * 64, receipt_handles=("receipt-handle",),
-            observer_id="observer-id", loaded_package_proof=proof,
+            canonical_arguments=args, observer_id="observer-id", loaded_package_proof=proof,
             expires_monotonic=25.0, service_generation_digest="c" * 64,
+            operation="mcp.request",
         )
         registry._invocations = {invocation.invocation_handle: invocation}
         registry._mcp_dispatches = {}

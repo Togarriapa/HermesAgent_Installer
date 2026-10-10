@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "id": "local-audio-device-consent-v1",
+  "requirements": [
+    "RG-F03",
+    "R0060",
+    "HI-T08"
+  ],
+  "scope": "Original local-audio-assist Resources channel; no JARVIS voice expansion or device access on development Mac.",
+  "owner_module": "hermes_installer.authority.local_audio_device",
+  "source": {
+    "package": "sounddevice",
+    "version": "0.5.6",
+    "revision": "bd3f0dfe325a45506eea8d97d91949cc4e9dbb4f",
+    "sdist_sha256": "8ec9fbfde2e32f020b167e348f3ab3bac6625a5f15af524d790108ac7147a410",
+    "primary_sources": [
+      "https://python-sounddevice.readthedocs.io/en/0.5.6/api/checking-hardware.html",
+      "https://python-sounddevice.readthedocs.io/en/0.5.6/api/raw-streams.html"
+    ],
+    "runtime_rule": "Version string is insufficient. Protected capture backend artifact/source receipt plus actually loaded sounddevice, CFFI and PortAudio runtime/module closure and current capture controller process proof are independently resolved. Do not invent PortAudio binary hash from the Python sdist."
+  },
+  "selection": {
+    "active_source": "Existing AudioIngressSelection and root selected native-input ingress binding; exact profile/owner generation/device enrollment/session policy/format and enclosing nonrecursive service generation digest. No worker device name/index or boolean authorizes capture.",
+    "producer": "RootLocalAudioDeviceService.adopt_device_from_tty()",
+    "fields": [
+      "selection_id",
+      "profile_id",
+      "owner_generation",
+      "device_enrollment_id",
+      "device_index",
+      "device_name",
+      "host_api",
+      "max_input_channels",
+      "default_samplerate",
+      "identity_digest"
+    ],
+    "identity": "SHA256(canonical UTF-8 JSON object with index,name,host_api,max_input_channels,default_samplerate; sort_keys=True,separators=(comma,colon),ensure_ascii=False). This is current PortAudio enumeration identity, not a permanent physical serial number.",
+    "enumeration": "query_devices() and query_hostapis() with no default selection; show only valid input-capable records to actual foreground root TTY. Explicit numeric index choice; host API association must match. Re-enumerate exact tuple before session and immediately before stream open; changed or missing tuple invalidates selection. No substring/default-device fallback.",
+    "evidence_limits": "PortAudio includes real and virtual inputs. Enumeration/TTY choice does not attest physical microphone identity, speaker identity, OS privacy permission, or selected non-root profile device rights. Report selected input endpoint accurately; never call a virtual/default endpoint a proven physical microphone. The protected runtime controller must have actual OS access when it opens the selected stream, and capture result proves only that current access plus explicit consent."
+  },
+  "consent": {
+    "producer": "RootLocalAudioDeviceService.open_input_session(requested_lease_seconds=60) -> RootAudioInputSession",
+    "purpose": "single-selected-local-audio-capture",
+    "choice": "Actual protected foreground root TTY writes exact selected endpoint/profile/owner generation, maximum duration/bytes and input-only privacy notice, then reads exact CAPTURE. No saved default, ambient permission, worker authorized_bool, or speaker identity assertion.",
+    "retained_fields": [
+      "selection_id",
+      "profile_id",
+      "owner_generation",
+      "session_handle",
+      "device_identity_digest",
+      "consent_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "bindings": "Root registry membership/seal and actual TTY choice observation/current controller PIDFD, selected ingress binding, capture backend/runtime receipts are retained out of worker DTO. Session and consent handles are opaque, never independently authority-bearing.",
+    "lifetime": "0 < requested lease <=60 seconds; cap by selected binding/controller/runtime leases. current_input_session revalidates exact registry membership, profile/owner generation, device tuple, expiry and revocation before capture and delivery. Close/revoke invalidates pending captures and zeros retained bytes.",
+    "separation": "Consent authorizes only this bounded input capture. It confers no provider recipient ceiling, memory capture enablement, background work, transcription provider route, or outgoing audio/message operation. Actual private-egress consent and voice workflow grants remain independent."
+  },
+  "capture": {
+    "call": "capture_selected_audio(selected_binding_handle,session_handle,...) uses only root resolved retained device and limits.",
+    "format": {
+      "samplerate": 16000,
+      "channels": 1,
+      "dtype": "int16",
+      "byte_order": "little",
+      "blocksize": 1024
+    },
+    "limits": "Minimum selected maximum_bytes/time, session remaining lease and cancellation deadline; exact 32-byte/1ms alignment. Timer/cancel/revocation must interrupt bounded capture; do not rely solely on frame count when read blocks.",
+    "stream": "RawInputStream(device=explicit index,samplerate=16000,channels=1,dtype=int16,blocksize=1024); validate negotiated stream parameters; overflow, truncated block, changed selection or deadline fails and zeros all accumulated bytes.",
+    "receipt": "Existing RootAudioCaptureReceiptResolver and selected in-memory artifact catalog retain exact actual PCM SHA/size/format/session/consent/device/controller/runtime/input observation joins. No caller bytes or transcript substitutes. One-use consumption; close and rejection zero retained mutable PCM.",
+    "provenance": "Existing v94 audio native-input protocol schema only; actual consent/capture handles resolved root-side. Sensitivity PRIVATE or UNKNOWN, no human identity inferred from audio permission. Authenticated parent/source/controller receipt ancestry is issued from root-observed capture, not worker labels.",
+    "unavailable": "Missing protected backend/runtime/controller, current selected ingress, explicit TTY consent, actual OS stream access or physical-device proof where a workflow expressly requires physical identity leaves that affected operation unavailable. Synthetic streams prove failure contracts only."
+  },
+  "tasks": [
+    "RG-T118.1: audio owner retain exact device/TTY/runtime/controller proof and enforce cancellation/lease during blocking capture.",
+    "RG-T118.2: source/controller owner join selected audio v94 schema and retained one-use capture/consent artifact into genuine source issuance without fabricated identity.",
+    "RG-T118.3: test changed enumeration, default fallback, runtime closure mismatch, overflow, revocation/cancel/timeout and byte zeroization; actual device/OS/ARM acceptance remains pending."
+  ]
+}
