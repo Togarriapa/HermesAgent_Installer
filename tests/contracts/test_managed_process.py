@@ -36,7 +36,7 @@ from hermes_installer.state import Journal, OwnedRoot
 from hermes_installer.authority.client import AuthorityClient
 from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
 from hermes_installer.authority.types import (
-    EffectAuthorization, HostContext, Sensitivity, VerifiedEffectAuthorization,
+    AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, VerifiedEffectAuthorization,
     canonical_digest,
 )
 
@@ -191,6 +191,12 @@ class ManagedProcessOperationRecipeTests(unittest.TestCase):
 
 
 class ManagedProcessAdmissionTests(unittest.TestCase):
+    def test_health_start_fails_closed_without_bound_native_health_authority(self):
+        manager = object.__new__(ManagedProcessEffectHandler)
+        manager.native_health_start_authority = None
+        with self.assertRaises(AuthorityDenied):
+            manager.start_selected_health_operation(object(), "a" * 43)
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="hermes-managed-process-")
         self.owned = OwnedRoot(Path(self.temp.name))
