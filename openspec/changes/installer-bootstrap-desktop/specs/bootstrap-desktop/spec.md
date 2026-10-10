@@ -587,3 +587,10 @@ The installer SHALL preserve unique interpreter identity, exact runtime member c
 #### Scenario: Persistent public config has no disclosed input
 - **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
 - **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
