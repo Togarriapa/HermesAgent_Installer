@@ -16,9 +16,13 @@ from hermes_installer.models.private_deployment import (
     PrivateDeploymentDenied,
     PrivateModelDeploymentObservation,
     RootExistingModelSelectionRegistry,
+    RootPrivateMemoryDeploymentRegistry,
     _validate_model_subpath,
     _tcp4_listener_inodes,
     _supporting_source_receipt_digest,
+    _root_selection_fields,
+    _GLM_LICENSE_ARTIFACT_ID,
+    _GLM_RELEASE_SOURCE_MEMBERS,
     inspect_loopback_listener,
     RootExistingModelArtifactObserver,
 )
@@ -241,6 +245,31 @@ def test_pinned_glm_manifest_parses_from_already_observed_bytes() -> None:
     assert manifest.declared_storage_bytes == MODEL_SIZE_CLAIM == 429_276_080_522
 
 
+def test_root_v139_model_store_selection_requires_exact_fixed_root_and_protected_identity() -> None:
+    selection = SimpleNamespace(
+        selection_handle="root-selection-handle", root_id="installer-existing-model-store-v1",
+        selection_kind="existing-model-store", template_artifact_receipt_handle="release-receipt",
+        template_sha256="a" * 64, private_profile_selection_handle="profile-selector",
+        principal_selection_handle="principal-selector", namespace_selection_handle="namespace-selector",
+        principal_id="p1", profile_id="private-memory", namespace_id="ns1",
+        prepared_generation_id="g2", prepared_generation_digest="b" * 64,
+        controller_binding_handle="controller-binding", selection_sha256="c" * 64,
+        issued_monotonic=10.0, expires_monotonic=35.0, revocation_epoch="epoch-1",
+        root_device=1, root_inode=2, root_uid=0, root_gid=0, root_mode=0o700,
+    )
+    fields = _root_selection_fields(selection)
+    assert fields["model_store_root_receipt_handle"] == "root-selection-handle"
+    assert fields["model_store_root_id"] == "installer-existing-model-store-v1"
+    assert fields["private_profile_selection_handle"] == "profile-selector"
+    assert fields["revocation_epoch"] == "epoch-1"
+
+    for mutation in ({"root_id": "caller-chosen"}, {"root_mode": 0o777},
+                     {"selection_sha256": "not-a-digest"}, {"revocation_epoch": ""}):
+        invalid = SimpleNamespace(**{**vars(selection), **mutation})
+        with pytest.raises(PrivateDeploymentDenied):
+            _root_selection_fields(invalid)
+
+
 def test_existing_model_observer_rejects_unissued_selection_object(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -271,11 +300,57 @@ def test_existing_model_observer_rejects_unissued_selection_object(
         observer.observe_selected_tree("selection-from-caller")
 
 
-def test_existing_model_choice_path_is_relative_and_cannot_escape() -> None:
-    assert _validate_model_subpath("models/glm52") == "models/glm52"
-    for candidate in ("", ".", "../model", "models/../other", "/root/model", "models\\glm52"):
+def test_existing_model_choice_is_one_safe_observed_direct_child() -> None:
+    assert _validate_model_subpath("glm52-existing") == "glm52-existing"
+    for candidate in ("", ".", "..", "../model", "models/glm52", "/root/model", "models\\glm52"):
         with pytest.raises(PrivateDeploymentDenied):
             _validate_model_subpath(candidate)
+
+
+def test_private_model_selection_requires_exact_glm_existing_tree_and_text_capability() -> None:
+    from hermes_installer.models.artifacts import MODEL_ID, MODEL_REVISION
+    license_digest = _GLM_RELEASE_SOURCE_MEMBERS[_GLM_LICENSE_ARTIFACT_ID][1]
+
+    tree_digest = "d" * 64
+    source = SimpleNamespace(
+        artifact_id="existing-model:" + tree_digest,
+        tree_manifest_sha256=tree_digest,
+        source_model_id=MODEL_ID, source_revision=MODEL_REVISION,
+        license_artifact_id=_GLM_LICENSE_ARTIFACT_ID, license_sha256=license_digest,
+        observation_handle="signed-tree-observation",
+    )
+    registry = RootPrivateMemoryDeploymentRegistry.__new__(RootPrivateMemoryDeploymentRegistry)
+    registry.bindings = SimpleNamespace(service_generation_digest="e" * 64)
+    registry._receipts = {"signed-tree-observation": ("existing-model-tree", source)}
+    registry.resolve_endpoint_selection = lambda _binding_id: SimpleNamespace(
+        service_generation_digest="e" * 64)
+    registry.resolve_existing_model_tree = lambda _handle: source
+
+    def model(**overrides: object) -> SimpleNamespace:
+        fields = dict(
+            binding_id="glm-text", endpoint_binding_id="endpoint-1", served_model_id="glm52",
+            source_model_id=MODEL_ID, source_revision=MODEL_REVISION,
+            license_artifact_id=_GLM_LICENSE_ARTIFACT_ID, license_sha256=license_digest,
+            model_artifact_id=source.artifact_id, model_artifact_sha256=tree_digest,
+            model_tree_manifest_sha256=tree_digest, runtime_artifact_id="runtime",
+            runtime_artifact_sha256="f" * 64, load_config_artifact_id="load-config",
+            load_config_sha256="a" * 64, capability="extraction-text", dimensions=None,
+            service_generation_digest="e" * 64)
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    registry.bindings.resolve_private_memory_model_binding = lambda _binding_id: model()
+    assert registry.resolve_model_selection("glm-text").source_model_id == MODEL_ID
+
+    registry.bindings.resolve_private_memory_model_binding = lambda _binding_id: model(
+        capability="embedding", dimensions=1024)
+    with pytest.raises(PrivateDeploymentDenied, match="unproven embedding"):
+        registry.resolve_model_selection("fake-embedding")
+
+    registry.bindings.resolve_private_memory_model_binding = lambda _binding_id: model(
+        model_artifact_id="artifact:glm52-unverified:" + tree_digest)
+    with pytest.raises(PrivateDeploymentDenied, match="existing model tree"):
+        registry.resolve_model_selection("nonexistent-download")
 
 
 def test_existing_model_selection_fails_before_tty_without_source_catalog_pins(
@@ -297,18 +372,29 @@ def test_existing_model_selection_fails_before_tty_without_source_catalog_pins(
             return False
 
     class NeverRootFilesystem:
-        def resolve_selection(self, _handle: str) -> object:
+        def resolve_current_root(self, *_args: object) -> object:
             raise AssertionError("catalog pins must be checked before filesystem selection")
 
-        def verify_current(self, _selection: object) -> object:
+        def open_selected_root(self, *_args: object) -> object:
             raise AssertionError("catalog pins must be checked before filesystem selection")
 
-        def open_selected_subdirectory(self, *_args: object, **_kwargs: object) -> object:
+        def list_existing_children(self, *_args: object) -> object:
             raise AssertionError("catalog pins must be checked before filesystem selection")
+
+        def open_child_directory(self, *_args: object) -> object:
+            raise AssertionError("catalog pins must be checked before filesystem selection")
+
+    class NeverReleaseReceipt:
+        def resolve_reviewed_source_artifact(self, *_args: object) -> object:
+            raise AssertionError("catalog pins are checked before release source resolution")
+
+        def open_reviewed_source_artifact(self, *_args: object) -> int:
+            raise AssertionError("catalog pins are checked before release source resolution")
 
     registry = RootExistingModelSelectionRegistry(
         object(), NeverRootFilesystem(), object(), ArtifactObserver(),
+        verified_installer_release_receipt=NeverReleaseReceipt(),
         input_reader=lambda _prompt: (_ for _ in ()).throw(AssertionError("no TTY prompt expected")),
     )
     with pytest.raises(PrivateDeploymentDenied, match="absent from the protected artifact catalog"):
-        registry.observe_existing_model_directory("root-store-receipt")
+        registry.observe_existing_model_directory("root-store-receipt", "private-profile-selection")
