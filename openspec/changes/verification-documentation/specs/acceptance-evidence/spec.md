@@ -921,3 +921,18 @@ The installer SHALL use the exact closed process/session/source/publication cont
 #### Scenario: Fixed qualification has a real producer
 - **WHEN** display or task qualification runs
 - **THEN** its current owned controller, actual source/PM/materialized fixture publication/session and isolated composed runtime SHALL drive the production typed effect path and verified cleanup; missing proof or unsupported kernel SHALL not count as passed
+
+
+### Requirement: Durable selected overlay startup custody
+
+The installer SHALL adopt Xpra receipts only through the v198 schema2 signed current build/CAS/catalog and selected-startup joins, without copying process-local setup entries or using the Xauthority signing domain.
+
+#### Scenario: Cold daemon receives genuine current overlay
+
+- **WHEN** the independently composed daemon resolves the exact current signed selection, schema2 envelope, attestation, held CAS output and source observations
+- **THEN** it may admit the selected startup only within the original admission deadline; completed active workers remain governed by independent active runtime policy after installer close
+
+#### Scenario: Durable or lifecycle proof is absent
+
+- **WHEN** any current source/build/selection/signature join is absent, expired or replaced, or only an ACK exists
+- **THEN** startup remains denied or unavailable, with owned incomplete-start cleanup and no fabricated completed active worker proof

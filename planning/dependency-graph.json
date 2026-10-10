@@ -2966,5 +2966,16 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
-  }
+  },
+  "finite_contract_clarifications": [
+    {
+      "amendment": "plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md",
+      "tasks": [
+        "HI-T197.1",
+        "HI-T197.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    }
+  ]
 }
