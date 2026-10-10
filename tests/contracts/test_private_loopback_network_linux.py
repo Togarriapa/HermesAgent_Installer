@@ -16,6 +16,7 @@ import time
 import uuid
 import unittest
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes_installer.authority.private_loopback_network import (
@@ -170,6 +171,7 @@ def _systemd_bind_probe(namespace: Path, uid: int, port: int, *, allowed: bool,
                         allowed_port: int | None) -> subprocess.CompletedProcess[str]:
     """Run an actual transient unit so systemd attaches its cgroup bind BPF."""
     unit = "hermes-loopback-bind-" + uuid.uuid4().hex + ".service"
+    started_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
     probe = (
         "import pathlib,socket,sys; "
         "st={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in pathlib.Path('/proc/self/status').read_text().splitlines() if ':' in line}; "
@@ -193,8 +195,80 @@ def _systemd_bind_probe(namespace: Path, uid: int, port: int, *, allowed: bool,
     if allowed_port is not None:
         command.append(f"--property=SocketBindAllow=ipv4:tcp:{allowed_port}")
     command.extend(("/usr/bin/python3", "-c", probe, str(port), "allow" if allowed else "deny"))
-    return subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True, timeout=15, check=False)
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, timeout=15, check=False)
+    if result.returncode != 0:
+        result.stdout += _systemd_bind_probe_diagnostics(unit, started_utc)
+    return result
+
+
+def _systemd_bind_probe_diagnostics(unit: str, started_utc: str) -> str:
+    """Append bounded host/unit evidence only when the kernel probe fails."""
+    output = [f"\nBIND_PROBE_DIAGNOSTICS unit={unit} started_utc={started_utc}\n"]
+
+    def capture(label: str, argv: tuple[str, ...], *, limit: int = 4096) -> str:
+        try:
+            result = subprocess.run(
+                argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, timeout=3, check=False,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            detail = f"unavailable ({type(exc).__name__})"
+        else:
+            detail = result.stdout[:limit]
+            if not detail:
+                detail = f"<empty; exit={result.returncode}>"
+            elif result.returncode:
+                detail += f"\n<exit={result.returncode}>"
+        output.append(f"[{label}]\n{detail}\n")
+        return detail
+
+    capture("uname", ("/usr/bin/uname", "-a"))
+    capture("systemd-version", ("/usr/bin/systemctl", "--version"))
+    capture("cgroup2-mount", ("/usr/bin/findmnt", "--noheadings", "--output",
+                               "FSTYPE,OPTIONS", "--target", "/sys/fs/cgroup"))
+    try:
+        controllers = Path("/sys/fs/cgroup/cgroup.controllers").read_text(encoding="ascii")[:1024]
+    except OSError as exc:
+        controllers = f"unavailable ({type(exc).__name__})"
+    output.append(f"[cgroup2-controllers]\n{controllers}\n")
+
+    properties = capture(
+        "transient-unit-properties",
+        ("/usr/bin/systemctl", "show", unit, "--no-pager",
+         "--property=ControlGroup", "--property=SocketBindDeny",
+         "--property=SocketBindAllow", "--property=Result",
+         "--property=ExecMainStatus"),
+    )
+    cgroup = next((line.partition("=")[2] for line in properties.splitlines()
+                   if line.startswith("ControlGroup=")), "")
+    if not cgroup or not cgroup.startswith("/"):
+        output.append(
+            "[cgroup-bind-attachments]\n"
+            "unavailable (ControlGroup not reported after --collect)\n"
+        )
+    else:
+        bpftool = next((path for path in (Path("/usr/sbin/bpftool"), Path("/usr/bin/bpftool"))
+                        if path.is_file()), None)
+        cgroup_path = Path("/sys/fs/cgroup") / cgroup.lstrip("/")
+        if bpftool is None:
+            output.append(
+                "[cgroup-bind-attachments]\nunavailable (bpftool is not installed)\n"
+            )
+        elif not cgroup_path.is_dir():
+            output.append(
+                "[cgroup-bind-attachments]\n"
+                "unavailable (transient unit cgroup absent after --collect)\n"
+            )
+        else:
+            capture("cgroup-bind-attachments", (str(bpftool), "cgroup", "show", str(cgroup_path)))
+
+    capture("unit-journal", ("/usr/bin/journalctl", "--unit", unit,
+                              "--since", started_utc, "--no-pager",
+                              "--output=short-iso-precise", "--lines=80"), limit=8192)
+    diagnostics = "".join(output)
+    return diagnostics[:20_000] + ("\n<diagnostics truncated>\n" if len(diagnostics) > 20_000 else "")
 
 
 @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0 and Path("/usr/sbin/nft").exists(),
