@@ -566,13 +566,16 @@
         "native_package_generation",
         "adapter_id",
         "action_id",
-        "source_receipt_handle"
+        "source_receipt_handle",
+        "size_bytes",
+        "derivation_receipt_handle"
       ],
       "schema_kind": "arguments|result",
       "artifact": "Root immutable CAS artifact exact canonical JSON schema bytes <=256KiB; strict finite supported JSON-schema subset object/array/string/integer/number/boolean/null, properties/required/additionalProperties/items/enum/minimum/maximum/minLength/maxLength/minItems/maxItems; no external references/ref resolution/imports/evaluation. Existing selected action validators remain required, schema alone is not effect authority.",
       "resolve_call": "resolve_native_schema(schema_id,native_package_id,native_package_generation,adapter_id,action_id,schema_kind)->verified schema mapping",
       "joins": "id equals action argument_schema_id/result_schema_id, or MCP binding request_schema_id/result_schema_id, for exact selected package/action. Root resolves row current active generation, actual ArtifactCatalog bytes/sha/source receipt/package selection; native_schema_sha256 equals canonical arguments schema SHA, not schema ID. Every required argument/result schema must resolve; no tool-name/service-label inference. Row source receipt is actual packaged selected action schema artifact or root selected authenticated MCP tools/list discovery schema receipt with current service/tool selection. Discovery unselected or changed schema cannot be silently enabled.",
-      "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step."
+      "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step.",
+      "derived_row_clarification": "id remains exact selected action argument/result schema ID. source_receipt_handle is actual parent packaged artifact or authenticated tools/list exchange source; derivation_receipt_handle exact root child derivation receipt (null only direct exact packaged artifact). size_bytes is actual canonical child schema bytes1..262144. artifact_id/SHA pins child bytes, not parent archive/response. Strict field set shared static/dynamic; no inferred handles. Active containing digest is external resolved DTO binding, no self-reference."
     },
     "initial_execution_selection": {
       "owner_module": "hermes_installer.authority.source_observers",
