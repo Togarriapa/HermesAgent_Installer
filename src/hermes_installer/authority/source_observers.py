@@ -1781,6 +1781,7 @@ class NativeInitialInputDelivery:
     input_sha256: str
     input_size_bytes: int
     expires_monotonic: float
+    turn_handle: str | None = None
 
     def __post_init__(self) -> None:
         if (self.schema != 1
@@ -1789,11 +1790,12 @@ class NativeInitialInputDelivery:
                 or not re.fullmatch(r"[0-9a-f]{64}", self.input_sha256)
                 or type(self.input_size_bytes) is not int
                 or not 1 <= self.input_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
-                or not math.isfinite(self.expires_monotonic)):
+                or not math.isfinite(self.expires_monotonic)
+                or self.turn_handle is not None and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None):
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -1801,6 +1803,9 @@ class NativeInitialInputDelivery:
             "input_size_bytes": self.input_size_bytes,
             "expires_monotonic": self.expires_monotonic,
         }
+        if self.turn_handle is not None:
+            result["turn_handle"] = self.turn_handle
+        return result
 
 
 @dataclass(slots=True)
