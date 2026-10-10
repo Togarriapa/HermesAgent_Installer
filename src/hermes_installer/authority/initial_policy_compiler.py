@@ -173,6 +173,10 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         "remote_observation_enrollments": [],
         "native_schema_artifacts": [], "composio_channel_enrollments": [],
         "channel_delivery_bindings": [],
+        # v123 adds these dormant capability catalogs. Prepared
+        # publication has no activation evidence, so the exact state is empty.
+        "remote_startup_enrollments": [], "private_loopback_networks": [],
+        "selected_resource_executions": [], "selected_application_runtimes": [],
         "root_journal_roots": [rows],
     }
     value["generation_digest"] = hashlib.sha256(_canonical_json(value)).hexdigest()
