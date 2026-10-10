@@ -223,6 +223,16 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         entrypoint_artifact_id="artifact:entry", entrypoint_sha256="d" * 64,
         resolver_artifact_id="artifact:resolver", resolver_sha256="e" * 64,
         adapter_records=MappingProxyType({adapter.adapter_id: adapter}),
+        action_records=MappingProxyType({"action-binding:lookup": SimpleNamespace(
+            adapter_id=adapter.adapter_id, action_id=adapter.action_id,
+            adapter_artifact_id=adapter.adapter_artifact_id,
+            adapter_sha256=adapter.adapter_sha256,
+            argument_schema_id=adapter.argument_schema_id,
+            result_schema_id=adapter.result_schema_id,
+        )}),
+        registration_records=MappingProxyType({}),
+        workflow_records=MappingProxyType({}),
+        process_role_records=MappingProxyType({}),
     )
     catalog = SimpleNamespace(
         digest="a" * 64,
