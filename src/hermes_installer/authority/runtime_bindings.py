@@ -174,6 +174,28 @@ class RootRuntimeBindings:
                 raise EnrollmentDenied("private memory model artifact is not pinned")
         return selected
 
+    private_memory_engine_selections: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+
+    @property
+    def service_generation_digest(self) -> str:
+        return self.enrollment_catalog.digest
+
+    def resolve_memory_enrollment(self, memory_enrollment_id: str, *,
+                                  service_generation_digest: str) -> Any:
+        return self.enrollment_catalog.resolve_memory_enrollment(
+            memory_enrollment_id, service_generation_digest=service_generation_digest)
+
+    def resolve_private_memory_engine_selection(self, selection_id: str, *,
+                                                service_generation_digest: str) -> Mapping[str, Any]:
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("private memory selection belongs to a stale service generation")
+        if not isinstance(selection_id, str) or not selection_id:
+            raise EnrollmentDenied("private memory selection ID is invalid")
+        selected = self.private_memory_engine_selections.get(selection_id)
+        if selected is None:
+            raise EnrollmentDenied("private memory engine selection is unavailable")
+        return selected
+
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
         """Return one channel row only after active resource, issuer and controller joins."""
@@ -1491,6 +1513,10 @@ def build_root_runtime_bindings(
             raise EnrollmentDenied("fixed service connector handler conflicts with an existing root handler")
         effect_handlers[key] = handler
 
+    private_memory_engine_selections = _parse_private_memory_engine_selections(
+        getattr(enrollment, "private_memory_engine_selections", ()),
+    )
+
     return RootRuntimeBindings(
         enrollment_catalog=service_catalog,
         build_catalog=build_catalog,
@@ -1535,7 +1561,66 @@ def build_root_runtime_bindings(
         artifact_staging_directory=Path(enrollment.artifact_staging_directory),
         application_source_receipts=application_source_receipts,
         application_runtime_receipts=application_runtime_receipts,
+        private_memory_engine_selections=private_memory_engine_selections,
     )
+
+
+_PRIVATE_MEMORY_SELECTION_FIELDS = frozenset({
+    "id", "profile_id", "namespace_id", "memory_provider", "memory_owner_generation",
+    "extract_route_id", "embed_route_id", "extraction_served_model_id",
+    "embedding_served_model_id", "embedding_dimensions", "endpoint_selection_receipt_handle",
+    "extraction_model_deployment_receipt_handle", "embedding_model_deployment_receipt_handle",
+    "protocol_artifact_id", "protocol_sha256", "credential_reference_ids",
+    "private_consent_selection_handle", "policy_revision",
+})
+_MEMORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z", re.ASCII)
+_MEMORY_SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+
+
+def _parse_private_memory_engine_selections(records: Any) -> Mapping[str, Mapping[str, Any]]:
+    """Freeze strict private model-selection rows from the verified generation."""
+    if records is None:
+        return MappingProxyType({})
+    if isinstance(records, Mapping):
+        values = tuple(records.values())
+    elif isinstance(records, (tuple, list)):
+        values = tuple(records)
+    else:
+        raise EnrollmentDenied("protected private memory selection records are malformed")
+    parsed: dict[str, Mapping[str, Any]] = {}
+    for row in values:
+        if not isinstance(row, Mapping) or set(row) != _PRIVATE_MEMORY_SELECTION_FIELDS:
+            raise EnrollmentDenied("protected private memory selection fields differ from v108")
+        identity_fields = (
+            "id", "profile_id", "namespace_id", "memory_provider", "extract_route_id",
+            "embed_route_id", "extraction_served_model_id", "embedding_served_model_id",
+            "endpoint_selection_receipt_handle", "extraction_model_deployment_receipt_handle",
+            "embedding_model_deployment_receipt_handle", "protocol_artifact_id",
+            "private_consent_selection_handle", "policy_revision",
+        )
+        if any(not isinstance(row[name], str) or not _MEMORY_ID.fullmatch(row[name])
+               for name in identity_fields):
+            raise EnrollmentDenied("protected private memory selection identity is invalid")
+        if (row["memory_provider"] not in {"openviking", "agentmemory", "claude-mem"}
+                or type(row["memory_owner_generation"]) is not int
+                or row["memory_owner_generation"] < 1
+                or type(row["embedding_dimensions"]) is not int
+                or not 1 <= row["embedding_dimensions"] <= 65536
+                or not isinstance(row["protocol_sha256"], str)
+                or not _MEMORY_SHA256.fullmatch(row["protocol_sha256"])):
+            raise EnrollmentDenied("protected private memory model selection is invalid")
+        credentials = row["credential_reference_ids"]
+        if (not isinstance(credentials, (tuple, list))
+                or any(not isinstance(item, str) or not _MEMORY_ID.fullmatch(item) for item in credentials)
+                or len(credentials) != len(set(credentials))):
+            raise EnrollmentDenied("private memory selection credential references are malformed")
+        selection_id = row["id"]
+        if selection_id in parsed:
+            raise EnrollmentDenied("private memory selection ID is duplicated")
+        parsed[selection_id] = MappingProxyType({
+            **dict(row), "credential_reference_ids": tuple(credentials),
+        })
+    return MappingProxyType(parsed)
 
 
 def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mapping[str, Any],
