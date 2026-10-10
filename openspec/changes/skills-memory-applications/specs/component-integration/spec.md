@@ -788,3 +788,10 @@ The installer SHALL reobserve current authorization for status and stop after in
 #### Scenario: Memory service outlives its start proof
 - **WHEN** the original short admission expires while the owned process remains within its original deadline
 - **THEN** productive control requires a fresh same-process admission and revocation cleanup remains bound to retained PIDFD ownership without extending the old proof
+
+### Requirement: Completed source choice ordering v146
+The installer SHALL distinguish held root observation from completed signed choice and full source verification, accurately name release identity and authenticate complete public scope payloads from retained configuration.
+
+#### Scenario: Fixed root is observed before child choice
+- **WHEN** only the fixed model store root is held
+- **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
