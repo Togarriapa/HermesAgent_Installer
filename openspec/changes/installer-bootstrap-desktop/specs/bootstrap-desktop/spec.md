@@ -1109,3 +1109,17 @@ The system SHALL verify an old installed predecessor with an internally selected
 #### Scenario: Unknown or mixed historical cohort is denied
 - **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
 - **THEN** predecessor verification denies before candidate effects and preserves the original pointer
+
+
+## ADDED Requirements
+
+### Requirement: Integrated setup and compiler source admission is exact
+The installer SHALL apply only the two existing member hash/size tuples identified in `planning/integrated-setup-compiler-source-review-v255.json` after reobserving identical committed leaf bytes, preserving current projection evidence before policy pointer publication and distinct source versus functional acceptance.
+
+#### Scenario: Projection expires or core changes before publication
+- **WHEN** the retained active authority projection expires or its current canonical core differs from the sealed claim
+- **THEN** the compiler denies before publication begins and the policy pointer is not replaced
+
+#### Scenario: Reviewed source is applied to an integrated candidate
+- **WHEN** only the exact two reviewed leaf tuples are applied and source fixtures pass
+- **THEN** broader modules and future bytes remain unadmitted and qualification, remote activation, account and Pi acceptance remain separately OPEN

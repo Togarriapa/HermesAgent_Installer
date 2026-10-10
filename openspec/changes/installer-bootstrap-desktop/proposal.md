@@ -315,3 +315,6 @@ v247 narrow source-update leaf review: `plans/amendments/2026-10-10-source-updat
 ## Immutable historical predecessor refinement v249
 
 Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed historical whole cohort and dedicated predecessor-only receipt in `planning/version-aware-predecessor-verification-v249.json`; old installed code never becomes current actor. Full closed release/pointer custody and original deadlines remain; no target acceptance.
+
+
+Integrated two-leaf source review v255: `plans/amendments/2026-10-11-integrated-setup-compiler-source-review-v255.md` and `planning/integrated-setup-compiler-source-review-v255.json` admit only exact committed root_setup and corrected active_policy_compiler source bytes. BD-T255.1 applies existing tuple literals after fresh equality; VD-T255.2 verifies coherent source and drift evidence separately from genuine functionality/target acceptance. Intermediate5744 compiler is rejected for missing pre-CAS projection currentness; no broader/future source admission. All AC01..18 OPEN.

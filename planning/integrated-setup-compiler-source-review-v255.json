@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "id": "integrated-setup-compiler-source-review-v255",
+  "amendment": "plans/amendments/2026-10-11-integrated-setup-compiler-source-review-v255.md",
+  "requirements": [
+    "R0001",
+    "R0055",
+    "R0058",
+    "R0060",
+    "R0148",
+    "R0153",
+    "R0172",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "refines": [
+    "planning/source-update-entry-source-review-v247.json",
+    "planning/qualification-compiler-terminal-custody-v217.json",
+    "planning/active-authority-receipt-aggregate-v231.json",
+    "planning/current-remote-identity-adoption-v225.json",
+    "planning/remote-source-active-digest-acyclic-v246.json"
+  ],
+  "tasks": [
+    "BD-T255.1",
+    "VD-T255.2"
+  ],
+  "source": {
+    "commit": "c16e826f75870d52ad390e8f7dd814393ebf1a82",
+    "tree": "254ee837637517d9a6d37af1358bc3bc4e26dc34",
+    "comparison_commit": "edb3493867a26974d01c057c705711f14eea0d64",
+    "rejected_intermediate_commit": "5744a0d9490982d109f76af6a39ad93dc03af00b",
+    "corrective_source_commit": "3260cf1dea7173563b4e720552d126e4e0ba4039"
+  },
+  "members": [
+    {
+      "module_name": "hermes_installer.root_setup",
+      "source_path": "src/hermes_installer/root_setup.py",
+      "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+      "installed_member": "lib/python/hermes_installer/root_setup.py",
+      "sha256": "29d626a67e0e1ead5e9d99b765e26a7e91322fad04c7863220c20fd93a278d03",
+      "size_bytes": 85560,
+      "old_sha256": "0b7d7203b41d3496ebb14d6997fa3e3aaef58aafa98bb8c498004aaf31960616",
+      "old_size_bytes": 71543,
+      "role": "module",
+      "installed_mode": 292,
+      "source_commit": "c16e826f75870d52ad390e8f7dd814393ebf1a82"
+    },
+    {
+      "module_name": "hermes_installer.authority.active_policy_compiler",
+      "source_path": "src/hermes_installer/authority/active_policy_compiler.py",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.active_policy_compiler",
+      "installed_member": "lib/python/hermes_installer/authority/active_policy_compiler.py",
+      "sha256": "38c9351367733aa850a46ad0642fd1324ff4b024b1bdc2ac12c799762f798fe1",
+      "size_bytes": 179878,
+      "old_sha256": "a9a0f983aeab2c47274c8a3f46155ac7f97ebd2264cb15d888d5379ed550f568",
+      "old_size_bytes": 147437,
+      "role": "module",
+      "installed_mode": 292,
+      "source_commit": "c16e826f75870d52ad390e8f7dd814393ebf1a82"
+    }
+  ],
+  "review": [
+    "The finite qualification dependency imports precede installed actor capture. Child qualification uses exact current installed/controller/journal owners and source-only fixture registries. Only a signed incomplete missing-native-task result is produced; owned discovery/tree/NSS cleanup precedes durable result publication. Parent resolves typed signed result, never child stdout or unit exit as acceptance. The absent display fixture remains incomplete.",
+    "Remote enable/defer is an independent exact root-TTY choice. Enabled setup obtains the current selected role aggregate and schema-2 typed identity publication source; compiler binds actual canonical source bytes, session/transaction/prepared/choice joins and finite receipt closure. Signed active identity adoption remains separate from activation and Cloudflare readiness.",
+    "Compiler retains exact policy/catalog/selection bytes for one precompile reservation, derives canonical active core from the current issuer aggregate, and binds separate prepared versus active service-generation domains and exact principal/namespace/selection identities.",
+    "Review rejected the intermediate compiler because its actual pre-CAS verifier accepted a real expired projection while post-CAS verifier rejected it; publisher deliberately retains a committed pointer for recovery. Correction3260 adds exact typed projection/currentness, live core equality/hash/size, generation/principal/namespace/selection checks before CAS and rechecks after the read. Changed core is denied before publisher _publish_compiled.",
+    "Failed pre-durable claim persistence now includes its exact owned .remote-service-identities leaf in existing bounded unlink cleanup. No wider filesystem cleanup is introduced."
+  ],
+  "application": {
+    "owner": "Luna integrator after root publishes this Sol review",
+    "tables": [
+      "src/hermes_installer/authority/installer_release_build.py::REVIEWED_SOURCE_MODULES",
+      "src/hermes_installer/authority/installer_release.py::REVIEWED_SOURCE_MODULES"
+    ],
+    "edits": "Replace only the digest/size literals for these two existing tuples in each table. Preserve all module/source/member/ID/role identities and every unrelated tuple. Reobserve exact final leaf equality first; any later change needs a separate review.",
+    "aliases": "No native worker recipe literal or downloaded catalog artifact refers to these two source paths. No catalog URL/version/hash/size/max_bytes, parser, source observer, new artifact/module row or role expansion is authorized.",
+    "structural_metadata": "Table application changes installer_release/build source bytes. Measure their actual final verified candidate/import metadata; do not fabricate future hashes or add a structural self-pin.",
+    "scope": "Exactly these two leaf pins. This does not admit additional modules, gateway NULL/dynamic-source rows, other source cohorts, source capture hooks, future producer changes or a complete deployment.",
+    "order": [
+      "Root publishes separate Sol planning review",
+      "Luna independently reobserves both actual leaves and applies exactly four tuple digest/size replacements",
+      "Root remeasures final source/import metadata and runs unexcluded source/pin/contract/spec/plan checks",
+      "Genuine isolated installed pipeline and authorized Pi/account functionality are separately verified"
+    ]
+  },
+  "evidence": {
+    "independent_exact_corrected_host": "Corrected3260:107 passed,6 skipped. Final integratedc16e826:108 passed,6 skipped. Both use isolated Python3.14.7 across root_setup, active compiler, remote identity publication source, qualification compiler/journal, active authority projection, policy publisher, native output, remote network selection and root setup choice contract suites. Skipped tests are not acceptance.",
+    "drift_regression": "Bounded independent fault injection used the actual expired projection DTO/issuer and actual pre/post compiler verifiers with unrelated setup checks mocked current. Intermediate accepted pre-CAS; exact3260 denies pre-CAS. This proves the currentness failure boundary, not a genuine positive authority pipeline.",
+    "fixture_limits": "Most typed owner/currentness boundaries are controlled fixtures. No genuine complete source/NSS/PM/native-output/home/projection/publication/activation positive or actual child systemd result is established by this review.",
+    "full_suite": "Full unexcluded coherent source/pin suite after exact pin application belongs to root; not claimed passed here.",
+    "remaining": "Managed service activation, lifetime after setup close/restart, real qualification task/display route, Cloudflare readiness and actual Pi/provider/account evidence remain OPEN. Adjacent future fixes are not forward-approved.",
+    "planning_checks": "Strict OpenSpec13/13; live and baseline plan validation pass; complete baseline160 exact-tag comparison pass; ten planning mutation/failure tests pass. Planning checks establish scope/immutability only."
+  },
+  "acceptance": "All AC01..18 OPEN. Source admission is distinct from installed, functional, account and target acceptance. Frozen baseline160/tag and prior amendments untouched."
+}

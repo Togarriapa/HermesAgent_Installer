@@ -277,3 +277,4 @@ v251c: `plans/amendments/2026-10-11-official-desktop-prepared-packaging-directio
 ## Current owned network observation v254
 
 `planning/current-owned-remote-network-observation-v254.json`; HI-T254.1/LC-T254.2/VD-T254.3 OPEN. Same live owned proof refresh only, unchanged finite recipe/start/Access/socket/tunnel deadlines and current-generation watchdog/owned stop. Sustained Desktop and all AC OPEN.
+Integrated source admission v255: `plans/amendments/2026-10-11-integrated-setup-compiler-source-review-v255.md` / `planning/integrated-setup-compiler-source-review-v255.json` govern only exact root_setup and corrected active_policy_compiler existing tuples. BD-T255.1 and VD-T255.2 remain OPEN; source/fixture admission is distinct from installed/runtime/account/Pi acceptance. No frozen baseline or prior amendment changed.

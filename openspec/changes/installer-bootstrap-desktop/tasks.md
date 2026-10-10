@@ -356,3 +356,9 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 - [ ] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
 - [ ] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
 - [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.
+
+
+## Exact integrated source review v255
+
+- [ ] BD-T255.1 Reobserve the exact two v255 leaf hashes/sizes and apply only their four existing release-table tuples after root publication; preserve all IDs/roles/other rows and measure structural metadata separately.
+- [ ] VD-T255.2 Run unexcluded coherent pin/spec/plan/contract checks and expiry/core drift before CAS; retain signed qualification/cleanup and genuine isolated/target functionality separately. All AC01..18 OPEN.

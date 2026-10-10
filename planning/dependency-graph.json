@@ -3821,32 +3821,6 @@
     },
     "acceptance": "All AC OPEN"
   },
-  "native_plugin_backend_composition_v253": {
-    "amendment": "plans/amendments/2026-10-11-native-plugin-backend-composition-v253.md",
-    "contract": "planning/native-plugin-backend-composition-v253.json",
-    "tasks": {
-      "RB-T253.1": [
-        "HI-T231.1"
-      ],
-      "HI-T253.2": [
-        "RB-T253.1",
-        "BD-T231.2"
-      ],
-      "VD-T253.3": [
-        "HI-T253.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "native_plugin_producer_sealed_api_v253b": {
-    "contract": "planning/native-plugin-producer-sealed-api-v253b.json",
-    "tasks": [
-      "RB-T253.1",
-      "HI-T253.2",
-      "VD-T253.3"
-    ],
-    "acceptance": "All AC OPEN"
-  },
   "official_desktop_native_source_policy_v251": {
     "contract": "planning/official-desktop-native-source-policy-v251.json",
     "amendment": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251.md",
@@ -3883,6 +3857,32 @@
     },
     "acceptance": "All AC OPEN"
   },
+  "native_plugin_backend_composition_v253": {
+    "amendment": "plans/amendments/2026-10-11-native-plugin-backend-composition-v253.md",
+    "contract": "planning/native-plugin-backend-composition-v253.json",
+    "tasks": {
+      "RB-T253.1": [
+        "HI-T231.1"
+      ],
+      "HI-T253.2": [
+        "RB-T253.1",
+        "BD-T231.2"
+      ],
+      "VD-T253.3": [
+        "HI-T253.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "native_plugin_producer_sealed_api_v253b": {
+    "contract": "planning/native-plugin-producer-sealed-api-v253b.json",
+    "tasks": [
+      "RB-T253.1",
+      "HI-T253.2",
+      "VD-T253.3"
+    ],
+    "acceptance": "All AC OPEN"
+  },
   "official_desktop_prepared_packaging_direction_v251c": {
     "contract": "planning/official-desktop-prepared-packaging-direction-v251c.json",
     "tasks": {
@@ -3916,5 +3916,25 @@
       ]
     },
     "acceptance": "All AC OPEN; sustained Desktop separate"
+  },
+  "integrated_setup_compiler_source_review_v255": {
+    "amendment": "plans/amendments/2026-10-11-integrated-setup-compiler-source-review-v255.md",
+    "contract": "planning/integrated-setup-compiler-source-review-v255.json",
+    "tasks": {
+      "BD-T255.1": [
+        "VD-T183.5",
+        "BD-T231.2",
+        "HI-T217.1",
+        "RT-T246.2"
+      ],
+      "VD-T255.2": [
+        "BD-T255.1",
+        "VD-T231.3",
+        "VD-T217.3",
+        "VD-T246.3"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN",
+    "source_scope": "exact two measured leaves; no forward approval"
   }
 }
