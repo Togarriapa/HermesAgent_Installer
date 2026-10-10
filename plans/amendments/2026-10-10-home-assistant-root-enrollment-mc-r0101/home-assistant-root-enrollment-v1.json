@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "requirement_id": "MC-R0101",
+  "baseline_requirement": "R0101; MC-F01/MC-F02; selected existing instance read, initialize/discovery/reconnect/revoked auth, deny house actions and preserve HA configuration",
+  "why": "Actual MCPSelectionAdapter only saves a generic resource ID and test_connection remains pending. ProtectedMCPHTTPBinding/RootMCPCredentialHandle and strict mcp_services/mcp_http_bindings already exist, but no root setup credential/selection producer or atomic protected publication/adoption exists.",
+  "official_source": "https://www.home-assistant.io/integrations/mcp_server/",
+  "official_facts": "Official documentation supports MCP HTTPS per-instance endpoint and OAuth2 PKCE, and documents long-lived access token clients. Exposed tools come from configured LLM APIs; names and readOnly hints are not a reviewed safe-operation grant. Existing HA login/dashboard session is not a Hermes credential. No server configuration, integration exposure or account permission is changed by this join.",
+  "supplied_target": "https://ha.togarriapahome.uk/dashboard-home/home identifies an existing authorized UI origin only; it is not an MCP endpoint or proof of API authentication. Root setup securely collects the actual copied MCP URL; never use dashboard HTML as MCP or infer cookie/token access.",
+  "producer": {
+    "module": "hermes_installer.authority.home_assistant_enrollment",
+    "class": "RootHomeAssistantEnrollmentRegistry",
+    "constructor": "from_root_setup(selected_installation_binding,verified_installer_release,root_setup_session_store,current_principal_registry,root_credential_vault,root_setup_choice_registry,mcp_schema_source_registry,root_publication_registry,root_journal)",
+    "observe": "observe_instance_configuration()->RootSelectedHomeAssistantInstance",
+    "credential": "collect_selected_instance_credential(selection_handle)->RootHomeAssistantCredentialObservation; or resolve_selected_existing_credential(selection_handle,credential_reference)->same typed observation",
+    "probe": "test_selected_instance(selection_handle)->RootHomeAssistantReadProbeReceipt",
+    "projection": "resolve_current_enrollment_projection(selection_handle)->RootHomeAssistantEnrollmentProjection",
+    "publish": "publish_selected_instance(selection_handle,expected_generation_digest)->RootHomeAssistantEnrollmentPublicationReceipt",
+    "current": "resolve_current(selection_handle)->RootSelectedHomeAssistantInstance",
+    "scope": "Actual current installed release/root actor, RootSetupSessionStore membership and verify_current_setup_controller, adopted principal/namespace/profile/current normal setup choice/transaction/prepared or current generation. Constructor must not accept caller-authoritative mappings or bool seals. Source owner composes actual current root service graph; ordinary setup worker sees only opaque handle and sanitized status, never credential endpoint authority or root vault write."
+  },
+  "selection_fields": [
+    "schema",
+    "selection_handle",
+    "setup_session_handle",
+    "transaction_handle",
+    "principal_selection_handle",
+    "namespace_selection_handle",
+    "profile_id",
+    "profile_generation",
+    "service_id",
+    "binding_id",
+    "endpoint_source_id",
+    "endpoint_sha256",
+    "reviewed_revision",
+    "selected_entity_ids",
+    "credential_reference",
+    "choice_selection_handle",
+    "choice_epoch",
+    "source_module_receipt_handles",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "selection_constraints": "service_id exactly home-assistant; root-generated binding_id and unique selection handle; endpoint_source_id exactly official_source. Endpoint retained root-private HTTPS, no userinfo/query/fragment, documented /api/mcp or /api/mcp/<short-name> existing ProtectedMCPHTTPBinding validator; certificate verification and current DNS/transport policy, no downgrade/redirect/cross-origin credential forwarding. Endpoint origin must match the actually selected existing instance; any different origin requires explicit normal instance selection, not dashboard-derived authority. 1..64 unique entity IDs matching [a-z0-9_]+\\.[a-z0-9_]+. Endpoint digest is metadata, not credential or ownership proof. reviewed_revision is actual reviewed installed adapter/protocol source closure SHA256 from held release module receipts, not an invented HA server revision.",
+  "auth": {
+    "minimal_path": "Documented long-lived token reference. Root foreground no-echo secure capture occurs inside trusted installed setup process, not unprivileged secret_reader/worker IPC. Existing credential reference may be reused only after actual vault resolves exact selected principal/UID/scopes and source choice. No automatic browser cookies, HA storage files, foreign secrets or environment scraping.",
+    "vault": "Existing RootCredentialVault.write_credential(reference,credential,principal_id,allowed_uids,scopes) writes root-owned protected record only through this current producer. Reference root-generated within existing safe alphabet; no caller-selected vault path/overwrite of unowned credential. allowed_uids exact current enrolled profile UID; scopes only mcp:home-assistant:connect and mcp:home-assistant:read. Existing RootMCPCredentialHandle supplies Authorization header only inside broker. Token never returned to worker/JSON/evidence/log/argv, short-lived secret buffers discarded after secure write.",
+    "oauth": "Official OAuth PKCE remains an original supported auth path; no new OAuth callback/refresh success is claimed here. Implement only with genuine root-owned state/PKCE/callback/account scope receipts and same vault/publication join; missing producer remains precisely pending. Token path does not delete OAuth obligations.",
+    "authority": "A broad HA account token does not widen Hermes operation permission: selected source-reviewed read tools/entity arguments only; action/write/unknown tools blocked by current broker and protected effect rules on every dispatch/retry."
+  },
+  "discovery": {
+    "grant": "RootHomeAssistantSetupReadGrant is registry-issued one-use operation capability bound selection/session/controller/current source/credential observation/endpoint/selected entities and original deadline, never worker effect grant or active service row. Only initialize, initialized notification, tools/list and one selected approved read are permitted. No arbitrary JSON-RPC method/URL/tool/argument accepted.",
+    "transport": "Reuse existing TLS StreamableHTTP transport/protocol bounded serializers and opaque root credential handle. Root setup source uses same ProtectedMCPHTTPBinding and read-policy validators with retained setup grant; do not manufacture an active AuthorityService authorization or bypass existing runtime broker. Existing raw setup transport must be explicitly root-grant gated.",
+    "schema": "Actual initialize and tools/list response bytes/request IDs/TLS endpoint/credential observation retained; existing bounded MCP discovery/schema CAS/source validators reject malformed/nonfinite/duplicate/oversized schemas and paging bounds. Tools are untrusted remote descriptions, not permissions.",
+    "read": "Root-reviewed per-tool safe read definition plus discovered exact schema/readOnlyHint=true/selection_arguments binds actual selected entity_id or entity_ids, and canonical argument bytes pass unchanged. Never assume all GetLiveContext/GetStates/ListEntities names exist or are scoped. No-argument whole-home context cannot substitute for selected-entity read; an unknown/unsupported schema leaves affected read pending with exact next step. Root owner supplies reviewed source-backed classifier, not automatic remote annotations.",
+    "receipt_fields": [
+      "schema",
+      "receipt_handle",
+      "selection_handle",
+      "credential_observation_handle",
+      "endpoint_sha256",
+      "initialize_request_sha256",
+      "initialize_result_sha256",
+      "tools_list_request_sha256",
+      "tools_list_result_sha256",
+      "selected_tool_name",
+      "argument_schema_id",
+      "argument_schema_sha256",
+      "result_schema_id",
+      "result_schema_sha256",
+      "selected_argument_sha256",
+      "selected_result_sha256",
+      "selected_entity_ids",
+      "source_receipt_handles",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "state": "Record configured/authenticated/reachable/discovered/functionally_tested separately from enabled/tested_actual_target. Fixture results never mark real HA acceptance. 401/403/revoked credential invalidates current observation and disables new reads until fresh authorized capture/reference proof; reconnect reuses existing owned binding/ref idempotently, rechecks schema/policy/current source each time, no duplicate config."
+  },
+  "projection": {
+    "type": "RootHomeAssistantEnrollmentProjection",
+    "fields": [
+      "schema",
+      "projection_handle",
+      "selection_handle",
+      "transaction_handle",
+      "expected_generation_digest",
+      "principal_id",
+      "profile_id",
+      "profile_generation",
+      "service_record",
+      "http_binding_record",
+      "effect_rule_records",
+      "probe_receipt_handle",
+      "source_receipt_handles",
+      "choice_adoption_handle",
+      "projection_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "service_record_fields": [
+      "id",
+      "channel",
+      "allowed_tools",
+      "transport_binding_id",
+      "reviewed_revision",
+      "selection_arguments"
+    ],
+    "http_binding_record_fields": [
+      "binding_id",
+      "service_id",
+      "endpoint",
+      "endpoint_source_id",
+      "reviewed_revision",
+      "credential_ref"
+    ],
+    "rules": "Existing mcp.request operation, target mcp:home-assistant:http, capabilities mcp:home-assistant:connect/read only with actual selected profile/principal/source sensitivity/current recipient/privacy policy and zero additional metered budget. No mcp action/write grant. Private HA endpoint opt-in capability, if needed by existing transport, comes from same explicit instance choice/current owner-bound target and never authorizes unrelated private network hosts."
+  },
+  "publication": {
+    "class": "RootHomeAssistantEnrollmentPublicationRegistry",
+    "constructor": "from_root_setup(selected_installation_binding,root_setup_session_store,current_protected_enrollment_resolver,authority_policy_compiler,root_setup_policy_generation_publisher,root_journal)",
+    "behavior": "Retain typed source projection and compile a full strict immutable protected generation through existing compiler/publication serializer/signature/CAS machinery, preserving every unrelated current catalog/rule/account/service byte/semantic value. Finite HA-only upsert of exactly matching mcp_services/mcp_http_bindings and its selected connect/read rules; no direct JSON edit, generic worker update mapping or /etc write. Reject unowned/conflicting existing binding; replacing previously owned matching instance requires normal selected configuration and expected current generation CAS. Prepared initial generation consumes selected projection before first active compile; active reconnect must not pretend a prepared generation exists.",
+    "adoption": "AuthorityService.adopt_current_home_assistant_enrollment(publication_receipt_handle) is a narrow root-owned current-publication resolver hook: reopen strict committed generation/current pointer/signature/source/choice/vault joins, verify unchanged key/principal and unrelated policy, atomically replace only this service broker binding using build_enrolled_mcp_handlers. Retire old transport/session handles and deny stale binding grants. On invalid new generation retain prior current generation; after successful CAS report committed state truthfully and recover adoption from current root journal. No arbitrary daemon reload command or caller row data.",
+    "receipt_fields": [
+      "schema",
+      "publication_receipt_handle",
+      "projection_handle",
+      "transaction_handle",
+      "previous_generation_digest",
+      "generation_digest",
+      "service_id",
+      "binding_id",
+      "credential_reference",
+      "choice_adoption_handle",
+      "source_receipt_handles",
+      "publication_state",
+      "adoption_state",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "lifecycle": "Normal setup intent can be durably adopted using existing current signed choice/revocation resolver; short probe/dispatch leases never extended. Runtime handles resolve current active enrollment and vault, not expired RootBootstrapSession. Removal/revoke affects only owned Hermes binding/ref, preserves HA instance/config/entities and all unrelated credentials."
+  },
+  "tasks": [
+    {
+      "id": "MC-R0101.1",
+      "owner": "home_assistant_join/factory/vault/enrollment/compiler/runtime composer",
+      "work": "Implement actual root instance/credential/source selection, typed grant discovery/read proof, strict HA-only compiler/publication/adoption and setup worker opaque facade."
+    },
+    {
+      "id": "MC-R0101.2",
+      "owner": "home_assistant_join",
+      "work": "Exercise actual protected transport/vault/broker/publication fixture initialize/list/selected read/reconnect/revoked auth, malformed schema/TLS/redirect denial, write/action denial, conflict/CAS recovery and credential redaction; document actual target pending independently."
+    }
+  ],
+  "acceptance": "Preserve MC-R0101/R0101 and all original obligations/AC open until actual evidence. Supplied UI authentication is not API enrollment; no live house actions, HA configuration mutation or acceptance claimed. Source pins await actual committed source review; baseline unchanged."
+}

@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md",
+  "source_audit_commit": "39f60361549e9c3e4c6baa8dc117fdb05a4f791f",
+  "startup_intent_schema": 1,
+  "startup_intent_purpose": "root-selected-startup-intent-v1",
+  "startup_intent_fields": [
+    "schema",
+    "purpose",
+    "intent_handle",
+    "nonce_sha256",
+    "activation_id",
+    "daemon_unit_id",
+    "daemon_invocation_id",
+    "setup_session_id",
+    "setup_actor_witness_sha256",
+    "bootstrap_transaction_handle",
+    "committed_transaction_id",
+    "generation_id",
+    "service_generation_digest",
+    "publication_receipt_handle",
+    "publication_sha256",
+    "remote_enrollment_id",
+    "remote_startup_row_sha256",
+    "network_enrollment_id",
+    "network_row_sha256",
+    "role_recipe_records_sha256",
+    "principal_binding_sha256",
+    "original_setup_deadline_monotonic",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "wire_frames": {
+    "startup-request": [
+      "schema",
+      "operation",
+      "intent_handle",
+      "intent_sha256",
+      "nonce"
+    ],
+    "startup-accepted": [
+      "schema",
+      "operation",
+      "intent_handle",
+      "intent_sha256"
+    ],
+    "startup-completed": [
+      "schema",
+      "operation",
+      "intent_handle",
+      "outcome_handle",
+      "outcome_sha256"
+    ]
+  },
+  "wire_max_bytes": 8192,
+  "wire_fd_count": 0,
+  "admission_sources": [
+    "setup-local:RootSetupSessionStore+RootSetupSessionHandle",
+    "daemon-delegated:RootDaemonSelectedStartupIntentRegistry+RootAcceptedSelectedStartupIntent",
+    "qualification-local:RootQualificationSessionStore+RootQualificationSessionHandle"
+  ],
+  "fixed_qualification_suites": [
+    "resource-cron-task-v1",
+    "display-xauthority-v1"
+  ],
+  "new_source_hashes": "pending actual committed producer bytes; no future pins",
+  "tasks": {
+    "HI-T197.1": [
+      "HI-T09",
+      "HI-T13",
+      "HI-T160.1"
+    ],
+    "HI-T197.2": [
+      "HI-T197.1"
+    ],
+    "HI-T197.3": [
+      "HI-T160.1",
+      "HI-T173.1",
+      "HI-T178.2"
+    ],
+    "VD-T197.4": [
+      "HI-T197.2",
+      "HI-T197.3",
+      "HI-T160.2"
+    ]
+  },
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}

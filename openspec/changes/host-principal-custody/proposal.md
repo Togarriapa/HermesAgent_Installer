@@ -330,3 +330,15 @@ Health causal ancestry v194: `plans/amendments/2026-10-10-health-event-causal-an
 ## Final coherent source review v195
 
 Exact closed source/member/catalog/preload application under existing VD-T180.6/VD-T183.5: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`. Source0add8c33 follows reviewed nested leaf corrections; metadata self-pinning is excluded. All original implementation/acceptance tasks and AC01..AC18 remain OPEN.
+
+
+## Installed startup and qualification custody v197
+
+Actual daemon/setup process separation requires a closed source-issued startup intent and concrete tagged admission; installed qualification must construct its own real fixture source/publication/session/runtime graph. Exact finite contract/order/failures: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md` / `planning/installed-startup-qualification-custody-v197.json`. No private store copy, production relabel or BPF relaxation; all original AC and future source pins OPEN.
+
+
+Durable Xpra startup adoption v198: `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`. Existing HI-T197.1/.2 and VD-T197.4 require schema2 actual build/CAS/catalog reopening under a separate overlay signing domain, and admission-to-active lifecycle ownership. All acceptance remains OPEN.
+
+Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.
+
+Finite actual setup/fixture source producers v199: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`. Existing HI197/173/178 tasks require genuine setup protected selection/role producer and distinct child-owned qualification acquisition; no copied stores, caller rows or publication cycle. All acceptance OPEN.

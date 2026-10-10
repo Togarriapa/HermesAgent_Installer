@@ -2448,6 +2448,13 @@
     "VD-T187.3": [
       "HI-T187.1",
       "HI-T187.2"
+    ],
+    "MC-R0101.1": [
+      "MC-F01",
+      "HI-T143.2"
+    ],
+    "MC-R0101.2": [
+      "MC-R0101.1"
     ]
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim. v99: HI-T08 native candidate compilation consumes the source registration projection before HI-T11 dispatch; RB-T08 and MC-F01 retain their existing native/source/schema prerequisite edges. No active-before-assembly dependency introduced. v100: HI-T11 source issuance resolves current purpose-specific private input consent before any provider egress; existing HI-T12/PR-F03 grant checks retain all parent ceilings and current revocation. v101: HI-T09/HI-T13 selected display startup requires measured Xpra source plus actual transform/output/runtime receipts; source pin is not process readiness. v102: prepared source receipt precedes Resources profile selection/native assembly; active publication follows actual PM/materialization output receipts. Dispatch current consent check is non-consuming after ingress. v104: SK-F03 selected runtime qualification probe precedes active application runtime row; actual owned application manager terminal plus artifact validation precedes functional evidence. Existing HI selected launch prerequisites retained.",
@@ -2876,5 +2883,135 @@
     "pin_application_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "installed_startup_qualification_custody_v197": {
+    "schema": 1,
+    "amendment": "plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md",
+    "source_audit_commit": "39f60361549e9c3e4c6baa8dc117fdb05a4f791f",
+    "startup_intent_schema": 1,
+    "startup_intent_purpose": "root-selected-startup-intent-v1",
+    "startup_intent_fields": [
+      "schema",
+      "purpose",
+      "intent_handle",
+      "nonce_sha256",
+      "activation_id",
+      "daemon_unit_id",
+      "daemon_invocation_id",
+      "setup_session_id",
+      "setup_actor_witness_sha256",
+      "bootstrap_transaction_handle",
+      "committed_transaction_id",
+      "generation_id",
+      "service_generation_digest",
+      "publication_receipt_handle",
+      "publication_sha256",
+      "remote_enrollment_id",
+      "remote_startup_row_sha256",
+      "network_enrollment_id",
+      "network_row_sha256",
+      "role_recipe_records_sha256",
+      "principal_binding_sha256",
+      "original_setup_deadline_monotonic",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "wire_frames": {
+      "startup-request": [
+        "schema",
+        "operation",
+        "intent_handle",
+        "intent_sha256",
+        "nonce"
+      ],
+      "startup-accepted": [
+        "schema",
+        "operation",
+        "intent_handle",
+        "intent_sha256"
+      ],
+      "startup-completed": [
+        "schema",
+        "operation",
+        "intent_handle",
+        "outcome_handle",
+        "outcome_sha256"
+      ]
+    },
+    "wire_max_bytes": 8192,
+    "wire_fd_count": 0,
+    "admission_sources": [
+      "setup-local:RootSetupSessionStore+RootSetupSessionHandle",
+      "daemon-delegated:RootDaemonSelectedStartupIntentRegistry+RootAcceptedSelectedStartupIntent",
+      "qualification-local:RootQualificationSessionStore+RootQualificationSessionHandle"
+    ],
+    "fixed_qualification_suites": [
+      "resource-cron-task-v1",
+      "display-xauthority-v1"
+    ],
+    "new_source_hashes": "pending actual committed producer bytes; no future pins",
+    "tasks": {
+      "HI-T197.1": [
+        "HI-T09",
+        "HI-T13",
+        "HI-T160.1"
+      ],
+      "HI-T197.2": [
+        "HI-T197.1"
+      ],
+      "HI-T197.3": [
+        "HI-T160.1",
+        "HI-T173.1",
+        "HI-T178.2"
+      ],
+      "VD-T197.4": [
+        "HI-T197.2",
+        "HI-T197.3",
+        "HI-T160.2"
+      ]
+    },
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "finite_contract_clarifications": [
+    {
+      "amendment": "plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md",
+      "tasks": [
+        "HI-T197.1",
+        "HI-T197.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md",
+      "tasks": [
+        "HI-T197.1",
+        "HI-T197.2",
+        "HI-T197.3",
+        "HI-T173.1",
+        "HI-T178.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md",
+      "tasks": [
+        "HI-T149.1",
+        "VD-T196.2"
+      ],
+      "acceptance": "OPEN"
+    }
+  ],
+  "home_assistant_root_enrollment_mc_r0101": {
+    "contract": "planning/home-assistant-root-enrollment-contract.json",
+    "amendment": "plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md",
+    "tasks": [
+      "MC-R0101.1",
+      "MC-R0101.2"
+    ],
+    "acceptance": "All original R0101/MC-R0101 and AC remain open; fixture/current account evidence separate."
   }
 }

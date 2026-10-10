@@ -257,3 +257,14 @@ MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-sch
 Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
 
 Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.
+
+### Requirement: Home Assistant root enrollment MC-R0101
+The installer SHALL enroll an existing Home Assistant MCP instance only through current root-held credential/source selection and strict protected publication, allowing reviewed selected-entity reads.
+
+#### Scenario: Dashboard login or generic setup ID exists
+- **WHEN** no actual protected API credential and selected read schema have been verified
+- **THEN** connection remains pending and no worker-created authority or device action is permitted
+
+#### Scenario: Credential is revoked after a successful read
+- **WHEN** reconnect receives unauthorized or revoked credential evidence
+- **THEN** new reads are denied, stale transport handles are retired and HA configuration remains unchanged
