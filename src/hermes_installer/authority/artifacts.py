@@ -81,6 +81,29 @@ class RootSchemaDerivationReceipt:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootDerivedSchemaArtifact:
+    """Root-resolved dynamic MCP schema bytes joined to the active binding."""
+
+    artifact_id: str
+    sha256: str
+    size_bytes: int
+    canonical_schema_bytes: bytes = field(repr=False)
+    source_receipt_handle: str
+    derivation_receipt_handle: str
+    service_enrollment_id: str
+    service_generation: str
+    native_binding_id: str
+    tool_name: str
+    schema_role: str
+    _registry_id: str = field(repr=False)
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _SEAL:
+            raise TypeError("derived schema artifacts are minted by the root registry")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class VerifiedSchemaObservation:
     """Private bytes and provenance produced by a root source observer."""
 
@@ -100,6 +123,7 @@ class VerifiedSchemaObservation:
     _bytes: bytes = field(repr=False)
     _registry_id: str = field(repr=False)
     _seal: object = field(default=None, repr=False, compare=False)
+    source_expires_monotonic: float | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self._seal is not _SEAL:
@@ -109,6 +133,79 @@ class VerifiedSchemaObservation:
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _valid_native_schema_bytes(body: bytes) -> bool:
+    """Accept only the bounded finite JSON-schema subset selected for native tools."""
+    if not isinstance(body, bytes) or not 1 <= len(body) <= 256 * 1024:
+        return False
+    try:
+        value = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                           parse_constant=lambda _item: (_ for _ in ()).throw(ValueError()))
+        if _canonical(value) != body:
+            return False
+        budget = [4096]
+        allowed_types = {"object", "array", "string", "integer", "number", "boolean", "null"}
+
+        def visit(schema: Any, depth: int) -> bool:
+            budget[0] -= 1
+            if budget[0] < 0 or depth > 16 or not isinstance(schema, dict):
+                return False
+            permitted = {"type", "properties", "required", "additionalProperties", "items", "enum",
+                         "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
+            if set(schema) - permitted:
+                return False
+            type_value = schema.get("type")
+            if type_value is not None and type_value not in allowed_types:
+                return False
+            properties = schema.get("properties", {})
+            if not isinstance(properties, dict) or len(properties) > 256:
+                return False
+            for name, child in properties.items():
+                if not isinstance(name, str) or not name or len(name.encode("utf-8")) > 256:
+                    return False
+                if not visit(child, depth + 1):
+                    return False
+            required = schema.get("required", [])
+            if (not isinstance(required, list) or len(required) > 256
+                    or any(not isinstance(item, str) for item in required)
+                    or len(set(required)) != len(required)
+                    or not set(required).issubset(properties)):
+                return False
+            additional = schema.get("additionalProperties", False)
+            if type(additional) is not bool and not visit(additional, depth + 1):
+                return False
+            items = schema.get("items")
+            if items is not None and not visit(items, depth + 1):
+                return False
+            enum = schema.get("enum")
+            if enum is not None:
+                if (not isinstance(enum, list) or not enum or len(enum) > 128
+                        or any(not (item is None or type(item) in {str, int, bool, float})
+                               for item in enum)):
+                    return False
+            for key in ("minimum", "maximum"):
+                number = schema.get(key)
+                if number is not None and (type(number) not in {int, float} or not math.isfinite(number)):
+                    return False
+            for key in ("minLength", "maxLength", "minItems", "maxItems"):
+                count = schema.get(key)
+                if count is not None and (type(count) is not int or not 0 <= count <= 1_000_000):
+                    return False
+            if (schema.get("minimum") is not None and schema.get("maximum") is not None
+                    and schema["minimum"] > schema["maximum"]):
+                return False
+            if (schema.get("minLength") is not None and schema.get("maxLength") is not None
+                    and schema["minLength"] > schema["maxLength"]):
+                return False
+            if (schema.get("minItems") is not None and schema.get("maxItems") is not None
+                    and schema["minItems"] > schema["maxItems"]):
+                return False
+            return True
+
+        return visit(value, 0)
+    except Exception:
+        return False
 
 
 def _observation_handle(*, artifact_id: str, sha256: str, size: int, schema_kind: str,
@@ -364,6 +461,261 @@ class RootSchemaDerivationReceiptRegistry:
             child_bytes, self._instance_id, _SEAL,
         )
 
+    def observe_mcp_tools_list(self, observation: Any) -> VerifiedSchemaObservation:
+        """Seal one currently retained authenticated tools/list schema proof.
+
+        The caller-supplied object is only a lookup key. The MCP registry must
+        re-resolve it from its retained current invocation and exchange receipt;
+        a caller-created dataclass with identical-looking fields is not trusted.
+        """
+        _require_root(self.expected_uid)
+        if (type(observation).__module__ != "hermes_installer.authority.mcp_discovery_registry"
+                or type(observation).__name__ != "MCPDiscoverySchemaObservation"):
+            raise SchemaDerivationDenied("MCP schema observation is not a typed root witness")
+        resolver = getattr(self.mcp_discovery_registry, "resolve_schema_observation", None)
+        if not callable(resolver):
+            raise SchemaDerivationPending("authenticated MCP tools/list observation resolver is unavailable")
+        identity = {
+            "schema": 1,
+            "artifact_id": observation.artifact_id,
+            "artifact_sha256": observation.artifact_sha256,
+            "size_bytes": observation.size_bytes,
+            "schema_kind": observation.schema_kind,
+            "package_id": observation.package_id,
+            "package_generation": observation.package_generation,
+            "adapter_id": observation.adapter_id,
+            "action_id": observation.action_id,
+            "source_kind": "mcp-tools-list",
+            "parent_receipt_handles": list(observation.parent_receipt_handles),
+            "source_observation_handle": observation.source_observation_handle,
+            "source_member_path": None,
+            "service_generation_digest": observation.service_generation_digest,
+        }
+        try:
+            proof = resolver(identity)
+        except Exception:
+            raise SchemaDerivationDenied("MCP tools/list witness is absent, stale, or not selected") from None
+        if (type(proof) is not type(observation)
+                or any(getattr(proof, name) != getattr(observation, name) for name in (
+                    "artifact_id", "artifact_sha256", "size_bytes", "schema_kind",
+                    "package_id", "package_generation", "adapter_id", "action_id",
+                    "service_generation_digest", "schema_bytes", "request_sha256",
+                    "response_sha256", "service_id", "mcp_generation", "mcp_tool_name",
+                    "native_tool_name", "profile_id", "process_generation", "invocation_handle",
+                    "invocation_proof_id", "response_receipt_handle", "parent_receipt_handles",
+                    "source_observation_handle", "expires_monotonic", "capability", "operation",
+                    "target", "selection_sha256"))):
+            raise SchemaDerivationDenied("MCP tools/list resolver returned a different retained witness")
+        if (proof.service_generation_digest != self.root_journal.service_generation_digest
+                or not isinstance(proof.parent_receipt_handles, tuple)
+                or not 1 <= len(proof.parent_receipt_handles) <= 8
+                or proof.response_receipt_handle in proof.parent_receipt_handles
+                or not isinstance(proof.source_observation_handle, str)
+                or not _SHA.fullmatch(proof.source_observation_handle)
+                or not isinstance(proof.expires_monotonic, (int, float))
+                or isinstance(proof.expires_monotonic, bool)
+                or not math.isfinite(proof.expires_monotonic)
+                or time.monotonic() >= proof.expires_monotonic
+                or proof.operation != "mcp.request"
+                or not isinstance(proof.schema_bytes, bytes)
+                or len(proof.schema_bytes) != proof.size_bytes
+                or hashlib.sha256(proof.schema_bytes).hexdigest() != proof.artifact_sha256):
+            raise SchemaDerivationDenied("MCP tools/list witness identity, bytes, or lease is invalid")
+        body = proof.schema_bytes
+        schema_digest = hashlib.sha256(body).hexdigest()
+        if (proof.schema_kind not in {"arguments", "result"}
+                or proof.artifact_id != f"native-mcp-schema:{schema_digest}"
+                or not _valid_native_schema_bytes(body)):
+            raise SchemaDerivationDenied("MCP schema is not an exact canonical finite schema artifact")
+        # Only the selected published source parents may be part of the derived
+        # schema ancestry. The response receipt remains a dynamic witness field.
+        try:
+            publication = PolicyPublicationReceiptResolver.resolve_current()
+        except Exception:
+            raise SchemaDerivationPending("no current selected policy publication receipt") from None
+        if (type(publication) is not RootSetupPublicationReceipt
+                or publication.state not in {"prepared", "active"}
+                or any(parent not in publication.input_receipt_handles
+                       for parent in proof.parent_receipt_handles)):
+            raise SchemaDerivationDenied("MCP source closure is absent from the selected publication")
+        self._write_derived_schema(proof.artifact_id, proof.artifact_sha256, proof.schema_bytes)
+        self._verify_derived_schema(proof.artifact_id, proof.artifact_sha256, proof.size_bytes,
+                                    proof.schema_bytes)
+        return VerifiedSchemaObservation(
+            proof.artifact_id, proof.artifact_sha256, proof.size_bytes, proof.schema_kind,
+            proof.package_id, proof.package_generation, proof.adapter_id, proof.action_id,
+            "mcp-tools-list", tuple(proof.parent_receipt_handles),
+            proof.source_observation_handle, None, proof.service_generation_digest,
+            proof.schema_bytes, self._instance_id, _SEAL,
+            float(proof.expires_monotonic),
+        )
+
+    def resolve_schema_artifact(
+        self,
+        derivation_receipt_handle: str,
+        *,
+        selected_binding: Any,
+        schema_role: str,
+    ) -> RootDerivedSchemaArtifact:
+        """Resolve one dynamic MCP schema only through its selected live binding."""
+        _require_root(self.expected_uid)
+        from hermes_installer.mcp.native_dispatch import NativeMCPToolBinding
+
+        if type(selected_binding) is not NativeMCPToolBinding or schema_role not in {"arguments", "result"}:
+            raise SchemaDerivationDenied("selected native MCP binding or schema role is invalid")
+        schema_id = (selected_binding.request_schema_id if schema_role == "arguments"
+                     else selected_binding.result_schema_id)
+        receipt_record = _read_registry_json(
+            self._secure_receipt_root(create=False) / f"{derivation_receipt_handle}.json",
+            expected_uid=self.expected_uid,
+        )
+        _validate_derivation_record(receipt_record, derivation_receipt_handle)
+        if (receipt_record["schema_kind"] != schema_role
+                or receipt_record["package_id"] != selected_binding.native_package_id
+                or receipt_record["package_generation"] != selected_binding.native_package_generation
+                or receipt_record["adapter_id"] != selected_binding.handler_artifact_id
+                or receipt_record["action_id"] != selected_binding.id
+                or receipt_record["service_generation_digest"] != self.root_journal.service_generation_digest):
+            raise SchemaDerivationDenied("schema derivation receipt does not match the selected native binding")
+
+        if receipt_record["source_kind"] == "packaged-schema":
+            return self._resolve_packaged_schema_artifact(
+                derivation_receipt_handle, receipt_record, selected_binding, schema_id, schema_role,
+            )
+        if (receipt_record["source_kind"] != "mcp-tools-list"
+                or receipt_record["artifact_id"] != f"native-mcp-schema:{receipt_record['artifact_sha256']}"
+                or receipt_record["artifact_sha256"] != receipt_record["artifact_id"].split(":", 1)[1]):
+            raise SchemaDerivationDenied("schema derivation receipt is not a supported selected artifact")
+
+        active_row = None
+        try:
+            candidate = self.native_package_registry.resolve_native_schema_record(
+                schema_id, selected_binding.native_package_id,
+                selected_binding.native_package_generation, selected_binding.handler_artifact_id,
+                selected_binding.id, schema_role,
+            )
+            if (isinstance(candidate, Mapping) and candidate.get("id") == schema_id
+                    and candidate.get("derivation_receipt_handle") == derivation_receipt_handle
+                    and candidate.get("artifact_id") == receipt_record["artifact_id"]
+                    and candidate.get("sha256") == receipt_record["artifact_sha256"]
+                    and candidate.get("schema_kind") == schema_role
+                    and (candidate.get("size_bytes") is None
+                         or candidate.get("size_bytes") == receipt_record["size_bytes"])):
+                active_row = candidate
+        except Exception:
+            pass
+
+        if active_row is not None:
+            receipt = self.resolve_schema_derivation(
+                derivation_receipt_handle, artifact_id=receipt_record["artifact_id"],
+                artifact_sha256=receipt_record["artifact_sha256"],
+                size_bytes=receipt_record["size_bytes"],
+                service_generation_digest=self.root_journal.service_generation_digest,
+            )
+        else:
+            # Prepublication compilation needs the child bytes to construct the
+            # active row. It may use only a current prepared publication whose
+            # selected parent source receipts are already committed.
+            publication = _active_publication(allow_prepared=True)
+            if (publication.state != "prepared"
+                    or any(parent not in publication.input_receipt_handles
+                           for parent in receipt_record["parent_receipt_handles"])):
+                raise SchemaDerivationPending("dynamic schema has no active row or selected prepared source closure")
+            now = time.monotonic()
+            if (now < receipt_record["issued_monotonic"] or now >= receipt_record["expires_monotonic"]):
+                raise SchemaDerivationDenied("prepared dynamic schema receipt lease is stale")
+            self._verify_observation(receipt_record)
+            self._revalidate_discovery_derivation(receipt_record)
+
+        derivation_record = receipt_record
+        proof = self.mcp_discovery_registry.resolve_schema_observation(derivation_record)
+        body = self._read_derived_schema(
+            receipt_record["artifact_id"], receipt_record["artifact_sha256"],
+            receipt_record["size_bytes"],
+        )
+        if (proof.schema_bytes != body or proof.schema_kind != schema_role
+                or proof.action_id != selected_binding.id
+                or proof.mcp_tool_name != selected_binding.mcp_tool_name
+                or proof.package_id != selected_binding.native_package_id
+                or proof.package_generation != selected_binding.native_package_generation
+                or (active_row is not None and
+                    proof.response_receipt_handle != active_row.get("source_receipt_handle"))):
+            raise SchemaDerivationDenied("current MCP tools/list schema differs from the selected CAS child")
+        return RootDerivedSchemaArtifact(
+            receipt_record["artifact_id"], receipt_record["artifact_sha256"],
+            receipt_record["size_bytes"], body,
+            proof.response_receipt_handle, derivation_receipt_handle,
+            proof.service_id, proof.mcp_generation, selected_binding.id,
+            proof.mcp_tool_name, schema_role, self._instance_id, _SEAL,
+        )
+
+    def _resolve_packaged_schema_artifact(
+        self, handle: str, receipt_record: Mapping[str, Any], selected_binding: Any,
+        schema_id: str, schema_role: str,
+    ) -> RootDerivedSchemaArtifact:
+        """Resolve packaged child bytes with the same sealed shape as MCP-derived schemas."""
+        active_row = None
+        try:
+            candidate = self.native_package_registry.resolve_native_schema_record(
+                schema_id, selected_binding.native_package_id,
+                selected_binding.native_package_generation, selected_binding.handler_artifact_id,
+                selected_binding.id, schema_role,
+            )
+            if (isinstance(candidate, Mapping)
+                    and candidate.get("derivation_receipt_handle") == handle
+                    and candidate.get("artifact_id") == receipt_record["artifact_id"]
+                    and candidate.get("sha256") == receipt_record["artifact_sha256"]
+                    and candidate.get("size_bytes") == receipt_record["size_bytes"]
+                    and candidate.get("source_receipt_handle") in receipt_record["parent_receipt_handles"]):
+                active_row = candidate
+        except Exception:
+            pass
+        if active_row is not None:
+            self.resolve_schema_derivation(
+                handle, artifact_id=receipt_record["artifact_id"],
+                artifact_sha256=receipt_record["artifact_sha256"],
+                size_bytes=receipt_record["size_bytes"],
+                service_generation_digest=self.root_journal.service_generation_digest,
+            )
+            row = self._require_selected_schema_row(active_row)
+        else:
+            publication = _active_publication(allow_prepared=True)
+            if (publication.state != "prepared" or handle not in publication.input_receipt_handles
+                    or any(parent not in publication.input_receipt_handles
+                           for parent in receipt_record["parent_receipt_handles"])):
+                raise SchemaDerivationPending("packaged schema has no active row or selected prepared closure")
+            now = time.monotonic()
+            if now < receipt_record["issued_monotonic"] or now >= receipt_record["expires_monotonic"]:
+                raise SchemaDerivationDenied("prepared packaged schema receipt lease is stale")
+            self._verify_observation(receipt_record)
+            self._revalidate_packaged_derivation(receipt_record)
+            row = None
+        try:
+            artifact = self.protected_artifact_catalog.resolve(
+                receipt_record["artifact_id"], receipt_record["artifact_sha256"],
+                self.artifact_receipt_registry.artifact_root, expected_uid=self.expected_uid,
+            )
+            body = _read_regular_member(
+                artifact.path.parent, artifact.path.name, expected_uid=self.expected_uid,
+                maximum=256 * 1024,
+            )
+            if (len(body) != receipt_record["size_bytes"]
+                    or hashlib.sha256(body).hexdigest() != receipt_record["artifact_sha256"]
+                    or not _valid_native_schema_bytes(body)):
+                raise ValueError
+        except Exception:
+            raise SchemaDerivationDenied("packaged schema child bytes are absent or changed") from None
+        source_handle = (row or {}).get("source_receipt_handle")
+        if source_handle is None:
+            source_handle = receipt_record["parent_receipt_handles"][0]
+        return RootDerivedSchemaArtifact(
+            receipt_record["artifact_id"], receipt_record["artifact_sha256"],
+            receipt_record["size_bytes"], body, source_handle, handle,
+            "packaged-source", self.root_journal.service_generation_digest,
+            selected_binding.id, getattr(selected_binding, "mcp_tool_name", "packaged"),
+            schema_role, self._instance_id, _SEAL,
+        )
+
     def mint_schema_artifact(self, verified_schema_observation: VerifiedSchemaObservation,
                              *, ttl_seconds: float = 3600.0) -> str:
         """Persist a receipt only from a live observation made by this instance."""
@@ -378,6 +730,15 @@ class RootSchemaDerivationReceiptRegistry:
                 or len(observation._bytes) != observation.size_bytes):
             raise SchemaDerivationDenied("schema observation is unverified, stale, or outside its lease")
         now = time.monotonic()
+        if (observation.source_expires_monotonic is not None
+                and (not isinstance(observation.source_expires_monotonic, (int, float))
+                     or isinstance(observation.source_expires_monotonic, bool)
+                     or not math.isfinite(observation.source_expires_monotonic)
+                     or now >= observation.source_expires_monotonic)):
+            raise SchemaDerivationDenied("schema source observation lease has expired")
+        expires = now + float(ttl_seconds)
+        if observation.source_expires_monotonic is not None:
+            expires = min(expires, float(observation.source_expires_monotonic))
         handle = secrets.token_urlsafe(32)
         record = {
             "schema": 1, "receipt_handle": handle,
@@ -392,7 +753,7 @@ class RootSchemaDerivationReceiptRegistry:
             "source_observation_handle": observation.source_observation_handle,
             "source_member_path": observation.source_member_path,
             "service_generation_digest": observation.service_generation_digest,
-            "issued_monotonic": now, "expires_monotonic": now + float(ttl_seconds),
+            "issued_monotonic": now, "expires_monotonic": expires,
             "journal_root_device": self.root_journal.device,
             "journal_root_inode": self.root_journal.inode,
         }
@@ -457,7 +818,9 @@ class RootSchemaDerivationReceiptRegistry:
                 or row["native_package_generation"] != value["package_generation"]
                 or row["adapter_id"] != value["adapter_id"]
                 or row["action_id"] != value["action_id"]
-                or row["source_receipt_handle"] != handle):
+                or row["derivation_receipt_handle"] != handle
+                or value["source_kind"] == "packaged-schema"
+                   and row["source_receipt_handle"] not in value["parent_receipt_handles"]):
             raise SchemaDerivationDenied("schema derivation does not match the selected active schema row")
         if value["source_kind"] == "packaged-schema":
             self._revalidate_packaged_derivation(value)
@@ -485,7 +848,7 @@ class RootSchemaDerivationReceiptRegistry:
                       and row.get("native_package_generation") == value["package_generation"]
                       and row.get("adapter_id") == value["adapter_id"]
                       and row.get("action_id") == value["action_id"]
-                      and row.get("source_receipt_handle") == value["receipt_handle"]]
+                      and row.get("derivation_receipt_handle") == value["receipt_handle"]]
         if len(candidates) != 1:
             raise SchemaDerivationDenied("derived schema receipt is not uniquely selected in the active generation")
         return self._require_selected_schema_row(candidates[0])
@@ -506,8 +869,6 @@ class RootSchemaDerivationReceiptRegistry:
         return MappingProxyType(dict(selected))
 
     def _verify_observation(self, value: Mapping[str, Any]) -> None:
-        if value["source_kind"] != "packaged-schema":
-            return
         path = self._secure_observation_root(create=False) / f"{value['source_observation_handle']}.json"
         expected = {
             "schema": 1, "observation_handle": value["source_observation_handle"],
@@ -537,6 +898,9 @@ class RootSchemaDerivationReceiptRegistry:
             )
             if recomputed != value["source_observation_handle"]:
                 raise SchemaDerivationDenied("retained root schema observation handle is not content-bound")
+        elif value["source_kind"] == "mcp-tools-list":
+            if not _SHA.fullmatch(value["source_observation_handle"]):
+                raise SchemaDerivationDenied("MCP discovery observation handle is malformed")
 
     def _revalidate_packaged_derivation(self, value: Mapping[str, Any]) -> None:
         if not isinstance(value["source_member_path"], str):
@@ -576,13 +940,45 @@ class RootSchemaDerivationReceiptRegistry:
         resolver = getattr(self.mcp_discovery_registry, "resolve_schema_observation", None)
         if not callable(resolver):
             raise SchemaDerivationPending("authenticated MCP tools/list observation resolver is unavailable")
-        raise SchemaDerivationPending(
-            "MCP tools/list observation has no typed current-generation verifier contract yet")
+        try:
+            proof = resolver(value)
+        except Exception:
+            raise SchemaDerivationDenied("authenticated MCP tools/list witness is stale or unavailable") from None
+        if (type(proof).__module__ != "hermes_installer.authority.mcp_discovery_registry"
+                or type(proof).__name__ != "MCPDiscoverySchemaObservation"):
+            raise SchemaDerivationDenied("MCP discovery resolver returned an untyped witness")
+        if (proof.artifact_id != value["artifact_id"]
+                or proof.artifact_sha256 != value["artifact_sha256"]
+                or proof.size_bytes != value["size_bytes"]
+                or proof.schema_kind != value["schema_kind"]
+                or proof.package_id != value["package_id"]
+                or proof.package_generation != value["package_generation"]
+                or proof.adapter_id != value["adapter_id"]
+                or proof.action_id != value["action_id"]
+                or proof.service_generation_digest != value["service_generation_digest"]
+                or tuple(proof.parent_receipt_handles) != tuple(value["parent_receipt_handles"])
+                or proof.source_observation_handle != value["source_observation_handle"]
+                or proof.service_generation_digest != self.root_journal.service_generation_digest
+                or proof.response_receipt_handle in proof.parent_receipt_handles
+                or proof.operation != "mcp.request"
+                or not isinstance(proof.response_sha256, str) or not _SHA.fullmatch(proof.response_sha256)
+                or not isinstance(proof.request_sha256, str) or not _SHA.fullmatch(proof.request_sha256)
+                or not isinstance(proof.expires_monotonic, (int, float))
+                or isinstance(proof.expires_monotonic, bool)
+                or not math.isfinite(proof.expires_monotonic)
+                or time.monotonic() >= proof.expires_monotonic
+                or not isinstance(proof.schema_bytes, bytes)):
+            raise SchemaDerivationDenied("MCP discovery witness differs from the current selected derivation")
+        self._verify_child_bytes(value, proof.schema_bytes)
 
     def _verify_child_bytes(self, value: Mapping[str, Any], body: bytes) -> None:
         if (not isinstance(body, bytes) or len(body) != value["size_bytes"]
                 or hashlib.sha256(body).hexdigest() != value["artifact_sha256"]):
             raise SchemaDerivationDenied("derived child schema bytes changed")
+        if value.get("source_kind") == "mcp-tools-list":
+            self._verify_derived_schema(value["artifact_id"], value["artifact_sha256"],
+                                        value["size_bytes"], body)
+            return
         spec = self.protected_artifact_catalog._artifact(
             value["artifact_id"], value["artifact_sha256"],
         )
@@ -603,6 +999,91 @@ class RootSchemaDerivationReceiptRegistry:
                 raise ValueError
         except Exception:
             raise SchemaDerivationDenied("derived schema is not canonical finite JSON") from None
+
+    def _write_derived_schema(self, artifact_id: str, sha256: str, body: bytes) -> None:
+        if (artifact_id != f"native-mcp-schema:{sha256}" or not _SHA.fullmatch(sha256)
+                or not _valid_native_schema_bytes(body) or hashlib.sha256(body).hexdigest() != sha256):
+            raise SchemaDerivationDenied("dynamic schema CAS identity is invalid")
+        root = self._secure_child_root("derived-schemas", create=True)
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        temporary = f".{sha256}.{secrets.token_hex(16)}.tmp"
+        final_name = f"{sha256}.json"
+        file_fd = -1
+        try:
+            file_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                              0o600, dir_fd=directory_fd)
+            view = memoryview(body)
+            offset = 0
+            while offset < len(view):
+                offset += os.write(file_fd, view[offset:])
+            os.fchmod(file_fd, 0o444)
+            os.fsync(file_fd)
+            os.close(file_fd)
+            file_fd = -1
+            try:
+                os.link(temporary, final_name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                        follow_symlinks=False)
+            except FileExistsError:
+                existing = self._read_derived_schema(artifact_id, sha256, len(body))
+                if existing != body:
+                    raise SchemaDerivationDenied("derived schema CAS digest collision")
+            os.unlink(temporary, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except SchemaDerivationDenied:
+            raise
+        except OSError:
+            raise SchemaDerivationDenied("dynamic schema bytes could not be atomically stored") from None
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except OSError:
+                pass
+            os.close(directory_fd)
+
+    def _read_derived_schema(self, artifact_id: str, sha256: str, size_bytes: int) -> bytes:
+        if (artifact_id != f"native-mcp-schema:{sha256}" or not _SHA.fullmatch(sha256)
+                or type(size_bytes) is not int or not 1 <= size_bytes <= 256 * 1024):
+            raise SchemaDerivationDenied("derived schema CAS selector is malformed")
+        root = self._secure_child_root("derived-schemas", create=False)
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = -1
+        try:
+            fd = os.open(f"{sha256}.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         dir_fd=directory_fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o444
+                    or info.st_size != size_bytes):
+                raise ValueError
+            chunks = bytearray()
+            while len(chunks) <= size_bytes:
+                block = os.read(fd, min(64 * 1024, size_bytes + 1 - len(chunks)))
+                if not block:
+                    break
+                chunks.extend(block)
+            body = bytes(chunks)
+            if len(body) != size_bytes or hashlib.sha256(body).hexdigest() != sha256:
+                raise ValueError
+            return body
+        except SchemaDerivationDenied:
+            raise
+        except Exception:
+            raise SchemaDerivationDenied("dynamic schema CAS object is absent or changed") from None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            os.close(directory_fd)
+
+    def _verify_derived_schema(self, artifact_id: str, sha256: str,
+                               size_bytes: int, body: bytes) -> None:
+        if (not isinstance(body, bytes) or len(body) != size_bytes
+                or hashlib.sha256(body).hexdigest() != sha256
+                or artifact_id != f"native-mcp-schema:{sha256}"
+                or self._read_derived_schema(artifact_id, sha256, size_bytes) != body
+                or not _valid_native_schema_bytes(body)):
+            raise SchemaDerivationDenied("dynamic schema CAS bytes do not match the selected derivation")
 
     def _secure_receipt_root(self, *, create: bool) -> Path:
         return self._secure_child_root("schema-derivations", create=create)
@@ -660,14 +1141,20 @@ class RootSchemaDerivationReceiptRegistry:
 
 def _schema_record(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     fields = {"id", "artifact_id", "sha256", "schema_kind", "native_package_id",
-              "native_package_generation", "adapter_id", "action_id", "source_receipt_handle"}
+              "native_package_generation", "adapter_id", "action_id", "source_receipt_handle",
+              "size_bytes", "derivation_receipt_handle"}
     if not isinstance(raw, Mapping) or set(raw) != fields:
         raise SchemaDerivationDenied("protected schema record has an unsupported shape")
     if (any(not isinstance(raw[key], str) or not _ID.fullmatch(raw[key])
-            for key in fields - {"sha256", "schema_kind", "source_receipt_handle"})
+            for key in fields - {"sha256", "schema_kind", "source_receipt_handle",
+                                 "size_bytes", "derivation_receipt_handle"})
             or not isinstance(raw["sha256"], str) or not _SHA.fullmatch(raw["sha256"])
             or not isinstance(raw["source_receipt_handle"], str)
             or not _HANDLE.fullmatch(raw["source_receipt_handle"])
+            or type(raw["size_bytes"]) is not int or not 1 <= raw["size_bytes"] <= 256 * 1024
+            or (raw["derivation_receipt_handle"] is not None
+                and (not isinstance(raw["derivation_receipt_handle"], str)
+                     or not _HANDLE.fullmatch(raw["derivation_receipt_handle"])))
             or raw["schema_kind"] not in {"arguments", "result"}):
         raise SchemaDerivationDenied("protected schema record identity is invalid")
     return MappingProxyType(dict(raw))
@@ -723,13 +1210,14 @@ def _active_publication_with_parent(parent_handle: str) -> RootSetupPublicationR
     return receipt
 
 
-def _active_publication() -> RootSetupPublicationReceipt:
+def _active_publication(*, allow_prepared: bool = False) -> RootSetupPublicationReceipt:
     try:
         receipt = PolicyPublicationReceiptResolver.resolve_current()
     except Exception:
         raise SchemaDerivationPending("no current selected policy publication receipt") from None
-    if type(receipt) is not RootSetupPublicationReceipt or receipt.state != "active":
-        raise SchemaDerivationPending("active policy generation has not incorporated schema receipts")
+    allowed = {"active", "prepared"} if allow_prepared else {"active"}
+    if type(receipt) is not RootSetupPublicationReceipt or receipt.state not in allowed:
+        raise SchemaDerivationPending("selected policy generation has not incorporated schema receipts")
     return receipt
 
 
