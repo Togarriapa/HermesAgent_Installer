@@ -71,6 +71,27 @@ def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
     assert all(item == body for item in result)
 
 
+@pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
+def test_source_export_replaces_git_checkout_with_exact_blob_tree(tmp_path):
+    repository = tmp_path / "checkout"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    (repository / "module.py").write_bytes(b"candidate module\n")
+    (repository / "nested").mkdir()
+    (repository / "nested" / "data.json").write_bytes(b'{"schema":1}\n')
+    subprocess.run(["/usr/bin/git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["/usr/bin/git", "-C", str(repository), "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "fixture"], check=True)
+
+    rows = release_build.RootInstallerDistributionRegistry._export_commit(repository, "HEAD")
+
+    assert {path for path, _, _ in rows} == {"module.py", "nested/data.json"}
+    assert not (repository / ".git").exists()
+    assert (repository / "module.py").read_bytes() == b"candidate module\n"
+    assert (repository / "nested" / "data.json").read_bytes() == b'{"schema":1}\n'
+    assert not list(repository.parent.glob(".stage-source-*"))
+
+
 @pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
                     reason="fixed deployment-parent custody requires Linux root")
 def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp_path):
