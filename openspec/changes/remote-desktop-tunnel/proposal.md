@@ -102,3 +102,8 @@ Implement bounded official Electron headers/ABI, signed ARM64 compiler/sysroot/r
 
 
 v225 compiler clarification: append-only schema clarification fixes authority envelope1/service-generations3 placement and disabled absent-member/null digest/zero size without fictional adoption records; existing tasks OPEN.
+
+
+## Preactive Xpra producers and role plans v227
+
+Implement actual one-use fixedHTTPS setup acquisition/dynamic sourceCAS, existing preactive transform executor and acyclic member/config/final receipt projections plus fixed managed role plans under `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`. RT-T227.1/.2/.3 and VD-T227.4 remain OPEN.

@@ -148,3 +148,11 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 
 
 - [ ] `VD-T225.3` Also test exact schema3 placement/legacy validator preservation and disabled absent/null/zero versus enabled complete-member representation; reject mixed states.
+
+
+## Pre-active Xpra acquisition and managed role plan v227
+
+- [ ] `RT-T227.1` Implement actual selected fixedHTTPS request/grant/native verifier/dynamic component sourceCAS producer and root binding.
+- [ ] `RT-T227.2` Implement actual preactive transform manager/CAS/independent overlay receipt and acyclic member/config/final input digest projections.
+- [ ] `RT-T227.3` Implement sealed exact managed role plan/current output-controller custody, fixed driver argv/mounts and role-specific caps under v227.
+- [ ] `VD-T227.4` Verify genuine setup acquisition/CAS/transform/input/manager joins and specified TLS/replay/foreign/closure/expiry/revocation/network/cleanup failures; all target acceptance OPEN.

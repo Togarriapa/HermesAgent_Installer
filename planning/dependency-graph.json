@@ -3400,5 +3400,27 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "preactive_xpra_acquisition_build_v227": {
+    "contract": "planning/preactive-xpra-acquisition-build-v227.json",
+    "tasks": {
+      "RT-T227.1": [
+        "RT-T219.1"
+      ],
+      "RT-T227.2": [
+        "RT-T227.1",
+        "RT-T219.2"
+      ],
+      "RT-T227.3": [
+        "RT-T227.2",
+        "RT-T223.2"
+      ],
+      "VD-T227.4": [
+        "RT-T227.1",
+        "RT-T227.2",
+        "RT-T227.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

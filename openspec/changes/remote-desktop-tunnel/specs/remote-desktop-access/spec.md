@@ -423,3 +423,18 @@ The installer SHALL preserve authority envelope schema1 and validate service-gen
 #### Scenario: Enabled source representation incomplete
 - **WHEN** enabled remote publication has missing member or mismatched/null digest/size/core selector fields
 - **THEN** publication and active resolution SHALL deny without inventing empty role or choice records
+
+
+### Requirement: Actual setup acquisition and preactive transform authority v227
+The installer SHALL implement `planning/preactive-xpra-acquisition-build-v227.json` using exact live setup/NSS/PM/source/controller one-use HTTPS grants, quarantined dynamic bytes, genuine signature/dependency/license admission and actual preactive transform manager output before runtime builds.
+
+#### Scenario: Download or active overlay substituted
+- **WHEN** quarantined metadata, caller URL/proof, copied CAS receipt, transform module or active-only overlay lookup substitutes for required preactive source authority
+- **THEN** admission SHALL deny without actor replacement, fictional catalog enrollment or enabling network in offline role builds
+
+### Requirement: Acyclic exact input closure and finite role build plan
+The installer SHALL compute separate finalized member and recipe-bound input digests and implement source-owned sealed managed role plans with the exact v227 argv/mount/output/cap/custody contracts.
+
+#### Scenario: Config or plan authority mutated
+- **WHEN** config embeds its own final digest, caller config becomes argv, a link/recipe changes without correct digest changes, or role plan exceeds source-owned bounds or original controller deadline
+- **THEN** managed build and runtime issuance SHALL deny and terminate only owned expired/cancelled jobs, preserving foreign state and independent output qualification

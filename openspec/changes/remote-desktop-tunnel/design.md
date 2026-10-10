@@ -110,3 +110,8 @@ Use the exact schemas/APIs in `planning/current-remote-identity-adoption-v225.js
 
 
 v225 schema placement is authority.service_generations schema3, exact schema2 fields/validators plus remote_service_identity_source_records; canonical digest includes selectors. No enabled remote means absent member/descriptor null/SHA null/size0; enabled requires complete matching member/core/descriptor/claim/receipt. Existing1/2 do not issue v225 identity receipts. See append-only v225 schema clarification.
+
+
+## Preactive source authority and acyclic build inputs v227
+
+Exact `planning/preactive-xpra-acquisition-build-v227.json` separates quarantined download from signed dependency/license admission and no-egress role build. Actual setup transform grants/manager output precede active patch adoption. Member digest excludes config; config carries member digest; final receipt binds config/member/setup/schema. Concrete sealed role plans enforce actual argv/mount/output/role caps and original controller deadline; no actor substitute, old receipt renewal or generic shared defaults.

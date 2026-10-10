@@ -190,3 +190,6 @@ Official Desktop native inputs v226: `plans/amendments/2026-10-10-official-deskt
 
 
 v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225-schema-clarification.md`; authority envelope1 / service-generations3 exact schema2+selector rows, disabled absent member/null SHA+0 size; existing tasks/all AC OPEN.
+
+
+Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`; RT-T227.1 → RT-T227.2 → RT-T227.3 → VD-T227.4 OPEN. Actual one-use fixedHTTPS/dynamic sourceCAS, preactive transform and acyclic member/recipe input digests; finite role managed plans, all pins/AC OPEN.
