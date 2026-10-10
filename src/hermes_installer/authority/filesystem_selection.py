@@ -63,7 +63,8 @@ class RootOwnedFilesystemSelection:
     selection_sha256: str
     issued_monotonic: float
     expires_monotonic: float
-    revocation_epoch: str
+    # None until the model registry records the complete child/source choice.
+    revocation_epoch: int | None
     _seal: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -76,7 +77,9 @@ class VerifiedRootOwnedFilesystemSelection:
     selection: RootOwnedFilesystemSelection
     current_profile_receipt_handle: str
     current_profile_selection_sha256: str
-    authority_epoch: str
+    choice_signer_key_id: str
+    choice_epoch: int | None
+    revocation_epoch: int | None
     issued_monotonic: float
     expires_monotonic: float
 
@@ -100,13 +103,17 @@ class RootOwnedFilesystemSelectionRegistry:
                  root_private_profile_selection_registry: Any,
                  root_release_module_registry: Any,
                  root_journal: RootJournalSelection,
-                 authority_service: Any):
+                 root_setup_choice_registry: Any,
+                 selected_choice_signer: Any):
         from .bootstrap_runtime_factory import RootSelectedInstallationBinding
-        from .service import AuthorityService
+        from .root_setup_choices import RootSetupChoiceRegistry
+        from .enrollment import RootSetupChoiceSigner
         if (type(selected_installation_binding) is not RootSelectedInstallationBinding
                 or not isinstance(root_journal, RootJournalSelection)
-                or not isinstance(authority_service, AuthorityService)):
-            raise BootstrapEnrollmentPending("model-store observer requires current root setup, journal and authority bindings")
+                or type(root_setup_choice_registry) is not RootSetupChoiceRegistry
+                or type(selected_choice_signer) is not RootSetupChoiceSigner
+                or root_setup_choice_registry.signer is not selected_choice_signer):
+            raise BootstrapEnrollmentPending("model-store observer requires the current durable setup-choice registry and selected key signer")
         session = selected_installation_binding._session
         if selected_installation_binding._seal != session._seal:
             raise BootstrapEnrollmentPending("model-store installation binding is stale")
@@ -131,9 +138,25 @@ class RootOwnedFilesystemSelectionRegistry:
         self._private_profiles = root_private_profile_selection_registry
         self._release_modules = root_release_module_registry
         self.root_journal = root_journal
-        self.authority = authority_service
-        self._authority_instance = authority_service
-        self._authority_epoch = authority_service.authority_epoch
+        self._setup_choices = root_setup_choice_registry
+        self._choice_signer = selected_choice_signer
+        try:
+            composed_choices = selected_installation_binding.resolve_setup_choice_registry()
+        except Exception:
+            raise BootstrapEnrollmentPending("root setup choice registry is not composed in this setup graph") from None
+        if composed_choices is not root_setup_choice_registry:
+            raise BootstrapEnrollmentPending("setup choice registry is not the session-composed instance")
+        if (root_setup_choice_registry.release is not session._factory._release
+                or root_setup_choice_registry.actor_verifier is not session._factory._actor
+                or root_setup_choice_registry.journal != root_journal
+                or root_setup_choice_registry.sessions is not session._factory.session_store):
+            raise BootstrapEnrollmentPending("model-store setup-choice registry belongs to another root setup graph")
+        try:
+            current_signer = selected_installation_binding.resolve_current_setup_choice_signer()
+        except Exception:
+            raise BootstrapEnrollmentPending("current durable setup-choice signer is unavailable") from None
+        if current_signer is not selected_choice_signer:
+            raise BootstrapEnrollmentPending("selected setup-choice signer is not the current adopted signer")
         self._template_receipt = None
         self._root_fd: int | None = None
         self._selection: RootOwnedFilesystemSelection | None = None
@@ -144,9 +167,11 @@ class RootOwnedFilesystemSelectionRegistry:
                         root_private_profile_selection_registry: Any,
                         root_release_module_registry: Any,
                         root_journal: RootJournalSelection,
-                        authority_service: Any) -> "RootOwnedFilesystemSelectionRegistry":
+                        root_setup_choice_registry: Any,
+                        selected_choice_signer: Any) -> "RootOwnedFilesystemSelectionRegistry":
         return cls(selected_installation_binding, root_private_profile_selection_registry,
-                   root_release_module_registry, root_journal, authority_service)
+                   root_release_module_registry, root_journal, root_setup_choice_registry,
+                   selected_choice_signer)
 
     def observe_existing_model_store(self, private_profile_selection_handle: str) -> RootOwnedFilesystemSelection:
         """Observe the reviewed template and the fixed existing root; never create it."""
@@ -216,7 +241,7 @@ class RootOwnedFilesystemSelectionRegistry:
                 root_gid=info.st_gid, root_mode=stat.S_IMODE(info.st_mode),
                 controller_binding_handle=getattr(profile._selection, "controller_binding_handle", ""),
                 selection_sha256="", issued_monotonic=now,
-                expires_monotonic=expiry, revocation_epoch=self._authority_epoch,
+                expires_monotonic=expiry, revocation_epoch=None,
                 _seal=_SEAL)
             payload = {key: value for key, value in fields.items() if key not in {"selection_sha256", "_seal"}}
             fields["selection_sha256"] = hashlib.sha256(_canonical(payload)).hexdigest()
@@ -244,9 +269,11 @@ class RootOwnedFilesystemSelectionRegistry:
         expiry = min(now + _MAX_LEASE_SECONDS, selection.expires_monotonic, profile.expires_monotonic)
         if expiry <= now:
             raise RootFilesystemSelectionDenied("model-store currentness lease expired")
+        self._check_current_signer()
         return VerifiedRootOwnedFilesystemSelection(selection, profile.receipt_handle,
                                                      profile.selection_sha256,
-                                                     self.authority.authority_epoch, now, expiry)
+                                                     self._choice_signer.key_id,
+                                                     None, selection.revocation_epoch, now, expiry)
 
     def verify_current(self, selection: RootOwnedFilesystemSelection) -> RootOwnedFilesystemSelection:
         self._check_live()
@@ -256,8 +283,7 @@ class RootOwnedFilesystemSelectionRegistry:
             raise RootFilesystemSelectionDenied("model-store selection is absent, replaced or expired")
         if hashlib.sha256(_canonical(_selection_payload(selection))).hexdigest() != selection.selection_sha256:
             raise RootFilesystemSelectionDenied("model-store selection digest changed")
-        if self.authority is not self._authority_instance or self.authority.authority_epoch != selection.revocation_epoch:
-            raise RootFilesystemSelectionDenied("model-store authority epoch changed")
+        self._check_current_signer()
         self._session.resolve_current_setup_identity()
         self._session._verify_current_setup_controller()
         profile = self._private_profiles.resolve_current(
@@ -375,10 +401,21 @@ class RootOwnedFilesystemSelectionRegistry:
                 raise ValueError("root journal binding changed")
             _verify_secure_directory(self.root_journal.path, self.root_journal.device,
                                      self.root_journal.inode, 0, 0o700)
-            if self.authority.authority_epoch != self._authority_epoch:
-                raise ValueError("authority epoch changed")
+            self._check_current_signer()
         except Exception:
             raise RootFilesystemSelectionDenied("root setup or authority service is no longer current") from None
+
+    def _check_current_signer(self) -> None:
+        try:
+            current = self._binding.resolve_current_setup_choice_signer()
+            choices = self._binding.resolve_setup_choice_registry()
+            self._session._factory._actor.verify_current(self._session._factory._release)
+            self._setup_choices._check_release()
+        except Exception:
+            raise RootFilesystemSelectionDenied("durable setup-choice signer or release is no longer current") from None
+        if (current is not self._choice_signer or choices is not self._setup_choices
+                or self._setup_choices.signer is not self._choice_signer):
+            raise RootFilesystemSelectionDenied("model-store setup-choice signer binding changed")
 
     def _verify_template_receipt(self, receipt: Any, data: bytes) -> None:
         from .bootstrap_runtime_factory import RootExistingModelStoreTemplateReceipt
