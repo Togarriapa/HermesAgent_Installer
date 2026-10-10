@@ -17,6 +17,7 @@ from hermes_installer.authority.installed_stage_publisher import (
 )
 from hermes_installer.authority import installer_release_build as release_build
 from hermes_installer.authority.installer_release import REVIEWED_SOURCE_ARTIFACTS, REVIEWED_SOURCE_MODULES
+from hermes_installer.authority.application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,19 @@ class InstalledStagePublicationTests(unittest.TestCase):
             destination.write_bytes(body)
             os.chmod(destination, 0o444)
             staged.append((target, _sha(body), len(body), 0o444, (row_role,)))
+        for _artifact_id, path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+            body = (repo / path).read_bytes()
+            row_override = overrides.get(path)
+            if row_override is not None:
+                target, row_role, body = row_override
+            else:
+                target, row_role = path, role
+                self.assertEqual((len(body), _sha(body)), (size, digest))
+            destination = output / target
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(body)
+            os.chmod(destination, 0o444)
+            staged.append((target, _sha(body), len(body), 0o444, (row_role,)))
         for _artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS:
             if role != "native-health-fixture":
                 continue
@@ -213,7 +227,7 @@ class InstalledStagePublicationTests(unittest.TestCase):
         )
         return receipt
 
-    def test_real_build_receipt_rows_accept_exact_source_and_health_members(self):
+    def test_real_build_receipt_rows_accept_exact_source_and_all_ten_application_members(self):
         with tempfile.TemporaryDirectory() as temp:
             receipt = self._real_role_receipt(Path(temp) / "output")
             try:
@@ -221,12 +235,23 @@ class InstalledStagePublicationTests(unittest.TestCase):
                 rows = _build_rows(receipt)
                 self.assertEqual(
                     {row.relative_path for row in rows if row.roles == ("source-module",)},
-                    {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"},
+                    ({item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"}
+                     | {item[1] for item in APPLICATION_EFFECT_SOURCE_MEMBERS
+                        if item[2] == "source-module"}),
                 )
                 self.assertEqual(
                     {row.relative_path for row in rows if row.roles == ("native-health-fixture",)},
                     {item[1] for item in REVIEWED_SOURCE_ARTIFACTS
                      if item[4] == "native-health-fixture"},
+                )
+                effect_members_by_path = {item[1]: item for item in APPLICATION_EFFECT_SOURCE_MEMBERS}
+                effect_rows = [row for row in rows if row.relative_path in effect_members_by_path]
+                self.assertEqual(len(effect_rows), len(APPLICATION_EFFECT_SOURCE_MEMBERS))
+                self.assertEqual(
+                    {(effect_members_by_path[row.relative_path][0], row.relative_path,
+                      row.roles[0], row.sha256, row.size_bytes)
+                     for row in effect_rows},
+                    set(APPLICATION_EFFECT_SOURCE_MEMBERS),
                 )
             finally:
                 os.close(receipt._root_fd)
@@ -272,6 +297,20 @@ class InstalledStagePublicationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             receipt = self._real_role_receipt(Path(temp) / "unpinned", overrides={
                 first[1]: (first[1], "source-module", b"different source bytes"),
+            })
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _build_rows(receipt)
+            finally:
+                os.close(receipt._root_fd)
+
+        fixture_id, fixture_path, _role, _digest, _size = next(
+            item for item in APPLICATION_EFFECT_SOURCE_MEMBERS
+            if item[2] == "application-effect-fixture")
+        with tempfile.TemporaryDirectory() as temp:
+            receipt = self._real_role_receipt(Path(temp) / "fixture-path-swapped", overrides={
+                fixture_path: (fixture_path + ".unknown", "application-effect-fixture",
+                               (Path(__file__).parents[2] / fixture_path).read_bytes()),
             })
             try:
                 with self.assertRaises(BootstrapEnrollmentError):

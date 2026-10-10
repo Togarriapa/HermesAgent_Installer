@@ -274,6 +274,22 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             with self.assertRaises(InstallerReleaseError):
                 _validate_fixed_layout_role(path, digest, size, ["module"])
 
+    def test_application_effect_members_have_exact_roles_paths_content_and_read_only_modes(self):
+        from hermes_installer.authority.installer_release import _validate_fixed_layout_role
+        self.assertEqual(len(APPLICATION_EFFECT_SOURCE_MEMBERS), 10)
+        for _artifact_id, path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+            _validate_fixed_layout_role(path, digest, size, [role], mode=0o444)
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, "0" * 64, size, [role], mode=0o444)
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, digest, size, ["module"], mode=0o444)
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, digest, size, [role], mode=0o644)
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role(
+                "src/hermes_installer/unknown_application_fixture.json",
+                "0" * 64, 1, ["application-effect-fixture"], mode=0o444)
+
     def test_open_verified_file_checks_digest_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

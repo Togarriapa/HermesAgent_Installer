@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from hermes_installer.authority import installer_release_build as release_build
+from hermes_installer.authority.application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 
 
 def _sealed_distribution(tmp_path):
@@ -111,6 +112,46 @@ def test_initial_setup_prefixes_reject_symlink_and_unsafe_existing_mode(tmp_path
         assert (parent / "hermes-installer").stat().st_mode & 0o777 == 0o777
     finally:
         os.close(parent_fd)
+
+
+def test_builder_stages_all_ten_application_effect_members_from_exact_source_rows(tmp_path):
+    repo = Path(__file__).parents[2]
+
+    class Source:
+        def __init__(self, tamper_digest: bool = False):
+            rows = []
+            for index, (_artifact_id, path, _role, digest, _size) in enumerate(
+                    APPLICATION_EFFECT_SOURCE_MEMBERS):
+                info = (repo / path).stat()
+                rows.append(release_build.DistributionFile(
+                    path, ("0" * 64 if tamper_digest and index == 0 else digest),
+                    info.st_size, 0o600, info.st_dev, info.st_ino, info.st_ctime_ns))
+            self.files = tuple(rows)
+
+        def open_file(self, path):
+            return os.open(repo / path, os.O_RDONLY)
+
+    output = tmp_path / "builder-output"
+    output.mkdir()
+    output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        builder = object.__new__(release_build.RootInstalledReleaseBuilder)
+        staged = []
+        builder._stage_application_effect_sources(Source(), output_fd, staged, set())
+        expected = set(APPLICATION_EFFECT_SOURCE_MEMBERS)
+        actual = {(path, role[0], digest, size)
+                  for path, digest, size, _mode, role in staged}
+        self_expected = {(path, role, digest, size)
+                         for _artifact_id, path, role, digest, size in expected}
+        assert actual == self_expected
+        assert all((output / path).read_bytes() == (repo / path).read_bytes()
+                   and (output / path).stat().st_mode & 0o777 == 0o444
+                   for _artifact_id, path, _role, _digest, _size in APPLICATION_EFFECT_SOURCE_MEMBERS)
+
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            builder._stage_application_effect_sources(Source(tamper_digest=True), output_fd, [], set())
+    finally:
+        os.close(output_fd)
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="foreign-owner custody requires root")

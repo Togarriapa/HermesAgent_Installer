@@ -575,7 +575,7 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for row in rows:
         for role in row.roles:
             by_role.setdefault(role, []).append(row)
-    for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture"):
+    for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture", "application-effect-fixture"):
         if role not in by_role:
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
@@ -810,8 +810,21 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
             if role == "source-module"
         })
         if (roles != ["source-module"] or path not in expected_source_modules
-                or (digest, size) != expected_source_modules[path]):
+                or (digest, size) != expected_source_modules[path]
+                or (mode is not None and mode != 0o444)):
             raise InstallerReleaseError("source-module role differs from its exact reviewed source member")
+    if "application-effect-fixture" in roles:
+        expected_effect_fixtures = {
+            relative_path: (digest, size)
+            for _artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS
+            if role == "application-effect-fixture"
+        }
+        if (roles != ["application-effect-fixture"]
+                or path not in expected_effect_fixtures
+                or (digest, size) != expected_effect_fixtures[path]
+                or (mode is not None and mode != 0o444)):
+            raise InstallerReleaseError(
+                "application effect fixture differs from its exact reviewed data member")
     if path.startswith("runtime/") and path != INTERPRETER_PATH and roles != ["runtime-member"]:
         raise InstallerReleaseError("installed runtime closure member lacks its exact runtime-member role")
     if "runtime-member" in roles and (

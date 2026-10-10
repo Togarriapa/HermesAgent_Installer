@@ -18,4 +18,5 @@ RELEASE_MEMBER_ROLES = frozenset({
     "amendment",
     "runtime-member",
     "native-health-fixture",
+    "application-effect-fixture",
 })

@@ -2716,19 +2716,23 @@ class RootInstalledReleaseBuilder:
                 self._copy_source(source, output_fd, source_rel, target, ("native-health-fixture",))
                 staged.append(self._last_output_row)
                 staged_paths.add(target)
+        self._stage_application_effect_sources(source, output_fd, staged, staged_paths)
+        return staged
+
+    def _stage_application_effect_sources(
+            self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
+            staged: list[tuple[str, str, int, int, tuple[str, ...]]], staged_paths: set[str]) -> None:
+        source_files = {row.relative_path: row for row in source.files}
         for artifact_id, source_rel, role, expected_digest, expected_size in APPLICATION_EFFECT_SOURCE_MEMBERS:
-            if role != "application-effect-fixture":
-                continue
             source_row = source_files.get(source_rel)
             if (source_row is None or source_row.sha256 != expected_digest
                     or source_row.size_bytes != expected_size):
                 raise InstallerReleaseBuildError(
-                    f"application effect fixture {artifact_id} differs from its reviewed pin")
+                    f"application effect source member {artifact_id} differs from its reviewed pin")
             if source_rel not in staged_paths:
                 self._copy_source(source, output_fd, source_rel, source_rel, (role,))
                 staged.append(self._last_output_row)
                 staged_paths.add(source_rel)
-        return staged
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
                      source_path: str, target_path: str, roles: tuple[str, ...],
