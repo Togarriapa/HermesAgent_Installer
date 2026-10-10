@@ -370,7 +370,10 @@ def run_root_setup_action(
                        "The selected root reference is validly shaped, but its installed resolver is not connected.")
     from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
     from .authority.installer_release import InstalledRootReleaseVerifier
-    from .authority.bootstrap_runtime_factory import RootBootstrapRuntimeFactory
+    from .authority.bootstrap_runtime_factory import (
+        RootBootstrapRuntimeFactory,
+        RootInitialSetupAggregate,
+    )
     from .authority.installer_release_build import (
         InstallerReleaseBuildError,
         bootstrap_selected_release,
@@ -413,26 +416,56 @@ def run_root_setup_action(
         return _result(selected_action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
 
     factory: RootBootstrapRuntimeFactory | None = None
+    initial_aggregate: RootInitialSetupAggregate | None = None
     session = None
     actor_verified = False
     try:
         actor.verify_current(release)
         actor_verified = True
-        account = _read_target_account_name()
-        if not _ACCOUNT.fullmatch(account):
-            return _result(selected_action, RootSetupState.FAILED, "admission",
-                           "The target account name is invalid.")
-        # Constructor composition takes ownership of the held release and
-        # actor receipts, including its failure paths.
-        release_for_factory, actor_for_factory = release, actor
-        release = actor = None  # type: ignore[assignment]
-        factory = RootBootstrapRuntimeFactory(_release=release_for_factory, _actor=actor_for_factory)
+        selection_leaf = Path("/etc/hermes-installer/root-setup-selection.json")
+        try:
+            selection_leaf.lstat()
+            selection_present = True
+        except FileNotFoundError:
+            selection_present = False
+        if not selection_present:
+            if selected_action is not RootSetupAction.INSTALL:
+                return _result(selected_action, RootSetupState.PENDING, "admission",
+                               "No installed root selection exists; run install to begin fresh setup.")
+            initial_aggregate = RootInitialSetupAggregate(release, actor)
+            release = actor = None  # type: ignore[assignment]
+            account = _read_target_account_name()
+            initial = initial_aggregate.begin_install(account)
+            if not (sys.stdin.isatty() and sys.stderr.isatty()):
+                raise RuntimeError("Authentik setup choices require the root controlling terminal")
+            origin = input("Authentik HTTPS origin: ").strip()
+            system_group_id = input("Authentik system group ID: ").strip()
+            recipient_group_id = input("Authentik recipient group ID: ").strip()
+            initial_aggregate.select_initial_identity(
+                initial.compilation_session_handle, https_origin=origin,
+                system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+            handoff = initial_aggregate.publish_prepared_selection(
+                initial.compilation_session_handle)
+            factory, session = initial_aggregate.adopt_prepared_selection(handoff.handoff_handle)
+            initial_aggregate.close()
+            initial_aggregate = None
+        else:
+            account = _read_target_account_name()
+            if not _ACCOUNT.fullmatch(account):
+                return _result(selected_action, RootSetupState.FAILED, "admission",
+                               "The target account name is invalid.")
+            # Constructor composition takes ownership of the held release and
+            # actor receipts, including its failure paths.
+            release_for_factory, actor_for_factory = release, actor
+            release = actor = None  # type: ignore[assignment]
+            factory = RootBootstrapRuntimeFactory(_release=release_for_factory, _actor=actor_for_factory)
         if selected_action is RootSetupAction.UPDATE:
             return _result(selected_action, RootSetupState.PENDING, "runtime",
                            "Fresh-generation update and rollback publication are not yet connected to the root setup runtime.",
                            resume_allowed=True)
         mode = "resume" if selected_action is RootSetupAction.RESUME else "install"
-        session = factory.begin(mode, account)
+        if session is None:
+            session = factory.begin(mode, account)
         if selected_action is RootSetupAction.RESUME:
             # begin(resume) verifies and adopts only an owned, checkpointed
             # transaction. The actual continuation phases are connected below
@@ -468,10 +501,16 @@ def run_root_setup_action(
                 if factory is not None:
                     factory.close()
             finally:
-                if actor is not None:
-                    actor.close()
-                if release is not None:
-                    release.close()
+                try:
+                    if initial_aggregate is not None:
+                        initial_aggregate.close()
+                finally:
+                    try:
+                        if actor is not None:
+                            actor.close()
+                    finally:
+                        if release is not None:
+                            release.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
