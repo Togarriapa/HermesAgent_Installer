@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F03",
+    "LC-F03",
+    "HI-T08",
+    "HI-T09",
+    "HI-T11"
+  ],
+  "why": "Existing activation order already resolves health/profile cycle, but custody lacks root-local health start admission carrying genuine committed transaction/enrollment/source/fixture before process start. Generic worker start or presentation status cannot substitute.",
+  "activation_order": "Use existing activate_runnable actual strict active enrollment from source/PM/runtime/native closure receipts; normal product enablement withheld and functional health pending. Prepared snapshots never health-start. Root factory resolves genuine current committed enrollment receipt and original transaction, starts fixed health recipe through admission below, then record_functional_health consumes actual passed same-generation observer receipt to permit enablement. Changed generation invalidates health. No activation success/AC claim from runnable publication.",
+  "authority": {
+    "owner_module": "hermes_installer.authority.native_health_observer",
+    "class": "RootNativeHealthStartAuthority",
+    "constructor": "from_root_runtime(active_bindings,committed_enrollment_registry,verified_installer_release,current_installed_actor_verifier,authority_service,managed_process_custody,health_observer,root_journal)",
+    "admit": "admit_selected_health(committed_enrollment_receipt_handle)->opaque root health admission_handle",
+    "resolve": "resolve_current_health_admission(admission_handle)->RootNativeHealthStartAdmission",
+    "start": "start_selected_health(admission_handle)->RootSelectedHealthControl",
+    "fields": [
+      "schema",
+      "admission_handle",
+      "committed_enrollment_receipt_handle",
+      "committed_enrollment_receipt_id",
+      "bootstrap_transaction_handle",
+      "enrollment_id",
+      "profile_id",
+      "principal_id",
+      "process_generation",
+      "service_generation_digest",
+      "operation_id",
+      "parameter_schema_id",
+      "parameter_schema_sha256",
+      "recipe_sha256",
+      "health_fixture_artifact_id",
+      "health_fixture_sha256",
+      "health_fixture_receipt_handle",
+      "health_result_schema_id",
+      "health_result_schema_sha256",
+      "native_package_id",
+      "native_package_generation",
+      "native_closure_sha256",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "validation": "Root-only actual committed enrollment registry membership/current pointer/signature/transaction and full current receipt closure, state committed, exact enrolled target/profile/UID/recipe hermes-agent-health-v1. Resolve parameter-free schema and held reviewed fixture bytes/result schema via exact current protected catalog/source receipts; no caller fixture/body/argv/path/profile/transaction fields. Installed actor/current source/controller PIDFD lease separate from native service subject. Profile process generation and native package generation separate. Original <=30s admission bounded controller/source/fixture/transaction current evidence; no old setup lease extension."
+  },
+  "service_grant": "Extend existing finite root-selected-service lifecycle role set with health ONLY for RootNativeHealthStartAuthority admitted hermes-agent-health-v1. Reuse AuthorityService.issue_root_selected_service_effect/consume_root_selected_service_effect and existing signed selected subject/profile/principal/UID operation+recipe+payload digest, with separate retained RootControllerProcessIdentityLease. Never relabel root controller as worker or use worker RPC/peer grant. Grant binds genuine health admission handle/current committed receipt/transaction/fixture/schema/package closure. Fixed empty canonical parameter payload {} only; fixture input is separate authenticated root input delivery after loader/observer readiness, not caller process.start arguments. Custody verifier independently resolves admission and current grant/lease before one-use start.",
+  "custody": "ManagedProcessEffectHandler.start_selected_health_operation(verified_root_selected_service_effect,health_admission_handle)->RootSelectedHealthControl. Requires role health, fixed recipe, re-resolved current admission and actual held source/runtime executable/child bytes. Start managed selected UID/profile/cgroup/PIDFD; register existing v21 control exact process_id/handle/starttime/generation/transaction/committed receipt/fixture binding. Root observer begin_selected_health(control_handle) immediately after live control retention and BEFORE any fixture bytes/input delivery. Existing authenticated selected input issuer joins same live peer/package/loader/role/source ancestry then delivers actual fixture bytes once. No fake control/source handles.",
+  "completion": "Actual root observer captures same-run loader/native request/provider result where required/tool invocation/bounded validated semantic result and terminal cleanup; finish_selected_health creates immutable receipt. Provider result nullable only explicit reviewed no-provider fixture, never runtime omission. RootSelectedHermesOperations gains health() that delegates this root authority through BootstrapCustody; raw enrollment/profile selectors are not start authorization. Owned cancellation/expiry cleans retained cgroup/PIDFD and records incomplete/failed; terminal stdout/exit0 cannot pass.",
+  "fixture_source": "Existing health fixture contract remains: actual reviewed local finite request/body/expected semantic result/action IDs from selected root catalog artifact bytes and source proof; compatible selected private zero-budget provider if required. This amendment introduces no invented fixture digest or default model/account. Fixture producer owner must provide actual source asset + schema/source/member receipts; missing fixture/principal/native observer/private route stays incomplete with exact next step. Installed qualification suites are separate owned fixture action, not accepted install health.",
+  "tasks": [
+    {
+      "id": "HI-T159.1",
+      "owner": "factory/entrypoint/startup/custody/health observer",
+      "work": "Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement."
+    },
+    {
+      "id": "HI-T159.2",
+      "owner": "native fixture/observer/registration source owners",
+      "work": "Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests."
+    }
+  ],
+  "acceptance": "All original AC remain open; genuine health operation and semantic receipt still required, no prepared start or acceptance inferred; baseline unchanged."
+}
