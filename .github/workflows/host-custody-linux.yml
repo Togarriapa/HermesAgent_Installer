@@ -27,6 +27,12 @@ jobs:
         run: |
           sudo install -d -o root -g root -m 0755 /run/hermes-custody-python
           sudo install -o root -g root -m 0755 "$(command -v python)" /run/hermes-custody-python/python
+      - id: prepare-private-loopback-tools
+        name: Prepare measured nftables test tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y nftables=1.0.9-1ubuntu0.1
+          test "$(sha256sum /usr/sbin/nft | cut -d ' ' -f1)" = "3f1c21553e62716ef1abfcf31f51ff94eb73ff4234a6653bac754a42f936d1c7"
       - name: Exercise root process custody
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
         run: |
@@ -82,6 +88,12 @@ jobs:
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env HERMES_RUN_XVFB_PROOF=1 PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_remote_observations_xvfb_linux -v
+
+      - name: Exercise selected private loopback namespace and nft enforcement
+        if: ${{ always() && steps.prepare-private-loopback-tools.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_private_loopback_network_linux -v
 
       - name: Exercise Linux package installation custody
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}

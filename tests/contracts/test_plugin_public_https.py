@@ -3,13 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import socket
+import time
 from types import SimpleNamespace
 import pytest
 
 from hermes_installer.components.plugin_local_voice_web import PluginAdapterError, WebResponse
 from hermes_installer.components.plugin_public_https import (
     DirectPublicHttpsReader, EnrolledPublicWebScope, PluginWebReadEffectHandler,
-    PublicHttpsDenied, PublicReadTarget, _direct_get, make_source_receipt,
+    PublicHttpsDenied, PublicReadTarget, ScopedWebCapture, _direct_get,
+    _decode_public_content, make_source_receipt, retrieve_scoped_capture,
+)
+from hermes_installer.authority.web_content_artifacts import (
+    WebContentArtifactDenied, WebTransportReceiptRegistry,
 )
 from hermes_installer.network import HTTPResult
 
@@ -64,6 +69,45 @@ def test_one_hop_reader_refuses_unbounded_caller_limits_before_network():
         reader.get_one_hop("https://example.com/",timeout=10,max_bytes=2_000_000)
 
 
+def test_transport_receipt_registry_binds_exact_scoped_capture_and_raw_bytes():
+    scope=EnrolledPublicWebScope("enrollment-1","target-1","generation-1",
+        "principal-1","profile-1","public-web",
+        (PublicReadTarget("example.com",("/docs",)),))
+    reader=DirectPublicHttpsReader()
+    reader.get_one_hop=lambda requested, **_kw: WebResponse(
+        200,{"Content-Type":"text/plain; charset=utf-8"},b"exact bytes",requested,
+        "93.184.216.34",True,False,hashlib.sha256(b"fixture-cert").hexdigest())
+    captured=retrieve_scoped_capture(reader,scope,"https://example.com/docs/page",
+                                     timeout=5,max_bytes=4096,cancelled=lambda:False)
+    registry=WebTransportReceiptRegistry()
+    request_sha=hashlib.sha256(b"request").hexdigest()
+    receipt=registry.capture(captured,request_sha256=request_sha,profile_id="profile-1",
+                             owner_generation="generation-1",expires_monotonic=time.monotonic()+20)
+    assert registry.resolve(receipt.handle) is receipt
+    assert receipt.body_sha256==hashlib.sha256(b"exact bytes").hexdigest()
+    assert receipt.body_size_bytes==len(b"exact bytes")
+    assert receipt.redirect_chain==("https://example.com/docs/page",)
+    assert captured.media_type=="text/plain"
+    assert captured.content_type=="text/plain; charset=utf-8"
+    forged=ScopedWebCapture(captured.final_url,captured.media_type,b"different bytes",
+                            captured.redirect_chain,captured.transport_receipt,
+                            captured.content_type,captured._seal)
+    with pytest.raises(WebContentArtifactDenied,match="does not match"):
+        registry.capture(forged,request_sha256=request_sha,profile_id="profile-1",
+                         owner_generation="generation-1",expires_monotonic=time.monotonic()+20)
+    with pytest.raises(TypeError,match="issued only"):
+        ScopedWebCapture(captured.final_url,captured.media_type,captured.body,
+                         captured.redirect_chain,captured.transport_receipt,captured.content_type)
+
+
+def test_public_content_uses_declared_charset_and_rejects_invalid_decoding():
+    assert _decode_public_content(b"caf\xe9", "text/plain; charset=latin-1")=="café"
+    with pytest.raises(PublicHttpsDenied,match="declared charset"):
+        _decode_public_content(b"\xff", "text/plain; charset=utf-8")
+    with pytest.raises(PublicHttpsDenied,match="declared charset"):
+        _decode_public_content(b"body", "text/plain; charset=no-such-codec")
+
+
 def test_source_receipt_binds_exact_content_destination_peer_and_tls():
     body=b"fixture source"
     response=WebResponse(200,{"content-type":"text/plain"},body,"https://example.com/a",
@@ -82,7 +126,7 @@ def test_source_receipt_binds_exact_content_destination_peer_and_tls():
                             generation="generation-1")
 
 
-def test_root_handler_requires_exact_grant_and_returns_scoped_untrusted_source_receipt():
+def test_root_handler_serializes_root_staged_receipt_as_untrusted_source():
     url="https://example.com/docs/page"
     scope=EnrolledPublicWebScope("enrollment-1","target-1","generation-1",
         "principal-1","profile-1","public-web",
@@ -91,7 +135,21 @@ def test_root_handler_requires_exact_grant_and_returns_scoped_untrusted_source_r
     reader.get_one_hop=lambda requested, **_kw: WebResponse(
         200,{"Content-Type":"text/plain"},b"trusted test fixture",requested,
         "93.184.216.34",True,False,hashlib.sha256(b"fixture-cert").hexdigest())
-    handler=PluginWebReadEffectHandler(scope,reader)
+    class Observation:
+        operation_id="test-operation"
+        def staged_result_fields(self):
+            digest=hashlib.sha256(b"trusted test fixture").hexdigest()
+            return {"artifact_id":"web-content:"+digest,"sha256":digest,
+                "size_bytes":19,"media_type":"text/plain","profile_id":"profile-1",
+                "owner_generation":"generation-1","operation_id":"test-operation",
+                "source_receipt_handle":"opaque-handle-000000000000000000000000000000000000",
+                "expires_monotonic":time.monotonic()+30}
+    class ArtifactCapture:
+        def prepare_authorized_response(self,*_args,**_kwargs):
+            capture=_args[3]
+            assert capture.body==b"trusted test fixture" and capture.media_type=="text/plain"
+            return Observation()
+    handler=PluginWebReadEffectHandler(scope,reader,artifact_registry=ArtifactCapture())
     payload=json.dumps({"schema":1,"adapter_id":"web","action_id":"retrieve",
         "enrollment_id":"enrollment-1","generation":"generation-1",
         "arguments":{"url":url}},sort_keys=True,separators=(",",":")).encode()
@@ -107,8 +165,9 @@ def test_root_handler_requires_exact_grant_and_returns_scoped_untrusted_source_r
     assert result["content"]=="trusted test fixture"
     assert result["untrusted_source"] is True and result["authority"]=="none"
     receipt=result["source_receipt"]
-    assert receipt["redirect_chain"]==[url]
-    assert receipt["enrollment_id"]=="enrollment-1"
+    assert result["redirects"]==[url]
+    assert receipt["sha256"]==hashlib.sha256(b"trusted test fixture").hexdigest()
+    assert receipt["profile_id"]=="profile-1"
     assert response["receipt_id"]
 
 

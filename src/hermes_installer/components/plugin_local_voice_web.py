@@ -6,6 +6,7 @@ contains no shell, socket, microphone, credential, or persistence discovery.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email.message import Message
 import hashlib
 from ipaddress import ip_address
 import json
@@ -342,7 +343,7 @@ def _valid_web_source_receipt(receipt: object, *, content: str, content_type: st
         and receipt.get("artifact_id") == "web-content:" + receipt["sha256"]
         and type(receipt.get("size_bytes")) is int
         and 1 <= receipt["size_bytes"] <= 16_777_216
-        and receipt.get("media_type") == content_type
+        and receipt.get("media_type") == _normalized_media_type(content_type)
         and all(_opaque_value(receipt.get(key)) for key in
                 ("profile_id", "owner_generation", "operation_id", "source_receipt_handle"))
         and receipt.get("operation_id") == operation_id
@@ -350,6 +351,12 @@ def _valid_web_source_receipt(receipt: object, *, content: str, content_type: st
         and time.monotonic() < expiry <= time.monotonic() + 600
         and redirect_chain[-1] == final_url
     )
+
+
+def _normalized_media_type(content_type: str) -> str:
+    parsed = Message()
+    parsed["content-type"] = content_type
+    return parsed.get_content_type().lower()
 
 
 def _opaque_handle(result: dict[str, Any], field: str) -> str:

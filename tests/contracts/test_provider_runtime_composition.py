@@ -245,6 +245,7 @@ class ProviderRuntimeCompositionTests(unittest.TestCase):
         )
         schema_catalog = NativeMCPProtectedSchemaCatalog((NativeSchemaArtifact(
             id="schema-fixture", artifact_id="artifact-fixture", sha256="f" * 64,
+            size_bytes=16, derivation_receipt_handle=None,
             schema_kind="arguments", native_package_id="package-fixture",
             native_package_generation="package-gen", adapter_id="adapter-fixture",
             action_id="action-fixture", source_receipt_handle="source-receipt-fixture",

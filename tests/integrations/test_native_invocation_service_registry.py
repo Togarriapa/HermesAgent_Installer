@@ -55,13 +55,16 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
         capability, operation = "provider-inference", "provider.dispatch"
         producer_binding = PrincipalBinding(
             producer_uid, "producer-principal", producer_profile,
-            "producer-namespace", frozenset({capability}),
+            "producer-namespace", frozenset({capability, "plugin:web"}),
         )
         gateway_binding = PrincipalBinding(
             gateway_uid, "gateway-principal", gateway_profile,
             "gateway-namespace", frozenset({capability}),
         )
         rule = EffectRule(capability, operation, target, recipient)
+        web_target = "plugin:web:fixture:generation-1"
+        web_rule = EffectRule("plugin:web", "plugin.web.read", web_target, "public-web")
+        web_effect_calls = []
         request_bytes = b'{"model":"fixture","messages":[]}'
         request_digest = hashlib.sha256(request_bytes).hexdigest()
         response_bytes = (
@@ -92,6 +95,13 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             policy=_Policy(),
             profile_generations={producer_profile: generation, gateway_profile: gateway_generation},
             service_generation_digest="2" * 64,
+        )
+        # A public web handler is present so this regression reaches the real
+        # service policy boundary. The empty provider-result ceiling must stop
+        # the effect before the handler can perform any transport work.
+        service.rules[("plugin:web", "plugin.web.read", web_target)] = web_rule
+        service.handlers[("plugin.web.read", web_target)] = (
+            lambda **kwargs: web_effect_calls.append(kwargs)
         )
         service._native_process_identity = lambda pid, uid: f"{pid}:{uid}"
         producer_enrollment_id = canonical_digest({
@@ -246,6 +256,20 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
                 peer_pid=producer_pid,
             )
             grant = EffectAuthorization.from_wire(grant_wire)
+            # Staged web effects may revalidate an invocation repeatedly,
+            # but the opaque root selector cannot invent or resurrect a row.
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, target, request_digest, "h" * 43,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, "unselected-target", request_digest, "h" * 43,
+                )
+            with self.assertRaises(AuthorityDenied):
+                registry.resolve_current_invocation_for_effect(
+                    context, grant, operation, target, "0" * 64, "h" * 43,
+                )
             with self.assertRaises(AuthorityDenied):
                 registry.resolve_invocation_for_effect(
                     context, grant, "plugin.unselected.execute", request_digest,
@@ -344,6 +368,46 @@ class NativeInvocationServiceRegistryIntegration(unittest.TestCase):
             self.assertEqual(contexts_wire["arguments_sha256"], hashlib.sha256(arguments).hexdigest())
             self.assertEqual(len(contexts_wire["source_receipt_handles"]), 1)
             self.assertIn(contexts_wire["source_receipt_handles"][0], service._source_receipt_handles)
+
+            # The retained provider-result source has no selected input parent,
+            # so its signed recipient ceiling is empty. Even a profile with
+            # the public web capability and an installed handler cannot use
+            # that ancestry to reach a public recipient.
+            result_handle = contexts_wire["source_receipt_handles"][0]
+            result_receipt = service._source_receipt_handles[result_handle]
+            self.assertEqual(result_receipt.source_kind, "provider-result")
+            self.assertEqual(result_receipt.recipient_ceiling, frozenset())
+            web_request = b'{"schema":1,"url":"https://example.com/docs"}'
+            web_digest = hashlib.sha256(web_request).hexdigest()
+            web_context_wire = service._issue_context(
+                producer_uid,
+                {
+                    "purpose": "native-hermes-chat",
+                    "intent": "fixture-public-web-read",
+                    "trace_id": "trace-web-ceiling-fixture",
+                    "lease_seconds": 20,
+                    "source_contexts": [],
+                    "source_receipt_handles": [result_handle],
+                    "final_payload_digest": web_digest,
+                    "operation": "plugin.web.read",
+                },
+                peer_pid=producer_pid,
+                inherited_process_identity=f"{producer_pid}:{producer_uid}",
+            )
+            with self.assertRaises(AuthorityDenied):
+                service._authorize_effect(
+                    producer_uid,
+                    {
+                        "context": web_context_wire,
+                        "capability": "plugin:web",
+                        "target": web_target,
+                        "recipient": "public-web",
+                        "request_digest": web_digest,
+                        "retry_index": 0,
+                    },
+                    peer_pid=producer_pid,
+                )
+            self.assertEqual(web_effect_calls, [])
 
             # The resolver is pre-effect app evidence only when the response
             # has joined a current root turn. This fixture intentionally has

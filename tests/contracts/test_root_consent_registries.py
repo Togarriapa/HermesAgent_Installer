@@ -59,7 +59,7 @@ def test_private_input_consent_is_absent_by_default_and_survives_restart(tmp_pat
     assert service.private_input_consent_registry is first
 
     assert first.selection_handle_for_current_profile(binding) is None
-    with pytest.raises(AuthorityDenied, match="TTY private-route choice resolver is unavailable"):
+    with pytest.raises(AuthorityDenied, match="no committed active service generation"):
         first.issue_selected_private_input_consent("untrusted-handle", binding)
 
     restarted_service, restarted_binding = _service()

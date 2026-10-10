@@ -103,7 +103,7 @@ def test_web_retrieval_checks_direct_tls_public_ip_size_and_untrusted_result():
     class DispatchFixture:
         def invoke(self, *, adapter_id, action_id, arguments):
             assert (adapter_id,action_id,arguments)==("web","retrieve",{"url":url})
-            result = {"url":url,"content_type":"text/plain",
+            result = {"url":url,"content_type":"text/plain; charset=utf-8",
                     "content":"hello","untrusted_source":True,"authority":"none",
                     "redirects":[url],"source_receipt":{
                         "artifact_id":"web-content:"+digest,"sha256":digest,
