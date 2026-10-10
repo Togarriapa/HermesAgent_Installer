@@ -60,3 +60,11 @@ HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-aud
 Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
 
 Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Local audio device/consent v118: `plans/amendments/2026-10-10-local-audio-device-consent-v118.md`; original RG-F03/R0060/HI-T08 obligations remain open.
+
+- [ ] RG-T118.1: audio owner retain exact device/TTY/runtime/controller proof and enforce cancellation/lease during blocking capture.
+
+- [ ] RG-T118.2: source/controller owner join selected audio v94 schema and retained one-use capture/consent artifact into genuine source issuance without fabricated identity.
+
+- [ ] RG-T118.3: test changed enumeration, default fallback, runtime closure mismatch, overflow, revocation/cancel/timeout and byte zeroization; actual device/OS/ARM acceptance remains pending.

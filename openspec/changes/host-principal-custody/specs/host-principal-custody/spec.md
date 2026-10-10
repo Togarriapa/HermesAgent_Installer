@@ -485,3 +485,31 @@ The system SHALL bind each v112 local result schema ID to exact packaged bytes a
 #### Scenario: Source table presented as receipt
 - **WHEN** a source-reviewed schema table lacks actual packaged artifact and installed validator proof
 - **THEN** executable registration remains unavailable.
+
+### Requirement: Separate protected native action and registration records
+The system SHALL use v113 exact typed action, registration and workflow arrays to join actual source42 Hermes registrations to source61 backend routes, selected schemas/observers/effects and staged installation receipts before atomic active publication. It SHALL preserve original canonical invocation arguments and independent child authorization.
+
+#### Scenario: Multiple actions share one adapter
+- **WHEN** source registrations select multiple reviewed actions under one adapter
+- **THEN** unique action binding IDs preserve each exact route instead of collapsing or inferring action authority from tool names.
+
+### Requirement: Bounded passthrough result data
+The system SHALL wrap source handler passthrough results in the v113 bounded closed tool-result envelope without treating backend data as authority or execution success. Actual operation/account/receipt validation remains required.
+
+#### Scenario: Backend data claims authorization
+- **WHEN** returned JSON contains authority-like or readiness fields
+- **THEN** those fields remain untrusted data and cannot affect authorization or acceptance.
+
+### Requirement: Exact catalog compatible local schema identities
+The system SHALL use the v114 literal catalog-compatible schema/artifact IDs for eight local result schemas without widening static catalog grammar or minting aliases.
+
+#### Scenario: Earlier impossible identity
+- **WHEN** a source row contains the superseded colon artifact ID
+- **THEN** selection fails until the corrected exact source map is used.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
