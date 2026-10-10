@@ -1,0 +1,198 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md",
+  "reference_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+  "reference_tree": "0d659151a41788cc9fa5c64e2c67a313c1edcc05",
+  "members": [
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/bootstrap_runtime_factory.py",
+      "module_name": "hermes_installer.authority.bootstrap_runtime_factory",
+      "source_artifact_id": "installer-reviewed-source-bootstrap-runtime-factory-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.bootstrap_runtime_factory",
+      "installed_member": "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
+      "sha256": "1156ea17992ddfd0b04819dc5afbc9426611cc2a745ebfb61800df86b08a0c14",
+      "size_bytes": 579669,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/local_resource_effects.py",
+      "module_name": "hermes_installer.authority.local_resource_effects",
+      "source_artifact_id": "installer-reviewed-source-local-resource-effects-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.local_resource_effects",
+      "installed_member": "lib/python/hermes_installer/authority/local_resource_effects.py",
+      "sha256": "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6",
+      "size_bytes": 47854,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/native_assembler.py",
+      "module_name": "hermes_installer.authority.native_assembler",
+      "source_artifact_id": "installer-reviewed-source-native-assembler-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_assembler",
+      "installed_member": "lib/python/hermes_installer/authority/native_assembler.py",
+      "sha256": "311e07fb52ae001e44d4be17cf4ed8a09277118e0aca34b6ff45c22b9b6e2055",
+      "size_bytes": 21265,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/native_output_receipts.py",
+      "module_name": "hermes_installer.authority.native_output_receipts",
+      "source_artifact_id": "installer-reviewed-source-native-output-receipts-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_output_receipts",
+      "installed_member": "lib/python/hermes_installer/authority/native_output_receipts.py",
+      "sha256": "37f18a0d9c2e7082955f82bb27221dae3ae4781c6278b5e0c1a254233fbf7b5f",
+      "size_bytes": 109864,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/native_policy_preparation.py",
+      "module_name": "hermes_installer.authority.native_policy_preparation",
+      "source_artifact_id": "installer-reviewed-source-native-policy-preparation-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_policy_preparation",
+      "installed_member": "lib/python/hermes_installer/authority/native_policy_preparation.py",
+      "sha256": "93695570e20218ea1e40a0707ef7d6f51e1646e74e5c5338ba1fd83fef737752",
+      "size_bytes": 60196,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/native_registration_projection.py",
+      "module_name": "hermes_installer.authority.native_registration_projection",
+      "source_artifact_id": "installer-reviewed-source-native-registration-projection-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_registration_projection",
+      "installed_member": "lib/python/hermes_installer/authority/native_registration_projection.py",
+      "sha256": "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b",
+      "size_bytes": 82047,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/native_source_definitions.py",
+      "module_name": "hermes_installer.authority.native_source_definitions",
+      "source_artifact_id": "installer-native-source-definitions-module-v137",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_source_definitions",
+      "installed_member": "lib/python/hermes_installer/authority/native_source_definitions.py",
+      "sha256": "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c",
+      "size_bytes": 23672,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/native_definition_composition.py",
+      "module_name": "hermes_installer.authority.native_definition_composition",
+      "source_artifact_id": "installer-reviewed-source-native-definition-composition-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_definition_composition",
+      "installed_member": "lib/python/hermes_installer/authority/native_definition_composition.py",
+      "sha256": "a60e3b2dadb8e1733767035209f988c2fcbb9feb0ff15e5fd0539da9877d16aa",
+      "size_bytes": 8355,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/application_runtime_archive.py",
+      "module_name": "hermes_installer.authority.application_runtime_archive",
+      "source_artifact_id": "installer-reviewed-source-application-runtime-archive-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.application_runtime_archive",
+      "installed_member": "lib/python/hermes_installer/authority/application_runtime_archive.py",
+      "sha256": "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197",
+      "size_bytes": 31457,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/application_runtime_relocation.py",
+      "module_name": "hermes_installer.authority.application_runtime_relocation",
+      "source_artifact_id": "installer-reviewed-source-application-runtime-relocation-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.application_runtime_relocation",
+      "installed_member": "lib/python/hermes_installer/authority/application_runtime_relocation.py",
+      "sha256": "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc",
+      "size_bytes": 12120,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    },
+    {
+      "source_commit": "3a349c72b3375fded7cc73629403e2c514039455",
+      "source_path": "src/hermes_installer/authority/remote_observations.py",
+      "module_name": "hermes_installer.authority.remote_observations",
+      "source_artifact_id": "installer-reviewed-source-remote-observations-v180",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.remote_observations",
+      "installed_member": "lib/python/hermes_installer/authority/remote_observations.py",
+      "sha256": "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31",
+      "size_bytes": 93746,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "state": "reviewed exact committed source only; held import and loaded runtime evidence separate"
+    }
+  ],
+  "application_build_driver": {
+    "source_commit": "c757aec16e2dd14a218adf26989b5f982cb1329f",
+    "source_path": "src/hermes_installer/authority/application_environment_builder.py",
+    "module_name": "hermes_installer.authority.application_environment_builder",
+    "source_artifact_id": "installer-application-environment-builder-v1",
+    "installed_artifact_id": "installer-application-environment-builder-v1",
+    "installed_member": "lib/python/hermes_installer/authority/application_environment_builder.py",
+    "sha256": "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",
+    "size_bytes": 45807,
+    "roles": [
+      "application-build-driver"
+    ],
+    "installed_mode": 292,
+    "state": "corrected committed source reviewed; source-only descriptor approval, no execution receipt/runtime acceptance"
+  },
+  "kernel_helper": "pending implementation and source review; no invented pin",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "source_review_evidence": {
+    "native_reference_hashes": "recomputed all11 files at3a349c72",
+    "builder": "git objectc757aec independently SHA/size verified; sole source tuple correction reviewed",
+    "remote": "60cdf production bytes unchanged; test-only FFI repair distinct",
+    "focused_owner_results": "81passed3skip native;32passed1skip overlay;27passed1skip builder; no live acceptance"
+  }
+}

@@ -2413,5 +2413,43 @@
       "separate loaded-process and live acceptance"
     ],
     "evidence": "docs/native-selected-source-composition-v179.md"
+  },
+  "reviewed_source_members_v180": {
+    "amendment": "plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md",
+    "source_pin_ledger": "planning/reviewed-source-pin-batch-v180.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "task_order": {
+      "HI-T180.1": [
+        "exact merged3a349c72 source member review"
+      ],
+      "SK-T180.2": [
+        "corrected builderc757aec merge",
+        "exact committed driver source review",
+        "HI-T180.1"
+      ],
+      "HI-T180.3": [
+        "HI-T180.1",
+        "genuine v172 source/view/schema/effect receipts"
+      ],
+      "HI-T180.4": [
+        "exact60cdf source review",
+        "actual native dependency observation"
+      ],
+      "HI-T180.5": [
+        "new measured helper source review",
+        "active installed helper-runtime/source receipt",
+        "same-worker-cgroup enforcement before app code"
+      ],
+      "VD-T180.6": [
+        "HI-T180.1",
+        "SK-T180.2",
+        "HI-T180.3",
+        "HI-T180.4",
+        "HI-T180.5"
+      ]
+    },
+    "fixture_phase_cycle": "HI-T178.2/HI-T179.2 remains open; no fabricated custody helper/source hashes"
   }
 }

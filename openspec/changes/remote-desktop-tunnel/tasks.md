@@ -83,3 +83,7 @@ Loopback inert kernel templates v122: `plans/amendments/2026-10-10-loopback-iner
 - [ ] HI-T122.1: network owner implement exact inert fallback invariant and retained typed root link/address/route/kernel/nft/subject proof.
 
 - [ ] HI-T122.2: kernel-capable isolated test proves known DOWN templates accepted only with actual nft/capability closure, UP/address/key/route/master/unknown/veth mutation denied. Missing privileges leaves test and live acceptance pending.
+
+- [ ] `HI-T180.4` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.5` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.

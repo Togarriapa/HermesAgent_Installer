@@ -341,3 +341,11 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [x] HI-T179.1 Implement/verify retained source-owner selected executable closure and exact projector/assembler/member/currentness denials under v179. Evidence: `docs/native-selected-source-composition-v179.md`; local source fixture only, HI-T178.1 and live acceptance remain OPEN.
 
 - [ ] HI-T179.2 Live loaded-worker/PIDFD and external target/account/provider/device acceptance; all AC01..18 remain OPEN.
+
+- [ ] `HI-T180.1` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.3` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.4` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.5` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
