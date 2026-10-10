@@ -837,3 +837,10 @@ The installer SHALL resolve the selected finite Node/Bun policy from its exact r
 #### Scenario: Source policy member is absent from the selected release
 - **WHEN** an otherwise cataloged tool is requested without the reviewed selected policy member
 - **THEN** acquisition denies and no caller artifact ID or invented plan field substitutes for that member proof
+
+### Requirement: Backend source observer v157
+The installer SHALL acquire and observe selected PEP517 backend wheel and embedded license bytes through a separate finite source-policy-bound observer.
+
+#### Scenario: Backend wheel is absent from project runtime lock
+- **WHEN** the exact separately reviewed backend policy selects that source
+- **THEN** the observer verifies actual wheel and license bytes against that policy without fabricating project lock membership or widening Node/Bun acquisition

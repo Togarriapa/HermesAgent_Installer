@@ -18,7 +18,7 @@ def _valid_scope() -> dict[str, object]:
         "generation": "profile-generation-1",
         "principal_id": "principal-1",
         "profile_id": "profile-1",
-        "recipient": "recipient-1",
+        "recipient": "public-web",
         "targets": [{
             "hostname": "docs.example.org",
             "path_prefixes": ["/manual"],
@@ -38,7 +38,7 @@ def test_scope_payload_is_canonical_v142_and_returns_exact_digest() -> None:
     assert raw == (
         b'{"deadline_seconds":5,"enrollment_id":"scope-0123456789abcdef0123456789abcdef",'
         b'"generation":"profile-generation-1","principal_id":"principal-1",'
-        b'"profile_id":"profile-1","recipient":"recipient-1",'
+        b'"profile_id":"profile-1","recipient":"public-web",'
         b'"request_bytes_limit":4096,"response_bytes_limit":8192,"target_id":"plugin-web-public-read",'
         b'"targets":[{"hostname":"docs.example.org","path_prefixes":["/manual"],'
         b'"query_keys":["language"]}]}'
@@ -52,6 +52,7 @@ def test_scope_payload_is_canonical_v142_and_returns_exact_digest() -> None:
     lambda row: {**row, "targets": [{"hostname": "127.0.0.1", "path_prefixes": ["/"], "query_keys": []}]},
     lambda row: {**row, "targets": [{"hostname": "docs.example.org", "path_prefixes": ["/../private"], "query_keys": []}]},
     lambda row: {**row, "targets": [{"hostname": "docs.example.org", "path_prefixes": ["/manual"], "query_keys": ["access_token"]}]},
+    lambda row: {**row, "recipient": "paid-provider"},
 ])
 def test_scope_payload_rejects_open_schema_or_unsafe_scope(mutate) -> None:
     with pytest.raises(PublicWebSelectionDenied):
