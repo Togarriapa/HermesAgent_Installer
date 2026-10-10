@@ -138,3 +138,11 @@ Private memory observed deployments v125: `plans/amendments/2026-10-10-private-m
 - [ ] SK-T125.2: provider/host/factory owner compose typed selected existing-service/model bindings and exact v108 receipt joins; retain unavailable remote/unselected embedding/absent weights facts.
 
 - [ ] SK-T125.3: test wrong alias-to-source mapping, changed config/weights/process/network/boot, false catalog/credential/consent, text-as-embed and probe-only claims; actual weights/ARM/private target/semantic memory acceptance remain open.
+
+Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+- [ ] SK-T127.1: models owner implement existing-root tree observation and explicit service signing injection, source presence separate load/deployment proof.
+
+- [ ] SK-T127.2: factory/owned-root/authority owner implement actual existing-model TTY/root selection retained receipt and finite signer attachment; no arbitrary path/default or copying/download.
+
+- [ ] SK-T127.3: test absent/unowned/writable/missing/hash-changed tree, forged source/selection/member handles, boot/lease/revocation, alias-only load and separately absent embedding; actual pre-existing model/ARM/server proof pending.
