@@ -2213,6 +2213,7 @@ class NativePackageBinding:
     registration_records: Mapping[str, NativeRegistrationRecord]
     workflow_records: Mapping[str, NativeWorkflowRecord]
     process_role_records: Mapping[str, NativeProcessRoleRecord]
+    owner_overlay_operation_records: Mapping[str, Mapping[str, Any]]
 
     @classmethod
     def from_protected_record(cls, item: Mapping[str, Any]) -> "NativePackageBinding":
@@ -2222,7 +2223,8 @@ class NativePackageBinding:
                     "resolver_artifact_id", "resolver_sha256", "service_package_root_id",
                     "service_mount_id", "adapter_records", "action_records",
                     "registration_records", "workflow_records", "process_role_records"}
-        if not isinstance(item, Mapping) or set(item) != expected:
+        if (not isinstance(item, Mapping)
+                or set(item) not in (expected, expected | {"owner_overlay_operation_records"})):
             raise EnrollmentDenied("protected native package record fields are invalid")
         digests = ("source_tree_sha256", "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256")
         if any(not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name])
@@ -2313,6 +2315,11 @@ class NativePackageBinding:
             profile_id=profile_id, profile_generation=profile_generation,
             actions=action_records, registrations=registration_records, workflows=workflow_records,
         )
+        owner_overlay_operation_records = _parse_native_owner_overlay_operation_records(
+            item.get("owner_overlay_operation_records", []), package_id=package_id,
+            generation=generation, profile_id=profile_id, profile_generation=profile_generation,
+            registrations=registration_records, process_roles=process_role_records,
+        )
         return cls(
             package_id, profile_id, generation, revision, item["source_tree_sha256"],
             _native_catalog_id(item["compiled_closure_artifact_id"], "compiled closure artifact ID"),
@@ -2322,7 +2329,83 @@ class NativePackageBinding:
             _native_catalog_id(item["service_mount_id"], "service mount ID"), MappingProxyType(adapters),
             profile_generation, MappingProxyType(action_records), MappingProxyType(registration_records),
             MappingProxyType(workflow_records), MappingProxyType(process_role_records),
+            MappingProxyType(owner_overlay_operation_records),
         )
+
+
+def _parse_native_owner_overlay_operation_records(
+        raw_rows: Any, *, package_id: str, generation: str, profile_id: str,
+        profile_generation: str, registrations: Mapping[str, NativeRegistrationRecord],
+        process_roles: Mapping[str, NativeProcessRoleRecord],
+) -> dict[str, Mapping[str, Any]]:
+    """Parse v172's separate local CAS lane without promoting backend actions."""
+    fields = {
+        "registration_id", "method", "operation", "capability", "target_id", "recipient",
+        "effect_enrollment_id", "profile_id", "profile_generation", "principal_id", "namespace_id",
+        "package_id", "package_generation", "argument_schema_id", "argument_schema_sha256",
+        "argument_schema_receipt_handle", "result_schema_id", "result_schema_sha256",
+        "result_schema_receipt_handle", "handler_artifact_id", "handler_sha256",
+        "handler_source_receipt_handle", "profile_view_selection_handle", "profile_view_receipt_handle",
+        "data_root_selection_handle", "data_root_receipt_handle", "target_selection_handle",
+        "target_receipt_handle", "prepared_source_observer_selection_handle",
+        "source_observer_enrollment_ids", "process_role_id", "source_issuer_id",
+    }
+    fixed = {
+        "resource-overlay-store:tool:resource_overlay_read": ("read", "plugin.resource-overlay-store.read"),
+        "resource-overlay-store:tool:resource_overlay_history": ("history", "plugin.resource-overlay-store.read"),
+        "resource-overlay-store:tool:resource_overlay_write": ("write", "plugin.resource-overlay-store.write"),
+        "resource-overlay-store:tool:resource_overlay_delete": ("delete", "plugin.resource-overlay-store.write"),
+    }
+    if not isinstance(raw_rows, list) or len(raw_rows) > 4:
+        raise EnrollmentDenied("protected owner-overlay operation lane is malformed")
+    if any(not isinstance(row, Mapping) or not isinstance(row.get("registration_id"), str)
+           for row in raw_rows):
+        raise EnrollmentDenied("protected owner-overlay operation identity is malformed")
+    ids = [row["registration_id"] for row in raw_rows]
+    if ids != sorted(ids) or len(set(ids)) != len(ids):
+        raise EnrollmentDenied("protected owner-overlay operation IDs are not uniquely ordered")
+    parsed: dict[str, Mapping[str, Any]] = {}
+    references = fields - {"recipient", "source_observer_enrollment_ids", "argument_schema_sha256",
+                           "result_schema_sha256", "handler_sha256"}
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping) or set(raw) != fields:
+            raise EnrollmentDenied("protected owner-overlay operation fields differ from v172")
+        registration_id = raw["registration_id"]
+        registration = registrations.get(registration_id)
+        method_operation = fixed.get(registration_id)
+        role = process_roles.get(raw.get("process_role_id"))
+        observers = raw.get("source_observer_enrollment_ids")
+        if (not isinstance(observers, list) or not observers or len(observers) > 128
+                or any(not isinstance(value, str) or not value for value in observers)
+                or observers != sorted(set(observers))):
+            raise EnrollmentDenied("protected owner-overlay observer references are invalid")
+        if (method_operation is None or registration is None
+                or registration.handler_kind != "owner-overlay"
+                or registration.argument_schema_id != raw["argument_schema_id"]
+                or registration.result_schema_id != raw["result_schema_id"]
+                or registration.registration_source_artifact_id != raw["handler_artifact_id"]
+                or registration.registration_source_sha256 != raw["handler_sha256"]
+                or registration.registration_source_receipt_handle != raw["handler_source_receipt_handle"]
+                or role is None or registration_id not in role.registration_ids
+                or not set(observers).issubset(role.observer_enrollment_ids)
+                or (raw["method"], raw["operation"]) != method_operation
+                or raw["capability"] != "plugin:resource-overlay-store" or raw["recipient"] is not None
+                or raw["profile_id"] != profile_id or raw["profile_generation"] != profile_generation
+                or raw["package_id"] != package_id or raw["package_generation"] != generation):
+            raise EnrollmentDenied("protected owner-overlay operation does not join its selected registration")
+        if any(not isinstance(raw[key], str) or not raw[key] or len(raw[key]) > 256
+               for key in references):
+            raise EnrollmentDenied("protected owner-overlay operation lacks a current source reference")
+        for key in ("argument_schema_sha256", "result_schema_sha256", "handler_sha256"):
+            if not isinstance(raw[key], str) or not re.fullmatch(r"[0-9a-f]{64}", raw[key]):
+                raise EnrollmentDenied("protected owner-overlay operation digest is invalid")
+        if (not _native_catalog_id(raw["principal_id"], "owner-overlay principal ID")
+                or not _native_catalog_id(raw["namespace_id"], "owner-overlay namespace ID")):
+            raise EnrollmentDenied("protected owner-overlay owner identity is invalid")
+        parsed[registration_id] = MappingProxyType({
+            **dict(raw), "source_observer_enrollment_ids": tuple(observers),
+        })
+    return parsed
 
 
 @dataclass(frozen=True, slots=True)

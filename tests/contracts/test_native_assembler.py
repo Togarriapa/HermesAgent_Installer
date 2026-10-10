@@ -41,6 +41,7 @@ class Definitions:
     registration_records = ()
     closure_members = (Member(),)
     effect_selection_receipt_handles = ("effect-proof-demo",)
+    owner_overlay_operation_records = ()
     candidate_records = ({
         "native_tool_name": "demo_lookup",
         "native_server_name": "hermes-installer",

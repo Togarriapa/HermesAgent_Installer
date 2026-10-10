@@ -1,0 +1,51 @@
+{
+  "amendment": "plans/amendments/2026-10-10-active-network-generation-owner-v182.md",
+  "parent_specification": "8aa90d161570e6ee14f15dafe65d1b31fb48621c",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "source_purpose": "native-policy-preparation only for first finite selected-worker lane",
+  "owner_type": "RootActiveNetworkGenerationOwner",
+  "constructor": "from_root_runtime(runtime: RootAuthorityRuntime)",
+  "projection_type": "RootActiveNetworkGenerationProjection",
+  "methods": [
+    "resolve_selected_worker(network_id,profile_id)",
+    "verify_current(projection)",
+    "close()"
+  ],
+  "registry_constructor": "RootActiveNetworkHelperRuntimeRegistry.from_root_runtime(runtime,generation_owner)",
+  "source_pins": "pending exact committed implementation, no uncommitted hash review",
+  "tasks": {
+    "HI-T182.1": {
+      "description": "Compile and publish finite signed-source/network/worker/enrollment projection.",
+      "depends_on": [],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "HI-T182.2": {
+      "description": "Own exact post-setup active generation, signed source/revocation and actor/key/journal revalidation.",
+      "depends_on": [
+        "HI-T182.1"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "HI-T182.3": {
+      "description": "Consume current active owner projections through helper spawn/stop/release/reload cleanup.",
+      "depends_on": [
+        "HI-T182.2",
+        "HI-T180.5"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "VD-T182.4": {
+      "description": "Exercise post-setup positive and CAS/revocation/kernel/cleanup failures; hand off exact source measurements.",
+      "depends_on": [
+        "HI-T182.3"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    }
+  }
+}

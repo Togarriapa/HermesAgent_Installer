@@ -70,7 +70,8 @@ def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[Nati
     process_roles_sha256 = hashlib.sha256(json.dumps(
         [process_role], sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode()).hexdigest()
-    resolver = json.dumps({"process_role_records_sha256": process_roles_sha256, "schema": 1},
+    resolver = json.dumps({"owner_overlay_operation_records": [],
+                           "process_role_records_sha256": process_roles_sha256, "schema": 1},
                           sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     resolver_sha256 = hashlib.sha256(resolver).hexdigest()
     if candidate is None:

@@ -827,3 +827,27 @@ The installer SHALL implement the exclusive typed identity domains, finite selec
 #### Scenario: Privileged dependency absent or identity stale
 - **WHEN** a local principal requests homelab/recipient authority or a current identity, selected effect, loaded proof or required Authentik dependency is missing
 - **THEN** the affected action SHALL deny before effect, preserve independent owned work, and report configure-later/resume without claiming full compliance or synthesizing Authentik authority
+
+
+### Requirement: Concrete active network generation owner v182
+The installer SHALL implement the exact finite compiler projection, post-setup owner and helper manager custody/revalidation lifecycle in `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`, with no bare currentness callback or setup receipt substitution.
+
+#### Scenario: Valid adoption after setup expiry
+- **WHEN** a signed native policy choice was adopted before its original deadline and current active release/actor/key/publication/source/revocation/journal/worker row proofs all match
+- **THEN** only its exact selected helper/worker MAY reach the own-cgroup kernel start barrier, and app release requires fresh current owner and actual enforcement evidence
+
+#### Scenario: Active proof changes or enforcement unavailable
+- **WHEN** revocation/CAS/code/actor/journal/profile currentness changes or a forbidden kernel bind succeeds
+- **THEN** app startup SHALL deny with no network lease, owned cleanup SHALL be verified, and unsupported enforcement SHALL remain unavailable without acceptance
+
+
+### Requirement: Signed worker and active overlay producers v183
+The installer SHALL implement the exact source/type/method/output producer joins and exclusive finite scopes in `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`.
+
+#### Scenario: Genuine source survives as current active custody
+- **WHEN** actual held worker/source/PM/native/view receipts enter signed selected recipe and tagged local-owner adoption during genuine active publication
+- **THEN** after setup expiry only independently verified current runtime source/NSS/enrollment/loaded process and one-use selected grant MAY permit its four exact owned overlay methods
+
+#### Scenario: Missing source or stale active authority
+- **WHEN** recipe/source/member/view/NSS/current choice/loaded peer proof is absent or mismatched, revoked, late-adopted or replaced
+- **THEN** app/effect SHALL deny before execution, preserve independent source readiness and never derive host/AuthentiK authority or network permission from static metadata/choice presence

@@ -146,15 +146,57 @@ _PREPARED_APPLICATION_BUILD_PROFILES = {
         "application-scrapegraph-ai-runtime-prepare:start"),
 }
 _NATIVE_ASSEMBLY_COMPILER_ARTIFACT = "installer-module:hermes_installer.authority.native_assembler"
+_NATIVE_ASSEMBLY_COMPILER_SOURCE = "installer-reviewed-source-native-assembler-v180"
+_REVIEWED_RELEASE_MODULE_SOURCE_IDS = {
+    "installer-module:hermes_installer.components.native_plugins": "installer-native-plugins-source-v137",
+    "installer-module:hermes_installer.components.public_registries": "installer-public-registries-source-v137",
+    "installer-module:hermes_installer.authority.bootstrap_runtime_factory":
+        "installer-reviewed-source-bootstrap-runtime-factory-v180",
+    "installer-module:hermes_installer.authority.local_resource_effects":
+        "installer-reviewed-source-local-resource-effects-v180",
+    "installer-module:hermes_installer.authority.native_assembler":
+        "installer-reviewed-source-native-assembler-v180",
+    "installer-module:hermes_installer.authority.native_output_receipts":
+        "installer-reviewed-source-native-output-receipts-v180",
+    "installer-module:hermes_installer.authority.native_policy_preparation":
+        "installer-reviewed-source-native-policy-preparation-v180",
+    "installer-module:hermes_installer.authority.native_registration_projection":
+        "installer-reviewed-source-native-registration-projection-v180",
+    "installer-module:hermes_installer.authority.native_source_definitions":
+        "installer-native-source-definitions-module-v137",
+    "installer-module:hermes_installer.authority.native_definition_composition":
+        "installer-reviewed-source-native-definition-composition-v180",
+    "installer-module:hermes_installer.authority.application_runtime_archive":
+        "installer-reviewed-source-application-runtime-archive-v180",
+    "installer-module:hermes_installer.authority.application_runtime_relocation":
+        "installer-reviewed-source-application-runtime-relocation-v180",
+    "installer-module:hermes_installer.authority.remote_observations":
+        "installer-reviewed-source-remote-observations-v180",
+}
+
+
+def _plan_allows_release_member(plan: Any, row: Any) -> bool:
+    """Join installed module identity to its one reviewed raw catalog identity."""
+    source_id = _REVIEWED_RELEASE_MODULE_SOURCE_IDS.get(row.artifact_id)
+    return source_id is not None and source_id in plan.allowed_artifact_ids
+
+
 _NATIVE_ASSEMBLY_SUPPORT_MODULES = (
     "installer-module:hermes_installer.authority.native_assembler",
-    "installer-module:hermes_installer.authority.native_materialization",
     "installer-module:hermes_installer.authority.native_registration_projection",
-    "installer-module:hermes_installer.authority.native_output_receipts",
+    "installer-module:hermes_installer.components.native_plugins",
+    "installer-module:hermes_installer.components.public_registries",
     "installer-module:hermes_installer.authority.native_definition_composition",
     "installer-module:hermes_installer.authority.native_policy_preparation",
     "installer-module:hermes_installer.authority.native_source_definitions",
     "installer-module:hermes_installer.authority.local_resource_effects",
+)
+_APPLICATION_BUILD_DRIVER = (
+    "installer-application-environment-builder-v1",
+    "lib/python/hermes_installer/authority/application_environment_builder.py",
+    "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",
+    45_807,
+    "application-build-driver",
 )
 _CAPABILITY_MAP_TEMPLATE_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
 _CAPABILITY_MAP_TEMPLATE_PATH = "templates/reviewed-native-capability-map-v1.json"
@@ -778,6 +820,12 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("application build service is not owned by this setup session")
         return self._session._resolve_prepared_application_build_service(build_profile_id)
+
+    def resolve_installed_application_builder_module(self) -> RootInstalledReleaseMemberReceipt:
+        """Resolve only the held execution-only application build driver member."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application build driver is not owned by this setup session")
+        return self._session._resolve_installed_application_builder_module()
 
     def resolve_application_runtime_probe_artifact(self, application_id: str) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -1446,6 +1494,9 @@ class RootNativeAssemblyDefinitions:
     result_schema_receipts: tuple["RootNativeRegistrationSchemaReceipt", ...]
     release_module_receipts: tuple[RootReleaseModuleReceipt, ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    # Local ResourceOverlayStore calls are published on their own protected
+    # lane. They are not PluginActionSchema actions or adapter action IDs.
+    owner_overlay_operation_records: tuple[Mapping[str, Any], ...]
     _registry_seal: object = field(repr=False, compare=False)
 
 
@@ -4729,8 +4780,8 @@ class RootBootstrapSession:
         support: list[RootReleaseModuleReceipt] = []
         for artifact_id in _NATIVE_ASSEMBLY_SUPPORT_MODULES:
             rows = [row for row in release.files if row.artifact_id == artifact_id]
-            if (len(rows) != 1 or "module" not in rows[0].roles
-                    or artifact_id not in plan.allowed_artifact_ids):
+            if (len(rows) != 1 or rows[0].roles != ("module",)
+                    or not _plan_allows_release_member(plan, rows[0])):
                 raise BootstrapEnrollmentPending("native package identity lacks its reviewed compiler module closure")
             row = rows[0]
             origins = [origin for origin in actor.module_origins
@@ -7055,14 +7106,14 @@ class RootBootstrapSession:
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
         compiler_rows = [row for row in release.files
                          if row.artifact_id == _NATIVE_ASSEMBLY_COMPILER_ARTIFACT]
-        if (len(compiler_rows) != 1 or "module" not in compiler_rows[0].roles
-                or compiler_rows[0].artifact_id not in plan.allowed_artifact_ids):
+        if (len(compiler_rows) != 1 or compiler_rows[0].roles != ("module",)
+                or _NATIVE_ASSEMBLY_COMPILER_SOURCE not in plan.allowed_artifact_ids):
             raise BootstrapEnrollmentPending("selected release lacks the native compiler module role")
         support_receipts = []
         for module_id in _NATIVE_ASSEMBLY_SUPPORT_MODULES:
             rows = [row for row in release.files if row.artifact_id == module_id]
-            if (len(rows) != 1 or "module" not in rows[0].roles
-                    or module_id not in plan.allowed_artifact_ids):
+            if (len(rows) != 1 or rows[0].roles != ("module",)
+                    or not _plan_allows_release_member(plan, rows[0])):
                 raise BootstrapEnrollmentPending("native assembler support module is outside the installed plan")
             row = rows[0]
             origins = [origin for origin in actor.module_origins
@@ -7287,7 +7338,11 @@ class RootBootstrapSession:
             freeze(records.process_role_records), overlay, release.release_commit, tuple(closure),
             records.native_schema_bytes, records.effect_policy_receipt_handles,
             freeze(records.action_records), freeze(records.workflow_records),
-            composition.result_schema_receipts, sources, (), self._factory._native_assembly_seal)
+            composition.result_schema_receipts, sources, (),
+            tuple(freeze(row) for row in sorted(
+                composition.operation_bundle.operation_records,
+                key=lambda row: row["registration_id"])),
+            self._factory._native_assembly_seal)
         # Strict projection resolves only this retained, sealed current source graph.
         self._native_assembly_definitions[selection.selection_handle] = definitions
         self._native_assembly_member_owners[selection.selection_handle] = owners
@@ -7303,7 +7358,8 @@ class RootBootstrapSession:
         row_fields = ("adapter_records", "dependency_records", "source_issuer_records",
                       "native_schema_records", "action_registration_records", "registration_records",
                       "candidate_records", "process_role_records", "effect_selection_receipt_handles",
-                      "action_records", "workflow_records", "native_mcp_tool_bindings")
+                      "action_records", "workflow_records", "native_mcp_tool_bindings",
+                      "owner_overlay_operation_records")
         body = {name: _plain_json(getattr(definitions, name)) for name in row_fields}
         body.update({
             "source_context": _plain_json(self._native_assembly_definition_contexts[definitions.selection_handle]),
@@ -7327,6 +7383,8 @@ class RootBootstrapSession:
     def _resolve_native_assembly_definitions(self, selection_handle: str) -> RootNativeAssemblyDefinitions:
         selection = self._resolve_current_native_bootstrap_assembly(selection_handle)
         records = self.resolve_current_prepared_native_policy_records(selection.native_policy_preparation_handle)
+        composition = self._native_policy_preparation_registry._selected_source_compositions.get(
+            records.records_handle)
         definitions = self._native_assembly_definitions.get(selection_handle)
         if (type(definitions) is not RootNativeAssemblyDefinitions
                 or definitions._registry_seal is not self._factory._native_assembly_seal
@@ -7339,6 +7397,10 @@ class RootBootstrapSession:
                 or definitions.native_schema_records != records.native_schema_records
                 or definitions.native_schema_bytes != records.native_schema_bytes
                 or definitions.effect_selection_receipt_handles != records.effect_policy_receipt_handles
+                or tuple(_plain_json(row) for row in definitions.owner_overlay_operation_records)
+                   != tuple(_plain_json(row) for row in sorted(
+                       composition.operation_bundle.operation_records,
+                       key=lambda row: row["registration_id"]))
                 or definitions.definitions_sha256 != selection.definitions_sha256
                 or self._native_definition_digest(definitions) != definitions.definitions_sha256):
             raise BootstrapEnrollmentPending("native retained definitions changed or belong to another selection")
@@ -7766,7 +7828,7 @@ class RootBootstrapSession:
             rows = [row for row in release.files
                     if row.relative_path == path and "module" in row.roles]
             if (len(rows) != 1 or rows[0].sha256 != captured_row.registration_source_sha256
-                    or rows[0].artifact_id not in plan.allowed_artifact_ids):
+                    or not _plan_allows_release_member(plan, rows[0])):
                 raise BootstrapEnrollmentPending("actual registration source module is not pinned by selected release")
             by_path[path] = [(rows[0].artifact_id, rows[0].sha256, rows[0].size_bytes)]
         output: list[RootReleaseModuleReceipt] = []
@@ -7818,7 +7880,7 @@ class RootBootstrapSession:
         for relative_path, digest in pins:
             rows = [row for row in release.files if row.relative_path == relative_path
                     and row.sha256 == digest and "module" in row.roles
-                    and row.artifact_id in plan.allowed_artifact_ids]
+                    and _plan_allows_release_member(plan, row)]
             if len(rows) != 1:
                 raise BootstrapEnrollmentPending("native target source module is not uniquely pinned in the installed release")
             row = rows[0]
@@ -7895,7 +7957,11 @@ class RootBootstrapSession:
         for relative_path, digest, size_bytes in pins:
             rows = [row for row in release.files if row.relative_path == relative_path
                     and row.sha256 == digest and row.size_bytes == size_bytes
-                    and "module" in row.roles and row.artifact_id in plan.allowed_artifact_ids]
+                    and row.roles == ("module",)
+                    # These five legacy action-schema members are selected by
+                    # their exact release-row IDs; the v180 raw-source map
+                    # covers only the newly source-derived module closure.
+                    and row.artifact_id in plan.allowed_artifact_ids]
             if len(rows) != 1:
                 raise BootstrapEnrollmentPending(
                     "native action schema module is not uniquely pinned in the selected release")
@@ -7996,19 +8062,21 @@ class RootBootstrapSession:
                 or not prepared.provision_receipt_handle):
             raise BootstrapEnrollmentPending("worker role modules require current empty prepared custody")
         pins = (
-            ("src/hermes_installer/native_invocations.py",
-             "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226"),
-            ("src/hermes_installer/native_boundary.py",
-             "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb"),
+            ("installer-native-invocations-module-v137", "src/hermes_installer/native_invocations.py",
+             "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+            ("installer-native-boundary-module-v137", "src/hermes_installer/native_boundary.py",
+             "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
         )
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
         output: list[RootPreparedReleaseMemberReceipt] = []
-        for relative_path, digest in pins:
+        for artifact_id, relative_path, digest, size_bytes in pins:
             rows = [row for row in release.files
-                    if row.relative_path == relative_path and row.sha256 == digest
-                    and "module" in row.roles and row.artifact_id in plan.allowed_artifact_ids]
+                    if row.artifact_id == artifact_id and row.relative_path == relative_path
+                    and row.sha256 == digest and row.size_bytes == size_bytes
+                    and row.roles == ("source-module",) and row.mode == 0o444
+                    and row.artifact_id in plan.allowed_artifact_ids]
             if len(rows) != 1:
                 raise BootstrapEnrollmentPending(
                     "worker role module is not uniquely pinned in the selected installed release")
@@ -8039,13 +8107,17 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending(
                 "native source definition adapter requires current empty prepared custody")
         relative_path = "lib/python/hermes_installer/authority/native_source_definitions.py"
-        digest = "190c471b721ee03edb6fb731bd2b86ca335f00fb00adcc2fd20060424a417c9c"
+        artifact_id = "installer-module:hermes_installer.authority.native_source_definitions"
+        source_artifact_id = "installer-native-source-definitions-module-v137"
+        digest = "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c"
+        size_bytes = 23_672
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
-        rows = [row for row in release.files if row.relative_path == relative_path
-                and row.sha256 == digest and row.size_bytes == 10_311 and "module" in row.roles
-                and row.artifact_id in plan.allowed_artifact_ids]
+        rows = [row for row in release.files if row.artifact_id == artifact_id
+                and row.relative_path == relative_path and row.sha256 == digest
+                and row.size_bytes == size_bytes and row.roles == ("module",) and row.mode == 0o444
+                and source_artifact_id in plan.allowed_artifact_ids]
         if len(rows) != 1:
             raise BootstrapEnrollmentPending(
                 "native source definition adapter is not uniquely pinned in the installed release")
@@ -8067,6 +8139,48 @@ class RootBootstrapSession:
                 handle, self._handle.session_id, self._seal, self,
                 prepared.generation_id)
             self._prepared_release_member_receipts[handle] = prior
+        prior.read_current()
+        actor.verify_current(release)
+        return prior
+
+    def _resolve_installed_application_builder_module(self) -> RootInstalledReleaseMemberReceipt:
+        """Retain the finite build-driver member without asserting it was imported."""
+        self._check_live()
+        self._refresh_authorization()
+        self._verify_current_setup_controller()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle
+                or prepared.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending(
+                "application build driver requires current empty prepared custody")
+        artifact_id, relative_path, digest, size_bytes, role = _APPLICATION_BUILD_DRIVER
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        rows = [row for row in release.files if row.artifact_id == artifact_id
+                and row.relative_path == relative_path and row.sha256 == digest
+                and row.size_bytes == size_bytes and row.roles == (role,)
+                and row.mode == 0o444 and row.artifact_id in plan.allowed_artifact_ids]
+        if len(rows) != 1:
+            raise BootstrapEnrollmentPending(
+                "application build driver is outside the exact selected release plan")
+        module_name = "hermes_installer.authority.application_environment_builder"
+        module = sys.modules.get(module_name)
+        expected_origin = str(release.release_root / relative_path)
+        if (module is not None or any(origin[1] == expected_origin for origin in actor.module_origins)):
+            raise BootstrapEnrollmentPending(
+                "execution-only application build driver was imported into the root actor")
+        prior = next((item for item in self._installed_release_member_receipts.values()
+                      if item.artifact_id == artifact_id
+                      and item._session_id == self._handle.session_id
+                      and item.release_commit == release.release_commit), None)
+        if prior is None:
+            handle = secrets.token_urlsafe(36)
+            prior = RootInstalledReleaseMemberReceipt(
+                artifact_id, relative_path, digest, size_bytes, release.release_commit,
+                release.deployment_receipt_sha256, handle, self._handle.session_id, self._seal, self)
+            self._installed_release_member_receipts[handle] = prior
         prior.read_current()
         actor.verify_current(release)
         return prior
@@ -8801,10 +8915,18 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("installed release member receipt is not retained by this setup session")
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
-        artifact_id, relative_path, sha256, size_bytes, role = _XPRA_TRANSFORM_MODULE
+        expected = {
+            _XPRA_TRANSFORM_MODULE[0]: _XPRA_TRANSFORM_MODULE,
+            _APPLICATION_BUILD_DRIVER[0]: _APPLICATION_BUILD_DRIVER,
+        }.get(receipt.artifact_id)
+        if expected is None:
+            raise BootstrapEnrollmentPending("installed release member has no purpose-specific resolver")
+        artifact_id, relative_path, sha256, size_bytes, role = expected
         row = next((item for item in release.files if item.artifact_id == artifact_id), None)
-        if (row is None or role not in row.roles or row.relative_path != relative_path
+        expected_roles = (role,)
+        if (row is None or row.roles != expected_roles or row.relative_path != relative_path
                 or row.sha256 != sha256 or row.size_bytes != size_bytes
+                or (artifact_id == _APPLICATION_BUILD_DRIVER[0] and row.mode != 0o444)
                 or receipt.artifact_id != artifact_id or receipt.sha256 != sha256
                 or receipt.size_bytes != size_bytes or receipt.release_commit != release.release_commit
                 or receipt.deployment_receipt_sha256 != release.deployment_receipt_sha256):
@@ -8890,8 +9012,15 @@ class RootBootstrapSession:
         actor.verify_current(release)
         plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
         row = next((item for item in release.files if item.artifact_id == receipt.artifact_id), None)
+        worker_source_ids = {
+            "installer-native-invocations-module-v137",
+            "installer-native-boundary-module-v137",
+        }
+        source_module_ok = (row is not None and row.artifact_id in worker_source_ids
+                            and row.roles == ("source-module",) and row.mode == 0o444)
         if (row is None or row.artifact_id not in plan.allowed_artifact_ids
-                or "module" not in row.roles or row.relative_path != receipt.relative_path
+                or not (source_module_ok or row.roles == ("amendment",))
+                or row.relative_path != receipt.relative_path
                 or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
                 or release.release_commit != receipt.release_commit
                 or release.deployment_receipt_sha256 != receipt.deployment_receipt_sha256):

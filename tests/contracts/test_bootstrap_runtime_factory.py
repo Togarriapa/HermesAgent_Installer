@@ -199,7 +199,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             file.flush()
             digest = hashlib.sha256(raw).hexdigest()
             release = SimpleNamespace(
-                files=[SimpleNamespace(artifact_id="capture-profile", roles=("module",),
+                files=[SimpleNamespace(artifact_id="capture-profile", roles=("amendment",),
                                        relative_path="plans/capture.json", sha256=digest,
                                        size_bytes=len(raw))],
                 release_commit="commit", deployment_receipt_sha256="d" * 64,
@@ -223,7 +223,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             session._prepared_release_file_receipts[receipt.source_receipt_handle] = receipt
             self.assertEqual(receipt.read_current(), raw)
 
-            release.files[0].roles = ("amendment",)
+            release.files[0].roles = ("module",)
             with self.assertRaisesRegex(BootstrapEnrollmentPending, "differs from its fixed receipt"):
                 receipt.read_current()
 

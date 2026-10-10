@@ -222,6 +222,8 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                 x11.XChangeKeyboardMapping.argtypes = [ctypes.c_void_p, ctypes.c_int,
                     ctypes.c_int, ctypes.POINTER(ctypes.c_ulong), ctypes.c_int]
                 x11.XChangeKeyboardMapping.restype = ctypes.c_int
+                x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+                x11.XSync.restype = ctypes.c_int
                 f24_keysym = ctypes.c_ulong(0xFFD5)
                 x11.XChangeKeyboardMapping(display, 255, 1, ctypes.byref(f24_keysym), 1)
                 x11.XSync(display, 0)

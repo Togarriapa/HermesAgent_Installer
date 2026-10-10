@@ -390,6 +390,28 @@ class AuthorityClient:
             raise AuthorityDenied("native.turn.finish", "root returned a stale or mismatched turn receipt")
         return presentation
 
+    def bind_selected_native_package(self) -> Mapping[str, Any]:
+        """Resolve only the package actually mounted in this live peer."""
+        result = self._rpc("native.package.bind", {"schema": 1})
+        if (not isinstance(result, Mapping) or set(result) != {
+                "schema", "opaque_binding_handle", "package_id", "profile_id", "generation",
+                "resolver_digest", "compiled_closure_sha256", "entrypoint_sha256", "expires_monotonic"}
+                or type(result.get("schema")) is not int or result["schema"] != 1):
+            raise AuthorityDenied("native.package", "root returned an invalid selected package binding")
+        return result
+
+    def read_native_resolver(self, binding_handle: str) -> Mapping[str, Any]:
+        """Read the current digest-covered resolver for this peer's binding."""
+        if (not isinstance(binding_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", binding_handle)):
+            raise AuthorityDenied("native.package", "native package binding handle is malformed")
+        result = self._rpc("native.package.resolver.read", {
+            "schema": 1, "binding_handle": binding_handle,
+        })
+        if not isinstance(result, Mapping):
+            raise AuthorityDenied("native.package", "root returned an invalid native resolver")
+        return result
+
     def begin_native_invocation(self, producer_context_handle: str,
                                 observed_call_handle: str,
                                 canonical_arguments: bytes) -> NativeInvocationBinding:
