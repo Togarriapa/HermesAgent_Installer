@@ -661,6 +661,13 @@ class RootXpraBuildSelectionProducer:
 
     def revalidate(self, selection: RootSelectedXpraBuildSelection) -> None:
         """Reopen every selected proof without creating a new job root or selection."""
+        if (type(selection) is not RootSelectedXpraBuildSelection
+                or selection._seal is not _SELECTION_SEAL
+                or selection._session is not self.session
+                or selection._producer_id != self.producer_id
+                or self._selections.get(selection.selection_handle) is not selection
+                or self.monotonic() >= selection.expires_monotonic):
+            raise XpraBuildSelectionDenied("Xpra selection is forged, stale, or expired")
         session = self.session
         session._check_live()
         session._refresh_authorization()
@@ -706,6 +713,20 @@ class RootXpraBuildSelectionProducer:
         subject = resolve_subject("xpra-root-xauthority-transform-v1")
         if subject != selection.setup_build_subject:
             raise XpraBuildSelectionDenied("prepared build subject has changed")
+        current_profile = self._fixed_build_profile(
+            subject, pm, prepared, selection.output_root_id, selection.output_root)
+        if self._recipe_digest(current_profile, selection.source, pm,
+                               selection.module_receipt) != selection.recipe_sha256:
+            raise XpraBuildSelectionDenied("fixed Xpra recipe changed before build admission")
+        try:
+            output_info = selection.output_root.lstat()
+        except OSError:
+            raise XpraBuildSelectionDenied("selected private Xpra output root is unavailable") from None
+        if (not stat.S_ISDIR(output_info.st_mode) or stat.S_ISLNK(output_info.st_mode)
+                or output_info.st_uid != subject.service_uid
+                or output_info.st_gid != subject.service_gid
+                or stat.S_IMODE(output_info.st_mode) != 0o700):
+            raise XpraBuildSelectionDenied("selected private Xpra output root custody changed")
         controller = self._current_controller(session)
         if (getattr(controller, "controller_binding_handle", None)
                 != selection.controller_binding_handle
