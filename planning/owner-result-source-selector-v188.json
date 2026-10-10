@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-owner-result-source-selector-v188.md",
+  "additive_observer_row_fields": [
+    "result_observer_enrollment_id",
+    "result_source_issuer_id",
+    "result_channel_id",
+    "result_handler_artifact_id",
+    "result_handler_sha256",
+    "result_handler_source_receipt_handle",
+    "result_handler_module_name",
+    "result_handler_closure_member_path"
+  ],
+  "result_source_kind": "tool-result",
+  "result_capture_schema_id": "native-owner-overlay-result-v1",
+  "result_handler_artifact_id": "installer-module:hermes_installer.authority.local_resource_effects",
+  "maximum_paired_rows": 4,
+  "tasks": [
+    "HI-T188.1",
+    "VD-T188.2",
+    "HI-T188.3",
+    "VD-T188.4"
+  ],
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "source_pins": "pending coherent committed cohort",
+  "native_worker_execution_mode": "native-hermes-cli-module-v1",
+  "native_worker_argv_suffix": [
+    "-m",
+    "hermes_cli.main",
+    "chat",
+    "--query-file",
+    "-",
+    "--oneshot",
+    "--quiet"
+  ]
+}
