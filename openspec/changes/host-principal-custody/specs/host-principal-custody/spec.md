@@ -682,3 +682,10 @@ The installer SHALL bind selected health fixture input to the actual started nat
 #### Scenario: Captured health source has no completed stdin delivery
 - **WHEN** native input take lacks exact successful write and EOF receipts for the current health peer
 - **THEN** delivery denies and no health success is recorded
+
+### Requirement: Qualification envelope v164
+The installer SHALL verify the exact fixture-only canonical authority/catalog envelope and current owned namespace before parsing enrollment.
+
+#### Scenario: Fixture catalog is swapped
+- **WHEN** catalog bytes disagree with the signed envelope or current fixture pointer
+- **THEN** the dedicated loader denies before creating any authority service

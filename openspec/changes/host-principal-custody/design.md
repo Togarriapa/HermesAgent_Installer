@@ -251,3 +251,5 @@ Application build admission v161: `plans/amendments/2026-10-10-application-build
 Qualification root adapter v162: `plans/amendments/2026-10-10-qualification-root-adapter-v162.md`; dedicated source-bound held root/publication/session/key namespace, actual core authority validation and untouched production constants.
 
 Health input source delivery v163: `plans/amendments/2026-10-10-health-input-source-delivery-v163.md`; root-resolved PRIVATE fixture context, actual observer/source membership and distinct write/EOF/one-use take; no task-origin substitution.
+
+Qualification envelope v164: `plans/amendments/2026-10-10-qualification-envelope-v164.md`; exact scoped envelope/generation/pointer/session bytes verified through held run-root FD and unchanged strict core validators.

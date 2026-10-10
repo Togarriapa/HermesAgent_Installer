@@ -206,3 +206,5 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 
 - [ ] HI-T163.1 Health/source/authority/custody: genuine selected source/context and health capture/write/EOF/take current-peer joins and negative tests.
 - [ ] HI-T163.2 Broker/release/health: exact source asset enrollment, owned seed cleanup and semantic result gate with required actual provider.
+
+- [ ] HI-T164.1 Fixture publisher/host enrollment/authority: exact canonical envelope and held namespace loader, scoped key/signature and wrong-source/currentness negatives.
