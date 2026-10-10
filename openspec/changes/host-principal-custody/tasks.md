@@ -291,3 +291,7 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
 
 - [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.
+
+- [ ] SK-T161.1 application builder/factory/custody: Implement sealed finite app admission/private FixedBuildProfile/output/service held inputs and one-use setup grant adapter; actual managed runner union/currentness/cleanup/denial tests.
+
+- [ ] SK-T161.2 application builder/source broker: Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts.
