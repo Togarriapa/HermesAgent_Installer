@@ -834,5 +834,24 @@
     "revoke": "revoke_selected_private_input_consent(selection_handle,current_authorized_owner_request)->RootPrivateInputConsentRevocationReceipt {schema,selection_handle,consent_id,revocation_epoch,revoked_monotonic,signature}. Actual current owner request bound root actor/principal/private profile, atomically increments durable epoch/state. Recheck before source issuance and every dispatch/retry/background child. Old receipt ceilings are necessary but not sufficient: current consent epoch checked separately. Previously emitted/committed bytes are not claimed undone.",
     "evidence": "Explicit selected private route choice then authentic initial input and private provider request positive; absent/public/wrong owner/profile/generation/unknown route/stale policy/revoked epoch/parent empty ceiling/replayed lookup/forged choice/worker authorized flag negatives. No public promotion or account/budget readiness inferred. All acceptance pending.",
     "dispatch_revalidation": "revalidate_retained_input_consent(consent_receipt_handle,*,retained_input_selection_handle,expected_consent_id,expected_revocation_epoch)->same retained RootPrivateInputConsent. Root registry non-consumingly resolves actual original input/selection and consent record after ingress consumed, rechecks current owner/profile/namespace/service/policy/routes/revocation and original expiry. Expected fields match independently retained root request closure, not caller dict. No re-consume ingress, extend stale input/source lease, remint permission or strip ancestry. Authority every dispatch/retry/background child calls it; current empty/revoked/expired denies."
+  },
+  "native_local_result_bounds_v110": {
+    "artifact_id": "installer-native-local-registration-results-v1",
+    "path": "plans/amendments/2026-10-10-native-local-result-bounds-v110/native-local-registration-results-v1.json",
+    "sha256": "2bc50e29087e8725159c7cb71000cc06f37e8cda08a67780d3dd00227173863c",
+    "size_bytes": 4889,
+    "source_pins": {
+      "src/hermes_installer/components/native_plugins.py": "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7",
+      "src/hermes_installer/components/public_registries.py": "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f"
+    },
+    "semantics": "These are finite transport output schemas for actual eight local registrations, not new effect permissions/source receipts/operational evidence. Public JSON remains untrusted-public-source authority none, root source ancestry retained; overlay reads require actual selected owner/profile CAS receipt and updates require existing owner consent/grant. Existing v99 actual source/schema/handler/observer/effect join before executable candidate, no audit null promotion.",
+    "unavailable_results": [
+      "financial-execution-gateway.execute",
+      "agent-live-wallet.read",
+      "agent-live-wallet.execute",
+      "agent-sandbox-wallet.read",
+      "agent-sandbox-wallet.execute",
+      "web-retrieve.source_receipt"
+    ]
   }
 }

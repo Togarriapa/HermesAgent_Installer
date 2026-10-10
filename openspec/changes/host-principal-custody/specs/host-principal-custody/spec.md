@@ -457,3 +457,24 @@ The system SHALL execute only the v106 selected empty-parameter Xpra build recip
 #### Scenario: Archive hash presented as executable identity
 - **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
 - **THEN** build admission or publication is denied.
+
+### Requirement: Exact regular Xpra build topology
+The system SHALL use the v109 source-verified transform module and exact original regular staging directory topology, mount the PM builder executable as a file and publish the archive as non-executable data.
+
+#### Scenario: Missing source topology
+- **WHEN** staging omits a required original manifest directory or changes the selected source links
+- **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Source bounded local registration results
+The system SHALL use exact v110 local handler result envelopes and recursive public JSON limits while preserving untrusted source classification and actual owner CAS controls. It SHALL NOT replace protected passthrough backend result authority with generic object schemas.
+
+#### Scenario: Protected backend schema missing
+- **WHEN** finance, wallet or source-receipt output lacks its actual bounded typed backend result schema
+- **THEN** that executable candidate remains unavailable without omitting the original family acceptance obligation.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.
