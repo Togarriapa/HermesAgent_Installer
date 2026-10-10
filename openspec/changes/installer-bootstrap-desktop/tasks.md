@@ -145,3 +145,17 @@ First-bootstrap pinned interpreter v76: `plans/amendments/2026-10-10-first-boots
 Same-process bootstrap handoff v78: `plans/amendments/2026-10-10-bootstrap-same-process-sealed-runtime-handoff-v78.md`; existing BD/HI tasks open, actual trusted re-exec proof required.
 
 Existing typed candidate handoff v79: `plans/amendments/2026-10-10-bootstrap-existing-typed-candidate-handoff-v79.md`; existing BD/HI tasks open.
+
+Closed root plan template selection v81: `plans/amendments/2026-10-10-closed-root-plan-template-selection-v81.md`; existing BD/HI tasks open.
+
+Two-stage source driver interpretation v83: `plans/amendments/2026-10-10-two-stage-source-driver-interpretation-v83.md`; existing BD/HI tasks open.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
