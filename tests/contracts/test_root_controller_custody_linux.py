@@ -15,6 +15,7 @@ from hermes_installer.authority.root_controller_custody import (
     RootControllerRoleCatalog,
     RootControllerRoleModuleRegistry,
     RootControllerRoleResolver,
+    RootSelectedIngressBinding,
     SystemdMainPidInspector,
 )
 
@@ -68,6 +69,26 @@ class RootControllerSystemdCustodyTests(unittest.TestCase):
             source_observer=observer, service_generation_digest=generation,
             authority_epoch="linux-fixture-epoch", expires_monotonic=time.monotonic() + 15,
         )
+        selected_observer = SimpleNamespace(
+            observer_enrollment_id="linux-fixture-observer", source_kind="schedule-event",
+            channel_id="linux-fixture-issuer", profile_id="linux-fixture-profile",
+            principal_id="linux-fixture-principal", capture_schema_id="timer-input-v1")
+        selected_issuer = SimpleNamespace(
+            issuer_channel_id="linux-fixture-issuer",
+            observer_enrollment_id="linux-fixture-observer",
+            producer_profile_id="linux-fixture-profile", capture_schema_id="timer-input-v1")
+        selected_backend = SimpleNamespace(
+            backend_id="linux-fixture-backend", source_issuer_channel_id="linux-fixture-issuer",
+            observer_enrollment_id="linux-fixture-observer", operation="resource.cron.run",
+            profile_id="linux-fixture-profile", principal_id="linux-fixture-principal",
+            generation="d" * 64)
+        ingress_binding = RootSelectedIngressBinding(
+            role=catalog.get("linux-fixture-role"), source_issuer=selected_issuer,
+            source_observer=selected_observer, backend=selected_backend,
+            resource_generation="d" * 64, service_generation_digest=generation,
+            authority_epoch="linux-fixture-epoch",
+            selected_ingress_binding_id="linux-fixture-timer-binding",
+            expires_monotonic=time.monotonic() + 15)
         inspector = SystemdMainPidInspector()
         resolver = RootControllerRoleResolver(
             catalog=catalog,
@@ -77,7 +98,20 @@ class RootControllerSystemdCustodyTests(unittest.TestCase):
                 artifact_id, executable_path, executable_sha),
             loaded_role_registry=module_registry,
             current_generation_digest=lambda: generation,
+            selected_ingress_binding_resolver=lambda _role, _issuer, _backend: ingress_binding,
         )
+        ingress_proof = resolver.resolve_selected_ingress_controller(
+            "linux-fixture-role", "linux-fixture-issuer", "linux-fixture-backend")
+        try:
+            self.assertEqual(ingress_proof.pid, os.getpid())
+            self.assertEqual(ingress_proof.uid, 0)
+            self.assertEqual(ingress_proof.live_peer_identity.cgroup, f"/system.slice/{unit}")
+            self.assertEqual(ingress_proof.role_artifact_sha256, role_sha)
+            self.assertTrue(inspector.is_pidfd_live(ingress_proof.pidfd, os.getpid()))
+            self.assertTrue(ingress_proof.revalidate())
+        finally:
+            resolver.release_ingress_proof(ingress_proof.proof_handle)
+            ingress_proof.close()
         custody = resolver.resolve_for_event("linux-fixture-event", "linux-fixture-node")
         try:
             self.assertEqual(custody.pid, os.getpid())
