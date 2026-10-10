@@ -686,7 +686,7 @@ def _validate_projection(row: Mapping[str, Any]) -> None:
                 or not _HANDLE.fullmatch(member["receipt_handle"])):
             raise TypeError("owner-overlay adoption source member row is malformed")
         if (type(member["size_bytes"]) is not int or member["size_bytes"] <= 0
-                or member["mode"] not in {0o400, 0o600, 0o644, 0o755}
+                or member["mode"] not in {0o400, 0o444, 0o600, 0o644, 0o755}
                 or not isinstance(member["relative_path"], str) or not member["relative_path"]
                 or not isinstance(member["role"], str) or not member["role"]):
             raise TypeError("owner-overlay adoption source member metadata is malformed")
