@@ -305,3 +305,11 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 
 - [ ] HI-T165.1 Factory/native/compiler/publisher: genuine typed runnable role closure and single atomic activation with truthful durable recovery.
 - [ ] HI-T165.2 Enrollment/authority/health: fresh current committed source/CAS observation without expired setup renewal.
+
+- [ ] HI-T166.1 Fixture key/publisher/authority: restricted prepublication envelope signer and same-key service adoption, source/currentness/domain negatives.
+
+- [ ] HI-T167.1 Fixture session/publisher/enrollment: historical session file never restores live authority; fresh current lease required.
+
+- [ ] SK-T168.1 Application builder/materializer/selection/execution: regular held PM interpreter entrypoint, finite source shebang normalization and final manifest/probe joins.
+
+- [ ] HI-T169.1 Factory/native/compiler/publisher: actual source-authorized outputs, precompile reservation and same-reservation compiled claim transition, wrong-source/currentness negatives.

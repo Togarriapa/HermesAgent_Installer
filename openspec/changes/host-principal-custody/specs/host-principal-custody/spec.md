@@ -696,3 +696,31 @@ The installer SHALL activate from the same genuine PM and native CAS receipt clo
 #### Scenario: Generated native receipt is presented as static source receipt
 - **WHEN** activation receives a generated output through unrelated static artifact lookup
 - **THEN** it denies until the exact typed producer/CAS/source role projection is resolved
+
+### Requirement: Qualification key signer v166
+The installer SHALL sign only the exact fixture envelope with the genuine held fixture key before constructing its actual authority service.
+
+#### Scenario: Caller requests another signature domain
+- **WHEN** a fixture signer is used for unrelated data or production authority
+- **THEN** the restricted facade denies
+
+### Requirement: Qualification session storage v167
+The installer SHALL retain live fixture session authority only in its current sealed registry and SHALL treat any session file as historical metadata.
+
+#### Scenario: Historical session file is reopened
+- **WHEN** no current genuine fixture lease and session registry membership exist
+- **THEN** the historical file cannot authorize an effect
+
+### Requirement: Application Python entrypoint relocation v168
+The installer SHALL bind the regular environment interpreter to actual held PM executable bytes and normalize only source-reviewed console script shebangs to its selected final generation.
+
+#### Scenario: Script requests ambient interpreter
+- **WHEN** installed script depends on /usr/bin/env or an unrelated interpreter path
+- **THEN** materialization denies until exact selected interpreter normalization is verified
+
+### Requirement: Native precompile reservation v169
+The installer SHALL authorize and reserve actual generated outputs from genuine current setup source selection before compiling their strict active rows.
+
+#### Scenario: Prepared native package catalog is empty
+- **WHEN** genuine source-backed assembly has produced five valid selected outputs
+- **THEN** authorization resolves the sealed setup selection and never requires future active package policy

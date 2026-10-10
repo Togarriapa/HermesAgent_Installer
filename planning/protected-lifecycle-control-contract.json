@@ -2161,5 +2161,48 @@
       }
     ],
     "acceptance": "No installation/runtime/health acceptance inferred. All AC remain open; baseline unchanged."
+  },
+  "qualification_key_signer_v166": {
+    "schema": 1,
+    "requirements": [
+      "HI-T162",
+      "HI-T164"
+    ],
+    "why": "Fixture envelope must be signed before enrollment/service exists; constructing a fake minimal service would be circular. The genuinely observed held fixture key can expose a restricted source-owned envelope signer before actual service adoption.",
+    "owner_module": "hermes_installer.authority.installed_qualification",
+    "class": "RootQualificationEnrollmentSigner",
+    "producer": "RootQualificationAuthorityKeyRegistry.resolve_enrollment_signer(key_observation)->RootQualificationEnrollmentSigner",
+    "method": "sign_qualification_enrollment(publication_fields,authority_sha256,catalog_sha256,generation_sha256)->str",
+    "verify": "verify_qualification_enrollment(envelope)->bool",
+    "semantics": "Registry retains genuine held key observation/current source-root/controller lease. Signer checks actual registry membership, exact v164 closed publication fields/current namespace/key/source/controller and hashes before signing exactly v164 canonical envelope preimage at hermes-installer.qualification-enrollment.v1. No arbitrary bytes/domain, caller key, fake minimal AuthorityService, production key copy or other-purpose signing. Returned string uses the existing authority signature codec; envelope.signature holds it. Verify performs same current key/source/namespace checks, not caller bool proof. Publisher retains signer capability internally and must reopen/recheck authority/catalog/generation bytes before signing; hash syntax alone never establishes provenance.",
+    "adoption": "After verified publication, AuthorityService.from_root_qualification adopts the SAME actual key observation/custody capability via restricted fixture runtime registry. No second key or new trust root. Source-owned signer facade reuses existing authority signature primitive/domain handling without requiring an already instantiated service. Supersedes v162 wording requiring actual service before envelope publication.",
+    "tasks": [
+      {
+        "id": "HI-T166.1",
+        "owner": "fixture key/publisher/host authority/enrollment",
+        "work": "Implement restricted prepublication envelope signer and postpublication same-key AuthorityService adoption; reject unrelated fields/domains/namespace, expired key/source lease and arbitrary hash claims."
+      }
+    ],
+    "acceptance": "No operational acceptance implied; all AC open; baseline unchanged."
+  },
+  "qualification_session_storage_v167": {
+    "schema": 1,
+    "requirements": [
+      "HI-T162",
+      "HI-T164",
+      "HI-T166"
+    ],
+    "why": "v164 requested signed fixture session file while v166 correctly restricts signer to enrollment envelope. Live sessions are registry-held current leases, not durable authority restored from file.",
+    "session": "RootQualificationSessionHandle remains in-memory sealed registry membership only, bounded original fixture/controller/environment deadline. RootQualificationSessionStore.begin_selected_fixture_session(publication_receipt_handle) independently verifies actual current fixture publication/lease/installed actor/key/controller and issues a new short current handle within original deadline. No expired process seal/FD/lease restoration.",
+    "file": "fixture-session.json, when retained, is canonical exact v162 session.fields ONLY, no signature. Root-owned0600 nofollow single-link bounded journal metadata; historical diagnostic data never source of live session authority. Supersedes v164 session file plus signature wording. No new signing domain/facade or arbitrary signature API.",
+    "restart": "A read historical session file cannot authorize effect or reconstruct a sealed session. Fresh actor/current held fixture lease/publication/key/source/controller registry must independently establish current facts. Missing actual lease/source evidence leaves qualification incomplete; cleanup may identify journal-owned members without extending authority.",
+    "tasks": [
+      {
+        "id": "HI-T167.1",
+        "owner": "fixture session/publisher/host enrollment",
+        "work": "Keep live sessions sealed/current only; canonical historical file has no signature or authority, and restart/expired-handle negatives deny without fresh actual lease."
+      }
+    ],
+    "acceptance": "All AC open; baseline unchanged."
   }
 }
