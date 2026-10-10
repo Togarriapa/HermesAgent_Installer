@@ -25,6 +25,16 @@ _WEB_REGISTRATION_SOURCE_PATH = "hermes_installer/components/plugin_local_voice_
 _WEB_REGISTRATION_SOURCE_SHA256 = "f46733a6e59788c94360187bb4d24369c5f3298984b6a351b190b1dca4feea84"
 _WEB_TARGET_CONTRACT_PATH = "src/hermes_installer/components/plugin_public_https.py"
 _WEB_TARGET_CONTRACT_SHA256 = "63e4a128f0a48f0bfcbd3c0f6c7313d94f4a3e79f83c2655dde32a339b91ff0d"
+_OWNER_OVERLAY_VIEW_SCHEMA = {
+    "schema": 1,
+    "parent": "selected-private-service-data-root",
+    "directory_mode": 0o700,
+    "root_owned": True,
+    "resource_profile_receipt": True,
+}
+_OWNER_OVERLAY_VIEW_SCHEMA_SHA256 = hashlib.sha256(json.dumps(
+    _OWNER_OVERLAY_VIEW_SCHEMA, sort_keys=True, separators=(",", ":"),
+).encode("ascii")).hexdigest()
 
 
 class NativeComponentTargetDenied(PermissionError):
@@ -224,6 +234,8 @@ class RootNativeComponentTargetRegistry:
         self._configured_candidates: dict[str, tuple[RootNativePublicWebTargetCandidate, Any, RootPreparedNativeTargetSelection]] = {}
         self._candidate_by_policy: dict[str, tuple[str, ...]] = {}
         self._candidate_evidence: dict[str, tuple[Any, Any]] = {}
+        self._owner_overlay_targets: dict[str, tuple[Any, RootPreparedNativeTargetSelection, Any]] = {}
+        self._owner_overlay_target_by_policy: dict[str, str] = {}
 
     @classmethod
     def from_root_setup(cls, selected_installation_binding: Any,
@@ -414,6 +426,9 @@ class RootNativeComponentTargetRegistry:
             raise NativeComponentTargetDenied("component is not in the root TTY policy selection")
         contract = self.source_contract(component_id)
         source_observation = self.observe_source_contract(component_id)
+        if component_id == "resource-overlay-store":
+            return self._observe_selected_owner_overlay_target(
+                selection, contract, source_observation)
         # The policy selection is intent, while target configuration, ownership,
         # account eligibility and permission require independent root receipts.
         # Current setup has no public issuer for native_plugins.py target-source
@@ -428,6 +443,148 @@ class RootNativeComponentTargetRegistry:
         else:
             missing.extend(("selected-profile-overlay-view", "overlay-root-owner-receipt"))
         raise NativeComponentTargetPending(component_id, tuple(dict.fromkeys(missing)))
+
+    def _observe_selected_owner_overlay_target(
+            self, selection: Any, contract: NativeComponentTargetSourceContract,
+            source_observation: RootNativeTargetSourceObservation,
+    ) -> RootPreparedNativeTargetSelection:
+        """Turn the actual selected root view into its separate local target.
+
+        The target is the root-owned profile view, not a user directory or a
+        guessed path.  The factory is the only view issuer; this registry
+        retains a typed target selection tied to the receipt and source bytes.
+        """
+        from .bootstrap_runtime_factory import RootSelectedInstallationBinding
+        from .local_resource_effects import (
+            RootPreparedOwnedProfileOverlayView, _VIEW_SEAL,
+        )
+
+        if type(self._binding) is not RootSelectedInstallationBinding:
+            raise NativeComponentTargetPending(
+                "resource-overlay-store", ("root-owned-overlay-view-issuer",),)
+        try:
+            selected_ids = tuple(getattr(selection, "selected_owner_overlay_registration_ids", ()))
+            expected_registrations = {
+                "resource-overlay-store:tool:resource_overlay_read",
+                "resource-overlay-store:tool:resource_overlay_write",
+                "resource-overlay-store:tool:resource_overlay_history",
+                "resource-overlay-store:tool:resource_overlay_delete",
+            }
+            if (not selected_ids or len(selected_ids) > 4 or len(set(selected_ids)) != len(selected_ids)
+                    or not set(selected_ids) <= expected_registrations
+                    or selection.resource_profile_selection_handle is None):
+                raise ValueError
+            factory_receipt = self._binding.prepare_selected_profile_overlay_view(
+                selection.selection_handle, selection.resource_profile_selection_handle)
+            if (type(factory_receipt) is not RootPreparedOwnedProfileOverlayView
+                    or factory_receipt._seal is not _VIEW_SEAL
+                    or factory_receipt.native_policy_selection_handle != selection.selection_handle
+                    or factory_receipt.resource_profile_receipt_handle
+                        != selection.resource_profile_selection_handle
+                    or factory_receipt.prepared_generation_id != selection.prepared_generation_id
+                    or factory_receipt.service_profile_id != selection.service_profile_id
+                    or factory_receipt.service_generation != selection.service_generation
+                    or factory_receipt.principal_selection_handle != selection.principal_selection_handle
+                    or factory_receipt.namespace_selection_handle != selection.namespace_selection_handle
+                    or factory_receipt.target_id == ""):
+                raise ValueError
+            current = self._binding.resolve_current_profile_overlay_view(
+                factory_receipt.profile_view_selection_handle, selection.selection_handle)
+            if current is not factory_receipt:
+                raise ValueError
+            expected_component_target = self._owner_overlay_target_by_policy.get(selection.selection_handle)
+            if expected_component_target is not None:
+                retained = self._owner_overlay_targets.get(expected_component_target)
+                if retained is None:
+                    raise ValueError
+                old_view, target, old_source = retained
+                if old_view is not factory_receipt or old_source != source_observation:
+                    raise ValueError
+                return self.resolve_current_target(target.selection_handle, selection.selection_handle)
+
+            current_identity = self._binding.resolve_current_setup_identity()
+            if (current_identity.principal_selection_handle != selection.principal_selection_handle
+                    or current_identity.namespace_selection_handle != selection.namespace_selection_handle
+                    or current_identity.principal.principal_id != factory_receipt.principal_id
+                    or current_identity.namespace.namespace_id != factory_receipt.namespace_id):
+                raise ValueError
+            now = time.monotonic()
+            target = RootPreparedNativeTargetSelection(
+                selection_handle=factory_receipt.target_selection_handle,
+                native_policy_selection_handle=selection.selection_handle,
+                component_id="resource-overlay-store", adapter_id=contract.adapter_id,
+                target_contract_artifact_id=source_observation.source_artifact_id,
+                target_contract_sha256=source_observation.contract_sha256,
+                target_contract_source_receipt_handle=source_observation.source_receipt_handle,
+                configuration_schema_id="root-owned-profile-overlay-view-v1",
+                configuration_schema_sha256=_OWNER_OVERLAY_VIEW_SCHEMA_SHA256,
+                configuration_observation_handle=factory_receipt.profile_view_selection_handle,
+                principal_selection_handle=factory_receipt.principal_selection_handle,
+                namespace_selection_handle=factory_receipt.namespace_selection_handle,
+                profile_id=factory_receipt.service_profile_id,
+                profile_generation=factory_receipt.service_generation,
+                target_id=factory_receipt.target_id, recipient=None,
+                credential_reference_ids=(), account_observation_handle=None,
+                owned_target_observation_handle=factory_receipt.view_selection_handle,
+                permission_observation_handle=factory_receipt.target_receipt_handle,
+                backend_generation=factory_receipt.service_generation,
+                configuration_sha256=_owner_overlay_configuration_digest(factory_receipt),
+                scope_payload=None, scope_payload_sha256=None,
+                issued_monotonic=now,
+                expires_monotonic=min(now + _TARGET_TTL_SECONDS,
+                                      selection.expires_monotonic,
+                                      factory_receipt.expires_monotonic),
+                revocation_epoch=selection.revocation_epoch,
+                _seal=_TARGET_SEAL,
+            )
+            self._targets[target.selection_handle] = target
+            self._owner_overlay_targets[factory_receipt.target_selection_handle] = (
+                factory_receipt, target, source_observation)
+            self._owner_overlay_target_by_policy[selection.selection_handle] = (
+                factory_receipt.target_selection_handle)
+            self._target_by_policy_component[(selection.selection_handle, "resource-overlay-store")] = (
+                target.selection_handle)
+            return target
+        except NativeComponentTargetPending:
+            raise
+        except Exception:
+            raise NativeComponentTargetPending(
+                "resource-overlay-store",
+                ("current-selected-root-owned-profile-overlay-view",),
+            ) from None
+
+    def resolve_current_owner_overlay_target(
+            self, native_policy_selection_handle: str, view: Any,
+            operation: str,
+    ) -> tuple[RootPreparedNativeTargetSelection, str]:
+        """Revalidate one operation rule against the retained typed target."""
+        from .local_resource_effects import (
+            RootPreparedOwnedProfileOverlayView, _VIEW_SEAL,
+        )
+
+        selection = self._resolve_policy_selection(native_policy_selection_handle)
+        retained = self._owner_overlay_targets.get(getattr(view, "target_selection_handle", ""))
+        if (type(view) is not RootPreparedOwnedProfileOverlayView or view._seal is not _VIEW_SEAL
+                or retained is None or retained[0] is not view
+                or view.native_policy_selection_handle != selection.selection_handle
+                or operation not in {"plugin.resource-overlay-store.read",
+                                     "plugin.resource-overlay-store.write"}):
+            raise NativeComponentTargetDenied("owner-overlay target is not retained for the current selection")
+        target = self.resolve_current_target(retained[1].selection_handle, selection.selection_handle)
+        current = self._binding.resolve_current_profile_overlay_view(
+            view.profile_view_selection_handle, selection.selection_handle)
+        if current is not view or _owner_overlay_configuration_digest(current) != target.configuration_sha256:
+            raise NativeComponentTargetDenied("owner-overlay target view changed")
+        rules = [row for row in view._effect_rules
+                 if row.operation == operation and row.target_id == target.target_id]
+        if (len(rules) != 1 or rules[0].expires_monotonic <= time.monotonic()
+                or rules[0].principal_id != self._binding.resolve_current_setup_identity().principal.principal_id
+                or rules[0].profile_id != selection.service_profile_id
+                or rules[0].namespace_id != selection.namespace_id
+                or rules[0].generation != selection.service_generation):
+            raise NativeComponentTargetPending(
+                "resource-overlay-store", ("current-selected-owner-overlay-effect-rule",),)
+        return target, rules[0].effect_enrollment_id
 
     def resolve_current_public_web_target_candidates(
             self, native_policy_selection_handle: str
@@ -762,7 +919,50 @@ __all__ = [
 
 def _canonical_target_source(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
-                       ensure_ascii=False, allow_nan=False).encode("utf-8")
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _owner_overlay_configuration_digest(view: Any) -> str:
+    """Hash only the retained actual root view/data-root observation fields."""
+    from .local_resource_effects import RootPreparedOwnedProfileOverlayView, _VIEW_SEAL
+
+    if type(view) is not RootPreparedOwnedProfileOverlayView or view._seal is not _VIEW_SEAL:
+        raise NativeComponentTargetDenied("owner-overlay view is not a root-issued receipt")
+    payload = {
+        "schema": view.schema,
+        "native_policy_selection_handle": view.native_policy_selection_handle,
+        "profile_view_selection_handle": view.profile_view_selection_handle,
+        "setup_session_id": view.setup_session_id,
+        "transaction_handle": view.transaction_handle,
+        "prepared_generation_id": view.prepared_generation_id,
+        "prepared_generation_digest": view.prepared_generation_digest,
+        "service_profile_id": view.service_profile_id,
+        "service_generation": view.service_generation,
+        "resource_profile_id": view.resource_profile_id,
+        "resource_profile_receipt_handle": view.resource_profile_receipt_handle,
+        "resources_source_receipt_handle": view.resources_source_receipt_handle,
+        "resources_source_artifact_id": view.resources_source_artifact_id,
+        "resources_source_sha256": view.resources_source_sha256,
+        "principal_selection_handle": view.principal_selection_handle,
+        "namespace_selection_handle": view.namespace_selection_handle,
+        "principal_id": view.principal_id,
+        "namespace_id": view.namespace_id,
+        "data_root_selection_handle": view.data_root_selection_handle,
+        "data_root_receipt_handle": view.data_root_receipt_handle,
+        "data_root_id": view.data_root_id,
+        "data_root_device": view.data_root_device,
+        "data_root_inode": view.data_root_inode,
+        "data_root_owner_uid": view.data_root_owner_uid,
+        "data_root_owner_gid": view.data_root_owner_gid,
+        "target_id": view.target_id,
+        "view_device": view.view_device,
+        "view_inode": view.view_inode,
+        "view_owner_uid": view.view_owner_uid,
+        "view_owner_gid": view.view_owner_gid,
+        "view_mode": view.view_mode,
+        "ownership_marker_sha256": view.ownership_marker_sha256,
+    }
+    return hashlib.sha256(_canonical_target_source(payload)).hexdigest()
 
 
 def _validate_scope_payload(target: RootPreparedNativeTargetSelection,
