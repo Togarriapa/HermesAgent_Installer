@@ -234,9 +234,10 @@ class RootPrivateMemoryRouteResolver:
             if not active_rows:
                 raise PrivateMemoryRouteDenied("selected private memory endpoint is absent or ambiguous")
             enrollment = memory_resolver(
-                enrollment_id, owner_generation=owner_generation,
-                service_generation_digest=generation_digest,
+                enrollment_id, service_generation_digest=generation_digest,
             )
+            if getattr(enrollment, "memory_owner_generation", None) != owner_generation:
+                raise PrivateMemoryRouteDenied("selected memory owner generation differs from protected enrollment")
             selection_candidates = [row for row in active_rows
                                     if row.get("memory_provider") == enrollment.provider
                                     and row.get("profile_id") == enrollment.profile_id
@@ -382,7 +383,7 @@ class RootPrivateMemoryRouteResolver:
             if not callable(resolve_enrollment) or not callable(resolve_selection) or cache_key is None:
                 return False
             enrollment = resolve_enrollment(
-                cache_key[0], owner_generation=cache_key[1], service_generation_digest=digest,
+                cache_key[0], service_generation_digest=digest,
             )
             row = resolve_selection(selected.selection_id, service_generation_digest=digest)
             if (not isinstance(row, Mapping)
