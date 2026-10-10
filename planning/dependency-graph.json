@@ -3249,6 +3249,44 @@
     ],
     "acceptance": "AC01..AC18 OPEN"
   },
+  "sealed_bootstrap_fd3_source_review_v220": {
+    "contract": "planning/sealed-bootstrap-fd3-source-review-v220.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "official_remote_role_definition_producer_v222": {
+    "contract": "planning/official-remote-role-definition-producer-v222.json",
+    "tasks": {
+      "RT-T222.1": [
+        "HI-T197.2"
+      ],
+      "RT-T222.2": [
+        "RT-T222.1"
+      ],
+      "VD-T222.3": [
+        "RT-T222.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "current_published_pm_home_runtime_v221": {
+    "contract": "planning/current-published-pm-home-runtime-v221.json",
+    "tasks": {
+      "HI-T221.1": [
+        "RB-T213.1"
+      ],
+      "HI-T221.2": [
+        "HI-T221.1"
+      ],
+      "VD-T221.3": [
+        "HI-T221.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
   "qualification_compiler_terminal_custody_v217": {
     "contract": "planning/qualification-compiler-terminal-custody-v217.json",
     "tasks": {

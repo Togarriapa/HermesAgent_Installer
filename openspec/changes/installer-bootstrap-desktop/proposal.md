@@ -280,5 +280,7 @@ Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replac
 
 OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/sourceobserver/Node npm Electron/native lockedclosure, no Hyperframesconsent or blanketlifecycle scripts. planning/official-desktop-build-acquisition-v218.json; BD-T218.1/.2 VD-T218.3 OPEN.
 
+SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.
+
 
 Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN.

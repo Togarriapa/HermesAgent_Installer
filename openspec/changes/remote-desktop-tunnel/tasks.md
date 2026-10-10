@@ -109,3 +109,7 @@ Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-pr
 - [ ] `RT-T212.2` Integrate exact current publisher adoption and manager-verified-dead journaled owned rollback under v212; all target acceptance remains OPEN.
 
 - [ ] `VD-T212.3` Exercise real isolated Linux NSS/root effects and current choice/receipt/adoption plus collision/replay/cleanup failure contracts under v212; all target acceptance remains OPEN.
+
+- [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
+- [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
+- [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.
