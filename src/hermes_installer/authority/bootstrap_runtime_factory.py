@@ -376,6 +376,30 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("application qualification consent is not owned by this setup session")
         return self._session.resolve_application_qualification_consent(choice_handle, phase_id)
 
+    def resolve_application_controller_binding(
+        self, choice_handle: str,
+    ) -> "RootApplicationSetupControllerBinding":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application controller binding is not owned by this setup session")
+        return self._session.resolve_application_controller_binding(choice_handle)
+
+    def resolve_application_controller_binding_by_handle(
+        self, controller_binding_handle: str,
+    ) -> "RootApplicationSetupControllerBinding":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application controller binding is not owned by this setup session")
+        return self._session.resolve_application_controller_binding_by_handle(controller_binding_handle)
+
+    def is_application_controller_binding_current(self, controller_binding_handle: str) -> bool:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            return False
+        return self._session.is_application_controller_binding_current(controller_binding_handle)
+
+    def verify_application_controller_binding(self, binding: "RootApplicationSetupControllerBinding") -> bool:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            return False
+        return self._session.verify_application_controller_binding(binding)
+
     def resolve_current_active_enrollment(self) -> EnrollmentReceipt:
         """Return only the actual current committed enrollment from this live session."""
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -739,6 +763,20 @@ class RootApplicationQualificationConsent:
     expires_monotonic: float
     signature: str
     _session_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootApplicationSetupControllerBinding:
+    """Opaque root-TTY controller proof bound to one current setup choice."""
+
+    handle: str
+    setup_session_id: str
+    qualification_choice_handle: str
+    principal_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _session_seal: str = field(repr=False, compare=False)
+    _proof: Any = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -3482,6 +3520,7 @@ class RootBootstrapSession:
         self._application_setup_choices: dict[str, RootSelectedApplicationQualificationChoice] = {}
         self._application_choice_tty_proofs: dict[str, Any] = {}
         self._application_controller_tty_proofs: dict[str, Any] = {}
+        self._application_controller_bindings: dict[str, RootApplicationSetupControllerBinding] = {}
         self._application_qualification_consents: dict[str, RootApplicationQualificationConsent] = {}
         self._verified_resources: dict[str, tuple[Any, Any]] = {}
         self._native_materializer: Any | None = None
@@ -3957,6 +3996,74 @@ class RootBootstrapSession:
         if self._last_receipt is not prepared:
             raise BootstrapEnrollmentPending("prepared setup changed while issuing phase consent")
         return snapshot
+
+    def resolve_application_controller_binding(
+        self, choice_handle: str,
+    ) -> RootApplicationSetupControllerBinding:
+        choice = self.resolve_application_setup_choice(choice_handle)
+        proof = self._application_controller_tty_proofs.get(choice.controller_binding_handle)
+        consent = self._application_qualification_consents.get(choice_handle)
+        if proof is None or not isinstance(consent, RootApplicationQualificationConsent):
+            raise BootstrapEnrollmentPending("application controller proof is unavailable")
+        from ..root_setup import _verify_root_tty_proof
+        _verify_root_tty_proof(proof)
+        principal = self.resolve_adopted_principal_selection()
+        if principal.receipt_id != choice.principal_selection_receipt_handle:
+            raise BootstrapEnrollmentPending("application controller no longer matches current principal")
+        binding = self._application_controller_bindings.get(choice.controller_binding_handle)
+        if binding is None:
+            binding = RootApplicationSetupControllerBinding(
+                handle=choice.controller_binding_handle,
+                setup_session_id=self._handle.session_id,
+                qualification_choice_handle=choice_handle,
+                principal_id=principal.principal_id,
+                issued_monotonic=consent.issued_monotonic,
+                expires_monotonic=consent.expires_monotonic,
+                _session_seal=self._seal,
+                _proof=proof,
+            )
+            self._application_controller_bindings[choice.controller_binding_handle] = binding
+        if (binding._session_seal != self._seal or binding._proof is not proof
+                or binding.qualification_choice_handle != choice_handle
+                or binding.principal_id != principal.principal_id):
+            raise BootstrapEnrollmentPending("application controller binding changed")
+        return binding
+
+    def resolve_application_controller_binding_by_handle(
+        self, controller_binding_handle: str,
+    ) -> RootApplicationSetupControllerBinding:
+        if not isinstance(controller_binding_handle, str):
+            raise BootstrapEnrollmentPending("application controller handle is malformed")
+        for choice_handle, choice in tuple(self._application_setup_choices.items()):
+            if choice.controller_binding_handle == controller_binding_handle:
+                binding = self.resolve_application_controller_binding(choice_handle)
+                if binding.handle != controller_binding_handle:
+                    break
+                return binding
+        raise BootstrapEnrollmentPending("application controller handle is not current")
+
+    def is_application_controller_binding_current(self, controller_binding_handle: str) -> bool:
+        try:
+            self.resolve_application_controller_binding_by_handle(controller_binding_handle)
+            return True
+        except (BootstrapEnrollmentError, BootstrapEnrollmentPending, OSError, ValueError):
+            return False
+
+    def verify_application_controller_binding(
+        self, binding: RootApplicationSetupControllerBinding,
+    ) -> bool:
+        if not isinstance(binding, RootApplicationSetupControllerBinding):
+            return False
+        try:
+            current = self.resolve_application_controller_binding_by_handle(binding.handle)
+            return (current is binding and current._session_seal == self._seal
+                    and current._proof is binding._proof
+                    and current.setup_session_id == self._handle.session_id
+                    and current.qualification_choice_handle == binding.qualification_choice_handle
+                    and current.principal_id == binding.principal_id
+                    and current.expires_monotonic > time.monotonic())
+        except (BootstrapEnrollmentError, BootstrapEnrollmentPending, OSError, ValueError):
+            return False
 
     def observe_selected_resource_profile(self) -> str:
         """Mint a current resource-profile choice from the verified bundle and root TTY.
@@ -5367,6 +5474,7 @@ class RootBootstrapSession:
                 pass
         self._application_choice_tty_proofs.clear()
         self._application_controller_tty_proofs.clear()
+        self._application_controller_bindings.clear()
         self._application_qualification_consents.clear()
         self._factory.session_store.close_session(self._handle)
         self._factory._sessions.pop(self._handle.session_id, None)
@@ -5408,6 +5516,7 @@ __all__ = [
     "RootNativeAssemblyDefinitions", "RootNativeAssemblyMember", "RootReleaseModuleReceipt",
     "RootInstalledReleaseMemberReceipt", "RootSelectedApplicationQualificationChoice",
     "RootApplicationQualificationConsent",
+    "RootApplicationSetupControllerBinding",
     "RootNativeBootstrapAssemblySelection", "RootSelectedInstallationBinding",
     "RootSetupChoices", "RootSetupPolicyGenerationPublisher",
     "RootSetupPrincipalSelectionRegistry", "RootFirstStagePolicyCompiler",
