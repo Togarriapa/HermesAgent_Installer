@@ -199,9 +199,9 @@ class RootControllerRoleRuntime:
                 or not isinstance(enrollment, ProtectedEnrollment)
                 or not isinstance(bindings, RootRuntimeBindings)
                 or not isinstance(bindings.artifact_catalog, ArtifactCatalog)
-                or not isinstance(release_receipt, VerifiedInstallerReleaseReceipt)
-                or not isinstance(actor_observation, RootActorObservation)
-                or not isinstance(inspector, SystemdMainPidInspector)
+                or type(release_receipt) is not VerifiedInstallerReleaseReceipt
+                or type(actor_observation) is not RootActorObservation
+                or type(inspector) is not SystemdMainPidInspector
                 or not isinstance(selected_resources, SelectedResourceRegistry)
                 or not isinstance(job_enrollments, Mapping)
                 or service.service_generation_digest != enrollment.protected_enrollment_digest

@@ -472,7 +472,7 @@ class RootControllerRoleModuleRegistry:
         """
         from .installer_release import VerifiedInstallerReleaseReceipt
 
-        if not isinstance(release_receipt, VerifiedInstallerReleaseReceipt):
+        if type(release_receipt) is not VerifiedInstallerReleaseReceipt:
             raise AuthorityDenied("controller.module", "verified installed-release receipt is required")
         try:
             release_receipt.verify_current()
