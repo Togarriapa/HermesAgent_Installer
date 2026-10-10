@@ -31,7 +31,7 @@ class FixtureAuthority:
 
 
 def fixture_context(*, loopback=False, stdio=False):
-    caps = {"mcp:fixture:connect", "mcp:fixture:read"}
+    caps = {"mcp:home-assistant:connect", "mcp:home-assistant:read"}
     if loopback:
         caps.add("mcp:test:loopback")
     if stdio:
@@ -77,11 +77,11 @@ class FakeManagedHandle:
 class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdio_uses_only_supervised_handle_and_requires_host_grant(self):
         context, handle = fixture_context(stdio=True), FakeManagedHandle()
-        transport = StdioTransport(handle, service_id="fixture")
+        transport = StdioTransport(handle, service_id="home-assistant")
         with self.assertRaises(TransportError):
             await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
         self.assertEqual(handle.writes, [])
-        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+        grant = FixtureAuthority()(context, "mcp:home-assistant:connect", "fixture-connect",
                                   time.monotonic(), 3, lambda: False)
         response = await transport.request(
             {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
@@ -93,8 +93,8 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_forged_stdio_handle_is_denied_before_any_child_io(self):
         context, handle = fixture_context(), FakeManagedHandle()
-        transport = StdioTransport(handle, service_id="fixture")
-        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+        transport = StdioTransport(handle, service_id="home-assistant")
+        grant = FixtureAuthority()(context, "mcp:home-assistant:connect", "fixture-connect",
                                   time.monotonic(), 3, lambda: False)
         with self.assertRaises(TransportError):
             await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"},
@@ -187,20 +187,20 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
         uid = os.getuid()
         capability_set = frozenset({
-            "mcp:fixture:connect", "mcp:fixture:read", "mcp:test:loopback",
+            "mcp:home-assistant:connect", "mcp:home-assistant:read", "mcp:test:loopback",
         })
         service_record = ProtectedMCPService(
-            service_id="fixture", channel="http", allowed_tools=frozenset({"get_state"}),
+            service_id="home-assistant", channel="http", allowed_tools=frozenset({"get_state"}),
             transport_binding_id="fixture-binding", reviewed_revision="a" * 64,
             selection_arguments={"get_state": ("entity_id",)},
         )
 
         class FixtureCredentialHandle:
             def headers_for(self, service_id, context, authorization):
-                if (service_id != "fixture"
+                if (service_id != "home-assistant"
                         or context.principal_id != authorization.principal_id
                         or authorization.capability not in {
-                            "mcp:fixture:connect", "mcp:fixture:read",
+                            "mcp:home-assistant:connect", "mcp:home-assistant:read",
                         }):
                     raise PermissionError("fixture credential binding mismatch")
                 scope = authorization.capability
@@ -228,7 +228,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                 ))
 
         transport = StreamableHTTPTransport(
-            f"http://127.0.0.1:{port}/mcp", service_id="fixture",
+            f"http://127.0.0.1:{port}/mcp", service_id="home-assistant",
             credential_handle=fixture_credential, timeout=2,
         )
 
@@ -236,7 +236,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
             return FixtureNetwork(transport)
 
         handlers = build_mcp_handlers(
-            {"fixture": service_record}, transport_factory=exchange,
+            {"home-assistant": service_record}, transport_factory=exchange,
         )
 
         class FixtureAuthorityClient:
@@ -269,8 +269,8 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
             def authorize_effect(self, context, *, capability, target, recipient,
                                  request_digest, retry_index, cancelled):
                 if (cancelled() or context is not self.context_value or recipient is not None
-                        or target != "mcp:fixture:http" or retry_index != 0
-                        or capability not in {"mcp:fixture:connect", "mcp:fixture:read"}
+                        or target != "mcp:home-assistant:http" or retry_index != 0
+                        or capability not in {"mcp:home-assistant:connect", "mcp:home-assistant:read"}
                         or request_digest != context.final_payload_digest):
                     raise PermissionError("fixture authority denied effect")
                 now = time.monotonic()
@@ -292,7 +292,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
             def mcp_request(self, authorization, *, target, payload, timeout, cancelled):
                 if (cancelled() or self.context_value is None
-                        or target != "mcp:fixture:http" or target != authorization.target
+                        or target != "mcp:home-assistant:http" or target != authorization.target
                         or authorization.operation != "mcp.request"
                         or authorization.final_payload_digest != authorization.request_digest
                         or authorization.context_digest != canonical_digest(self.context_value.claims())
@@ -307,7 +307,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
         authority = FixtureAuthorityClient()
         client = MCPClient(
-            transport, {"get_state"}, service_id="fixture",
+            transport, {"get_state"}, service_id="home-assistant",
             selection="sensor.office", authority_client=authority, timeout=2,
             result_scrubber=lambda _value: {
                 "content": [{"type": "text", "text": "Selected entity state read"}],
@@ -326,7 +326,7 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
                                  "sensor.office")
                 self.assertTrue(all(credential_checks))
                 self.assertEqual(set(credential_scopes), {
-                    "mcp:fixture:connect", "mcp:fixture:read",
+                    "mcp:home-assistant:connect", "mcp:home-assistant:read",
                 })
                 await client.close()
         finally:
@@ -335,11 +335,11 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_transport_rejects_private_network_without_host_capability(self):
         context, handle = fixture_context(loopback=False), FakeManagedHandle()
-        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+        grant = FixtureAuthority()(context, "mcp:home-assistant:connect", "fixture-connect",
                                   time.monotonic(), 3, lambda: False)
         server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        transport = StreamableHTTPTransport(f"http://127.0.0.1:{port}/mcp", service_id="fixture")
+        transport = StreamableHTTPTransport(f"http://127.0.0.1:{port}/mcp", service_id="home-assistant")
         try:
             with self.assertRaises(TransportError):
                 await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"},
