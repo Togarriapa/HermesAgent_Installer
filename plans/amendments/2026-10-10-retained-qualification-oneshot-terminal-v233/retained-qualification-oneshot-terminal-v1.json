@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "amendment": "v233",
+  "refines": [
+    "v217",
+    "v197"
+  ],
+  "requirements": [
+    "HI-T197.3",
+    "VD-T217.3"
+  ],
+  "source_audit": {
+    "checkout": "/private/tmp/hermes-v197-root-setup-20261010",
+    "commit": "b5e834df5c7506dbdb7bd8b7a029cd3a627a86ee",
+    "module": "src/hermes_installer/authority/installed_qualification_result.py",
+    "finding": "fixed oneshot launch retains RemainAfterExit=true; terminal DTO/wait accepts inactive/failed only, so genuine active/exited retained result is denied",
+    "evidence_limit": "Root reports real ARM64 systemd named read-only OpenFile FD3 transfer. This amendment does not pin uncommitted evidence or establish native task/Pi acceptance.",
+    "primary_source": "https://raw.githubusercontent.com/systemd/systemd/main/man/systemd.service.xml"
+  },
+  "launch": "Existing fixed suite launcher only: Type=oneshot, RemainAfterExit=true; retain existing unit/invocation/PIDFD/cgroup/start/executable/release/journal/evidence key joins and original deadlines. No arbitrary command or unit names.",
+  "terminal_type": "RootQualificationControllerTerminal",
+  "existing_fields": [
+    "launch_handle",
+    "unit_id",
+    "invocation_id",
+    "main_pid",
+    "start_ticks",
+    "exit_code",
+    "state",
+    "cgroup_empty",
+    "observed_monotonic"
+  ],
+  "additional_fields": [
+    "substate",
+    "systemd_main_pid",
+    "exec_main_pid",
+    "exec_main_code",
+    "exec_main_status",
+    "exec_main_exit_monotonic_usec"
+  ],
+  "field_semantics": {
+    "main_pid": "original launched PID from retained controller, never replaced with zero",
+    "systemd_main_pid": "fresh systemd MainPID observation",
+    "exec_main_pid": "retained systemd ExecMainPID must equal original launched PID",
+    "exec_main_code": "fresh systemd ExecMainCode integer; active/exited branch requires normal CLD_EXITED (1)",
+    "exec_main_status": "fresh ExecMainStatus integer; active/exited branch requires 0 and equals exit_code",
+    "exec_main_exit_monotonic_usec": "fresh positive integer microseconds from ExecMainExitTimestampMonotonic; within same boot and original launch interval, not a new lease",
+    "state": "literal observed ActiveState, not normalized/relabelled",
+    "substate": "literal observed SubState"
+  },
+  "active_exited_predicate": [
+    "state == active AND substate == exited",
+    "systemd_main_pid == 0",
+    "exec_main_pid == retained controller.main_pid",
+    "exec_main_code == 1 AND exec_main_status == exit_code == 0",
+    "positive exit timestamp at/after original controller launch and not after observation",
+    "unchanged InvocationID, exact owned cgroup device/inode/path identity",
+    "owned cgroup empty recursively and retained controller PIDFD reports dead",
+    "current parent installed actor/release/journal/evidence-key custody and original deadline",
+    "fresh stable property snapshot: reread InvocationID/state/substate/main PID/exit tuple and deny drift"
+  ],
+  "other_terminal_states": "Existing inactive/failed branches remain literal observations with genuine recorded status/code and dead PIDFD/empty cgroup/same invocation. No failure status is promoted to success; activating/deactivating/active-running/reloading always nonterminal.",
+  "api": {
+    "wait": "RootInstalledQualificationSupervisor.wait_terminal(controller) -> RootQualificationControllerTerminal; controller.wait_terminal issues same sealed retained object only after predicate",
+    "verify": "RootLaunchedQualificationController.verify_terminal_current(terminal) -> RootQualificationControllerTerminal; exact controller._terminal object, membership and fresh terminal snapshot/parent proof checks; no live-child verify_current call for a dead process",
+    "consume": "Existing supervisor.resolve_result(controller, terminal) calls verify_terminal_current before signed result/cleanup joins; terminal success does not imply qualification passed",
+    "collect": "Existing supervisor.collect_verified_controller(controller, terminal) requires consumed result plus verify_terminal_current; stops only exact already-quiescent purpose-owned retained unit, waits bounded for inactive/gone with empty cgroup and no live retained PIDFD, then closes key/PIDFD/journal. Foreign/restarted invocation denies; no kill fallback."
+  },
+  "failure_cleanup": "close_after_terminal_without_evidence requires exact current sealed terminal and quiescence, then same purpose-owned retained unit collection. Missing/tampered evidence remains failed/incomplete; never fabricate consumption. Unit stop cannot authorize killing foreign descendants; any nonempty cgroup or changed invocation denies collection. Preserve genuine failed evidence before reset/collection.",
+  "prohibitions": [
+    "do not relabel active as inactive",
+    "no original lease extension/reset or new task authority from terminal evidence",
+    "no TTL renewal, PID reuse, missing invocation acceptance or foreign unit stop",
+    "no source pin approvals or full native acceptance from FD-transfer fixture"
+  ],
+  "tests": [
+    "real retained oneshot active/exited positive with named read-only FD transfer and unchanged invocation",
+    "active-running, wrong SubState, live PIDFD, nonzero MainPID, wrong ExecMainPID/code/status/timestamp deny",
+    "changed invocation or cgroup inode/descendants/property snapshot deny",
+    "failed/inactive statuses remain truthful",
+    "signed passed/failed/incomplete result still requires original independent proof joins",
+    "consume then purpose-owned stop/collection positive; foreign invocation and pre-consumption collection deny"
+  ],
+  "tasks": [
+    "HI-T233.1",
+    "VD-T233.2"
+  ],
+  "acceptance": "All AC01..AC18 OPEN; fixture transport and controller terminal proof remain distinct from actual native qualification and Pi acceptance."
+}

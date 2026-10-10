@@ -1017,11 +1017,19 @@ The installer SHALL consume only the issuer-current v231 active authority aggreg
 
 ### Requirement: Exact Jarvis cohort source closure
 The installer SHALL apply the finite source membership and byte tuples in `planning/jarvis-runtime-source-pin-review-v228.json`, preserving the immutable selected source snapshot, held module custody and unchanged execution authority.
+### Requirement: Retained oneshot terminal evidence
+The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
 
 #### Scenario: Delayed module is absent or comes from a checkout
 - **WHEN** any of the three selected fixed module members cannot be imported from the sealed installed release
 - **THEN** staging or actor verification fails without source fallback or expanded module-prefix authority
+#### Scenario: Retained child has exited successfully
+- **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
+- **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
 
 #### Scenario: Materialization or direct mount fixture succeeds
 - **WHEN** exact source profiles/skills or isolated bind effects pass
 - **THEN** evidence retains that phase and does not promote task/provider/runtime/Pi acceptance
+#### Scenario: Active unit is not the retained terminal
+- **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
+- **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority

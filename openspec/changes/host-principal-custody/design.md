@@ -398,3 +398,8 @@ Officialremote roledefinition222: source-only held3roledescriptor→currentchoic
 CurrentpublishedPMhome runtime221: reuseexistingfreshcommittedPMresolver, exact11keyprojection/currentcore/receipt/venvFDproof; noexpiredsetupseal/newdurablehandle. planning/current-published-pm-home-runtime-v221.json HI-T221.1/.2 VD-T221.3 OPEN.
 
 Active authority aggregate v231: planning/active-authority-receipt-aggregate-v231.json requires retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication. HI-T231.1 and VD-T231.3 remain OPEN; all AC OPEN.
+
+
+## Retained qualification terminal v233
+
+See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.

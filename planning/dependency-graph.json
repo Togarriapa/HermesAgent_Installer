@@ -3504,5 +3504,19 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "retained_qualification_oneshot_terminal_v233": {
+    "contract": "planning/retained-qualification-oneshot-terminal-v233.json",
+    "tasks": {
+      "HI-T233.1": [
+        "HI-T197.3",
+        "VD-T217.3"
+      ],
+      "VD-T233.2": [
+        "HI-T233.1"
+      ]
+    },
+    "owner": "luna_linux_task_display_contracts",
+    "acceptance": "All AC OPEN"
   }
 }

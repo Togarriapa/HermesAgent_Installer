@@ -207,3 +207,6 @@ Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-ac
 
 
 v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md`;13 outer leaf tuples +3 exact held module members/preloads +4 existing catalog rows. Existing VD-T180.6/VD-T183.5/VD-T232.2 OPEN; coherent full checks and actual runtime evidence pending. All AC OPEN.
+## v233 Retained oneshot terminal
+
+`planning/retained-qualification-oneshot-terminal-v233.json` preserves exact active/exited evidence and permits purpose-owned quiescent unit collection only under original current custody. HI-T233.1/VD-T233.2 and all AC remain open. Installed predecessor update remains a separate unimplemented path.
