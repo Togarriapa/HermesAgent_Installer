@@ -633,6 +633,7 @@ def test_native_schema_record_selection_joins_protected_package_action_and_kind(
             external_result_schema_id="workflow-result-v1",
             workflow_artifact_id="workflow-artifact-a", workflow_sha256="f" * 64,
         )},
+        process_role_records={},
         entrypoint_artifact_id="entrypoint-a", entrypoint_sha256="c" * 64,
         resolver_artifact_id="resolver-a", resolver_sha256="d" * 64,
         compiled_closure_artifact_id="closure-a",

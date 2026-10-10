@@ -694,3 +694,12 @@ The installer SHALL resolve selected memory service lifecycle enablement and act
 
 - **WHEN** a selected memory process passes only its liveness/status route
 - **THEN** the installer records that exact status and leaves semantic memory functionality pending until actual selected capability operations and private route gates are verified
+
+### Requirement: Actual installer memory service enable configuration
+
+The installer SHALL record v124 actual protected root TTY service-enable configuration and publish its exact verified active service projection separately from capture/provider consent.
+
+#### Scenario: User-mode selection or capture consent alone
+
+- **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
+- **THEN** memory service startup is unavailable and no service authorization is inferred
