@@ -113,3 +113,6 @@ Installed startup/qualification custody v197: `plans/amendments/2026-10-10-insta
 
 
 Existing HI-T197.1/.2 and VD-T197.4: exact durable Xpra adoption and admission/active lifecycle clarification `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; all OPEN.
+
+
+Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; all OPEN.
