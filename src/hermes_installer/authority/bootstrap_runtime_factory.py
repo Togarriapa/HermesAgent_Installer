@@ -545,6 +545,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
         return self._session.record_durable_setup_choice(actual_root_tty_choice)
 
+    def revoke_durable_setup_choice_purpose(self, purpose: str, profile_id: str) -> int:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("durable setup choice is not owned by this session")
+        return self._session.revoke_durable_setup_choice_purpose(purpose, profile_id)
+
     def attach_public_web_selection_registry(self, registry: Any) -> None:
         """Attach the public-specific configuration producer during root composition."""
         self._check_live()
@@ -587,23 +592,25 @@ class RootSelectedInstallationBinding:
         """Attach the single public-specific TTY proof registry during root composition."""
         self._check_live()
         from .public_web_selection import RootPublicInputDisclosureRegistry
-        source = (getattr(self, "_source_observer_registry", None)
-                  or getattr(self._factory, "_source_observer_registry", None))
+        from .source_observers import SourceObserverRegistry
+        source = getattr(registry, "_source", None)
         if (type(registry) is not RootPublicInputDisclosureRegistry
-                or source is None or registry._session is not self
+                or type(source) is not SourceObserverRegistry or registry._session is not self
                 or registry._source is not source
                 or self._public_input_disclosure_registry is not None):
             raise BootstrapEnrollmentPending("public input disclosure registry is not the exact root source composition")
+        source.attach_public_input_disclosure_registry(registry)
         self._public_input_disclosure_registry = registry
 
     def resolve_current_public_input_disclosure_registry(self) -> Any:
         self._check_live()
         from .public_web_selection import RootPublicInputDisclosureRegistry
+        from .source_observers import SourceObserverRegistry
         registry = self._public_input_disclosure_registry
-        source = (getattr(self, "_source_observer_registry", None)
-                  or getattr(self._factory, "_source_observer_registry", None))
+        source = getattr(registry, "_source", None)
         if (type(registry) is not RootPublicInputDisclosureRegistry
-                or registry._session is not self or source is None or registry._source is not source):
+                or type(source) is not SourceObserverRegistry
+                or registry._session is not self or registry._source is not source):
             raise BootstrapEnrollmentPending("root public input disclosure is not composed with the current source observer")
         return registry
 
@@ -4130,6 +4137,14 @@ class RootBootstrapSession:
             return registry.record_observed_choice(actual_root_tty_choice, self._selected_installation)
         except Exception:
             raise BootstrapEnrollmentPending("root TTY choice could not be durably signed and retained") from None
+
+    def revoke_durable_setup_choice_purpose(self, purpose: str, profile_id: str) -> int:
+        registry = self._root_setup_choice_registry()
+        try:
+            return registry.revoke_current_profile_purpose(
+                self._selected_installation, purpose, profile_id)
+        except Exception:
+            raise BootstrapEnrollmentPending("current durable setup choice could not be revoked") from None
 
     def _resolve_current_native_policy_registry(self) -> Any:
         """Compose the retained preactive native-policy registries once per session."""
