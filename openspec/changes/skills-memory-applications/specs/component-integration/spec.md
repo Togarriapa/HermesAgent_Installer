@@ -671,3 +671,17 @@ The system SHALL use v108 selected owned endpoint/model deployment and private t
 #### Scenario: Only public chat dispatcher exists
 - **WHEN** private endpoint/model or embedding capability proof is absent
 - **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
+
+### Requirement: Preactive application source preparation
+The system SHALL use v117 typed root setup source selections and independently observed full source/lock receipts before active runtime publication without manufacturing a selected active row. Operational application authorization SHALL remain independent.
+
+#### Scenario: Runtime not yet active
+- **WHEN** an actual prepared setup choice selects one fixed source profile
+- **THEN** the source producer verifies/stages its exact pinned source and locks before runtime probing and activation.
+
+### Requirement: Purpose bound qualification consent
+The system SHALL record v117 finite local qualification consent in the same explicit rootTTY workflow choice and resolve current phase snapshots without another routineprompt. It SHALL NOT reuse capture/private-input consent or authorize provider/account effects.
+
+#### Scenario: Qualification attempts provider egress
+- **WHEN** a selected fixture attempts an unrelated endpoint or metered operation
+- **THEN** qualification consent denies that effect.
