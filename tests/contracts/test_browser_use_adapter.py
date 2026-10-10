@@ -1,4 +1,5 @@
 """Browser Use adapter boundaries and fixture-effect verification."""
+import json
 import unittest
 
 from hermes_installer.components.application_handlers import RuntimeProfileError
@@ -17,7 +18,24 @@ class Supervisor:
 
     async def invoke(self, spec):
         self.calls.append(spec)
-        return self.result
+        return self.result(spec) if callable(self.result) else self.result
+
+
+def _proof(url="http://127.0.0.1:8080/fixture", **overrides):
+    proof = {
+        "schema_version": 1,
+        "navigation_url": url,
+        "navigation_succeeded": True,
+        "page_title": "Hermes qualification fixture",
+        "initial_text": "ready",
+        "click_succeeded": True,
+        "interaction_text": "interaction-ok",
+        "screenshot_format": "png",
+        "screenshot_bytes": 128,
+        "screenshot_sha256": "a" * 64,
+    }
+    proof.update(overrides)
+    return {"exit_code": 0, "stdout": "HERMES_BROWSER_USE_PROOF=" + json.dumps(proof) + "\n"}
 
 
 class BrowserUseAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -44,8 +62,9 @@ class BrowserUseAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("PRIVATE", spec.sensitivity)
         self.assertEqual((), spec.credential_references)
         self.assertEqual(2048, spec.memory_limit_mb)
-        self.assertIn("#action", spec.argv[2])
-        self.assertIn("chromium_sandbox=True", spec.argv[2])
+        self.assertTrue(spec.argv[1].endswith("browser_use_qualification_probe.py"))
+        self.assertEqual("http://127.0.0.1:8080/fixture", spec.argv[2])
+        self.assertNotIn("-c", spec.argv)
         self.assertIn(("BROWSER_USE_HEADLESS", "1"), spec.environment)
 
     def test_non_loopback_or_url_mutation_is_denied(self):
@@ -60,13 +79,12 @@ class BrowserUseAdapterTests(unittest.IsolatedAsyncioTestCase):
                 build_browser_use_fixture_invocation("/owned/venv/bin/python", url, "/owned/work")
 
     async def test_managed_supervisor_effects_are_checked_before_proof_is_returned(self):
-        result = {"exit_code": 0, "stdout": 'HERMES_BROWSER_USE_PROOF={"navigation": true, "interaction": "interaction-ok", "screenshot_bytes": 128}\n'}
-        supervisor = Supervisor(result)
+        supervisor = Supervisor(lambda spec: _proof(spec.argv[2]))
         proof = await run_browser_use_fixture(
             supervisor, "/owned/venvs/browser/bin/python", "http://127.0.0.1:8080/fixture", "/owned/work/browser"
         )
-        self.assertTrue(proof["navigation"])
-        self.assertEqual("interaction-ok", proof["interaction"])
+        self.assertTrue(proof["navigation_succeeded"])
+        self.assertEqual("interaction-ok", proof["interaction_text"])
         self.assertEqual(1, len(supervisor.calls))
         self.assertEqual("localhost", supervisor.calls[0].network)
 
@@ -74,10 +92,22 @@ class BrowserUseAdapterTests(unittest.IsolatedAsyncioTestCase):
         for result in (
             {"exit_code": 1, "stdout": ""},
             {"exit_code": 0, "stdout": ""},
-            {"exit_code": 0, "stdout": 'HERMES_BROWSER_USE_PROOF={"navigation":true,"interaction":"interaction-ok","screenshot_bytes":0}\n'},
+            _proof(screenshot_bytes=64),
+            _proof(click_succeeded=1),
+            _proof(unexpected="extra"),
+            _proof(screenshot_sha256="z" * 64),
+            _proof(navigation_url="http://127.0.0.1:8080/outside"),
         ):
             with self.subTest(result=result), self.assertRaises(RuntimeProfileError):
                 verify_browser_use_fixture_result(result)
+
+    async def test_proof_must_match_exact_owned_loopback_url(self):
+        supervisor = Supervisor(_proof("http://127.0.0.1:8081/fixture"))
+        with self.assertRaises(RuntimeProfileError):
+            await run_browser_use_fixture(
+                supervisor, "/owned/venvs/browser/bin/python",
+                "http://127.0.0.1:8080/fixture", "/owned/work/browser",
+            )
 
 
 if __name__ == "__main__":

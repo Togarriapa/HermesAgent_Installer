@@ -270,7 +270,10 @@ class RootOwnedApplicationFixtureServer:
     The listener owns its socket and thread and emits a receipt only after the
     socket is listening. It has no URL, content, or bind-address inputs.
     """
-    _BODY = b"<!doctype html><title>Hermes qualification fixture</title><p>fixture only</p>"
+    _BODY = (b'<!doctype html><html><head><title>Hermes qualification fixture</title></head>'
+             b'<body><p id="proof">ready</p><button id="action" type="button" '
+             b'onclick="document.getElementById(\'proof\').textContent=\'interaction-ok\'">'
+             b'Run fixture interaction</button></body></html>')
 
     def __init__(self, *, controllers: Any, monotonic: Any, service_generation_digest: str,
                  ttl_seconds: float = 120.0):
