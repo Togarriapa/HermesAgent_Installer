@@ -612,3 +612,10 @@ The installer SHALL distinguish held root observation from completed signed choi
 #### Scenario: Fixed root is observed before child choice
 - **WHEN** only the fixed model store root is held
 - **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents

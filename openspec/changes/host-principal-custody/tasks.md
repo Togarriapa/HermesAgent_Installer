@@ -265,3 +265,9 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] SK-T146.1 factory/model selection/consent: Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately.
 
 - [ ] HI-T146.2 native target/factory/enrollment: Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation.
+
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance.
+
+- [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
+
+- [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.
