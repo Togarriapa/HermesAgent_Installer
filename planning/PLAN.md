@@ -83,3 +83,6 @@ Listener activation v187: `plans/amendments/2026-10-10-supervised-listener-activ
 Owner result source v188: `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; HI-T188.1 → VD-T188.2 OPEN. Separately signed actual result observer/root handler, no backend observer substitution; all AC01..18 OPEN/source review pending.
 
 HI-T188.3 → VD-T188.4 OPEN: exact native Hermes module launch mode resolves source recipe/generic interpreter contradiction without weakening generic scripts.
+
+
+Committed PM executable v189: `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; HI-T189.1 → VD-T189.2 OPEN. Exact private native runtime identity, unchanged generic static catalog validation, all AC01..18 OPEN.

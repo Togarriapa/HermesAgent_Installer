@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md",
+  "runtime_row_addition": "committed_venv_identity",
+  "descriptor_fields": [
+    "schema",
+    "identity_kind",
+    "pm_runtime_receipt_handle",
+    "pm_receipt_sha256",
+    "pm_generation",
+    "source_commit",
+    "runtime_relative",
+    "runtime_venv_relative",
+    "runtime_closure_sha256",
+    "executable_identity_id",
+    "executable_sha256",
+    "executable_device",
+    "executable_inode",
+    "executable_uid",
+    "executable_gid",
+    "executable_mode"
+  ],
+  "identity_kind": "pm-committed-hermes-venv-v1",
+  "executable_identity_id": "observed:pm-committed-venv-python",
+  "tasks": [
+    "HI-T189.1",
+    "VD-T189.2"
+  ],
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "source_pins": "pending coherent source cohort",
+  "acceptance": "AC01..AC18 OPEN"
+}
