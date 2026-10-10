@@ -1,11 +1,12 @@
 """Direct, bounded, one-hop public HTTPS transport for native web retrieval."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import http.client
 import json
 import re
+from email.message import Message
 import socket
 import ssl
 import threading
@@ -38,6 +39,32 @@ class PublicSourceReceipt:
     enrollment_id: str
     generation: str
     receipt_sha256: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ScopedWebCapture:
+    """Exact verified TLS response bytes retained only within the root handler."""
+
+    final_url: str
+    media_type: str
+    body: bytes = field(repr=False)
+    redirect_chain: tuple[str, ...]
+    transport_receipt: PublicSourceReceipt
+    content_type: str = "application/octet-stream"
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _SCOPED_CAPTURE_SEAL
+                or not isinstance(self.body, bytes) or not self.body
+                or not isinstance(self.redirect_chain, tuple)
+                or not 1 <= len(self.redirect_chain) <= 5
+                or not isinstance(self.media_type, str) or not self.media_type
+                or not isinstance(self.content_type, str) or not self.content_type
+                or self.final_url != self.redirect_chain[-1]):
+            raise TypeError("scoped web captures are issued only by the root HTTPS reader")
+
+
+_SCOPED_CAPTURE_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,10 +300,11 @@ def make_source_receipt(url: str, response: WebResponse, *, body: bytes,
 class PluginWebReadEffectHandler:
     """Root-side one-use broker handler for one exact RB08 web enrollment."""
     def __init__(self, enrollment: EnrolledPublicWebScope,
-                 reader: DirectPublicHttpsReader):
+                 reader: DirectPublicHttpsReader, *, artifact_registry: Any | None = None):
         if type(enrollment) is not EnrolledPublicWebScope or type(reader) is not DirectPublicHttpsReader:
             raise TypeError("web handler requires protected enrollment and reviewed direct reader")
         self.enrollment, self.reader = enrollment, reader
+        self.artifact_registry = artifact_registry
         self._lock = threading.Lock()
 
     def __call__(self, *, context: object, authorization: object, payload: bytes,
@@ -317,15 +345,34 @@ class PluginWebReadEffectHandler:
         if getattr(authorization, "request_digest", None) != digest or len(payload) > scope.request_bytes_limit:
             raise PublicHttpsDenied("web request payload differs from its one-use grant")
         arguments = _decode_plugin_request(payload, scope)
-        result = retrieve_scoped(
+        if self.artifact_registry is None:
+            raise PublicHttpsDenied("root web content artifact registry is not assembled")
+        capture = retrieve_scoped_capture(
             self.reader, scope, arguments["url"],
             timeout=min(float(timeout), scope.deadline_seconds),
             max_bytes=min(MAX_RESPONSE_BYTES, scope.response_bytes_limit),
             cancelled=cancelled,
         )
+        decoded_content = _decode_public_content(capture.body, capture.content_type)
+        prepare = getattr(self.artifact_registry, "prepare_authorized_response", None)
+        if not callable(prepare):
+            raise PublicHttpsDenied("root web content artifact producer is not assembled")
+        observation = prepare(context, authorization, payload, capture)
+        if (not callable(getattr(observation, "staged_result_fields", None))
+                or not isinstance(getattr(observation, "operation_id", None), str)):
+            raise PublicHttpsDenied("root web content producer returned an invalid sealed observation")
+        operation_id = observation.operation_id
+        result = {
+            "url": capture.final_url,
+            "content_type": capture.content_type,
+            "content": decoded_content,
+            "untrusted_source": True,
+            "authority": "none",
+            "redirects": list(capture.redirect_chain),
+            "source_receipt": observation.staged_result_fields(),
+        }
         result_body = json.dumps(result, sort_keys=True, separators=(",", ":"),
                                   ensure_ascii=False).encode("utf-8")
-        operation_id = hashlib.sha256(payload + b"\0" + result_body).hexdigest()
         body = json.dumps({"schema": 1, "operation_id": operation_id,
                            "state": "read-complete", "result": result,
                            "verification_status": "verified", "resume_action_id": None},
@@ -336,6 +383,37 @@ class PluginWebReadEffectHandler:
         return {"status": 200, "body": body,
                 "headers": {"Content-Type": "application/json", "Cache-Control": "no-store"},
                 "receipt_id": receipt_id}
+
+
+def _decode_public_content(body: bytes, content_type: str) -> str:
+    """Decode exact captured bytes using only the response's declared charset."""
+    if (not isinstance(body, bytes) or not isinstance(content_type, str) or len(content_type) > 512
+            or any(char in content_type for char in "\r\n\x00")):
+        raise PublicHttpsDenied("public content encoding metadata is invalid")
+    message = Message()
+    message["content-type"] = content_type
+    if not _textual_media_type(message.get_content_type().lower()):
+        raise PublicHttpsDenied("public content media type is not textual")
+    charset = message.get_content_charset() or "utf-8"
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", charset, re.ASCII):
+        raise PublicHttpsDenied("public content charset is invalid")
+    try:
+        import codecs
+        codec = codecs.lookup(charset)
+        return body.decode(codec.name, errors="strict")
+    except (LookupError, UnicodeError):
+        raise PublicHttpsDenied("public content cannot be decoded with its declared charset") from None
+
+
+def _textual_media_type(value: str) -> bool:
+    if not isinstance(value, str) or len(value) > 128 or "/" not in value:
+        return False
+    major, subtype = value.split("/", 1)
+    if major == "text":
+        return bool(re.fullmatch(r"[a-z0-9!#$&^_.+-]+", subtype, re.ASCII))
+    return (major == "application"
+            and (subtype in {"json", "xml"} or subtype.endswith(("+json", "+xml"))
+                 and bool(re.fullmatch(r"[a-z0-9!#$&^_.+-]+", subtype, re.ASCII))))
 
 
 def _decode_plugin_request(payload: bytes, scope: EnrolledPublicWebScope) -> dict[str, Any]:
@@ -363,6 +441,19 @@ def _decode_plugin_request(payload: bytes, scope: EnrolledPublicWebScope) -> dic
 def retrieve_scoped(reader: DirectPublicHttpsReader, scope: EnrolledPublicWebScope,
                     url: str, *, timeout: float, max_bytes: int,
                     cancelled: Callable[[], bool]) -> dict[str, Any]:
+    captured = retrieve_scoped_capture(reader, scope, url, timeout=timeout,
+                                       max_bytes=max_bytes, cancelled=cancelled)
+    from dataclasses import asdict
+    return {"url": captured.final_url, "content_type": captured.media_type,
+            "content": captured.body.decode("utf-8", errors="replace"),
+            "untrusted_source": True, "authority": "none",
+            "redirects": max(0, len(captured.redirect_chain) - 1),
+            "source_receipt": asdict(captured.transport_receipt)}
+
+
+def retrieve_scoped_capture(reader: DirectPublicHttpsReader, scope: EnrolledPublicWebScope,
+                            url: str, *, timeout: float, max_bytes: int,
+                            cancelled: Callable[[], bool]) -> ScopedWebCapture:
     current = scope.authorize_url(url)
     chain = [current]
     deadline = time.monotonic() + timeout
@@ -387,15 +478,18 @@ def retrieve_scoped(reader: DirectPublicHttpsReader, scope: EnrolledPublicWebSco
             raise PublicHttpsDenied(f"public site returned HTTP {response.status}")
         content_type = next((v for k, v in response.headers.items() if k.lower() == "content-type"),
                             "application/octet-stream")
-        if not any(kind in content_type.casefold() for kind in ("text/", "json", "xml")):
+        if (not isinstance(content_type, str) or len(content_type) > 512
+                or any(char in content_type for char in "\r\n\x00")):
+            raise PublicHttpsDenied("public content type metadata exceeds its bound")
+        content_type_message = Message()
+        content_type_message["content-type"] = content_type
+        media_type = content_type_message.get_content_type().lower()
+        if not _textual_media_type(media_type):
             raise PublicHttpsDenied("only textual public content is supported")
         receipt = make_source_receipt(
             current, response, body=response.body, retrieved_at_unix=int(time.time()),
             redirect_chain=tuple(chain), enrollment_id=scope.enrollment_id,
             generation=scope.generation)
-        from dataclasses import asdict
-        return {"url": current, "content_type": content_type,
-                "content": response.body.decode("utf-8", errors="replace"),
-                "untrusted_source": True, "authority": "none", "redirects": hop,
-                "source_receipt": asdict(receipt)}
+        return ScopedWebCapture(current, media_type, response.body, tuple(chain), receipt,
+                                content_type, _SCOPED_CAPTURE_SEAL)
     raise PublicHttpsDenied("web redirect limit exceeded")
