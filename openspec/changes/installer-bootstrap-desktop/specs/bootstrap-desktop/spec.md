@@ -767,3 +767,15 @@ The installer SHALL resolve the endpoint source phase through actual root-held l
 #### Scenario: Custody or phase invalid
 - **WHEN** socket/root/actor/account/transfer/publication identity changes or adoption is absent/expired
 - **THEN** worker start/effect SHALL deny, preserve foreign conflicts and verify only owned cleanup without claiming future target proof
+
+
+### Requirement: Actual supervised listener activation v187
+The installer SHALL implement the actual both-process supervisor/peer/activation channel and current one-use FD custody in `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`.
+
+#### Scenario: Exact installed daemon handoff
+- **WHEN** independently current setup actor and supervised installed daemon join the protected activation record, real peer PIDFD/unit/launch and current publication/source/socket
+- **THEN** only that daemon MAY adopt the held listener after one-use FD transfer and verified acknowledgment
+
+#### Scenario: Cross-process proof invalid
+- **WHEN** remote actor is treated as local, only UID0 or same-process channel is known, or peer/unit/source/CAS/FD differs
+- **THEN** adoption/startup SHALL deny and owned cleanup/conflict preservation remain mandatory with all acceptance pending
