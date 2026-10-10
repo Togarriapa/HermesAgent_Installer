@@ -17,6 +17,8 @@ from urllib.parse import urlsplit
 
 _FIXTURE_URL = re.compile(r"^http://127\.0\.0\.1:[1-9][0-9]{0,4}/fixture$")
 _MARKER = "HERMES_BROWSER_USE_PROOF="
+_MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
+_MAX_SCREENSHOT_BASE64_CHARS = ((_MAX_SCREENSHOT_BYTES + 2) // 3) * 4
 
 
 def _validate_fixture_url(value: str) -> str:
@@ -26,6 +28,20 @@ def _validate_fixture_url(value: str) -> str:
     if parsed.port is None or parsed.port > 65535 or parsed.query or parsed.fragment:
         raise ValueError("qualification probe fixture URL is invalid")
     return value
+
+
+def _decode_screenshot(payload: object) -> bytes:
+    if (not isinstance(payload, str)
+            or len(payload) > _MAX_SCREENSHOT_BASE64_CHARS):
+        raise ValueError("browser screenshot base64 payload exceeds its pre-decode bound")
+    try:
+        screenshot = base64.b64decode(payload, validate=True)
+    except (ValueError, base64.binascii.Error):
+        raise ValueError("browser screenshot is not valid base64") from None
+    if (not screenshot.startswith(b"\x89PNG\r\n\x1a\n")
+            or not 64 < len(screenshot) <= _MAX_SCREENSHOT_BYTES):
+        raise ValueError("browser screenshot is outside its PNG size bound")
+    return screenshot
 
 
 async def _run(fixture_url: str) -> dict[str, object]:
@@ -65,9 +81,7 @@ async def _run(fixture_url: str) -> dict[str, object]:
             raise RuntimeError("browser click did not produce the expected fixture effect")
 
         screenshot_b64 = await page.screenshot(format="png")
-        screenshot = base64.b64decode(screenshot_b64, validate=True)
-        if not screenshot.startswith(b"\x89PNG\r\n\x1a\n") or len(screenshot) <= 64:
-            raise RuntimeError("browser did not return a valid PNG screenshot")
+        screenshot = _decode_screenshot(screenshot_b64)
         import hashlib
 
         return {
