@@ -10,7 +10,8 @@
     "commit": "9dd53e823058cfc7c516075572aad6fb510cfcc8",
     "tree": "0f31e5aaf71a8fe4aebcb2aa556406d558b93650",
     "source_staging": "reported exact, root-owned staged source",
-    "root_setup_source_commit": "0b7d71543 (short SHA as supplied)"
+    "root_setup_source_sha256": "0b7d7203b41d3496ebb14d6997fa3e3aaef58aafa98bb8c498004aaf31960616",
+    "root_setup_source_size_bytes": 71543
   },
   "pi_attempt": {
     "command_summary": "Actual /bin/sh source-launcher source-update invocation; exact launcher path and full argv not supplied.",
@@ -26,7 +27,7 @@
     "pointer_sha256": "4fb20b47f759986696cb23ee9752c04a08a91e43bbc0025990c1b14062f5ee9e",
     "closure_sha256": "a8c2e34d62710087877f549828bc14c7d086493a274ff87b892cb406e946d40b",
     "closure_member_count": 5315,
-    "closure_total_bytes": 1043975,
+    "closure_manifest_size_bytes": 1043975,
     "verification_distinction": "The earlier installed-release verifier reported full closure/currentness pass for cc81. The newer verifier used by this update path rejected a finite native target source module against its newer reviewed pin. The pointer and installed predecessor were preserved; no workaround or mutation is reported."
   },
   "repository_verification_for_candidate": {
