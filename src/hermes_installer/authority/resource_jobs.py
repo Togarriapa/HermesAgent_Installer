@@ -1545,6 +1545,25 @@ class ResourceJobAuthority:
                 or binding["task_request_schema_id"] != handle.task_request_schema_id):
             raise AuthorityDenied("resource.source", "task source selection changed after admission")
         capsule = event.source_capsule_lineage
+        # Resolve the private context capability and exact signed receipt
+        # handles before splitting root-owned ingress from worker-observed
+        # events.  Both paths consume the same retained, signature-bearing
+        # closure; only the authority that validates the producer differs.
+        receipt_handle_map = getattr(self.service, "_source_receipt_handles", None)
+        if not isinstance(receipt_handle_map, Mapping):
+            raise AuthorityDenied("resource.source", "root source receipt handle registry is unavailable")
+        opaque_receipt_handles: list[str] = []
+        signed_wires: list[bytes] = []
+        for receipt in event.source_receipts:
+            matches = [key for key, candidate in receipt_handle_map.items()
+                       if candidate is receipt or candidate.receipt_id == receipt.receipt_id]
+            if len(matches) != 1:
+                raise AuthorityDenied("resource.source", "signed source receipt handle is unavailable or ambiguous")
+            opaque_receipt_handles.append(str(matches[0]))
+            signed_wires.append(_canonical(receipt.to_wire()))
+        context_handle = self._source_context_handles.get(handle.handle_id)
+        if not isinstance(context_handle, str) or not context_handle:
+            raise AuthorityDenied("resource.source", "root source context handle is unavailable")
         # Root timer/webhook/channel events have a different trusted producer
         # identity from worker-captured native events. Bind the same complete
         # retained source context/receipt closure, but do not try to reinterpret
@@ -1583,21 +1602,6 @@ class ResourceJobAuthority:
                 receipt_id for receipt_id, _fields in event.parent_results.values()
                 if receipt_id in child.parent_result_receipt_ids}:
             raise AuthorityDenied("resource.source", "declared predecessor result closure is incomplete")
-        receipt_handle_map = getattr(self.service, "_source_receipt_handles", None)
-        if not isinstance(receipt_handle_map, Mapping):
-            raise AuthorityDenied("resource.source", "root source receipt handle registry is unavailable")
-        opaque_receipt_handles: list[str] = []
-        signed_wires: list[bytes] = []
-        for receipt in event.source_receipts:
-            matches = [key for key, candidate in receipt_handle_map.items()
-                       if candidate is receipt or candidate.receipt_id == receipt.receipt_id]
-            if len(matches) != 1:
-                raise AuthorityDenied("resource.source", "signed source receipt handle is unavailable or ambiguous")
-            opaque_receipt_handles.append(str(matches[0]))
-            signed_wires.append(_canonical(receipt.to_wire()))
-        context_handle = self._source_context_handles.get(handle.handle_id)
-        if not isinstance(context_handle, str):
-            raise AuthorityDenied("resource.source", "root source context handle is unavailable")
         observers = getattr(self.service, "source_observer_registry", None)
         resolver = getattr(observers, "resolve_live_source_producer", None)
         capsule = event.source_capsule_lineage

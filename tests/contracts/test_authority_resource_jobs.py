@@ -252,6 +252,7 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
 
     from hermes_installer.authority.resource_jobs import (
         ResourceJobAuthority, RootResourceProcessReceipt,
+        _admitted_source_closure_digest,
     )
     from hermes_installer.authority.service import AuthorityService
     from hermes_installer.authority.types import (
@@ -299,6 +300,7 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
     observed_handles = []
     observed_sources = []
     observed_tasks = []
+    root_source_arguments = []
     authority = None
 
     def launcher(handle, node_id):
@@ -348,6 +350,38 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         service.monotonic = lambda: handle.expires_monotonic + 1
         assert not authority.is_admitted_task_current(task, selection_bytes)
         service.monotonic = original_clock
+
+        # Exercise the root-ingress dispatch branch using the same retained
+        # signed closure. The common evidence must be assembled before the
+        # root/worker split, rather than leaking out of worker-only locals.
+        running = authority._running_task_handles[handle.handle_id]
+        _original_handle, original_child, original_enrollment, original_event = running
+        root_event = SimpleNamespace(handle="root-event-handle")
+        root_lineage = dict(original_event.source_capsule_lineage)
+        root_lineage["root_event_handle"] = root_event.handle
+        root_event_record = replace(original_event, source_capsule_lineage=root_lineage)
+        root_handle = replace(
+            handle,
+            parent_closure_digest=_admitted_source_closure_digest(
+                root_event_record, original_child,
+                original_enrollment.node_map[handle.node_id], backend,
+            ),
+        )
+        authority._running_task_handles[handle.handle_id] = (
+            root_handle, original_child, original_enrollment, root_event_record,
+        )
+        authority._root_event_by_job[handle.job_id] = root_event
+        authority._source_resolved_handles.discard(handle.handle_id)
+
+        def resolve_root_source(*args):
+            root_source_arguments.append(args)
+            return observed_sources[0]
+
+        authority._resolve_root_admitted_task_source = resolve_root_source
+        assert authority.resolve_admitted_task_source(root_handle, node_id) is observed_sources[0]
+        authority._root_event_by_job.pop(handle.job_id)
+        authority._running_task_handles[handle.handle_id] = running
+        authority._source_resolved_handles.add(handle.handle_id)
         authority.start_task_handle(handle, node_id)
         return RootResourceProcessReceipt(
             job_id=handle.job_id, node_id=handle.node_id,
@@ -473,6 +507,13 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
     event = authority._event(admission.job_id, enrollment)
     result = authority._launch_profile_task(child, event, enrollment.backends["backend-1"], 30.0, lambda: False)
     assert result["receipt_id"] == "root-result-receipt"
+    assert len(root_source_arguments) == 1
+    args = root_source_arguments[0]
+    assert args[0].node_id == "node-1"
+    assert args[3].source_capsule_lineage["root_event_handle"] == "root-event-handle"
+    assert args[4] == observed_sources[0].source_context_handle
+    assert tuple(args[5]) == observed_sources[0].verified_source_receipt_handles
+    assert tuple(args[6]) == observed_sources[0].signed_receipt_wires
     assert len(observed_handles) == 1
     assert observed_handles[0].attempt_index == 0
     assert observed_handles[0].task_payload == b'{"prompt":"perform the selected action"}'
