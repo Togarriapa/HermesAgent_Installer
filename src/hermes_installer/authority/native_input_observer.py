@@ -407,7 +407,15 @@ class RootNativeInputObserver:
                 current, observer, package, now,
                 peer_pid=binding.pid, peer_pidfd=binding.pidfd,
             )
-            if (proof != binding.loaded_package_proof
+            if (getattr(proof, "proof_id", None) is None
+                    or getattr(proof, "proof_id", None)
+                       != getattr(binding.loaded_package_proof, "proof_id", None)
+                    or getattr(proof, "profile_id", None) != event.producer_profile_id
+                    or getattr(proof, "generation", None) != event.producer_generation
+                    or getattr(proof, "package_id", None) != package.package_id
+                    or getattr(proof, "compiled_closure_sha256", None) != package.compiled_closure_sha256
+                    or getattr(proof, "service_generation_digest", None)
+                       != getattr(binding.loaded_package_proof, "service_generation_digest", None)
                     or proof.expires_monotonic <= now
                     or proof.loader_ready_event_id != event.native_loader_ready_event_id):
                 raise ValueError

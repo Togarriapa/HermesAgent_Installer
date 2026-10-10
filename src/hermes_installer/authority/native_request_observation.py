@@ -101,11 +101,33 @@ class NativeRequestObservationRegistry:
         self.process_resolver = process_resolver
         self.monotonic = monotonic
         self._records: dict[str, _RequestRecord] = {}
+        self._health_input_delivery_registry: Any | None = None
         self._health_selection_issuer = object()
         self._native_handle_index: dict[str, str] = {}
         self._retry_claims: dict[tuple[str, str, int], float] = {}
         self._total_bytes = 0
         self._lock = threading.RLock()
+
+    def attach_health_input_delivery_registry(self, registry: Any) -> None:
+        """Attach the separate daemon health input issuer to native request checks."""
+        from .native_health_daemon import RootHealthInputDeliveryRegistry
+        if (type(registry) is not RootHealthInputDeliveryRegistry
+                or registry.runtime.service is not self.service
+                or registry.source_observers is not self.source_observers):
+            raise AuthorityDenied("native.request_input", "selected health input issuer is not current")
+        with self._lock:
+            if (self._health_input_delivery_registry is not None
+                    and self._health_input_delivery_registry is not registry):
+                raise AuthorityDenied("native.request_input", "a different health input issuer is already attached")
+            self._health_input_delivery_registry = registry
+
+    def _current_native_input_events(self) -> tuple[Any, ...]:
+        with self._lock:
+            health_registry = self._health_input_delivery_registry
+        events = tuple(self.native_input_observer._events.values())
+        if health_registry is not None:
+            events += health_registry.current_events_for_native_request()
+        return events
 
     def record_request(self, *, bridge: Any, native_request_handle: str,
                        producer_pid: int, producer_pidfd: int,
@@ -175,7 +197,7 @@ class NativeRequestObservationRegistry:
                     capsule_handles[handle] = capsule
         if set(capsules) != parent_ids:
             raise AuthorityDenied("native.request_lineage", "parent source bytes are no longer retained by the root observer")
-        input_events = tuple(event for event in self.native_input_observer._events.values()
+        input_events = tuple(event for event in self._current_native_input_events()
                              if event.source_receipt_handle in parent_receipt_handles
                              and event.expires_monotonic > now)
         selected_inputs = []
@@ -293,7 +315,7 @@ class NativeRequestObservationRegistry:
             capsule_ids = set(capsule_rows)
             if {item.receipt_id for item in record.parent_receipts} - capsule_ids:
                 raise AuthorityDenied("native.request_stale", "request parent payload capsule expired")
-            input_events = {event.source_receipt_handle for event in self.native_input_observer._events.values()
+            input_events = {event.source_receipt_handle for event in self._current_native_input_events()
                             if event.expires_monotonic > now}
             if not (set(observation.parent_source_receipt_handles) & input_events):
                 raise AuthorityDenied("native.request_stale", "retained root native input is no longer current")
@@ -360,7 +382,8 @@ class NativeRequestObservationRegistry:
                     and input_event.source_receipt_handle in observation.parent_source_receipt_handles):
                 current.append((record, observation))
         if len(current) != 1:
-            raise AuthorityDenied("native.request_health", "health input does not select exactly one current native request")
+            code = "native.request_health_ambiguous" if len(current) > 1 else "native.request_health_pending"
+            raise AuthorityDenied(code, "health input does not select exactly one current native request")
         record, observation = current[0]
         # The base resolver verified all retained receipts/capsules, signed
         # context, current PIDFD identity and actual input-event membership.

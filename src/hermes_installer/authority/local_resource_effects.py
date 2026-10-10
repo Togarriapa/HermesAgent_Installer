@@ -1446,6 +1446,114 @@ class RootActiveOwnerOverlayEffectAuthority:
             raise LocalProfileOverlayEffectsDenied("owner-overlay completion record is unavailable")
         return row[0]
 
+    def resolve_current_health_result(self, selected_call: Any, input_event: Any, *,
+                                      peer_uid: int, peer_pid: int, peer_pidfd: int,
+                                      live_producer_identity: Any,
+                                      expected_profile_id: str, expected_generation: str,
+                                      expected_package_id: str, expected_package_generation: str,
+                                      expected_service_generation_digest: str,
+                                      expected_action_id: str) -> "RootSelectedOwnerOverlayHealthResult":
+        """Resolve the actual one-use CAS completion for the selected health call."""
+        from .native_runtime_observer import (
+            NativeInvocationRegistry, RootSelectedHealthOwnerInvocation,
+        )
+        registry = self._registry
+        invocation_registry = registry._runtime.service.native_invocation_registry
+        if (type(selected_call) is not RootSelectedHealthOwnerInvocation
+                or selected_call._registry is not invocation_registry
+                or type(invocation_registry) is not NativeInvocationRegistry
+                or invocation_registry.verify_current_health_owner_invocation(
+                    selected_call, input_event, peer_uid=peer_uid, peer_pid=peer_pid,
+                    peer_pidfd=peer_pidfd, live_producer_identity=live_producer_identity,
+                    expected_profile_id=expected_profile_id,
+                    expected_generation=expected_generation,
+                    expected_package_id=expected_package_id,
+                    expected_package_generation=expected_package_generation,
+                    expected_service_generation_digest=expected_service_generation_digest,
+                    expected_action_id=expected_action_id,
+                ) is not selected_call):
+            raise LocalProfileOverlayEffectsDenied("selected health call is no longer current")
+        invocation = selected_call.owner_invocation
+        selection = invocation.source_observer.selection
+        registry.verify_current(selection)
+        expected_args_sha = hashlib.sha256(invocation.canonical_arguments).hexdigest()
+        try:
+            journal = registry._effect_journal()
+            with journal._lock:
+                rows = tuple(journal._connection.execute(
+                    "SELECT nonce,invocation_handle,registration_id,arguments_sha256,adoption_sha256,"
+                    "result_sha256,result_receipt_handle FROM owner_overlay_effect_completions "
+                    "WHERE invocation_handle=?",
+                    (invocation.invocation_handle,),
+                ).fetchall())
+        except Exception:
+            rows = ()
+        if not rows:
+            from .types import AuthorityDenied
+            raise AuthorityDenied(
+                "native.health.result_pending",
+                "selected health tool has not produced a committed owner-overlay result",
+            )
+        if len(rows) != 1:
+            from .types import AuthorityDenied
+            raise AuthorityDenied("native.health.result_ambiguous",
+                                  "selected health operation has ambiguous current CAS completions")
+        nonce, invocation_handle, registration_id, arguments_sha, adoption_sha, result_sha, result_handle = rows[0]
+        now = registry._runtime.service.monotonic()
+        if (not isinstance(nonce, str) or not nonce
+                or invocation_handle != invocation.invocation_handle
+                or registration_id != "resource-overlay-store:tool:resource_overlay_read"
+                or invocation.registration_id != registration_id
+                or arguments_sha != expected_args_sha
+                or adoption_sha != selection.adoption_sha256
+                or not isinstance(result_sha, str) or not _HEX.fullmatch(result_sha)
+                or not isinstance(result_handle, str) or not 32 <= len(result_handle) <= 128
+                or invocation.expires_monotonic <= now):
+            raise LocalProfileOverlayEffectsDenied("current CAS completion does not match the selected health call")
+        with registry._effect_journal()._lock:
+            retained = registry._effect_journal()._connection.execute(
+                "SELECT invocation_handle,registration_id,arguments_sha256,adoption_sha256,result_sha256 "
+                "FROM owner_overlay_effect_completions WHERE nonce=?", (nonce,),
+            ).fetchone()
+        if retained != (invocation_handle, registration_id, arguments_sha, adoption_sha, result_sha):
+            raise LocalProfileOverlayEffectsDenied("selected health CAS completion changed")
+        return RootSelectedOwnerOverlayHealthResult(
+            invocation_handle=invocation_handle,
+            result_receipt_handle=result_handle,
+            result_sha256=result_sha,
+            parent_source_receipt_handles=tuple(invocation.parent_source_receipt_handles),
+            expires_monotonic=min(invocation.expires_monotonic,
+                                  selected_call.provider_response.expires_monotonic),
+            invocation=invocation, selection=selection, _issuer=self,
+            _seal=_OWNER_OVERLAY_HEALTH_RESULT_SEAL,
+        )
+
+
+_OWNER_OVERLAY_HEALTH_RESULT_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedOwnerOverlayHealthResult:
+    """Issuer-held durable effect/source receipt join for one selected health call."""
+
+    invocation_handle: str
+    result_receipt_handle: str
+    result_sha256: str
+    parent_source_receipt_handles: tuple[str, ...]
+    expires_monotonic: float
+    invocation: Any = field(repr=False, compare=False)
+    selection: Any = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _OWNER_OVERLAY_HEALTH_RESULT_SEAL
+                or not self.invocation_handle or not self.result_receipt_handle
+                or not _HEX.fullmatch(self.result_sha256)
+                or not self.parent_source_receipt_handles
+                or self.expires_monotonic <= 0):
+            raise TypeError("health effect result requires its exact issuer-owned completion")
+
 
 class RootActiveOwnerOverlayRegistry:
     """Rejoin signed owner adoption, current NSS/view, package and READY role.
