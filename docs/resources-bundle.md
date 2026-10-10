@@ -44,7 +44,10 @@ from an enrollment or caller DTO. Until the host enrollment exposes those
 typed selected rows and the v67 root ingress proof carries distinct raw and
 canonical payloads, webhook/timer events remain unable to enter the resource
 job ledger. A signed webhook receipt alone is authentication/replay evidence,
-not source authority or a runnable job.
+not source authority or a runnable job. Webhook ingress authenticates the
+original bounded body bytes before JSON parsing, rejects duplicate object
+members and non-finite numbers, then claims the durable delivery replay key;
+invalid signatures and ambiguous JSON never consume that key.
 This user-authorized owner copy does not assert a blanket redistribution grant.
 Preserve all source notices and apply the relevant terms before distributing
 the Installer or its bundled snapshot.
