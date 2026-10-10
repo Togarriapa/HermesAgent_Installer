@@ -18,6 +18,7 @@ def enrolled_agentmemory():
     value["lifecycle_binding"] = {
         "service_enrollment_id": value["service_enrollment_id"],
         "service_generation": value["service_generation"],
+        "enablement_selection_handle": "memory-choice-one",
         "start_operation_id": "memory-agentmemory-serve-v1",
         "start_parameter_schema_id": "no-caller-parameters-v1",
         "prestart_receipt_handles": ["package-receipt", "engine-receipt"],
