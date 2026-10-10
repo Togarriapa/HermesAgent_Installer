@@ -263,3 +263,14 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
                 prompt="digest mismatch", expected_hash_override="0" * 64)
         self.assertFalse(fixture.handler._handles)
         self.assertFalse(fixture.handler._starting)
+
+
+class RootTaskNativeFixturePreflightTests(unittest.TestCase):
+    def test_fixture_rejects_noncomposed_runtime_before_systemd_or_actor_probe(self) -> None:
+        from task_native_fixture import (
+            RootInstalledTaskRuntime,
+            TaskNativeFixtureUnavailable,
+        )
+
+        with self.assertRaisesRegex(TaskNativeFixtureUnavailable, "composed RootAuthorityRuntime"):
+            RootInstalledTaskRuntime.bind_current_main_pid(object(), unit_id="fixture.service")
