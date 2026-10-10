@@ -84,6 +84,27 @@ class RootSetupBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 registry.issue_explicit_tty_choice(RootSetupAction.INSTALL)
 
+    def test_interrupted_candidate_input_closes_captured_controller_proof(self) -> None:
+        registry = RootBootstrapCandidateSelectionRegistry()
+        stdin_fd = os.open(os.devnull, os.O_RDONLY)
+        pidfd = os.open(os.devnull, os.O_RDONLY)
+        tty = os.fstat(stdin_fd)
+        proof = root_setup._RootTTYProof(
+            stdin_fd, pidfd, os.getpid(), 1, 0, 0, 1, os.getpgrp(), tty.st_dev,
+            tty.st_ino, tty.st_rdev, time.monotonic(), time.monotonic() + 30,
+        )
+        with patch("hermes_installer.root_setup.sys.platform", "linux"), \
+             patch("hermes_installer.root_setup.os.getuid", return_value=0), \
+             patch("hermes_installer.root_setup.os.geteuid", return_value=0), \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=proof), \
+             patch.object(builtins, "input", side_effect=EOFError):
+            with self.assertRaises(EOFError):
+                registry.issue_explicit_tty_choice(RootSetupAction.INSTALL)
+        self.assertEqual(proof.stdin_fd, -1)
+        self.assertEqual(proof.pidfd, -1)
+
     def test_action_schema_is_finite_and_extra_arguments_are_rejected(self) -> None:
         for action in ("install", "resume", "update"):
             with self.subTest(action=action):

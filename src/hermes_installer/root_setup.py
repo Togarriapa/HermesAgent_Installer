@@ -241,8 +241,8 @@ class RootBootstrapCandidateSelectionRegistry:
         if not (sys.stdin.isatty() and sys.stderr.isatty()):
             raise RuntimeError("candidate source choice requires the root controlling terminal")
         proof = _capture_root_tty_proof()
-        candidate = input("Exact Hermes installer source commit (40 lowercase hex characters): ").strip()
         try:
+            candidate = input("Exact Hermes installer source commit (40 lowercase hex characters): ").strip()
             choice = RootSetupExplicitChoices(candidate, action, _seal=_CHOICE_SEAL)
         except BaseException:
             proof.close()
@@ -386,10 +386,13 @@ def run_root_setup_action(
         predecessor.verify_current()
         if predecessor.state == "absent":
             selection_registry = RootBootstrapCandidateSelectionRegistry()
-            choices = selection_registry.issue_explicit_tty_choice(selected_action)
-            bootstrap_selected_release(choices, selection_registry)
-            return _result(selected_action, RootSetupState.FAILED, "distribution",
-                           "Isolated source bootstrap returned without its required same-process handoff.")
+            try:
+                choices = selection_registry.issue_explicit_tty_choice(selected_action)
+                bootstrap_selected_release(choices, selection_registry)
+                return _result(selected_action, RootSetupState.FAILED, "distribution",
+                               "Isolated source bootstrap returned without its required same-process handoff.")
+            finally:
+                selection_registry.close()
         if predecessor.state != "present-verified":
             raise InstallerReleaseBuildError("deployment predecessor state is outside the reviewed schema")
         if predecessor.verified_release_receipt_handle is None:
@@ -484,6 +487,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         except RuntimeError as exc:
             result = _result(RootSetupAction(args.action), RootSetupState.PENDING,
                              "admission", _safe_reason(exc))
+        except EOFError:
+            result = _result(RootSetupAction(args.action), RootSetupState.PENDING,
+                             "admission", "Root terminal input ended before source selection completed.")
         except ValueError as exc:
             result = _result(RootSetupAction(args.action), RootSetupState.FAILED,
                              "admission", _safe_reason(exc))
