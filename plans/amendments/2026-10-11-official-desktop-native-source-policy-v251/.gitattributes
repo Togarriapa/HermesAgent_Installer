@@ -1,0 +1,3 @@
+# Exact upstream notice bytes, including original CRLF, are immutable evidence.
+packaging-COPYING -text -diff
+packaging-LICENSE.txt -text -diff
