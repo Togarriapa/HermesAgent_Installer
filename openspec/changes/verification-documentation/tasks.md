@@ -92,3 +92,8 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 ## v182 active generation custody
 
 - [ ] `VD-T182.4` Exercise post-setup positive and CAS/revocation/kernel/cleanup failures; hand off exact source measurements. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
+
+
+## v183 exact active effect producers
+
+- [ ] `VD-T183.5` Exercise real source/generated/loaded/current effects and failure evidence; exact committed source review. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.

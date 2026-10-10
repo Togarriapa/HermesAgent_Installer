@@ -77,3 +77,8 @@ Reviewed source members and boundary joins v180: `plans/amendments/2026-10-10-re
 ## Conditional Authentik and local-owner setup v181
 
 Use the separate root-observed Linux-owner identity/principal/snapshot domain, finite selected owner-overlay ceiling, digest-covered native policy and genuine loaded worker joins; preserve Authentik TLS/credential/fresh System/recipient/broker checks. Contract and sequential producer/evidence details: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. No runtime implementation or acceptance is claimed; all AC01..18 OPEN.
+
+
+## Concrete signed worker and active overlay producers v183
+
+Follow `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`: exact held recipe→signed choice→service-generation producer→active PM/native custody, and signed local-owner/source/view adoption→current NSS/loaded invocation/one-use four-method grant. No setup object or static metadata becomes active authority. Source pins pending committed review, all AC01..18 OPEN.

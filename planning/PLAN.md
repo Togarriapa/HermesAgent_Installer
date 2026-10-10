@@ -63,3 +63,6 @@ Conditional Authentik/local-owner setup v181: `plans/amendments/2026-10-10-condi
 
 
 Active network generation owner v182: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md` and `planning/active-network-generation-owner-v182.json`; HI-T182.1→HI-T182.2→HI-T182.3→VD-T182.4 OPEN. Concrete signed source/publication/revocation/current actor/journal owner replaces ambiguous active_enrollment. Valid original adoption can survive setup expiry; no lease survives active proof change. v180 kernel gates/all AC01..18 remain OPEN.
+
+
+Signed worker/current active overlay producers v183: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md` and `planning/active-effect-producers-v183.json`; concrete held source→signed recipe→service generation/active runtime and signed owner/view adoption→NSS/loaded invocation/four-method grant. HI-T183.0..4/VD-T183.5 OPEN; no static network authorization, setup receipt extension or host/AuthentiK scope. All AC01..18 OPEN.
