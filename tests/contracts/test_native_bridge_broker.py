@@ -26,6 +26,26 @@ class _Policy:
 
 
 class NativeBridgeBrokerContracts(unittest.TestCase):
+    def test_request_broker_attaches_to_the_concrete_root_turn_registry(self):
+        from hermes_installer.authority.native_bridge import NativeBridgeBroker
+        from hermes_installer.authority.native_turn_observation import RootNativeTurnObservationRegistry
+
+        service = object()
+        broker = object.__new__(NativeBridgeBroker)
+        broker.service = service
+        broker.native_request_observer = object()
+        broker.native_turn_observer = None
+        broker._lock = __import__("threading").RLock()
+        turns = object.__new__(RootNativeTurnObservationRegistry)
+        turns.service = service
+        turns.native_bridge_broker = None
+        turns._lock = __import__("threading").RLock()
+
+        broker.attach_native_turn_observer(turns)
+
+        self.assertIs(broker.native_turn_observer, turns)
+        self.assertIs(turns.native_bridge_broker, broker)
+
     def test_response_registry_attaches_once_after_cycle_safe_construction(self):
         from hermes_installer.authority.native_runtime_observer import NativeInvocationRegistry
 
