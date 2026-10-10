@@ -32,6 +32,7 @@ class NativeInstallReceipt:
     profile_id: str
     discovered_profile: bool
     profile_identity_loaded: bool
+    profile_display_name: str
     discovered_skills: tuple[str, ...]
     loaded_skills: tuple[str, ...]
     content_digests: dict[str, str]
@@ -172,6 +173,7 @@ for name in skill_ids:
 print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_id,
                   "skills": sorted(names), "loaded": loaded,
                   "visible_profiles": visible_profiles,
+                  "profile_display_name": str(matches[0].display_name or ""),
                   "digests": digests}, sort_keys=True))
 '''
 
@@ -373,6 +375,7 @@ def discover_and_load_selected(
     loaded_skills = tuple(payload.get("loaded", ()))
     if (payload.get("profile") != profile_id
             or (require_sole_profile and payload.get("visible_profiles") != [profile_id])
+            or not isinstance(payload.get("profile_display_name"), str)
             or not set(skill_ids).issubset(found_skills)
             or set(loaded_skills) != set(skill_ids)):
         raise NativeInstallError("pinned Hermes returned an incomplete native discovery receipt")
@@ -382,6 +385,7 @@ def discover_and_load_selected(
         profile_id=profile_id,
         discovered_profile=True,
         profile_identity_loaded=True,
+        profile_display_name=payload["profile_display_name"],
         discovered_skills=tuple(sorted(found_skills)),
         loaded_skills=loaded_skills,
         content_digests=dict(payload.get("digests", {})),

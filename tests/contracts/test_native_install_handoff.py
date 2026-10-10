@@ -77,6 +77,7 @@ def test_selected_profile_and_skill_use_pinned_hermes_apis(tmp_path: Path) -> No
     assert receipt.hermes_revision == PINNED_HERMES_REVISION
     assert receipt.python_version.startswith("3.14.")
     assert receipt.discovered_profile and receipt.profile_identity_loaded
+    assert receipt.profile_display_name == "Native fixture"
     assert "selected-fixture" in receipt.discovered_skills
     assert receipt.loaded_skills == ("selected-fixture",)
     assert set(receipt.content_digests) == {"profile:native-fixture", "skill:selected-fixture"}
@@ -126,10 +127,54 @@ def test_complete_vendored_profiles_and_skills_load_through_pinned_hermes_apis(t
     assert len(receipt.profiles_discovered) == len(receipt.profiles_loaded) == 208
     assert len(receipt.skills_discovered) == len(receipt.skills_loaded) == 396
     assert receipt.profile_aliases == {
-        name: name.replace("-", " ").replace("_", " ").title() for name in profile_ids
+        name: ("Jarvis" if name == "hermes"
+               else name.replace("-", " ").replace("_", " ").title())
+        for name in profile_ids
     }
     assert len(receipt.profile_digests) == 208
     assert len(receipt.skill_digests) == 396
+
+
+def test_primary_jarvis_is_the_only_pinned_default_home_profile(tmp_path: Path) -> None:
+    """Exercise real profile.list display metadata and sole-default guard at pinned Hermes."""
+    source = os.environ.get("HERMES_NATIVE_TEST_SOURCE")
+    python = os.environ.get("HERMES_NATIVE_TEST_PYTHON")
+    if not source or not python:
+        pytest.skip("set HERMES_NATIVE_TEST_SOURCE and HERMES_NATIVE_TEST_PYTHON to run the pinned primary profile probe")
+
+    bundle = Path(__file__).parents[2] / "src" / "hermes_installer" / "registry" / "bundle_data"
+    pin = PinnedSource.from_mapping(json.loads(
+        (bundle / "hermes-agent-resources.pin.json").read_text(encoding="utf-8")))
+    verified = BundledRegistrySource(pin).load(
+        (bundle / "hermes-agent-resources-2.3.1.tar.gz").read_bytes())
+    registry = NativeRegistry.from_verified_source(verified)
+    discovery = registry.discover(["profiles/hermes@*"])
+    compiled = registry.materialize(discovery)
+    from hermes_installer.authority.native_materialization import _selected_files
+    selected = _selected_files(compiled, "hermes", native_profile_key="default")
+    root = tmp_path / "hermes"
+    root.mkdir()
+    for relative, content in selected.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    skill_ids = tuple(sorted(
+        relative.removeprefix("skills/").removesuffix("/SKILL.md")
+        for relative in selected if relative.startswith("skills/")
+    ))
+
+    receipt = discover_and_load_selected(
+        hermes_source=source,
+        python=python,
+        hermes_root=root,
+        profile_id="default",
+        skill_ids=skill_ids,
+        require_sole_profile=True,
+    )
+    assert receipt.hermes_revision == PINNED_HERMES_REVISION
+    assert receipt.profile_id == "default"
+    assert receipt.profile_display_name == "Jarvis"
+    assert receipt.profile_identity_loaded
 
 
 @pytest.mark.parametrize("profile_id", ["", "../escape", "Uppercase", "a" * 65, "a" * 97])
