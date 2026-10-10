@@ -151,6 +151,13 @@ class RootMemoryLifecycleRegistry:
         self._start_receipts: dict[str, Any] = {}
         self._readiness_receipts: dict[str, Any] = {}
         self._receipts: dict[str, RootMemoryServiceStartReceipt] = {}
+        # Control re-admission is keyed by the exact opaque manager receipt
+        # object. The associated user-selected handles are retained here only
+        # so the registry can re-resolve current evidence; callers never pass
+        # controller, source, or consent selectors again.
+        self._control_origins: dict[str, tuple[str, str, str, str, Any]] = {}
+        self._control_admissions: dict[str, tuple[RootVerifiedMemoryLifecycleAdmission, Any, str]] = {}
+        self._authority_handles: dict[str, tuple[str, str]] = {}
 
     @classmethod
     def from_root_runtime(cls, *, active_bindings: Any, lifecycle: RootMemoryServiceLifecycle,
@@ -255,14 +262,21 @@ class RootMemoryLifecycleRegistry:
         consent_deadline = getattr(consent, "expires_monotonic", None)
         route_deadline = getattr(routes, "expires_monotonic", None)
         source_deadline = getattr(source, "expires_monotonic", None)
-        deadlines = (consent_deadline, route_deadline, source_deadline, controller.expires_monotonic)
-        if any(isinstance(value, bool) or type(value) not in (int, float)
-               or not math.isfinite(value) or value <= now for value in deadlines):
+        # The service lifetime is bounded by its durable lifecycle consent and
+        # the enrolled recipe. Source, route, and controller receipts are fresh
+        # per-effect evidence; their <=30s leases must not shorten the owned
+        # process deadline. They still cap this particular start admission.
+        if (isinstance(consent_deadline, bool) or type(consent_deadline) not in (int, float)
+                or not math.isfinite(consent_deadline) or consent_deadline <= now
+                or any(isinstance(value, bool) or type(value) not in (int, float)
+                       or not math.isfinite(value) or value <= now
+                       for value in (route_deadline, source_deadline, controller.expires_monotonic))):
             controller.close()
             raise RootMemoryLifecycleRegistryDenied("one or more selected memory evidence leases expired")
         life = enrollment.lifecycle_binding
-        original_deadline = min(now + life.original_deadline_seconds, *deadlines)
-        expires = min(original_deadline, now + 30.0)
+        original_deadline = min(now + life.original_deadline_seconds, float(consent_deadline))
+        expires = min(original_deadline, now + 30.0, float(route_deadline),
+                      float(source_deadline), float(controller.expires_monotonic))
         if expires <= now:
             controller.close()
             raise RootMemoryLifecycleRegistryDenied("selected memory lifecycle deadline is exhausted")
@@ -318,6 +332,8 @@ class RootMemoryLifecycleRegistry:
             self._source_closures[admission.admission_handle] = source
             self._consents[admission.admission_handle] = consent
             self._routes[admission.admission_handle] = routes
+            self._authority_handles[admission.admission_handle] = (
+                consent_handle, controller_proof_handle)
         return admission.admission_handle
 
     def resolve_admission(self, admission_handle: str) -> RootVerifiedMemoryLifecycleAdmission:
@@ -419,7 +435,269 @@ class RootMemoryLifecycleRegistry:
             self._start_receipts[admission_handle] = start_receipt
             self._readiness_receipts[admission_handle] = probe
             self._receipts[handle] = receipt
+            from hermes_installer.managed_process_custodian import RootSelectedServiceProcessReceipt
+            if type(start_receipt) is RootSelectedServiceProcessReceipt:
+                self._control_origins[start_receipt.receipt_handle] = (
+                    admission._enrollment.target_id,
+                    self._consent_handle_for(admission_handle),
+                    self._controller_handle_for(admission_handle),
+                    admission_handle,
+                    start_receipt,
+                )
         return receipt
+
+    def _consent_handle_for(self, admission_handle: str) -> str:
+        return self._authority_handles[admission_handle][0]
+
+    def _controller_handle_for(self, admission_handle: str) -> str:
+        return self._authority_handles[admission_handle][1]
+
+    def readmit_selected_control(self, memory_enrollment_id: str, owned_process_handle: Any,
+                                 operation: str) -> RootVerifiedMemoryLifecycleAdmission:
+        """Mint a fresh <=30s status/stop admission for one retained process.
+
+        The caller can select only the active enrollment and a finite control
+        operation. Process identity, original deadline, source closure,
+        enablement, consent and controller PIDFD are re-resolved from root
+        registries and the exact object retained at start.
+        """
+        from hermes_installer.managed_process_custodian import RootSelectedServiceProcessReceipt
+        from hermes_installer.authority.memory_lifecycle_evidence import _managed_identity_digest
+        action = {"process.status": "status", "process.stop": "stop"}.get(operation)
+        if (action is None
+                or type(owned_process_handle) is not RootSelectedServiceProcessReceipt
+                or not isinstance(memory_enrollment_id, str) or not memory_enrollment_id):
+            raise RootMemoryLifecycleRegistryDenied("typed retained process and finite control operation are required")
+        receipt = owned_process_handle
+        with self._lock:
+            origin = self._control_origins.get(receipt.receipt_handle)
+        if (origin is None or origin[4] is not receipt or origin[0] != memory_enrollment_id):
+            raise RootMemoryLifecycleRegistryDenied("process receipt is not the exact retained memory start")
+        enrollment_id, consent_handle, controller_handle, start_handle, _ = origin
+        original = self._admissions.get(start_handle)
+        if (type(original) is not RootVerifiedMemoryLifecycleAdmission
+                or original._enrollment.target_id != enrollment_id
+                or original.original_deadline != receipt.expires_monotonic
+                or receipt.action != "start"
+                or receipt.operation_id != original.action_bindings["start"].operation_id
+                or receipt.role != f"memory-{original._enrollment.provider}"
+                or receipt.enrollment_id != original.service_enrollment_id
+                or receipt.profile_id != original.profile_id
+                or receipt.generation != original.generation
+                or receipt.selected_principal_id != original.principal_id
+                or receipt.selected_namespace_identity != original.namespace_identity
+                or receipt.service_generation_digest != original.service_generation_digest
+                or self.monotonic() >= receipt.expires_monotonic):
+            raise RootMemoryLifecycleRegistryDenied("original process lineage or deadline is stale")
+        process_resolver = getattr(self.lifecycle.custody, "resolve_selected_service_process", None)
+        if not callable(process_resolver):
+            raise RootMemoryLifecycleRegistryDenied("manager-owned process identity resolver is unavailable")
+        live = process_resolver(receipt)
+        if live is None:
+            raise RootMemoryLifecycleRegistryDenied("retained selected service process is no longer current")
+        try:
+            if (getattr(live, "process_id", None) != receipt.process_id
+                    or getattr(live, "generation", None) != receipt.generation
+                    or getattr(live, "profile_id", None) != receipt.profile_id
+                    or getattr(live, "uid", None) != receipt.selected_subject_uid
+                    or getattr(live, "gid", None) != receipt.selected_subject_gid
+                    or getattr(live, "expires_monotonic", 0) != receipt.expires_monotonic):
+                raise RootMemoryLifecycleRegistryDenied("retained process identity differs from its start receipt")
+        finally:
+            close = getattr(live, "close", None)
+            if callable(close):
+                close()
+
+        now = self.monotonic()
+        digest, enrollment, source, consent, routes, controller, selection = self._resolve_evidence(
+            enrollment_id, consent_handle, controller_handle)
+        source_sha256 = source.source_closure_sha256
+        if (digest != original.service_generation_digest
+                or enrollment != original._enrollment
+                or source_sha256 != original.source_closure_sha256
+                or tuple(source.receipt_handles) != original.source_receipt_handles
+                or consent.consent_id != original.consent_id
+                or consent.consent_revision != original.consent_revision
+                or selection.selection_handle != source.enablement_selection_handle):
+            controller.close()
+            raise RootMemoryLifecycleRegistryDenied("fresh control evidence differs from the original process admission")
+        deadlines = (getattr(consent, "expires_monotonic", None),
+                    getattr(routes, "expires_monotonic", None),
+                    getattr(source, "expires_monotonic", None),
+                    controller.expires_monotonic, receipt.expires_monotonic)
+        if any(isinstance(value, bool) or type(value) not in (int, float)
+               or not math.isfinite(value) or value <= now for value in deadlines):
+            controller.close()
+            raise RootMemoryLifecycleRegistryDenied("fresh control evidence lease is exhausted")
+        expires = min(now + 30.0, *deadlines)
+        try:
+            actions = {
+                action: MemorySelectedLifecycleActionBinding.resolve(
+                    enrollment, self.bindings.enrollment_catalog, action=action,
+                    source_closure_sha256=source_sha256,
+                    source_receipt_handles=tuple(source.receipt_handles),
+                    process_id=receipt.process_id if action in {"status", "stop"} else None,
+                ) for action in ("start", "status", "stop")
+            }
+        except Exception:
+            controller.close()
+            raise RootMemoryLifecycleRegistryDenied(
+                "fresh process control recipe is unavailable") from None
+        if expires <= now:
+            controller.close()
+            raise RootMemoryLifecycleRegistryDenied("fresh control admission has no live lease")
+
+        holder: dict[str, RootVerifiedMemoryLifecycleAdmission] = {}
+
+        def same_controller(fresh: Any, retained: Any) -> bool:
+            return (getattr(fresh, "proof_sha256", None) == getattr(retained, "proof_sha256", None)
+                    and getattr(fresh, "pid", None) == getattr(retained, "pid", None)
+                    and getattr(fresh, "start_ticks", None) == getattr(retained, "start_ticks", None)
+                    and getattr(fresh, "cgroup_identity", None) == getattr(retained, "cgroup_identity", None)
+                    and getattr(fresh, "mount_namespace_inode", None) == getattr(retained, "mount_namespace_inode", None)
+                    and getattr(fresh, "network_namespace_inode", None) == getattr(retained, "network_namespace_inode", None))
+
+        def current_check(admission: RootVerifiedMemoryLifecycleAdmission) -> bool:
+            if holder.get("admission") is not admission or self.monotonic() >= receipt.expires_monotonic:
+                return False
+            fresh_controller = None
+            fresh_process = None
+            try:
+                current = self._resolve_evidence(enrollment_id, consent_handle, controller_handle)
+                fresh_controller = current[5]
+                if (current[0] != digest or current[1] != enrollment
+                        or current[2].source_closure_sha256 != source_sha256
+                        or tuple(current[2].receipt_handles) != tuple(source.receipt_handles)
+                        or current[3].consent_id != consent.consent_id
+                        or current[3].consent_revision != consent.consent_revision
+                        or current[6].selection_handle != selection.selection_handle
+                        or not same_controller(fresh_controller, controller)
+                        or not controller.is_current()):
+                    return False
+                fresh_process = process_resolver(receipt)
+                return bool(fresh_process is not None
+                            and fresh_process.process_id == receipt.process_id
+                            and fresh_process.generation == receipt.generation
+                            and fresh_process.profile_id == receipt.profile_id
+                            and fresh_process.uid == receipt.selected_subject_uid
+                            and fresh_process.gid == receipt.selected_subject_gid
+                            and fresh_process.expires_monotonic == receipt.expires_monotonic
+                            and _managed_identity_digest(fresh_process) == receipt.process_identity_digest)
+            except Exception:
+                return False
+            finally:
+                if fresh_controller is not None and fresh_controller is not controller:
+                    fresh_controller.close()
+                if fresh_process is not None:
+                    fresh_process.close()
+
+        try:
+            admission = RootVerifiedMemoryLifecycleAdmission._from_root_registry(
+                service_generation_digest=digest, enrollment=enrollment,
+                consent_id=consent.consent_id, consent_revision=consent.consent_revision,
+                source_closure_sha256=source_sha256,
+                source_receipt_handles=tuple(source.receipt_handles), sensitivity="PRIVATE",
+                issued_monotonic=now, expires_monotonic=expires,
+                original_deadline=receipt.expires_monotonic, action_bindings=actions,
+                controller_lease=controller, consent_record=consent,
+                source_closure=source, current_check=current_check,
+            )
+            holder["admission"] = admission
+            self.lifecycle.retain_admission(admission)
+            if not admission.is_current(now=self.monotonic()):
+                raise RootMemoryLifecycleRegistryDenied("fresh process-control evidence changed during readmission")
+        except Exception:
+            controller.close()
+            raise
+        with self._lock:
+            self._admissions[admission.admission_handle] = admission
+            self._source_closures[admission.admission_handle] = source
+            self._consents[admission.admission_handle] = consent
+            self._routes[admission.admission_handle] = routes
+            self._control_admissions[admission.admission_handle] = (admission, receipt, operation)
+            self._authority_handles[admission.admission_handle] = (consent_handle, controller_handle)
+        # The old controller lease cannot authorize later operations. Release
+        # it after a fresh proof has been retained; the immutable old object is
+        # kept only as lineage metadata in this registry.
+        release = getattr(self.lifecycle, "release_admission", None)
+        if callable(release):
+            release(start_handle)
+        return admission
+
+    def perform_selected_control(self, admission: RootVerifiedMemoryLifecycleAdmission,
+                                 owned_process_handle: Any, operation: str, *,
+                                 reason: str = "shutdown", timeout: float = 10.0,
+                                 cancelled: Callable[[], bool] | None = None) -> Any:
+        """Execute only the exact fresh control admission returned above."""
+        from hermes_installer.managed_process_custodian import RootSelectedServiceProcessReceipt
+        retained = self._control_admissions.get(getattr(admission, "admission_handle", ""))
+        action = {"process.status": "status", "process.stop": "stop"}.get(operation)
+        if (action is None or type(admission) is not RootVerifiedMemoryLifecycleAdmission
+                or retained is None or retained[0] is not admission
+                or retained[1] is not owned_process_handle or retained[2] != operation
+                or type(owned_process_handle) is not RootSelectedServiceProcessReceipt
+                or not admission.is_current(now=self.monotonic())):
+            raise RootMemoryLifecycleRegistryDenied("fresh process-control admission is absent or stale")
+        if action == "stop" and reason != "shutdown":
+            raise RootMemoryLifecycleRegistryDenied("only the fixed shutdown stop reason is available here")
+        binding = admission.action(action, now=self.monotonic(),
+                                  reason=reason if action == "stop" else None)
+        binding = binding.with_retained_process(owned_process_handle.process_id)
+        try:
+            return self.lifecycle._effect(admission, binding, timeout=timeout, cancelled=cancelled)
+        finally:
+            release = getattr(self.lifecycle, "release_admission", None)
+            if callable(release):
+                release(admission.admission_handle)
+            with self._lock:
+                self._control_admissions.pop(admission.admission_handle, None)
+                self._admissions.pop(admission.admission_handle, None)
+                self._source_closures.pop(admission.admission_handle, None)
+                self._consents.pop(admission.admission_handle, None)
+                self._routes.pop(admission.admission_handle, None)
+                self._authority_handles.pop(admission.admission_handle, None)
+                if action == "stop":
+                    origin = self._control_origins.get(owned_process_handle.receipt_handle)
+                    if origin is not None and origin[4] is owned_process_handle:
+                        self._control_origins.pop(owned_process_handle.receipt_handle, None)
+                        old_handle = origin[3]
+                        self._admissions.pop(old_handle, None)
+                        self._source_closures.pop(old_handle, None)
+                        self._consents.pop(old_handle, None)
+                        self._routes.pop(old_handle, None)
+                        self._authority_handles.pop(old_handle, None)
+
+    def control_selected_memory(self, memory_enrollment_id: str, owned_process_handle: Any,
+                                operation: str, *, timeout: float = 10.0,
+                                cancelled: Callable[[], bool] | None = None) -> Any:
+        """Revalidate and perform one same-process status or fixed shutdown.
+
+        This is the production callpoint for controls after the original
+        admission lease expires. Every call receives fresh source, choice,
+        consent, controller PIDFD and process-identity evidence; it cannot
+        launch or extend the retained process deadline.
+        """
+        if operation not in {"process.status", "process.stop"}:
+            raise RootMemoryLifecycleRegistryDenied("only process.status or process.stop is available")
+        admission = self.readmit_selected_control(
+            memory_enrollment_id, owned_process_handle, operation)
+        return self.perform_selected_control(
+            admission, owned_process_handle, operation,
+            reason="shutdown", timeout=timeout, cancelled=cancelled)
+
+    def status_selected_memory(self, memory_enrollment_id: str,
+                               owned_process_handle: Any, *, timeout: float = 10.0,
+                               cancelled: Callable[[], bool] | None = None) -> Any:
+        return self.control_selected_memory(
+            memory_enrollment_id, owned_process_handle, "process.status",
+            timeout=timeout, cancelled=cancelled)
+
+    def stop_selected_memory(self, memory_enrollment_id: str,
+                             owned_process_handle: Any, *, timeout: float = 10.0,
+                             cancelled: Callable[[], bool] | None = None) -> Any:
+        return self.control_selected_memory(
+            memory_enrollment_id, owned_process_handle, "process.stop",
+            timeout=timeout, cancelled=cancelled)
 
     def resolve_start_receipt(self, receipt_handle: str) -> RootMemoryServiceStartReceipt:
         with self._lock:
