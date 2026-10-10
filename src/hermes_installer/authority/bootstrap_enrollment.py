@@ -74,6 +74,9 @@ class EnrollmentPolicy:
     resource_controller_roles: tuple[Mapping[str, Any], ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
     remote_observation_enrollments: tuple[Mapping[str, Any], ...]
+    native_schema_artifacts: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollments: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_bindings: tuple[Mapping[str, Any], ...] = ()
     protected_devices: tuple[Mapping[str, Any], ...] = ()
     protected_build_records: tuple[Mapping[str, Any], ...] = ()
     native_packages: tuple[Mapping[str, Any], ...] = ()
@@ -1668,7 +1671,10 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "root_journal_roots": [dict(row) for row in policy.root_journal_roots],
              "resource_controller_roles": [dict(row) for row in policy.resource_controller_roles],
              "native_mcp_tool_bindings": [dict(row) for row in policy.native_mcp_tool_bindings],
-             "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments]}
+             "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments],
+             "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
+             "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
+             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:
