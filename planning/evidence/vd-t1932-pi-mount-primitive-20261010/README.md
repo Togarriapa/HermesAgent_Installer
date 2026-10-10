@@ -1,0 +1,10 @@
+Partial evidence for VD-T193.2 and HI-T193.1, change `verification-documentation`, baseline AC01–AC18 all OPEN. The exact amendment is `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`.
+
+The probe ran on the user-authorized PI-HERMES through the supplied Raspberry Pi Connect browser shell, as UID/GID 0:0, on 2026-10-10 from 16:25:03.838938 UTC to 16:25:03.932816 UTC. The probe and JSON below are byte-exact mirrors of the retained Pi artifacts; the repository publisher independently verified their SHA-256 values and the five source/target device, inode and content matches.
+
+- `probe.py`: SHA-256 `76b68eba512e3f91f815b786133d59221097f96e0026689f5e640d818d3d8146`, 6287 bytes.
+- `evidence.json`: SHA-256 `450ea88265f922894fd48094c242595cdea6a7d307d64ecb0a8b9ca588aeebd4`, 6308 bytes. Original Pi file is root-owned mode 0600 under `/root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/`.
+
+A private mount namespace bound exactly five public fixture leaves from a source directory that remained mode 0700 into a distinct tmpfs target directory, mode 0711, under a fresh `/run` directory. Mountinfo recorded read-only, nosuid, nodev and noexec flags. UID 65534 read all five files. Root writes failed with EROFS; UID 65534 writes, creation and traversal to the protected source/foreign sentinel were denied. Each leaf retained its source device, inode and SHA-256. The private namespace exited and the temporary fixture and `/run` target were removed. The namespace script was retained in the root-only evidence stage.
+
+This verifies the Linux mount primitive only. It does not execute an installer candidate, manager-issued selected view, official Hermes worker, complete protected-parent masking, PM closure, loader/event chain, health completion, account integration or installer acceptance. VD-T193.2 remains open for those joins and failure cases; no acceptance checkbox is completed by this record. No service, account or network configuration was changed by this probe.
