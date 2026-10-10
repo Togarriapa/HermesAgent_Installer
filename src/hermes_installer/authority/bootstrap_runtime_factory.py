@@ -703,9 +703,21 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("PM runtime is not owned by this setup session")
         return self._session._resolve_current_pm_runtime()
 
+    def resolve_current_pm_runtime_projection(self) -> Any:
+        """Resolve held official PM base-runtime descriptors for the live setup."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("PM runtime projection is not owned by this setup session")
+        return self._session._resolve_current_pm_runtime_projection()
+
     def resolve_current_pm_uv_tool(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("PM uv tool selection is not owned by this setup session")
+        return self._session._resolve_current_pm_uv_tool()
+
+    def resolve_current_pm_uv_tool_projection(self) -> Any:
+        """Resolve the official PM uv executable as a held current receipt FD."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("PM uv tool projection is not owned by this setup session")
         return self._session._resolve_current_pm_uv_tool()
 
     def observe_memory_service_enablement(
@@ -5674,6 +5686,25 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("official PM runtime receipt differs from current setup custody")
         return selected
 
+    def _resolve_current_pm_runtime_projection(self) -> Any:
+        selected = self._resolve_current_pm_runtime()
+        from .pm_runtime import RootPMRuntimeReceiptRegistry, VerifiedPMRuntimeProjection
+        registry = self._pm_runtime_registry
+        if not isinstance(registry, RootPMRuntimeReceiptRegistry):
+            raise BootstrapEnrollmentPending("current PM runtime projection registry is unavailable")
+        projection = registry.resolve_runtime_projection(
+            selected.receipt_handle, self._authorization.transaction_handle,
+            self._last_receipt.generation_id)
+        if (not isinstance(projection, VerifiedPMRuntimeProjection)
+                or projection.selection != selected
+                or projection.selection.setup_session_id != self._handle.session_id
+                or projection.selection.transaction_handle != self._authorization.transaction_handle
+                or projection.selection.prepared_generation_id != self._last_receipt.generation_id):
+            if isinstance(projection, VerifiedPMRuntimeProjection):
+                projection.close()
+            raise BootstrapEnrollmentPending("PM runtime projection differs from current setup custody")
+        return projection
+
     def _resolve_current_pm_uv_tool(self) -> Any:
         """Resolve the sealed PM-managed uv executable selection for this setup."""
         runtime = self._resolve_current_pm_runtime()
@@ -6652,6 +6683,9 @@ class RootBootstrapSession:
             registry = RootPMRuntimeReceiptRegistry(
                 runtime_root=runtime_root, setup_session=self,
                 current_guard=current_guard,
+                catalog=self._factory._catalog,
+                artifact_root=self._factory._receipt_registry.artifact_root,
+                artifact_receipts=self._factory._receipt_registry,
             )
             provisioner = RootPMRuntimeProvisioner(
                 setup_session=self, artifact_fetcher=fetcher,
