@@ -7,6 +7,7 @@ reconstructed transcript stays behind the root memory-capture boundary.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -17,11 +18,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from .types import AuthorityDenied, canonical_digest
+from .types import AuthorityDenied, canonical_bytes, canonical_digest
 
 _MAX_TURNS = 256
 _MAX_TURN_EVENTS = 512
 _MAX_TRANSCRIPT_BYTES = 1_048_576
+_MAX_TRANSCRIPT_EVENTS = 4096
 _HANDLE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -169,6 +171,50 @@ class RootTurnTranscriptEvent:
     payload_bytes: bytes = field(repr=False)
 
 
+def build_root_turn_transcript(events: tuple[RootTurnTranscriptEvent, ...]) -> bytes:
+    """Serialize only the exact root-retained ordered event bytes.
+
+    This representation is intentionally an event transcript, not a claim
+    that the underlying SDK payloads are already normalized chat messages.
+    Downstream memory extraction treats the bounded JSON as private captured
+    text and applies its own selected serializer/consent policy.
+    """
+    allowed_kinds = {"input", "request", "response", "tool-result", "delegation-result"}
+    if not isinstance(events, tuple) or not 1 <= len(events) <= _MAX_TRANSCRIPT_EVENTS:
+        raise AuthorityDenied("native.turn.transcript", "root event transcript is outside its event bound")
+    rows: list[dict[str, Any]] = []
+    total_payload_bytes = 0
+    for sequence, event in enumerate(events):
+        if (type(event) is not RootTurnTranscriptEvent
+                or event.kind not in allowed_kinds
+                or not isinstance(event.receipt_handle, str)
+                or _HANDLE.fullmatch(event.receipt_handle) is None
+                or not isinstance(event.source_kind, str) or not event.source_kind
+                or len(event.source_kind) > 128
+                or not isinstance(event.payload_bytes, bytes)):
+            raise AuthorityDenied("native.turn.transcript", "root event transcript contains a malformed event")
+        total_payload_bytes += len(event.payload_bytes)
+        if total_payload_bytes > _MAX_TRANSCRIPT_BYTES:
+            raise AuthorityDenied("native.turn.transcript", "root event transcript exceeds its payload bound")
+        rows.append({
+            "sequence": sequence,
+            "event_kind": event.kind,
+            "receipt_handle": event.receipt_handle,
+            "source_kind": event.source_kind,
+            "payload_sha256": hashlib.sha256(event.payload_bytes).hexdigest(),
+            "payload_size_bytes": len(event.payload_bytes),
+            "payload_b64": base64.b64encode(event.payload_bytes).decode("ascii"),
+        })
+    result = canonical_bytes({
+        "schema": 1,
+        "format": "root-observed-turn-events-v1",
+        "events": rows,
+    })
+    if len(result) > _MAX_TRANSCRIPT_BYTES:
+        raise AuthorityDenied("native.turn.transcript", "serialized root event transcript exceeds its bound")
+    return result
+
+
 @dataclass(slots=True)
 class _Turn:
     handle: str
@@ -215,8 +261,7 @@ class RootNativeTurnObservationRegistry:
     def __init__(self, *, service: Any, selected_execution_registry: Any,
                  input_observer: Any, source_observers: Any,
                  process_custody: Any, response_resolver: Callable[[str], Any],
-                 native_bridge_broker: Any,
-                 transcript_builder: Callable[[tuple[RootTurnTranscriptEvent, ...]], bytes],
+                 native_bridge_broker: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (service is None
                 or not callable(getattr(selected_execution_registry, "resolve_current_execution", None))
@@ -225,8 +270,8 @@ class RootNativeTurnObservationRegistry:
                 or not callable(getattr(source_observers, "resolve_delivered_source_receipt", None))
                 or not callable(getattr(process_custody, "resolve_managed_task_process_handle", None))
                 or not callable(response_resolver)
-                or not callable(getattr(native_bridge_broker, "resolve_native_request_observation", None))
-                or not callable(transcript_builder)
+                or (native_bridge_broker is not None and not callable(
+                    getattr(native_bridge_broker, "resolve_native_request_observation", None)))
                 or not callable(monotonic)):
             raise ValueError("root native turn observation dependencies are incomplete")
         self.service = service
@@ -236,21 +281,37 @@ class RootNativeTurnObservationRegistry:
         self.process_custody = process_custody
         self.response_resolver = response_resolver
         self.native_bridge_broker = native_bridge_broker
-        self.transcript_builder = transcript_builder
+        self.transcript_builder = build_root_turn_transcript
         self.monotonic = monotonic
         self._turns: dict[str, _Turn] = {}
         self._by_source: dict[str, set[str]] = {}
         self._begun_inputs: dict[str, float] = {}
-        self._completed: dict[str, tuple[RootCompletedNativeTurn, bytes]] = {}
+        self._completed: dict[str, tuple[RootCompletedNativeTurn, bytearray]] = {}
         self._persisting_completed: set[str] = set()
-        self._used_final_responses: set[str] = set()
+        self._used_final_responses: dict[str, float] = {}
         self._memory_capture_coordinator: Any | None = None
         self._lock = threading.RLock()
         self._closed = False
 
+    def attach_native_request_broker(self, broker: Any) -> None:
+        """Attach the exact HI11 broker once, closing the turn/request cycle."""
+        from .native_bridge import NativeBridgeBroker
+
+        if (type(broker) is not NativeBridgeBroker or broker.service is not self.service
+                or not callable(getattr(broker, "resolve_native_request_observation", None))
+                or not callable(getattr(broker, "request_bytes", None))):
+            raise AuthorityDenied("native.turn.request", "selected native request broker is incompatible")
+        with self._lock:
+            if self.native_bridge_broker is not None:
+                raise AuthorityDenied("native.turn.request", "native request broker is already attached")
+            self.native_bridge_broker = broker
+
     def begin_selected_turn(self, selected_execution_handle: str,
                             actual_native_input_receipt_handle: str) -> str:
         """Begin only from a retained selected execution and captured input."""
+        with self._lock:
+            if self._closed:
+                raise AuthorityDenied("native.turn.closed", "selected native turn registry is retired")
         if not self._valid_handle(selected_execution_handle) or not self._valid_handle(
                 actual_native_input_receipt_handle):
             raise AuthorityDenied("native.turn.begin", "selected input handle is malformed")
@@ -360,6 +421,9 @@ class RootNativeTurnObservationRegistry:
                 or not _DIGEST.fullmatch(request_sha256)
                 or type(retry_index) is not int or not 0 <= retry_index <= 100):
             raise AuthorityDenied("native.turn.request", "root native request binding is malformed")
+        broker = self.native_bridge_broker
+        if broker is None:
+            raise AuthorityDenied("native.turn.request", "root native request broker is unavailable")
         with self._lock:
             self._prune_locked(self.monotonic())
             turn = self._turns.get(turn_handle)
@@ -368,10 +432,10 @@ class RootNativeTurnObservationRegistry:
                     or native_request_handle in turn.request_handles
                     or len(turn.request_handles) >= _MAX_TURN_EVENTS):
                 raise AuthorityDenied("native.turn.request", "native request is foreign, replayed, or unselected")
-            request = self.native_bridge_broker.resolve_native_request_observation(
+            request = broker.resolve_native_request_observation(
                 request_observation_handle, turn_handle=turn_handle)
             from .native_bridge import RootNativeRequestObservation
-            request_bytes = self.native_bridge_broker.request_bytes(
+            request_bytes = broker.request_bytes(
                 request_observation_handle, live_producer_identity)
             for handle in request_source_receipt_handles:
                 receipt = self._retained_source(handle)
@@ -656,8 +720,8 @@ class RootNativeTurnObservationRegistry:
             if current_turn is not turn or turn.finished or final_response_delivery_handle in self._used_final_responses:
                 raise AuthorityDenied("native.turn.replay", "turn completion raced another consumer")
             turn.finished = True
-            self._used_final_responses.add(final_response_delivery_handle)
-            self._completed[receipt_handle] = (completed, transcript)
+            self._used_final_responses[final_response_delivery_handle] = turn.expires_monotonic
+            self._completed[receipt_handle] = (completed, bytearray(transcript))
             return RootCompletedNativeTurnPresentation(
                 schema=1, receipt_handle=receipt_handle, turn_handle=turn.handle,
                 state="completed", expires_monotonic=completed.expires_monotonic,
@@ -697,7 +761,9 @@ class RootNativeTurnObservationRegistry:
             row = self._completed.pop(completed_turn_handle, None)
             if row is None or row[0].expires_monotonic <= self.monotonic():
                 raise AuthorityDenied("native.turn.completed", "completed turn handle is unavailable")
-            return row
+            payload = bytes(row[1])
+            row[1][:] = b"\0" * len(row[1])
+            return row[0], payload
 
     def persist_completed_turn(self, completed_turn_handle: str, *,
                                memory_capture_coordinator: Any,
@@ -732,7 +798,7 @@ class RootNativeTurnObservationRegistry:
                 raise AuthorityDenied("native.turn.memory", "selected memory persistence path is unavailable")
             record, transcript = row
             result = persist(
-                record, transcript, completed_turn_handle=completed_turn_handle,
+                record, bytes(transcript), completed_turn_handle=completed_turn_handle,
                 selected_memory_enrollment_id=selected_memory_enrollment_id,
                 background_consent_handle=background_consent_handle,
             )
@@ -749,6 +815,7 @@ class RootNativeTurnObservationRegistry:
                 raise AuthorityDenied("native.turn.memory", "completed turn changed during persistence")
             self._completed.pop(completed_turn_handle, None)
             self._persisting_completed.discard(completed_turn_handle)
+            row[1][:] = b"\0" * len(row[1])
             return result
 
     def cancel_selected_turn(self, turn_handle: str) -> bool:
@@ -762,6 +829,22 @@ class RootNativeTurnObservationRegistry:
                 if not handles:
                     self._by_source.pop(source, None)
             return True
+
+    def close(self) -> None:
+        """Retire the registry and zeroize retained transcript material."""
+        with self._lock:
+            if self._persisting_completed:
+                raise AuthorityDenied(
+                    "native.turn.close", "turn persistence must finish before observer shutdown",
+                )
+            self._closed = True
+            self._turns.clear()
+            self._by_source.clear()
+            self._begun_inputs.clear()
+            self._used_final_responses.clear()
+            for _record, payload in self._completed.values():
+                payload[:] = b"\0" * len(payload)
+            self._completed.clear()
 
     def _retained_source(self, handle: str) -> Any:
         source = self.source_observers
@@ -907,9 +990,14 @@ class RootNativeTurnObservationRegistry:
                     self._by_source[source].discard(handle)
                     if not self._by_source[source]:
                         self._by_source.pop(source, None)
-        for handle, (record, _payload) in tuple(self._completed.items()):
+        for handle, (record, payload) in tuple(self._completed.items()):
             if record.expires_monotonic <= now:
                 self._completed.pop(handle, None)
+                payload[:] = b"\0" * len(payload)
+                self._persisting_completed.discard(handle)
+        for handle, expires in tuple(self._used_final_responses.items()):
+            if expires <= now:
+                self._used_final_responses.pop(handle, None)
 
     @staticmethod
     def _valid_handle(value: Any) -> bool:

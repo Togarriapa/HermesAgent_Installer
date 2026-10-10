@@ -154,6 +154,8 @@ class RootMemoryCaptureConsentRegistry:
         if not set(routes).issubset(enrollment.fixed_route_map):
             raise AuthorityDenied("memory.consent", "memory choice contains a route outside the selected engine")
         policy_revision = _id(getattr(choice, "policy_revision", None), "memory policy revision")
+        if policy_revision != enrollment.background_consent_revision:
+            raise AuthorityDenied("memory.consent", "TTY choice policy revision differs from selected enrollment")
         source_digest = getattr(choice, "source_selection_digest", None)
         if not isinstance(source_digest, str) or len(source_digest) != 64 or any(c not in "0123456789abcdef" for c in source_digest):
             raise AuthorityDenied("memory.consent", "memory selection policy digest is invalid")
@@ -276,6 +278,7 @@ class RootMemoryCaptureConsentRegistry:
                 or row.get("service_enrollment_id") != enrollment.service_enrollment_id
                 or row.get("service_generation") != enrollment.service_generation
                 or row.get("provider") != enrollment.provider
+                or row.get("policy_revision") != enrollment.background_consent_revision
                 or self.service.profile_generations.get(enrollment.profile_id) != enrollment.service_generation):
             raise AuthorityDenied("memory.stale", "current owner, service, or profile generation changed")
         if not set(row.get("route_ids", ())).issubset(enrollment.fixed_route_map):

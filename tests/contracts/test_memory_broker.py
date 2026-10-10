@@ -10,6 +10,8 @@ from hermes_installer.memory.broker import (
     BrokerDenied, BrokerUnavailable, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
     canonical, ROUTE_IDS, build_memory_runtime,
 )
+from hermes_installer.memory.enrollment import MemoryServiceEnrollment
+from test_memory_enrollment import record as memory_enrollment_record
 
 
 class Context:
@@ -142,10 +144,95 @@ class MemoryBrokerTests(unittest.TestCase):
             eligibility=lambda *_: True)
         handler = handlers[("memory.extract", "memory:agentmemory:extract")]
         response = call(handler, Context(), "extract", {
-            "schema": 1, "record": {"id": "synthetic", "source": "fixture",
-                                    "text": "a harmless synthetic fact"}})
+            "schema": 1, "job_handle": "J" * 32,
+            "record": {"id": "synthetic", "profile": "p1", "namespace": "n1",
+                       "source": "fixture", "text": "a harmless synthetic fact",
+                       "provenance": ["a" * 64]}})
         self.assertEqual(response["status"], 503)
         self.assertEqual(ipc.calls, [])
+
+    def test_private_engines_are_bound_to_one_profile_and_exact_private_routes(self):
+        # Synthetic boundary test only: it exercises handler scoping with a
+        # stand-in and does not register or qualify a production engine.
+        first_enrollment = MemoryServiceEnrollment.from_protected_record(memory_enrollment_record())
+        second_record = memory_enrollment_record()
+        second_record.update(
+            target_id="memory-agentmemory:profile-two",
+            profile_id="profile-two", principal_id="principal-two",
+            service_enrollment_id="service-agentmemory-two",
+            service_generation="service-gen-8", namespace_identity="namespace-two",
+            data_root_id="memory-data-agentmemory-two", auth_reference_id="memory-auth-agentmemory-two",
+        )
+        second_record["fixed_project_account_user_scope"].update(
+            project_id="project-two", account_id="account-two", user_id="profile-two")
+        second_record["fixed_route_map"]["agentmemory-search"]["scope_bindings"].update(
+            profile_id="profile-two", service_generation="service-gen-8",
+            backend_project_ref="project-two", backend_agent_ref="profile-two",
+            credential_reference_id="memory-auth-agentmemory-two")
+        second_record["fixed_route_map"]["agentmemory-capture"]["scope_bindings"].update(
+            profile_id="profile-two", service_generation="service-gen-8",
+            backend_project_ref="project-two", backend_agent_ref="profile-two",
+            credential_reference_id="memory-auth-agentmemory-two")
+        second_record["fixed_route_map"]["agentmemory-ready"]["scope_bindings"].update(
+            profile_id="profile-two", service_generation="service-gen-8",
+            backend_project_ref="project-two", backend_agent_ref="profile-two",
+            credential_reference_id="memory-auth-agentmemory-two")
+        for route_id in ("agentmemory-search", "agentmemory-capture", "agentmemory-ready"):
+            second_record["fixed_route_map"][route_id]["credential_reference_id"] = \
+                "memory-auth-agentmemory-two"
+        second_enrollment = MemoryServiceEnrollment.from_protected_record(second_record)
+        first = MemoryTarget.from_enrollment(first_enrollment)
+        second = MemoryTarget.from_enrollment(second_enrollment)
+
+        class Engine:
+            engine_id = "selected-private-engine"
+            route_class = "private-local"
+            private = True
+            route_ids = dict(first_enrollment.private_extraction_embedding_routes)
+
+            def __init__(self):
+                self.calls = []
+
+            def extract(self, **kwargs):
+                self.calls.append(("extract", kwargs["context"].profile_id))
+                return ["synthetic fact"]
+
+            def embed(self, **kwargs):
+                self.calls.append(("embed", kwargs["context"].profile_id))
+                return [[0.25, 0.75] for _ in kwargs["facts"]]
+
+        engine = Engine()
+        handlers = build_memory_handlers(
+            targets={
+                (first.profile_id, first.namespace_id, first.provider): first,
+                (second.profile_id, second.namespace_id, second.provider): second,
+            },
+            owner_state=lambda _profile: ("agentmemory", 4), queue=None, ipc=None,
+            engines={(first.profile_id, first.namespace_id, first.provider): engine},
+            eligibility=lambda *_: True,
+        )
+        response = call(
+            handlers[("memory.extract", "memory:agentmemory:extract")],
+            Context("profile-one", "namespace-one"), "extract",
+            {"schema": 1, "job_handle": "K" * 32,
+             "record": {"id": "fixture", "profile": "profile-one",
+             "namespace": "namespace-one", "source": "hermes-session:fixture",
+             "text": "synthetic private fact", "provenance": ["a" * 64]}},
+        )
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(json.loads(response["body"])["facts"], ["synthetic fact"])
+        # The same engine cannot service a sibling profile without its own
+        # exact enrollment key, even if the provider and route names match.
+        sibling = call(
+            handlers[("memory.extract", "memory:agentmemory:extract")],
+            Context("profile-two", "namespace-two"), "extract",
+            {"schema": 1, "job_handle": "L" * 32,
+             "record": {"id": "fixture-two", "profile": "profile-two",
+             "namespace": "namespace-two", "source": "hermes-session:fixture-two",
+             "text": "sibling private fact", "provenance": ["b" * 64]}},
+        )
+        self.assertEqual(sibling["status"], 503)
+        self.assertEqual(engine.calls, [("extract", "profile-one")])
 
     def test_compound_search_records_receive_scope_only_from_root_broker(self):
         class SearchTarget:
@@ -214,6 +301,101 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertFalse(queue.result(Context("p2", "n2"), receipt)["found"])
             self.assertEqual(consent_calls[0]["provider_id"], "agentmemory")
             self.assertEqual(consent_calls[0]["owner_generation"], 7)
+
+    def test_active_private_job_resolution_is_attempt_and_consent_bound(self):
+        import time
+        from hermes_installer.authority.types import HostContext, Sensitivity, SourceReceipt
+
+        t = target("p1", "n1", "service-one")
+        now = [100.0]
+        owner = {"value": ("agentmemory", 7)}
+        receipt_id = "R" * 43
+        source_receipt = SourceReceipt(
+            receipt_id=receipt_id, issuer_id="root-issuer", source_kind="native-input",
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            origin_id="native-turn", process_generation="generation-one",
+            payload_digest=hashlib.sha256(b"synthetic source").hexdigest(),
+            sensitivity=Sensitivity.PRIVATE, parent_lineage_hash="a" * 64,
+            policy_revision="policy-one", recipient_ceiling=frozenset(),
+            issued_at_monotonic=1.0, monotonic_expires_at=200.0,
+            signature="fixture-signature", enrollment_id="native-one",
+            native_process_identity="process-one", nonce="source-nonce",
+        )
+        context = HostContext(
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            purpose="memory-capture", intent_id="memory-capture-one", trace_id="trace-one",
+            sensitivity=Sensitivity.PRIVATE, lineage_hash="b" * 64, policy_revision="policy-one",
+            capabilities=frozenset({"memory-capture"}), issued_at_monotonic=1.0,
+            monotonic_expires_at=200.0, nonce="context-nonce", grant_id="context-grant",
+            signature="fixture-signature", source_receipts=(source_receipt,),
+            operation="memory.capture",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            queue = DurableMemoryQueue(
+                Path(directory) / "queue", owner_state=lambda _profile: owner["value"],
+                consent_issuer=lambda **_: {"consent_id": "consent-active", "signature": "signed"},
+                clock=lambda: now[0],
+            )
+            job_handle = queue.enqueue(target=t, context=context, body={
+                "schema": 1, "event": "turn", "session_id": "session-one",
+                "user_content": "synthetic user statement",
+                "assistant_content": "synthetic response statement",
+            })
+            queue.claim(lease_seconds=60)
+            record = queue.resolve_active_job(job_handle)
+            self.assertEqual(record.job_handle, job_handle)
+            self.assertEqual(record.source_receipt_handles, (receipt_id,))
+            self.assertEqual(record.source_closure_sha256, context.lineage_hash)
+            self.assertEqual(record.attempt, 1)
+            self.assertTrue(queue.is_current(record))
+            self.assertNotIn(b"synthetic user statement", repr(record).encode())
+            owner["value"] = ("agentmemory", 8)
+            self.assertFalse(queue.is_current(record))
+            owner["value"] = ("agentmemory", 7)
+            queue.revoke_owner("p1", "agentmemory", 7)
+            self.assertFalse(queue.is_current(record))
+
+    def test_active_private_job_resolution_denies_expired_lease(self):
+        from hermes_installer.authority.types import HostContext, Sensitivity, SourceReceipt
+
+        t = target("p1", "n1", "service-one")
+        now = [100.0]
+        source_receipt = SourceReceipt(
+            receipt_id="Q" * 43, issuer_id="root-issuer", source_kind="native-input",
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            origin_id="native-turn", process_generation="generation-one",
+            payload_digest=hashlib.sha256(b"source").hexdigest(),
+            sensitivity=Sensitivity.PRIVATE, parent_lineage_hash="a" * 64,
+            policy_revision="policy-one", recipient_ceiling=frozenset(),
+            issued_at_monotonic=1.0, monotonic_expires_at=200.0,
+            signature="fixture-signature", enrollment_id="native-one",
+            native_process_identity="process-one", nonce="source-nonce",
+        )
+        context = HostContext(
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            purpose="memory-capture", intent_id="memory-capture-two", trace_id="trace-two",
+            sensitivity=Sensitivity.PRIVATE, lineage_hash="c" * 64, policy_revision="policy-one",
+            capabilities=frozenset({"memory-capture"}), issued_at_monotonic=1.0,
+            monotonic_expires_at=200.0, nonce="context-nonce-two", grant_id="context-grant-two",
+            signature="fixture-signature", source_receipts=(source_receipt,),
+            operation="memory.capture",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            queue = DurableMemoryQueue(
+                Path(directory) / "queue", owner_state=lambda _profile: ("agentmemory", 7),
+                consent_issuer=lambda **_: {"consent_id": "consent-expiring", "signature": "signed"},
+                clock=lambda: now[0],
+            )
+            handle = queue.enqueue(target=t, context=context, body={
+                "schema": 1, "event": "turn", "session_id": "session-two",
+                "user_content": "synthetic", "assistant_content": "synthetic",
+            })
+            queue.claim(lease_seconds=1)
+            record = queue.resolve_active_job(handle)
+            now[0] = 102.0
+            self.assertFalse(queue.is_current(record))
+            with self.assertRaises(BrokerDenied):
+                queue.resolve_active_job(handle)
 
     def test_prepared_owner_transition_blocks_worker_without_consuming_job(self):
         t = target("p1", "n1", "service-one")
