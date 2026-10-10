@@ -1169,6 +1169,7 @@ class ProtectedEnrollment:
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
     private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
     private_memory_model_selection_records: tuple[Mapping[str, Any], ...] = ()
+    memory_service_enablement_projection_records: tuple[Mapping[str, Any], ...] = ()
     public_web_scope_records: tuple[Mapping[str, Any], ...] = ()
 
 
@@ -1417,6 +1418,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "selected_resource_executions",
             "selected_application_runtimes",
             "private_memory_endpoint_selections", "private_memory_model_selections",
+            "memory_service_enablement_projections",
             "public_web_scopes",
             "generation_digest"}
     item = _exact(value, keys, "service generation snapshot")
@@ -1439,6 +1441,7 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "remote_startup_enrollments", "private_loopback_networks",
                    "selected_resource_executions", "selected_application_runtimes",
                    "private_memory_endpoint_selections", "private_memory_model_selections",
+                   "memory_service_enablement_projections",
                    "public_web_scopes")
     for name in list_fields:
         rows = item[name]
@@ -2783,6 +2786,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
             native_packages=service_generations["native_packages"],
             source_issuers=_parse_source_issuers(service_generations["source_issuers"]),
             memory_enrollments=memory_enrollments,
+            memory_service_enablement_projections=service_generations["memory_service_enablement_projections"],
             parameter_schemas=service_generations["operation_parameter_schemas"],
             selected_application_runtimes=service_generations["selected_application_runtimes"],
             native_schema_artifacts=service_generations["native_schema_artifacts"],
@@ -2841,6 +2845,7 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         tuple(MappingProxyType(dict(row)) for row in service_generations["selected_application_runtimes"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_endpoint_selections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
+        tuple(MappingProxyType(dict(row)) for row in service_generations["memory_service_enablement_projections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["public_web_scopes"]),
     )
 

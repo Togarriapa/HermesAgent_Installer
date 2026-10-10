@@ -80,7 +80,7 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         self.assertEqual(set(snapshot), {
             "schema", "generation_id", "service_records", "protected_devices",
             "protected_build_records", "native_packages", "memory_enrollments",
-            "operation_parameter_schemas", "source_issuers", "resource_jobs",
+            "memory_service_enablement_projections", "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments",
             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
             "root_journal_roots",
@@ -439,7 +439,7 @@ class LinuxRootBootstrapFixtures(unittest.TestCase):
         authority_path = fixture / "authority.json"
         old = {"schema": 1, "service_generations": {"schema": 1, "generation_id": "old",
               "service_records": [], "protected_devices": [], "protected_build_records": [],
-              "native_packages": [], "memory_enrollments": [], "operation_parameter_schemas": []}}
+              "native_packages": [], "memory_enrollments": [], "memory_service_enablement_projections": [], "operation_parameter_schemas": []}}
         old["service_generations"]["generation_digest"] = hashlib.sha256(json.dumps(
             {key: value for key, value in old["service_generations"].items() if key != "generation_digest"},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,

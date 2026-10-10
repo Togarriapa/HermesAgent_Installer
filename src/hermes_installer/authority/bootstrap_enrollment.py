@@ -100,6 +100,7 @@ class EnrollmentPolicy:
     # Public network scopes become active only after their source-specific
     # target configuration receipt is selected and joined by root.
     public_web_scopes: tuple[Mapping[str, Any], ...] = ()
+    memory_service_enablement_projections: tuple[Mapping[str, Any], ...] = ()
     native_schema_artifacts: tuple[Mapping[str, Any], ...] = ()
     composio_channel_enrollments: tuple[Mapping[str, Any], ...] = ()
     channel_delivery_bindings: tuple[Mapping[str, Any], ...] = ()
@@ -1681,6 +1682,8 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "protected_build_records": [dict(row) for row in policy.protected_build_records],
              "native_packages": [dict(row) for row in policy.native_packages],
              "memory_enrollments": [dict(row) for row in policy.memory_enrollments],
+             "memory_service_enablement_projections": [dict(row) for row in getattr(
+                 policy, "memory_service_enablement_projections", ())],
              "operation_parameter_schemas": [dict(row) for row in policy.operation_parameter_schemas],
              "source_issuers": [dict(row) for row in policy.source_issuers],
              "resource_jobs": [dict(row) for row in policy.resource_jobs],
@@ -1722,11 +1725,20 @@ def _verify_service_records(policy: EnrollmentPolicy, identity: ServiceIdentity)
     """Parse and join the selected record through the same decoder as runtime."""
     snapshot = _generation(policy)
     from .protected_enrollment import ProtectedEnrollmentCatalog
+    from hermes_installer.memory.enrollment import MemoryServiceEnrollment
     try:
         catalog = ProtectedEnrollmentCatalog.from_verified_records(
             snapshot["service_records"], protected_digest=snapshot["generation_digest"],
             expected_uid=0, native_packages=snapshot["native_packages"],
             parameter_schemas=snapshot["operation_parameter_schemas"],
+            memory_enrollments={
+                (row.service_enrollment_id, row.service_generation): row
+                for row in (
+                    MemoryServiceEnrollment.from_protected_record(raw)
+                    for raw in snapshot["memory_enrollments"]
+                )
+            },
+            memory_service_enablement_projections=snapshot["memory_service_enablement_projections"],
         )
         matches = [record for record in catalog._records.values()
                    if record.profile_id == policy.service_profile_id]

@@ -2050,7 +2050,8 @@ class InstalledBootstrapPolicyResolver:
             normalized_templates.append({"id": row["id"], "record": copy.deepcopy(record),
                                          "receipt_bindings": tuple(normalized)})
         selection_fields = {"protected_devices", "protected_build_records", "native_packages",
-                            "memory_enrollments", "operation_parameter_schemas", "source_issuers",
+                            "memory_enrollments", "memory_service_enablement_projections",
+                            "operation_parameter_schemas", "source_issuers",
                             "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
                             "resource_body_recipes", "resource_scope_bindings", "resource_validators",
                             "root_journal_roots", "resource_controller_roles",
@@ -2205,6 +2206,7 @@ class InstalledBootstrapPolicyResolver:
             _fail("prepared authority base requires a valid root-bound service snapshot")
         empty_snapshot_catalogs = (
             "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+            "memory_service_enablement_projections",
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments", "resource_body_recipes",
             "resource_scope_bindings", "resource_validators", "resource_controller_roles",
@@ -2242,6 +2244,7 @@ class InstalledBootstrapPolicyResolver:
             "protected_build_records": "protected_build_records",
             "native_packages": "native_packages",
             "memory_enrollments": "memory_enrollments",
+            "memory_service_enablement_projections": "memory_service_enablement_projections",
             "operation_parameter_schemas": "operation_parameter_schemas",
             "source_issuers": "source_issuers",
             "resource_jobs": "resource_jobs",
@@ -3669,6 +3672,7 @@ class RootSetupPolicyFactory:
             native_schema_artifacts=selection.get("native_schema_artifacts", ()),
             composio_channel_enrollments=selection.get("composio_channel_enrollments", ()),
             channel_delivery_bindings=selection.get("channel_delivery_bindings", ()),
+            memory_service_enablement_projections=selection["memory_service_enablement_projections"],
             authority_base=copy.deepcopy(policy.authority_base_template),
             home_root=parent / "home", work_root=parent / "work", data_root=parent / "data",
             root_journal_roots=(dict(authorization.root_journal_root),),
@@ -3725,6 +3729,7 @@ class RootSetupPolicyFactory:
             protected_build_records=selection["protected_build_records"],
             native_packages=selection["native_packages"],
             memory_enrollments=selection["memory_enrollments"],
+            memory_service_enablement_projections=selection["memory_service_enablement_projections"],
             operation_parameter_schemas=selection["operation_parameter_schemas"],
             source_issuers=selection["source_issuers"], resource_jobs=selection["resource_jobs"],
             resource_controller_roles=selection["resource_controller_roles"],
@@ -5087,7 +5092,8 @@ class RootBootstrapSession:
                     "remote_observation_enrollments", "native_schema_artifacts",
                     "composio_channel_enrollments", "channel_delivery_bindings",
                     "remote_startup_enrollments", "private_loopback_networks",
-                    "selected_resource_executions", "selected_application_runtimes",
+            "selected_resource_executions", "selected_application_runtimes",
+            "memory_service_enablement_projections",
                     "private_memory_endpoint_selections", "private_memory_model_selections",
                     "public_web_scopes"))):
             raise BootstrapEnrollmentPending("resume snapshot is not an empty prepared generation")

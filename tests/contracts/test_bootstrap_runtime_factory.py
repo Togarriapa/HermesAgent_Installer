@@ -379,6 +379,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         base = {"service_generations": generation}
         catalogs = {name: tuple(generation[name]) for name in (
             "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+                "memory_service_enablement_projections",
             "operation_parameter_schemas", "source_issuers", "resource_jobs",
             "remote_session_enrollments", "resource_backend_enrollments", "resource_body_recipes",
             "resource_scope_bindings", "resource_validators", "root_journal_roots",
@@ -442,6 +443,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             service_record_templates=(),
             catalog_selections={name: () for name in (
                 "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+                "memory_service_enablement_projections",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
                 "resource_validators", "root_journal_roots", "resource_controller_roles",
@@ -495,6 +497,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                                                             "receipt_field": "artifact_id"},)},),
             catalog_selections={name: () for name in (
                 "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+                "memory_service_enablement_projections",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
                 "resource_validators", "root_journal_roots", "resource_controller_roles",
