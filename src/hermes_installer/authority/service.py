@@ -3524,10 +3524,54 @@ class AuthorityService:
                 or observation.enrollment_id != context.enrollment_id
                 or observation.generation != context.generation):
             raise AuthorityDenied("source.observation", "root observation is stale or mismatched")
-        rule = self.rules.get((observation.capability, observation.operation, observation.target_id))
-        if (rule is None or rule.operation != observation.operation
-                or rule.recipient != observation.recipient):
-            raise AuthorityDenied("source.observation", "source action is not an enrolled fixed authority route")
+        owner_effect = getattr(observation, "owner_overlay_effect", None)
+        if owner_effect is not None:
+            # A local Resources result is provenance from an already completed
+            # typed CAS grant. It does not pass through generic HostContext or
+            # EffectAuthorization policy routing.
+            from .local_resource_effects import RootVerifiedOwnerOverlayEffect, _OWNER_OVERLAY_EFFECT_SEAL
+            try:
+                active = getattr(self, "active_owner_overlay_registry", None)
+                if (type(owner_effect) is not RootVerifiedOwnerOverlayEffect
+                        or owner_effect._seal is not _OWNER_OVERLAY_EFFECT_SEAL
+                        or active is None or owner_effect.selection._issuer is not active
+                        or not callable(getattr(active._effect_authority, "verify_completed_effect", None))):
+                    raise ValueError
+                owner_effect.selection._issuer.verify_current(owner_effect.selection)
+                payload_row = json.loads(observation.payload_bytes.decode("utf-8", errors="strict"))
+                if (not isinstance(payload_row, dict)
+                        or set(payload_row) != {"schema", "invocation_handle", "registration_id",
+                                                "result_schema_id", "result_sha256", "canonical_result_b64",
+                                                "parent_source_receipt_handles"}
+                        or payload_row["schema"] != 1
+                        or payload_row["invocation_handle"] != owner_effect.invocation.invocation_handle
+                        or payload_row["registration_id"] != owner_effect.selection.registration_id
+                        or payload_row["parent_source_receipt_handles"] != list(observation.parent_receipt_handles)
+                        or payload_row["result_schema_id"] != "native-owner-overlay-result-v1"):
+                    raise ValueError
+                result_bytes = base64.b64decode(payload_row["canonical_result_b64"], validate=True)
+                if hashlib.sha256(result_bytes).hexdigest() != payload_row["result_sha256"]:
+                    raise ValueError
+                active._effect_authority.verify_completed_effect(owner_effect, payload_row["result_sha256"])
+                row = owner_effect.selection.operation_record
+                if (observation.capability != row["capability"]
+                        or observation.operation != row["operation"]
+                        or observation.target_id != row["target_id"]
+                        or observation.recipient != row["recipient"]
+                        or observation.action_id != row["registration_id"]
+                        or observation.argument_schema_id != row["argument_schema_id"]
+                        or observation.result_schema_id != row["result_schema_id"]
+                        or observation.effect_enrollment_id != row["effect_enrollment_id"]):
+                    raise ValueError
+            except Exception:
+                raise AuthorityDenied(
+                    "source.owner_overlay", "local result is not bound to a completed current owner effect",
+                ) from None
+        else:
+            rule = self.rules.get((observation.capability, observation.operation, observation.target_id))
+            if (rule is None or rule.operation != observation.operation
+                    or rule.recipient != observation.recipient):
+                raise AuthorityDenied("source.observation", "source action is not an enrolled fixed authority route")
         manager = self.process_effect_handler
         resolve_live_peer = getattr(manager, "resolve_live_peer", None)
         if not callable(resolve_live_peer):

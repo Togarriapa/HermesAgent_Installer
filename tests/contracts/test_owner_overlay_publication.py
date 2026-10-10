@@ -94,7 +94,7 @@ def _projection():
         "data_root_selection_handle": "data-root-selection", "data_root_receipt_handle": "data-root-receipt",
         "target_selection_handle": "target-selection", "target_receipt_handle": "target-receipt",
         "prepared_source_observer_selection_handle": "source-observer-selection",
-        "source_observer_enrollment_ids": ["source-enrollment"], "process_role_id": "role",
+        "source_observer_enrollment_ids": ["result-source-enrollment", "source-enrollment"], "process_role_id": "role",
         "source_issuer_id": "issuer",
     }
     members = [{
@@ -105,7 +105,13 @@ def _projection():
         "artifact_id": "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
         "receipt_handle": "t" * 40,
         "relative_path": "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py",
-        "sha256": "7" * 64, "size_bytes": 1, "mode": 0o400,
+        "sha256": "7" * 64, "size_bytes": 1, "mode": 0o444,
+    }, {
+        "role": "native-source-module",
+        "artifact_id": "installer-module:hermes_installer.authority.local_resource_effects",
+        "receipt_handle": "u" * 40,
+        "relative_path": "lib/python/hermes_installer/authority/local_resource_effects.py",
+        "sha256": "a" * 64, "size_bytes": 1, "mode": 0o444,
     }]
     observer = {
         "schema": 1, "observer_kind": "owner-overlay-registration-v1",
@@ -122,7 +128,14 @@ def _projection():
         "role_source_receipt_handle": "s" * 40, "role_module_name": "owner_role",
         "role_closure_member_path": "module.py", "role_source_revision": "f" * 40,
         "role_source_tree_sha256": "6" * 64, "source_issuer_id": "issuer",
-        "channel_id": "channel", "invocation_capture_schema_id": INVOCATION_SCHEMA_ID,
+        "channel_id": "channel", "result_observer_enrollment_id": "result-source-enrollment",
+        "result_source_issuer_id": "result-issuer", "result_channel_id": "result-channel",
+        "result_handler_artifact_id": "installer-module:hermes_installer.authority.local_resource_effects",
+        "result_handler_sha256": "a" * 64,
+        "result_handler_source_receipt_handle": "u" * 40,
+        "result_handler_module_name": "hermes_installer.authority.local_resource_effects",
+        "result_handler_closure_member_path": "lib/python/hermes_installer/authority/local_resource_effects.py",
+        "invocation_capture_schema_id": INVOCATION_SCHEMA_ID,
         "result_capture_schema_id": RESULT_SCHEMA_ID,
         "argument_schema_id": operation["argument_schema_id"],
         "argument_schema_sha256": operation["argument_schema_sha256"],

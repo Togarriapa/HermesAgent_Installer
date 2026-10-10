@@ -121,6 +121,12 @@ def graph(tmp_path, monkeypatch):
     captured = capture_actual_hermes_registrations()
     receipts = tuple(retain('src/'+path, factory.RootReleaseModuleReceipt)
                      for path in sorted({row.registration_source_path for row in captured}))
+    handler = retain(
+        'src/hermes_installer/authority/local_resource_effects.py',
+        factory.RootReleaseModuleReceipt,
+        'installer-module:hermes_installer.authority.local_resource_effects')
+    handler = replace(handler, relative_path='lib/python/hermes_installer/authority/local_resource_effects.py')
+    receipt_map[handler.source_receipt_handle] = handler
     session._resolve_prepared_release_module_receipts = lambda: receipts
     workers = tuple(retain(row.release_member_path, factory.RootPreparedReleaseMemberReceipt)
                     for row in source_defs._ROLE_DECLARATIONS)
@@ -132,8 +138,25 @@ def graph(tmp_path, monkeypatch):
     definition = retain(path, factory.RootReleaseModuleReceipt)
     definition = replace(definition, relative_path='lib/python/hermes_installer/authority/native_source_definitions.py')
     receipt_map[definition.source_receipt_handle] = definition
+    capture_schema = retain(
+        'src/hermes_installer/authority/owner_overlay_capture_schemas.py',
+        factory.RootReleaseModuleReceipt,
+        'installer-module:hermes_installer.authority.owner_overlay_capture_schemas')
+    capture_schema = replace(
+        capture_schema,
+        relative_path='lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py')
+    receipt_map[capture_schema.source_receipt_handle] = capture_schema
+    monkeypatch.setattr(
+        factory.RootSelectedInstallationBinding,
+        "resolve_prepared_owner_overlay_capture_schema_module_receipt",
+        lambda self: capture_schema, raising=False)
+    monkeypatch.setattr(
+        factory.RootSelectedInstallationBinding,
+        "resolve_prepared_owner_overlay_result_handler_module_receipt",
+        lambda self: handler, raising=False)
     roles = source_defs.RootNativeSourceDefinitionRegistry(
         binding, lambda: workers, lambda: definition, capture_profile_receipt_provider=lambda: profiles,
+        owner_overlay_capture_schema_receipt_provider=lambda: capture_schema,
         _seal=source_defs._REGISTRY_SEAL)
     source_bundle = roles.prepare_for_policy(selection)
     source = RootNativeRegistrationProjectionRegistry.from_root_setup(binding, tmp_path)

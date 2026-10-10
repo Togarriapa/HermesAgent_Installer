@@ -34,6 +34,10 @@ _OBSERVER_FIELDS = frozenset({
     "role_id", "role_artifact_id", "role_sha256", "role_source_receipt_handle",
     "role_module_name", "role_closure_member_path", "role_source_revision",
     "role_source_tree_sha256", "source_issuer_id", "channel_id",
+    "result_observer_enrollment_id", "result_source_issuer_id", "result_channel_id",
+    "result_handler_artifact_id", "result_handler_sha256",
+    "result_handler_source_receipt_handle", "result_handler_module_name",
+    "result_handler_closure_member_path",
     "invocation_capture_schema_id", "result_capture_schema_id",
     "argument_schema_id", "argument_schema_sha256", "result_schema_id",
     "result_schema_sha256", "lease_seconds",
@@ -244,6 +248,12 @@ def collect_owner_overlay_adoptions(
         source_registry = session._native_policy_preparation_registry
         composer = source_registry._selected_source_composer
         composition = composer.resolve_current(selection)
+        owner_source_records = {
+            item["registration_id"]: item for item in composition.owner_overlay_source_records
+        }
+        if (len(owner_source_records) != len(composition.owner_overlay_source_records)
+                or set(owner_source_records) != set(selection.selected_owner_overlay_registration_ids)):
+            raise ValueError("selected owner source definitions do not match the protected operation set")
         operations = composition.operation_bundle
         if (tuple(row["registration_id"] for row in operations.operation_records) != tuple(sorted(ceiling))
                 or operations.pending_registration_records
@@ -391,6 +401,33 @@ def collect_owner_overlay_adoptions(
                 "receipt_handle": member.artifact_receipt_handle, "relative_path": member.relative_path,
                 "sha256": member.sha256, "size_bytes": member.size_bytes, "mode": member.mode,
             })
+        # The two owner-overlay capture schemas are root-handler source, not a
+        # worker closure member. Retain the exact R0058 installed-module
+        # receipt independently so publication recovery and the active result
+        # observer can re-open it without keeping this setup binding alive.
+        schema_resolver = getattr(
+            binding, "resolve_prepared_owner_overlay_capture_schema_module_receipt", None)
+        if not callable(schema_resolver):
+            raise ValueError("held owner-overlay capture schema source is unavailable")
+        schema_module = schema_resolver()
+        from .bootstrap_runtime_factory import RootReleaseModuleReceipt
+        if (type(schema_module) is not RootReleaseModuleReceipt
+                or schema_module.artifact_id !=
+                   "installer-module:hermes_installer.authority.owner_overlay_capture_schemas"
+                or schema_module.relative_path !=
+                   "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py"):
+            raise ValueError("held owner-overlay capture schema source differs from R0058")
+        schema_source = schema_module.read_current()
+        if (len(schema_source) != schema_module.size_bytes
+                or hashlib.sha256(schema_source).hexdigest() != schema_module.sha256):
+            raise ValueError("held owner-overlay capture schema source changed")
+        members.append({
+            "role": "native-source-module", "artifact_id": schema_module.artifact_id,
+            "receipt_handle": schema_module.source_receipt_handle,
+            "relative_path": schema_module.relative_path,
+            "sha256": schema_module.sha256, "size_bytes": schema_module.size_bytes,
+            "mode": 0o444,
+        })
         for receipt in composition.schema_receipts:
             content = receipt.read_current()
             artifact_id = getattr(receipt, "artifact_id", None)
@@ -434,8 +471,25 @@ def collect_owner_overlay_adoptions(
             "receipt_handle": capture_receipt.source_receipt_handle,
             "relative_path": capture_receipt.relative_path,
             "sha256": capture_receipt.sha256, "size_bytes": capture_receipt.size_bytes,
-            "mode": 0o400,
+            "mode": 0o444,
         })
+        handler_members = {}
+        for source_record in owner_source_records.values():
+            handler = source_record["handler"]
+            current = handler_members.get(handler["source_receipt_handle"])
+            if current is not None and current != handler:
+                raise ValueError("selected owner result handler receipts disagree")
+            handler_members[handler["source_receipt_handle"]] = handler
+        if len(handler_members) != 1:
+            raise ValueError("selected owner operations lack one exact held result handler")
+        for handler in handler_members.values():
+            members.append({
+                "role": "native-source-module", "artifact_id": handler["artifact_id"],
+                "receipt_handle": handler["source_receipt_handle"],
+                "relative_path": handler["closure_member_path"],
+                "sha256": handler["sha256"], "size_bytes": handler["size_bytes"],
+                "mode": 0o444,
+            })
         members.append({
             "role": "resources-profile-member", "artifact_id": profile.resources_source_artifact_id,
             "receipt_handle": profile.resources_source_receipt_handle,
@@ -463,20 +517,83 @@ def collect_owner_overlay_adoptions(
         })).hexdigest()
         source_members = tuple(sorted(members, key=lambda row: (
             row["relative_path"], row["artifact_id"], row["receipt_handle"])))
-        issuer_rows = {item.get("observer_enrollment_id"): item
-                       for item in definitions.source_issuer_records}
+        issuer_rows = {}
+        source_observer_rows = {}
+        for source_record in owner_source_records.values():
+            role = source_record["role"]
+            for kind, selector in (("invocation", source_record["invocation"]),
+                                   ("result", source_record["result"])):
+                observer_id = selector["observer_enrollment_id"]
+                issuer_rows[observer_id] = {
+                    "observer_enrollment_id": observer_id,
+                    "issuer_channel_id": selector["issuer_channel_id"],
+                    "generation": next(row["profile_generation"] for row in rows
+                                       if row["registration_id"] == source_record["registration_id"]),
+                    "producer_role_artifact_id": role["role_artifact_id"],
+                    "producer_role_sha256": role["role_sha256"],
+                    "capture_schema_id": selector["capture_schema_id"],
+                    "source_action_ids": (selector["source_action_id"],),
+                }
+                source_observer_rows[observer_id] = {
+                    "observer_enrollment_id": observer_id,
+                    "source_kind": selector["source_kind"],
+                    "capture_schema_id": selector["capture_schema_id"],
+                    "source_action_ids": (selector["source_action_id"],),
+                    "source_registration_ids": tuple(selector["source_registration_ids"]),
+                    "generation": issuer_rows[observer_id]["generation"],
+                    "role_id": role["role_id"],
+                    "role_artifact_id": role["role_artifact_id"],
+                    "role_sha256": role["role_sha256"],
+                }
         role_rows = {item.get("role_id"): item for item in definitions.process_role_records}
         observer_rows: list[dict[str, Any]] = []
         for operation in rows:
             registration = operation["registration_id"]
             candidates = [observer_id for observer_id in operation["source_observer_enrollment_ids"]
-                          if observer_id == operation["source_issuer_id"]
-                          and observer_id in issuer_rows]
+                          if observer_id in issuer_rows
+                          and issuer_rows[observer_id].get("issuer_channel_id")
+                              == operation["source_issuer_id"]]
             role = role_rows.get(operation["process_role_id"])
             if len(candidates) != 1 or role is None:
                 raise ValueError("owner-overlay source observer does not join one held issuer and role")
             observer_id = candidates[0]
             issuer = issuer_rows[observer_id]
+            result_candidates = [candidate_id for candidate_id in operation["source_observer_enrollment_ids"]
+                                 if candidate_id != observer_id
+                                 and candidate_id in issuer_rows
+                                 and candidate_id in source_observer_rows
+                                 and source_observer_rows[candidate_id].get("source_kind") == "tool-result"
+                                 and source_observer_rows[candidate_id].get("capture_schema_id")
+                                     == RESULT_SCHEMA_ID
+                                 and "registered-tool-result" in source_observer_rows[candidate_id].get(
+                                     "source_action_ids", ())
+                                 and registration in source_observer_rows[candidate_id].get(
+                                     "source_registration_ids", ())]
+            if len(result_candidates) != 1:
+                raise ValueError("owner-overlay result source lacks one separately selected enrollment")
+            result_observer_id = result_candidates[0]
+            result_issuer = issuer_rows[result_observer_id]
+            result_observer = source_observer_rows[result_observer_id]
+            handler_members = [member for member in source_members
+                               if member["role"] == "native-source-module"
+                               and member["artifact_id"]
+                                   == "installer-module:hermes_installer.authority.local_resource_effects"
+                               and member["relative_path"]
+                                   == "lib/python/hermes_installer/authority/local_resource_effects.py"]
+            if (len(handler_members) != 1
+                    or result_observer.get("observer_enrollment_id") != result_observer_id
+                    or result_issuer.get("observer_enrollment_id") != result_observer_id
+                    or result_issuer.get("generation") != operation["profile_generation"]
+                    or result_issuer.get("producer_role_artifact_id") != role["role_artifact_id"]
+                    or result_issuer.get("producer_role_sha256") != role["role_sha256"]
+                    or result_observer.get("generation") != operation["profile_generation"]
+                    or result_observer.get("role_id") != role["role_id"]
+                    or result_observer.get("role_artifact_id") != role["role_artifact_id"]
+                    or result_observer.get("role_sha256") != role["role_sha256"]
+                    or "registered-tool-result" not in result_observer.get("source_action_ids", ())
+                    or registration not in result_observer.get("source_registration_ids", ())):
+                raise ValueError("owner-overlay result source does not join current source role")
+            result_member = handler_members[0]
             role_member = next((member for member in source_members
                                 if member["role"] == "native-source-module"
                                 and member["artifact_id"] == role["role_artifact_id"]
@@ -485,7 +602,7 @@ def collect_owner_overlay_adoptions(
                                 and member["relative_path"] == role["closure_member_path"]), None)
             if (role_member is None or observer_id not in role["observer_enrollment_ids"]
                     or registration not in role["registration_ids"]
-                    or issuer.get("generation") != assembly.native_package_generation
+                    or issuer.get("generation") != operation["profile_generation"]
                     or issuer.get("producer_role_artifact_id") != role["role_artifact_id"]
                     or issuer.get("producer_role_sha256") != role["role_sha256"]
                     or not isinstance(issuer.get("issuer_channel_id"), str)
@@ -513,6 +630,14 @@ def collect_owner_overlay_adoptions(
                 "role_source_tree_sha256": role["role_source_tree_sha256"],
                 "source_issuer_id": operation["source_issuer_id"],
                 "channel_id": issuer["issuer_channel_id"],
+                "result_observer_enrollment_id": result_observer_id,
+                "result_source_issuer_id": result_issuer["issuer_channel_id"],
+                "result_channel_id": result_issuer["issuer_channel_id"],
+                "result_handler_artifact_id": result_member["artifact_id"],
+                "result_handler_sha256": result_member["sha256"],
+                "result_handler_source_receipt_handle": result_member["receipt_handle"],
+                "result_handler_module_name": "hermes_installer.authority.local_resource_effects",
+                "result_handler_closure_member_path": result_member["relative_path"],
                 "invocation_capture_schema_id": INVOCATION_SCHEMA_ID,
                 "result_capture_schema_id": RESULT_SCHEMA_ID,
                 "argument_schema_id": operation["argument_schema_id"],
@@ -704,7 +829,7 @@ def _validate_projection(row: Mapping[str, Any]) -> None:
             raise TypeError("owner-overlay observer row has an unexpected schema")
         digest_fields = ("operation_row_sha256", "source_choice_signed_record_sha256",
                          "role_sha256", "role_source_tree_sha256", "argument_schema_sha256",
-                         "result_schema_sha256")
+                         "result_schema_sha256", "result_handler_sha256")
         if (observer["schema"] != 1 or observer["observer_kind"] != "owner-overlay-registration-v1"
                 or any(not isinstance(observer.get(name), str) or not observer[name]
                        for name in _OBSERVER_FIELDS - {"schema", "choice_epoch", "revocation_epoch", "lease_seconds"})
@@ -735,7 +860,15 @@ def _validate_projection(row: Mapping[str, Any]) -> None:
                 or observer["result_schema_sha256"] != operation["result_schema_sha256"]
                 or observer["invocation_capture_schema_id"] != "native-owner-overlay-invocation-v1"
                 or observer["result_capture_schema_id"] != "native-owner-overlay-result-v1"
-                or observer["observer_enrollment_id"] not in operation["source_observer_enrollment_ids"]):
+                or observer["observer_enrollment_id"] not in operation["source_observer_enrollment_ids"]
+                or observer["result_observer_enrollment_id"] not in operation["source_observer_enrollment_ids"]
+                or observer["result_observer_enrollment_id"] == observer["observer_enrollment_id"]
+                or observer["result_handler_artifact_id"]
+                   != "installer-module:hermes_installer.authority.local_resource_effects"
+                or observer["result_handler_module_name"]
+                   != "hermes_installer.authority.local_resource_effects"
+                or observer["result_handler_closure_member_path"]
+                   != "lib/python/hermes_installer/authority/local_resource_effects.py"):
             raise TypeError("owner-overlay observer does not join its signed operation and choice")
         if not any(member.get("artifact_id") == observer["role_artifact_id"]
                    and member.get("receipt_handle") == observer["role_source_receipt_handle"]
@@ -743,6 +876,13 @@ def _validate_projection(row: Mapping[str, Any]) -> None:
                    and member.get("relative_path") == observer["role_closure_member_path"]
                    for member in row["source_members"]):
             raise TypeError("owner-overlay observer role is not a held source member")
+        if not any(member.get("role") == "native-source-module"
+                   and member.get("artifact_id") == observer["result_handler_artifact_id"]
+                   and member.get("receipt_handle") == observer["result_handler_source_receipt_handle"]
+                   and member.get("sha256") == observer["result_handler_sha256"]
+                   and member.get("relative_path") == observer["result_handler_closure_member_path"]
+                   for member in row["source_members"]):
+            raise TypeError("owner-overlay result handler is not a held current source member")
         if not any(member.get("role") == "owner-overlay-capture-schema-source"
                    and member.get("artifact_id") == (
                        "installer-module:hermes_installer.authority.owner_overlay_capture_schemas")
