@@ -712,3 +712,12 @@ The installer SHALL require v125 actual root-held endpoint/model/runtime/source-
 
 - **WHEN** an endpoint lists a model alias but no exact verified installed model/runtime/config/current load proof exists
 - **THEN** no deployment receipt is minted and private memory remains unavailable with the missing prerequisite stated
+
+### Requirement: Root selected existing model source tree observation
+
+The installer SHALL use v127 actual held root directory/source-member verification and finite authority signing for pre-existing model artifacts outside the static catalog.
+
+#### Scenario: Arbitrary directory or listed model alias
+
+- **WHEN** no genuine selected owned-directory/source inventory receipt exists
+- **THEN** the registry denies model source observation and does not infer source or deployment proof from a path or served alias
