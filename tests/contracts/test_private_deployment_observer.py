@@ -18,6 +18,7 @@ from hermes_installer.models.private_deployment import (
     RootExistingModelSelectionRegistry,
     _validate_model_subpath,
     _tcp4_listener_inodes,
+    _supporting_source_receipt_digest,
     inspect_loopback_listener,
     RootExistingModelArtifactObserver,
 )
@@ -144,6 +145,25 @@ def test_signed_receipt_claims_are_domain_payload_and_signature_excluded() -> No
         expires_monotonic=20.0, signature=b"sig",
     )
     assert endpoint.claims()["connector_route_ids"] == ["colibri-openai-v1"]
+
+
+def test_v136_source_receipt_digest_binds_exact_observed_catalog_receipts() -> None:
+    rows = [
+        {"artifact_id": "glm52-artifact-metadata-v1", "sha256": "a" * 64,
+         "size_bytes": 56232, "receipt_handle": "model-source-observation:manifest-123456789012"},
+        {"artifact_id": "glm52-upstream-mit-license-cf457fa", "sha256": "b" * 64,
+         "size_bytes": 1065, "receipt_handle": "model-source-observation:license-1234567890123456"},
+        {"artifact_id": "glm52-quantized-readme-6bbb01e", "sha256": "c" * 64,
+         "size_bytes": 17468, "receipt_handle": "model-source-observation:readme-1234567890123456"},
+    ]
+    digest = _supporting_source_receipt_digest(rows)
+    assert len(digest) == 64
+    assert _supporting_source_receipt_digest(list(reversed(rows))) == digest
+    altered = [dict(row) for row in rows]
+    altered[0]["receipt_handle"] = "model-source-observation:other-1234567890123456"
+    assert _supporting_source_receipt_digest(altered) != digest
+    with pytest.raises(PrivateDeploymentDenied):
+        _supporting_source_receipt_digest(rows[:2])
 
 
 def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Path) -> None:

@@ -33,8 +33,10 @@ _AUTHORITY_KINDS = {
     "private-model-deployment": "PrivateModelDeploymentObservation",
     "existing-model-tree": "ExistingModelArtifactObservation",
 }
-_GLM_SOURCE_MANIFEST_ARTIFACT_ID = "glm52-source-manifest"
-_GLM_LICENSE_ARTIFACT_ID = "glm52-license-mit"
+_GLM_SOURCE_MANIFEST_ARTIFACT_ID = "glm52-artifact-metadata-v1"
+_GLM_LICENSE_ARTIFACT_ID = "glm52-upstream-mit-license-cf457fa"
+_GLM_QUANTIZED_README_ARTIFACT_ID = "glm52-quantized-readme-6bbb01e"
+_MODEL_SELECTION_JOURNAL_CHILD = "existing-model-selections"
 
 
 class PrivateDeploymentDenied(RuntimeError):
@@ -84,6 +86,33 @@ def _canonical_claims(value: Any) -> dict[str, Any]:
     if len(encoded) > 1_000_000:
         raise PrivateDeploymentDenied("observation claims exceed the fixed bound")
     return result
+
+
+def _supporting_source_receipt_digest(rows: Any) -> str:
+    """Digest the exact v136 supporting-source receipt rows, independent of order."""
+    if not isinstance(rows, (list, tuple)) or len(rows) != 3:
+        raise PrivateDeploymentDenied("three pinned supporting source receipts are required")
+    normalized = []
+    expected = {_GLM_SOURCE_MANIFEST_ARTIFACT_ID, _GLM_LICENSE_ARTIFACT_ID,
+                _GLM_QUANTIZED_README_ARTIFACT_ID}
+    for row in rows:
+        if (not isinstance(row, Mapping)
+                or set(row) != {"artifact_id", "sha256", "size_bytes", "receipt_handle"}
+                or row.get("artifact_id") not in expected
+                or not isinstance(row.get("sha256"), str)
+                or not _SHA256.fullmatch(row["sha256"])
+                or type(row.get("size_bytes")) is not int or row["size_bytes"] <= 0
+                or not isinstance(row.get("receipt_handle"), str)
+                or not re.fullmatch(r"model-source-observation:[A-Za-z0-9_-]{20,128}",
+                                    row["receipt_handle"], re.ASCII)):
+            raise PrivateDeploymentDenied("supporting source receipt row is invalid")
+        normalized.append(dict(row))
+    if {row["artifact_id"] for row in normalized} != expected:
+        raise PrivateDeploymentDenied("supporting source receipt set is incomplete")
+    normalized.sort(key=lambda row: (row["artifact_id"], row["sha256"], row["receipt_handle"]))
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _validate_model_subpath(value: Any) -> str:
@@ -211,6 +240,7 @@ class ExistingModelArtifactObservation:
     issued_monotonic: float
     expires_monotonic: float
     boot_id: str
+    supporting_source_receipt_sha256: str
     signature: bytes = b""
 
     def claims(self) -> dict[str, Any]:
@@ -300,6 +330,8 @@ class _ExistingModelSelectionState:
     uid: int
     gid: int
     mode: int
+    supporting_source_observations: tuple[Any, ...] = ()
+    supporting_source_receipt_rows: tuple[Mapping[str, Any], ...] = ()
 
 
 class RootExistingModelSelectionRegistry:
@@ -357,9 +389,11 @@ class RootExistingModelSelectionRegistry:
             raise PrivateDeploymentDenied("root model-store selection receipt is unavailable")
         manifest_sha = self._catalog_digest(_GLM_SOURCE_MANIFEST_ARTIFACT_ID)
         license_sha = self._catalog_digest(_GLM_LICENSE_ARTIFACT_ID)
+        readme_sha = self._catalog_digest(_GLM_QUANTIZED_README_ARTIFACT_ID)
         root_selection = self._resolve_current_root(root_receipt_handle)
         proof = None
         held = None
+        source_observations: list[Any] = []
         retained = False
         try:
             from hermes_installer.root_setup import _capture_root_tty_proof, _verify_root_tty_proof
@@ -371,6 +405,49 @@ class RootExistingModelSelectionRegistry:
             )
             _verify_root_tty_proof(proof)
             subpath = _validate_model_subpath(raw_subpath)
+            source_rows: list[Mapping[str, Any]] = []
+            for artifact_id, digest in (
+                    (_GLM_SOURCE_MANIFEST_ARTIFACT_ID, manifest_sha),
+                    (_GLM_LICENSE_ARTIFACT_ID, license_sha),
+                    (_GLM_QUANTIZED_README_ARTIFACT_ID, readme_sha)):
+                observation = self.artifact_observer.observe(artifact_id, digest)
+                source_observations.append(observation)
+                if (not self.artifact_observer.verify_current(observation)
+                        or observation.artifact_id != artifact_id
+                        or observation.sha256 != digest
+                        or type(observation.size_bytes) is not int):
+                    raise PrivateDeploymentDenied("pinned model source evidence is stale or mismatched")
+                source_rows.append({
+                    "artifact_id": artifact_id, "sha256": digest,
+                    "size_bytes": observation.size_bytes,
+                    "receipt_handle": "model-source-observation:" + secrets.token_urlsafe(24),
+                })
+            readme_observation = source_observations[2]
+            readme_fd = readme_observation.open_blob()
+            try:
+                readme_bytes = _read_bounded_fd(readme_fd, 32 * 1024)
+            finally:
+                os.close(readme_fd)
+            readme_lines = {line.strip() for line in readme_bytes.splitlines()}
+            if not {b"license: mit", b"base_model: zai-org/GLM-5.2"}.issubset(readme_lines):
+                raise PrivateDeploymentDenied("quantized source README lacks the pinned license/base-model declaration")
+            from hermes_installer.models.artifacts import ArtifactManifest, MODEL_ID, MODEL_REVISION
+            manifest_fd = source_observations[0].open_blob()
+            try:
+                manifest = ArtifactManifest.from_metadata_bytes(
+                    _read_bounded_fd(manifest_fd, 8 * 1024 * 1024))
+            finally:
+                os.close(manifest_fd)
+            if (manifest.model_id != MODEL_ID or manifest.revision != MODEL_REVISION
+                    or not manifest.fully_verifiable):
+                raise PrivateDeploymentDenied("pinned source manifest does not identify the selected model")
+            license_fd = source_observations[1].open_blob()
+            try:
+                license_bytes = _read_bounded_fd(license_fd, 256 * 1024)
+            finally:
+                os.close(license_fd)
+            if b"MIT License" not in license_bytes:
+                raise PrivateDeploymentDenied("pinned model license bytes are not the reviewed MIT license")
             held = self.filesystem_registry.open_selected_subdirectory(root_receipt_handle, subpath)
             root_info = os.fstat(held.directory_fd)
             self._verify_held_root_subdirectory(held, root_selection, root_info)
@@ -382,7 +459,6 @@ class RootExistingModelSelectionRegistry:
                 raise PrivateDeploymentDenied("root model-store selection expired during TTY choice")
             choice_observation_id = "root-tty-model-choice:" + secrets.token_urlsafe(24)
             controller = root_fields["controller_binding_handle"]
-            from hermes_installer.models.artifacts import MODEL_ID, MODEL_REVISION
             selection = RootExistingModelArtifactSelection(
                 selection_handle="existing-model-selection:" + secrets.token_urlsafe(24),
                 choice_observation_id=choice_observation_id,
@@ -399,12 +475,15 @@ class RootExistingModelSelectionRegistry:
                 issued_monotonic=now, expires_monotonic=expiry,
             )
             _verify_root_tty_proof(proof)
+            self._persist_selection(selection, source_rows)
             state = _ExistingModelSelectionState(
                 selection, root_selection, root_receipt_handle, proof,
                 os.dup(held.directory_fd), root_info.st_dev, root_info.st_ino,
                 root_info.st_uid, root_info.st_gid, stat.S_IMODE(root_info.st_mode),
+                tuple(source_observations), tuple(source_rows),
             )
             self._selections[selection.selection_handle] = state
+            source_observations = []
             retained = True
             return selection
         except PrivateDeploymentDenied:
@@ -414,6 +493,8 @@ class RootExistingModelSelectionRegistry:
         finally:
             if held is not None and held.directory_fd >= 0:
                 os.close(held.directory_fd)
+            for observation in source_observations:
+                observation.close()
             if proof is not None and not retained:
                 proof.close()
 
@@ -491,12 +572,20 @@ class RootExistingModelSelectionRegistry:
                 except OSError:
                     pass
 
+    def supporting_source_receipt_digest(self, selection_handle: str) -> str:
+        selection = self.resolve_selection(selection_handle)
+        self._verify_source_catalog_current(selection)
+        state = self._selections[selection_handle]
+        return _supporting_source_receipt_digest(state.supporting_source_receipt_rows)
+
     def close(self) -> None:
         for state in self._selections.values():
             if state.directory_fd >= 0:
                 os.close(state.directory_fd)
                 state.directory_fd = -1
             state.tty_proof.close()
+            for observation in state.supporting_source_observations:
+                observation.close()
         self._selections.clear()
 
     def _resolve_current_root(self, receipt_handle: str) -> Any:
@@ -525,18 +614,85 @@ class RootExistingModelSelectionRegistry:
             ) from None
 
     def _verify_source_catalog_current(self, selection: RootExistingModelArtifactSelection) -> None:
-        for artifact_id, digest in ((selection.source_manifest_artifact_id,
-                                     selection.source_manifest_sha256),
-                                    (selection.license_artifact_id, selection.license_sha256)):
-            observation = None
+        state = self._selections.get(selection.selection_handle)
+        if state is None or len(state.supporting_source_observations) != 3:
+            raise PrivateDeploymentDenied("supporting source receipts are no longer retained")
+        expected_ids = (_GLM_SOURCE_MANIFEST_ARTIFACT_ID, _GLM_LICENSE_ARTIFACT_ID,
+                        _GLM_QUANTIZED_README_ARTIFACT_ID)
+        for observation, expected_id in zip(state.supporting_source_observations,
+                                            expected_ids, strict=True):
+            if (not self.artifact_observer.verify_current(observation)
+                    or observation.artifact_id != expected_id
+                    or observation.sha256 != self._catalog_digest(expected_id)):
+                raise PrivateDeploymentDenied("supporting model source observation is stale")
+        rows = [dict(row) for row in state.supporting_source_receipt_rows]
+        if (len(rows) != 3 or any(
+                set(row) != {"artifact_id", "sha256", "size_bytes", "receipt_handle"}
+                or not isinstance(row["receipt_handle"], str)
+                or not row["receipt_handle"].startswith("model-source-observation:")
+                or row["artifact_id"] != observation.artifact_id
+                or row["sha256"] != observation.sha256
+                or row["size_bytes"] != observation.size_bytes
+                for row, observation in zip(rows, state.supporting_source_observations, strict=True))
+                or not self._verify_selection_record(selection, rows)):
+            raise PrivateDeploymentDenied("supporting model source receipts are not durably retained")
+
+    def _persist_selection(self, selection: RootExistingModelArtifactSelection,
+                           source_rows: list[Mapping[str, Any]]) -> None:
+        value = _existing_model_selection_record(selection, source_rows)
+        raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+        directory_fd = _open_private_child(self.root_journal, _MODEL_SELECTION_JOURNAL_CHILD)
+        name = hashlib.sha256(selection.selection_handle.encode("utf-8")).hexdigest() + ".json"
+        temp = "." + secrets.token_hex(16) + ".tmp"
+        try:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=directory_fd)
             try:
-                observation = self.artifact_observer.observe(artifact_id, digest)
-                if not self.artifact_observer.verify_current(observation):
-                    raise ValueError
+                view = memoryview(raw)
+                while view:
+                    count = os.write(fd, view)
+                    if count <= 0:
+                        raise OSError("short model selection record write")
+                    view = view[count:]
+                os.fsync(fd)
+                os.fchmod(fd, 0o400)
             finally:
-                close = getattr(observation, "close", None)
-                if callable(close):
-                    close()
+                os.close(fd)
+            os.link(temp, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                    follow_symlinks=False)
+            os.unlink(temp, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except Exception:
+            try:
+                os.unlink(temp, dir_fd=directory_fd)
+            except OSError:
+                pass
+            raise
+        finally:
+            os.close(directory_fd)
+
+    def _verify_selection_record(self, selection: RootExistingModelArtifactSelection,
+                                 source_rows: list[Mapping[str, Any]]) -> bool:
+        directory_fd = fd = -1
+        try:
+            directory_fd = _open_private_child(self.root_journal, _MODEL_SELECTION_JOURNAL_CHILD)
+            name = hashlib.sha256(selection.selection_handle.encode("utf-8")).hexdigest() + ".json"
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o400 or info.st_size > 64 * 1024):
+                return False
+            value = json.loads(_read_bounded_fd(fd, 64 * 1024))
+            return value == _existing_model_selection_record(selection, source_rows)
+        except Exception:
+            return False
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if directory_fd >= 0:
+                os.close(directory_fd)
+
 
     @staticmethod
     def _verify_held_root_subdirectory(held: Any, root_selection: Any,
@@ -548,6 +704,23 @@ class RootExistingModelSelectionRegistry:
                 or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
                    != (held.uid, held.gid, held.mode)):
             raise PrivateDeploymentDenied("selected model directory custody is invalid")
+
+
+def _existing_model_selection_record(selection: RootExistingModelArtifactSelection,
+                                     source_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema": 1, "selection_handle": selection.selection_handle,
+        "choice_observation_id": selection.choice_observation_id,
+        "model_store_root_id": selection.model_store_root_id,
+        "model_store_root_receipt_handle": selection.model_store_root_receipt_handle,
+        "relative_subpath": selection.relative_subpath,
+        "principal_id": selection.principal_id, "profile_id": selection.profile_id,
+        "namespace_id": selection.namespace_id, "source_model_id": selection.source_model_id,
+        "source_revision": selection.source_revision,
+        "issued_monotonic": selection.issued_monotonic,
+        "expires_monotonic": selection.expires_monotonic,
+        "source_receipts": list(source_rows),
+    }
 
 
 class RootExistingModelArtifactObserver:
@@ -700,6 +873,8 @@ class RootExistingModelArtifactObserver:
                 member_count=facts.member_count, total_size_bytes=facts.total_size_bytes,
                 issued_monotonic=now, expires_monotonic=deadline,
                 boot_id=self._boot_id_reader(), signature=b"",
+                supporting_source_receipt_sha256=(
+                    self.selection_registry.supporting_source_receipt_digest(selection_handle)),
             )
             verified = VerifiedExistingModelArtifactObservation(provisional, self._observer_id)
             self._observations[provisional.observation_handle] = (verified, selection, facts)
@@ -1649,7 +1824,8 @@ def _open_private_child(root_journal: Any, name: str) -> int:
     """Open/create one fixed 0700 child beneath the held protected journal."""
     from hermes_installer.protected_enrollment import RootJournalSelection
 
-    if (name not in {"private-memory-deployments", "existing-model-observations"}
+    if (name not in {"private-memory-deployments", "existing-model-observations",
+                     "existing-model-selections"}
             or type(root_journal) is not RootJournalSelection or root_journal.root_id != "installer-authority-journal-v1"
             or os.geteuid() != 0):
         raise PrivateDeploymentDenied("protected authority journal selection is unavailable")
