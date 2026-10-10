@@ -170,3 +170,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] HI-T236.1: Produce actual selected reviewed six-operation process declaration and strict protected root-service process binding separately from local user overlay caps.
 - [ ] HI-T236.2: Integrate typed current source/task/health/control process admission and one-use consume into actual root manager paths; preserve all kernel and child authority checks.
 - [ ] VD-T236.3: Verify strict dual domain enrollment plus genuine task/health process effects, unchanged user ceiling and replay/currentness/sibling isolation failures; target acceptance separate.
+
+- [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b): Implement exact retained health primaryhome binding, current runtime epoch/policy revision, prepared-vs-published declaration getter/restart source custody and schema4; verify all genuine positive/currentness/legacy failures.
+
+- [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b cold custody): Implement independent read-only signed adopted-choice/current key/member issuer, strict cold parser declaration bridge, and ordinary exact runtime revalidation before activation; test restart/races/deny-before-effects.

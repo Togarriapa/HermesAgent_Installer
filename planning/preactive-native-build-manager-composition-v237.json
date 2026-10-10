@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-preactive-native-build-manager-composition-v237.md",
+  "extends": [
+    "v209",
+    "v212",
+    "v225",
+    "v227",
+    "v234"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "source_audit": {
+    "commit": "21fd1d721e1cf6e7d483fecb2a37ac0e079aa593",
+    "facts": [
+      "root_setup.py564 and initial adopt_prepared_selection4617 omit _authority_service.",
+      "session _resolve_remote_role_build_manager5224 requires AuthorityService and active RootRuntimeBindings build profile; fresh prepared enrollment is empty.",
+      "RootRemoteRoleManagedBuildExecutor.run1194 already derives _RootPreparedBuildRuntime from current genuine role identity and fixed plan then invokes actual ManagedBuildJobRunner._run_one. It never consumes active process_profile_resolver.",
+      "RemoteRoleMemberProviderSet exposes fixed source/toolchain/dependency resolvers but no production issuers; identity adoption/rollback deny stubs remain pending."
+    ]
+  },
+  "manager_factory": {
+    "handler_api": "ManagedProcessEffectHandler.from_current_root_setup(binding, registry) -> ManagedProcessEffectHandler",
+    "runner_api": "ManagedBuildJobRunner.from_current_root_setup(handler, binding, registry) -> ManagedBuildJobRunner",
+    "owner": "luna_application_workload_wiring with luna_application_execution native factory implementation",
+    "currentness": "Exact RootSelectedInstallationBinding and RootSelectedRemoteRuntimeRegistry must share original live root actor/release/session/controller, current prepared transaction/generation, genuine root-TTY enable choice, held role definition, PM and three current NSS/root receipts. Factory methods retain same exact object owners privately; copied/caller objects deny. Recheck currentness before constructor effects and runner admission.",
+    "handler_scope": "Actual native handler, setup-build-only sealed internal mode; active profile map and registered generic effect handlers empty. Ordinary public constructor still requires nonempty genuine profiles. No fake ManagedProfileCustody, AuthorityService, active enrollment, or profile resolver; no root/worker/nobody identity substitution. Root-owned systemd executables are verified through native root-path custody.",
+    "runner_scope": "Actual native runner retains exact setup-only handler and binding/registry; generic active profile resolution denies. Creates and retains genuine RootRemoteRoleSetupBuildGrantIssuer(registry, signer=current session setup signer), binds via existing bind_remote_role_build_grant_issuer. Existing remote executor derives _RootPreparedBuildRuntime only from rechecked selected identity and fixed reviewed plan; all existing one-use grant, controller PIDFD, PrivateNetwork/AF_UNIX, staging, output, cap and polling checks remain.",
+    "session_hook": "Existing RootBootstrapSession._resolve_remote_role_build_manager(registry) composes these classmethods once, stores _remote_role_build_runner, reopens same current binding/registry and handler on reuse. Existing AuthorityService composition remains unchanged for active lanes; remote preactive lane does not require it."
+  },
+  "composition_callsite": {
+    "owner": "luna_application_workload_wiring",
+    "sequence": [
+      "Both existing-selection and initial-publication root setup paths retain original factory/session release+actor ownership.",
+      "After genuine prepared provisioning, endpoint/root custody and official native PM source preparation, call selected_installation.observe_root_remote_startup_choice() from root controlling TTY. No choice or disabled choice produces empty optional remote projection and no remote account/build/network effects.",
+      "For enabled choice only, compose exact static reviewed adapter classes and actual factory-owned sealed issuer providers from same binding/release/PM/source/CAS. Registry.from_current_setup(binding, held_release, role_adapters=private fixed map, member_provider_set=actual RemoteRoleMemberProviderSet) is an internal factory map, never accepted from CLI/RPC/env/config.",
+      "GatewayRuntimeComponentAdapter(provider_set) consumes actual source/toolchain/locked-wheel issuers exposing three existing fixed resolve_current_gateway_*_members methods. Xpra adapter consumes actual v219/v227 acquisition+preactive transform providers. OfficialDesktop adapter consumes actual v218/v226/v229 acquisition/native/prepared packaging/output observer. Missing concrete provider or reviewed policy member denies; no source/hash rows reminted as authority.",
+      "Call registry.prepare_selected_startup(choice.choice_handle); each genuine current selection invokes run_selected_role_build(selection_handle) through retained setup runner, then independent output observer, CAS package/executable and final materialization/runtime issuers. A terminal exit is not a completed aggregate.",
+      "Only fully current typed three-role aggregate verifies actual complete inputs and joins existing precommit compiler/source/adoption callpoint from v225. Missing role remains pending; no static ready selector."
+    ],
+    "failure_order": "Revoke current selected build admission/cancel through original root selection owner; runner cancellation/currentness polling must stop/reap only its owned job and yield verified cleanup terminal. Drain synchronous admitted jobs before closing inputs/source/output/controller FDs. Then existing v212 rollback implementation may remove only transaction-created marker/NSS/roots proved owned and all corresponding units/PIDFDs dead. If terminal/death/ownership is missing, preserve journal/source ownership and report recovery-pending. Session.close is not rollback; close identity registry after runtime/job/output custody, not before. No new generic kill/rollback API is authorized."
+  },
+  "cleanup_creation_clarification": {
+    "owner": "luna_active_service_lifetime",
+    "existing_contract": "v234",
+    "additional_journal_api": "cancel_unmounted_placeholder(reservation, observation: RootRemoteNetworkCreatorObservation) -> None",
+    "semantics": "Only same original sealed reservation/creator with held parent FD/device/inode and exact exclusive placeholder identity, and independently established no mount ever created/sealed may unlink creator placeholder and CAS complete. Uncertain mount/identity keeps recovery-pending. No generic unlink/unmount.",
+    "mounted_observation_order": "Immediately after successful mount and BEFORE nft apply, call record_created_placeholder again with same creator-sealed observation extended by actual namespace FD/device/inode and mount ID. Only monotonic null-to-measured mount facts permitted; parent/placeholder/provenance immutable. Persist before further effects; journal failure preserves owned resources/recovery-pending."
+  },
+  "tasks": {
+    "RT-T237.1": "Implement sealed setup-only native handler/runner classmethods and actual session hook, preserving ordinary active constructor.",
+    "RT-T237.2": "Wire original root controller choice/provider/preparation/build/observer/aggregate and verified-dead failure lifecycle using existing adoption/rollback obligations.",
+    "VD-T237.3": "Test fresh empty prepared composition, wrong owner/actor/PM/NSS/controller deny, generic effect deny, changed choice cancellation+reap and partial mount/journal failure preservation."
+  },
+  "pins": null,
+  "acceptance": "Source contract only; runtime/Pi/AC OPEN. Headers observations separate v238 after exact evidence.",
+  "validation_evidence": {
+    "scope": "Source AST contract check only: actual remote run derives _RootPreparedBuildRuntime and delegates native runner; no active process_profile_resolver access. JSON and all four artifacts validated. No effect/production acceptance."
+  }
+}

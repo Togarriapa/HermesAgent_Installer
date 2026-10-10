@@ -463,3 +463,31 @@ The implementation SHALL apply the exact v234 Gateway member/config/output diges
 #### Scenario: Missing cleanup proof or cyclic Gateway digest
 - **WHEN** cleanup ownership/tool evidence is missing or Gateway config embeds a recipe-derived legacy input closure
 - **THEN** the implementation SHALL deny the affected effect and retain recovery-pending journal state where applicable
+
+
+## ADDED Requirements
+
+### Requirement: Genuine preactive native manager composition
+The implementation SHALL compose the actual native setup-only handler and runner from original live root setup binding/registry and SHALL derive remote build runtime identity only from current role NSS/root facts and fixed reviewed plan. It SHALL NOT substitute active enrollment or accept caller adapter/profile maps.
+
+#### Scenario: Fresh prepared remote build
+- **WHEN** genuine empty prepared setup has a current root-TTY enable choice and complete held providers/PM/NSS/source/controller facts
+- **THEN** the setup-only native runner SHALL execute the selected fixed build with existing isolated managed lifecycle without requiring active service rows
+
+#### Scenario: Incomplete provider or creator cleanup
+- **WHEN** a provider or current ownership proof is absent, or mounted namespace facts cannot be durably recorded
+- **THEN** setup SHALL remain pending and preserve owned resources for recovery without fabricated receipts or foreign cleanup
+
+
+## ADDED Requirements
+
+### Requirement: Concrete held Xpra native source policy
+The implementation SHALL acquire only the exact v238 locked official sources through current selected one-use grants and SHALL verify original signed dependency relations, provider qualifiers and whole license references before CAS admission. Observed source policy SHALL NOT prove runtime readiness.
+
+#### Scenario: Full signed source graph
+- **WHEN** exact policy/keyring are held and current signed indexes prove every locked archive and dependency/license edge
+- **THEN** acquisition SHALL issue only current source proofs; actual PM314 native build/HTML5/session qualification remains separate
+
+#### Scenario: Missing or mismatched source fact
+- **WHEN** source hash/version/signature/provider/license reference is changed or Debian CP313 would execute as runtime
+- **THEN** the affected closure SHALL remain unavailable without alias receipts or lazy fallback

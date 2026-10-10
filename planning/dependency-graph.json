@@ -3257,21 +3257,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "current_published_pm_home_runtime_v221": {
-    "contract": "planning/current-published-pm-home-runtime-v221.json",
-    "tasks": {
-      "HI-T221.1": [
-        "RB-T213.1"
-      ],
-      "HI-T221.2": [
-        "HI-T221.1"
-      ],
-      "VD-T221.3": [
-        "HI-T221.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "official_remote_role_definition_producer_v222": {
     "contract": "planning/official-remote-role-definition-producer-v222.json",
     "tasks": {
@@ -3283,6 +3268,21 @@
       ],
       "VD-T222.3": [
         "RT-T222.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "current_published_pm_home_runtime_v221": {
+    "contract": "planning/current-published-pm-home-runtime-v221.json",
+    "tasks": {
+      "HI-T221.1": [
+        "RB-T213.1"
+      ],
+      "HI-T221.2": [
+        "HI-T221.1"
+      ],
+      "VD-T221.3": [
+        "HI-T221.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3440,6 +3440,22 @@
     },
     "acceptance": "All AC OPEN"
   },
+  "gateway_digests_owned_network_cleanup_v234": {
+    "contract": "planning/gateway-digests-owned-network-cleanup-v234.json",
+    "tasks": {
+      "RT-T234.1": [
+        "RT-T227.3"
+      ],
+      "RT-T234.2": [
+        "RT-T225.2"
+      ],
+      "VD-T234.3": [
+        "RT-T234.1",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
   "qualification_source_before_process_custody_v230": {
     "contract": "planning/qualification-source-before-process-custody-v230.json",
     "tasks": [
@@ -3519,22 +3535,6 @@
     "owner": "luna_linux_task_display_contracts",
     "acceptance": "All AC OPEN"
   },
-  "gateway_digests_owned_network_cleanup_v234": {
-    "contract": "planning/gateway-digests-owned-network-cleanup-v234.json",
-    "tasks": {
-      "RT-T234.1": [
-        "RT-T227.3"
-      ],
-      "RT-T234.2": [
-        "RT-T225.2"
-      ],
-      "VD-T234.3": [
-        "RT-T234.1",
-        "RT-T234.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "predecessor_bound_candidate_update_v235": {
     "contract": "planning/predecessor-bound-candidate-update-v235.json",
     "tasks": {
@@ -3569,5 +3569,64 @@
       "HI-T231.1",
       "BD-T231.2"
     ]
+  },
+  "root_service_process_proof_joins_v236b": {
+    "contract": "planning/root-service-process-proof-joins-v236b.json",
+    "tasks": [
+      "HI-T236.1",
+      "HI-T236.2",
+      "VD-T236.3"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "root_service_process_cold_source_custody_v236b": {
+    "contract": "planning/root-service-process-cold-source-custody-v236b.json",
+    "tasks": [
+      "HI-T236.1",
+      "HI-T236.2",
+      "VD-T236.3"
+    ],
+    "sequence": [
+      "current held core/release/key/journal source verification",
+      "strict published declaration parser",
+      "genuine dormant runtime ordinary revalidation",
+      "enable exact root service lane"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "preactive_native_build_manager_composition_v237": {
+    "contract": "planning/preactive-native-build-manager-composition-v237.json",
+    "tasks": {
+      "RT-T237.1": [
+        "RT-T227.3"
+      ],
+      "RT-T237.2": [
+        "RT-T237.1",
+        "RT-T225.1"
+      ],
+      "VD-T237.3": [
+        "RT-T237.1",
+        "RT-T237.2",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_native_source_policy_v238": {
+    "contract": "planning/xpra-native-source-policy-v238.json",
+    "tasks": {
+      "RT-T238.1": [
+        "RT-T227.1"
+      ],
+      "RT-T238.2": [
+        "RT-T238.1",
+        "RT-T227.2"
+      ],
+      "VD-T238.3": [
+        "RT-T238.1",
+        "RT-T238.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

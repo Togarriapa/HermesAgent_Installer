@@ -213,3 +213,11 @@ v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source
 v234: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` / `planning/gateway-digests-owned-network-cleanup-v234.json`; RT-T234.1 → RT-T234.2 → VD-T234.3 OPEN. Gateway acyclic field correction and original-owned journaled cleanup after expiry/revocation; no new pins/all AC OPEN.
 Existing predecessor candidate update v235: plans/amendments/2026-10-10-predecessor-bound-candidate-update-v235.md; BD-T235.1 → LC-T235.2 → VD-T235.3 OPEN. Exact old release before staging, reviewed candidate inputs, samecontroller sealed transition, present pointer CAS and owned rollback/reexec; distribution/runtime claims separate; all AC OPEN.
 Root service process lane v236: plans/amendments/2026-10-10-root-service-process-authority-lane-v236.md; HI-T236.1 → HI-T236.2 → VD-T236.3 OPEN. Actual source-selected six-operation declaration, separate root binding/current admission/consume, localuser ceiling unchanged, strict6process checks/kernel evidence preserved/allACOPEN.
+
+Root process proof joins236b: plans/amendments/2026-10-10-root-service-process-proof-joins-v236b.md; existing236tasks OPEN; actual primaryhealthhome/PM/FD, currentpolicy/serviceepoch, distinctpublisheddeclaration, schema4preserves225schema3; allACOPEN.
+
+Cold root process custody236b: plans/amendments/2026-10-10-root-service-process-cold-source-custody-v236b.md and planning/root-service-process-cold-source-custody-v236b.json; source verification before strict parser, genuine dormant runtime revalidation before effects. HI-T236.1/.2/VD-T236.3 and all AC OPEN.
+v237: `plans/amendments/2026-10-10-preactive-native-build-manager-composition-v237.md` / `planning/preactive-native-build-manager-composition-v237.json`; RT-T237.1/.2 and VD-T237.3 OPEN. Genuine preactive native manager chain breaks active-profile cycle; exact root controller sequence and owned partial-creation clarification; no pins/all AC OPEN.
+
+
+v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `planning/xpra-native-source-policy-v238.json`; RT-T238.1/.2 and VD-T238.3 OPEN. Concrete399DEB/8Python bounded signed-source policy+keyring tuples, exact dependency/license edges; acquisition only/no native runtime/Pi acceptance.
