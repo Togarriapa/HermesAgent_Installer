@@ -2370,5 +2370,35 @@
   "native_policy_preparation_v137": "Actual root choice/current principal+namespace/component target/account/permission/source role/schema observations -> sealed staged61 action42 registration/workflow/role/observer definitions -> actual output receipts -> atomic active publication -> live imported-role/PIDFD observation; all18 acceptance open",
   "public_input_web_permission_v138": "Actual configured finite web scope+PUBLIC captured input+purpose permission -> current recipient intersection -> genuine web transport/CAS/result; PRIVATE/UNKNOWN source ancestry always denied/allACopen",
   "existing_model_source_v135_v139": "Actual inventory/upstreamMIT/quantizer declaration catalog observations+purpose private selector+held fixed existing-store/child -> every149 member source verification -> separately owned runtime/load/deploy; no weights download/embedding inference/allACopen",
-  "application_packages_v136": "Actual root qualification acquisition phase+source/lock/toolchain/platform+integrity/origin/license evidence -> scoped dynamic packageCAS/offline supported transport -> noneditable environment/probe -> qualification, not active-before-build/allACopen"
+  "application_packages_v136": "Actual root qualification acquisition phase+source/lock/toolchain/platform+integrity/origin/license evidence -> scoped dynamic packageCAS/offline supported transport -> noneditable environment/probe -> qualification, not active-before-build/allACopen",
+  "source_join_producers_v178": {
+    "amendment": "plans/amendments/2026-10-10-source-join-producers-v178.md",
+    "audited_candidate": "6432d0495b8a416f72d3cdd1dd376c98a6e794f5",
+    "audited_factory": "9b9f7c37aceb40342df4d35182b53ef6e3c69fdb",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "order": {
+      "HI-T178.1": [
+        "current prepared source/schema/target/effect selections"
+      ],
+      "HI-T178.2": [
+        "current source handoff + official PM runtime + held fixture lease"
+      ],
+      "HI-T178.3": [
+        "HI-T178.2",
+        "measured descriptor/release receipts",
+        "separate observed service"
+      ],
+      "HI-T178.4": [
+        "current owner-overlay producer",
+        "HI-T178.1"
+      ],
+      "HI-T178.5": [
+        "HI-T178.1",
+        "HI-T178.3",
+        "HI-T178.4"
+      ]
+    }
+  }
 }

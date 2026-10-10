@@ -670,13 +670,6 @@ The installer SHALL satisfy this obligation: Finish with the project location, e
 - **WHEN** a requested item or assertion lacks functional evidence, contains a failed/pending result or only has source/configuration/fixture evidence
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
 
-### Requirement: Supplemental target and account evidence profiles
-The acceptance verifier SHALL provide installer-owned assertion profiles for every Sol-validated supplemental evidence ID and bind each profile to its exact acceptance criterion. A profile definition SHALL NOT claim that the corresponding implementation, hardware, account, or external-service behavior has been executed.
-
-#### Scenario: Complete supplemental profile coverage
-- **WHEN** the validated planning catalog includes EV-RB06, EV-RB07, EV-RB08, EV-HI10, EV-HI11, EV-HI12, EV-HI13, EV-HW01, or EV-PR01
-- **THEN** each ID SHALL map to its exact requirement dimensions under AC16, AC16, AC16, AC18, AC18, AC18, AC18, AC10, or AC08 respectively, with no generic placeholder assertion
-- **AND** every unobserved assertion SHALL remain null/pending; an observed false assertion or nonzero command exit SHALL fail; only authenticated retained results can contribute to acceptance
 ### Requirement: Installer-owned target and result verification
 
 The executable verifier SHALL bind actual selected installer target/current candidate and each original assertion to root-observed concrete workflow receipts.
@@ -684,5 +677,17 @@ The executable verifier SHALL bind actual selected installer target/current cand
 #### Scenario: Fixture or candidate drift
 - **WHEN** a result is fixture-only, incomplete or differs from current enrolled target/candidate
 - **THEN** acceptance remains pending and no claimed success is exported.
+
 Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
-- **THEN** acceptance remains pending and no claimed success is exported.
+
+
+### Requirement: Source-join producers v178
+The installer SHALL implement the source-owned receipt joins and closed fixture descriptor in `plans/amendments/2026-10-10-source-join-producers-v178.md` before compiling executable native or fixture authority.
+
+#### Scenario: Genuine current source graph
+- **WHEN** the exact held setup/source/PM, selected definition/member/effect/schema/role and separately observed fixture service receipts are current
+- **THEN** the compiler SHALL consume their retained immutable projection and actual generated/materialized/discovered bytes, keeping fixture evidence separate from production and AC acceptance
+
+#### Scenario: Missing or misjoined producer
+- **WHEN** a required source/effect/member/observer/service receipt is absent, stale, altered or from another namespace
+- **THEN** affected capability remains precisely pending, no caller path or production-row relabeling fills the gap, and no denial-only callback counts as implementation

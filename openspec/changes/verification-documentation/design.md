@@ -44,3 +44,6 @@ The verifier profile registry covers the exact current evidence IDs, including E
 
 VD-F02/VD-F04 use protected-runtime-assembly-contract.json installer_target_result_verifier exact current root target/candidate/admission/result constructors and receipts. All AC01..18 remain pending absent actual dimensions.
 Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+
+Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v178.md`. Exact retained setup/source/PM/native definition/member, finite fixture descriptor/service observation and local overlay invocation producers; all AC01..18 OPEN, baseline unchanged. Producer ownership/order and acceptance remain in HI-T178.1..5.
