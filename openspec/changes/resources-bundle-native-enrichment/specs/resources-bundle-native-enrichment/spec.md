@@ -479,3 +479,12 @@ The installer SHALL use the corrected field split in planning/jarvis-published-h
 #### Scenario: Compile home crosswalk before tasks exist
 - **WHEN** verified source homes are published before task admission
 - **THEN** only actual source/home/runtime/principal/namespace facts are compiled and live task/context/process/resource facts are resolved later through genuine current grants
+
+## ADDED Requirements
+
+### Requirement: Distinct selected source profile and service identity
+The installer SHALL use planning/jarvis-source-profile-task-identity-v215.json to distinguish verified source_profile_id from actual protected service profile_id and derive task home leases from retained typed live admissions.
+
+#### Scenario: Delegate source differs from task service profile
+- **WHEN** a current protected backend selects an internal source profile
+- **THEN** source_profile_id resolves exact current owned home while service profile/principal/namespace/grant checks remain unchanged and no additional serviceprofile identity is fabricated

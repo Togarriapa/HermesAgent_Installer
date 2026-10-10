@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "refines": [
+    "planning/jarvis-published-home-live-task-split-v214.json",
+    "planning/jarvis-selected-task-home-custody-v213.json"
+  ],
+  "requirements": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0060"
+  ],
+  "source_facts": "SelectedResourceProfileTask.profile_id equals backend.profile_id and protected operation/admission serviceprofile; source Resources profiles are separate native delegate homes, not207 serviceprocess enrollments. RootResourceTaskRunner has typed live task admission/source/node before start; static selection lacks deadlines.",
+  "backend_mapping": {
+    "location": "Protected ResourceBackendEnrollment.execution_binding for reviewed Hermes profile-task adapter",
+    "additional_required_fields": [
+      "source_profile_id",
+      "home_binding_id"
+    ],
+    "existing_fields_preserved": [
+      "process_enrollment_id",
+      "process_generation",
+      "operation_id",
+      "native_package_id",
+      "native_package_generation",
+      "child_operation",
+      "child_target_id",
+      "child_capability",
+      "task_body_recipe_id",
+      "task_request_schema_id"
+    ],
+    "producer": "Compiler selects exact verified resource task/body/backend declaration source-target reference through existing native resource discovery/handler mapping and joins sealed prepared home/source row/current immutable crosswalk member. No fallback from backend.profile_id, lexical similar name, prompt/model argument or user selector. Absent exact source mapping leaves that capability pending with precise producer step.",
+    "proof": "Digest-covered backend mapping/source manifest+materialization+coremember/currentclaim joins. source_profile_id must exactmatch one of208 verified sourcehome rows, home_binding_id same row; current resource ID/generation and service profile/principal/namespace/toolpolicy grants still separately required."
+  },
+  "selected_task": {
+    "type": "SelectedResourceProfileTask",
+    "additional_fields": [
+      "source_profile_id",
+      "home_binding_id"
+    ],
+    "profile_id": "UNCHANGED actual protected service/process/profile identity equal backend/operation/admission. Do not rewrite it to resource sourceID, enroll207 serviceprofiles or relabel primary rights.",
+    "source_profile_id": "Exact protected mapping only, distinct verified Resources source identity; used solely to resolve current isolated nativehome. Sourcehermesprimary/defaultJarvis and207 delegates preserved."
+  },
+  "live_resolver": {
+    "registry": "RootNativeProfileTaskHomeRegistry",
+    "signature": "resolve_selected_resource_task_home(selection: SelectedResourceProfileTask, *, admission_handle: RootResourceJobAdmissionHandle, node_id: str, task_admission: RootAdmittedTask, admitted_source: RootAdmittedTaskSource) -> RootSelectedResourceTaskHomeBinding",
+    "factory_extension": "from_published_authority_core receives current resource_job_authority/controller_registry capabilities in addition to core,ownedhomes,PM,principal_namespace_registry,root_journal; exact service-composed retained instances only.",
+    "proof": "Registry re-resolves exact issuing jobs membership/admitted node/task/source/current controller lease internally. Typed objects must be same current retained observation, not arbitrary DTO constructors. Source/profile/home mapping exactmatch publishedcurrentrow. No caller monotonic deadline/epoch/controller bool.",
+    "lifetime": "min(now+30s, originaltaskdeadline, actual controller/source/runtime/principalNS/currentmember lease expiry). Binding predates startgrant but is not authority alone. Existing root authority issuescontext/grant committing bindingdigest; consumed proof verifier rechecks exact existing authority_epoch/policy_revision/servicegen and selectedtask/currenthome before start.",
+    "consume": "Custody start accepts only same binding committed to real consumed taskproof/admission/node/request; revalidates currentness and heldFD mount through unit creation; one-task binding not reusable."
+  },
+  "prepared_producer": {
+    "type": "RootPreparedNativeProfileHomeSource",
+    "fields": "Same16 exact sourcehome fields as v214",
+    "private_refs": "Actual setup session membership/seal, verified Resources bundle/source receipt, actual native materialization receipt, current PM selection and current verified setup principal/namespace refs; no fabricated handle.",
+    "promotion": "Setup producer issues prepared type only; compiler validates genuine refs/current generation/source claim and serializes RootPublishedNativeProfileHomeRow. No prepared DTO passed as published proof. principal_id+namespace_id mandatory genuine publication facts; UID/GID ONLY live current NSS/task proof."
+  },
+  "core_claim_clarification": {
+    "member_binding": "Exact ONE native_profile_home_crosswalk object{schema,relative_path,sha256,size_bytes} same claimmembermanifest/descriptor/receipt from214, not parallel fields.",
+    "source_output_claim_sha256": "Getter-only POST-COMPILE projection of existing signed publication receipt.claim_digest / descriptor inputs.claim_digest, validated against same current bound RootNativeOutputClaim. NEVER insert this digest into its own compiler manifest/member inputs. Precompile source-home producer receives actual RootNativePrecompileOutputReservation.output_closure_sha256 and receipt IDs as source lineage; that existing closure domain is distinct and is not relabelled claim_digest. Manifest commits memberSHA/size/schema; postcompile descriptor/receipt binds existingclaim_digest. Missing postclaim denies getter, no new hash/field needed."
+  },
+  "unchanged": "Actual currentpublished core/member readback and restart capability mandatory aftersetup; fixed/hermes HOME/HERMES_HOME/cwd/mount and unprivileged siblingprimary isolation; all208 nativeprofiles/207 delegates and soleJarvis, source runtime grants/toolpolicy/privatepublic separation/budget0 preserved.",
+  "tasks": [
+    "RB-T213.1",
+    "HI-T213.2",
+    "VD-T213.3"
+  ],
+  "acceptance": "All AC01..18 OPEN; source/API review only, future testedsourcepins/runtimeeffectevidence required."
+}
