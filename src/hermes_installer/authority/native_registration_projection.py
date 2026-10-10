@@ -10,7 +10,8 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -52,6 +53,41 @@ class NativeRegistrationActionBinding:
     action_id: str
     argument_projection: tuple[tuple[str, str], ...]
     workflow_id: str | None = None
+
+
+_ROOT_PROJECTION_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeRegistrationProjection:
+    """One root-issued executable registration after every required join.
+
+    Construction is sealed to the root projection producer. Source capture,
+    catalog observations, and reviewed source maps alone cannot mint this row.
+    """
+
+    registration_id: str
+    native_tool_name: str
+    native_server_name: str
+    toolset: str
+    family: str
+    adapter_id: str
+    argument_schema: Mapping[str, Any]
+    result_schema: Mapping[str, Any]
+    native_schema_sha256: str
+    registration_source_artifact_id: str
+    registration_source_sha256: str
+    registration_source_receipt_handle: str
+    handler_kind: str
+    handler_id: str
+    selector_fields: tuple[str, ...]
+    action_bindings: tuple[NativeRegistrationActionBinding, ...]
+    observer_enrollment_ids: tuple[str, ...]
+    _seal: object = field(repr=False, compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _ROOT_PROJECTION_SEAL:
+            raise TypeError("native registration projection rows are issued by the root resolver")
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,10 +207,215 @@ class NativeRegistrationResultSchemaDenied(ValueError):
     """The reviewed bounded local result-schema artifacts drifted."""
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeRegistrationResultSchemaObservation:
+    """A catalog-held observation of one reviewed result-schema artifact.
+
+    This is deliberately not a selected schema/action receipt.  It proves only
+    that exact bytes are present in the current immutable root artifact catalog.
+    """
+
+    schema: ReviewedNativeRegistrationResultSchema
+    catalog_observation: Any
+
+
+class NativeRegistrationResultSchemaObservationDenied(ValueError):
+    """The reviewed result schema could not be observed in the root catalog."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeRegistrationResultSchemaReceipt:
+    """Prepared-setup scoped root receipt for exact packaged schema bytes."""
+
+    schema: ReviewedNativeRegistrationResultSchema
+    source_receipt_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    prepared_setup_receipt_handle: str
+    prepared_generation_id: str
+    _observation: Any = field(repr=False, compare=False)
+    _registry_seal: object = field(repr=False, compare=False)
+
+
+class RootNativeRegistrationResultSchemaReceiptRegistry:
+    """Mint/resolve setup-scoped receipts from the actual root catalog APIs.
+
+    This narrow registry avoids requiring an already-active native schema row
+    to compile the catalog which will contain that row. It still requires the
+    current prepared setup authorization and the held root catalog observer;
+    it never turns caller-provided schema rows or hashes into receipts.
+    """
+
+    def __init__(self, observer: Any, artifact_receipt_registry: Any,
+                 setup_authorization: Any) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import (
+            RootArtifactReceiptRegistry, VerifiedRootSetupAuthorization,
+        )
+        from hermes_installer.authority.source_artifact_receipts import (
+            RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver,
+        )
+
+        if (type(observer) not in {RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver}
+                or type(artifact_receipt_registry) is not RootArtifactReceiptRegistry
+                or type(setup_authorization) is not VerifiedRootSetupAuthorization):
+            raise NativeRegistrationResultSchemaObservationDenied(
+                "root setup authorization, artifact receipt registry and catalog observer are required")
+        self._observer = observer
+        self._receipts = artifact_receipt_registry
+        self._authorization = setup_authorization
+        self._seal = object()
+        self._issued: dict[str, RootNativeRegistrationResultSchemaReceipt] = {}
+
+    def mint(self, *, prepared_setup_receipt_handle: str, prepared_generation_id: str,
+             registrations: tuple[CapturedHermesRegistration, ...] | None = None
+             ) -> tuple[RootNativeRegistrationResultSchemaReceipt, ...]:
+        if (not isinstance(prepared_setup_receipt_handle, str) or not prepared_setup_receipt_handle
+                or not isinstance(prepared_generation_id, str) or not prepared_generation_id):
+            raise NativeRegistrationResultSchemaObservationDenied(
+                "current selected prepared setup identity is required")
+        try:
+            output: list[RootNativeRegistrationResultSchemaReceipt] = []
+            for schema in reviewed_local_registration_result_schemas(registrations):
+                observation = self._observer.observe(schema.artifact_id, schema.sha256)
+                if (observation.artifact_id != schema.artifact_id
+                        or observation.sha256 != schema.sha256
+                        or observation.size_bytes != schema.size_bytes
+                        or not self._observer.verify_current(observation)):
+                    observation.close()
+                    raise ValueError
+                handle = self._receipts.mint(
+                    store_id=f"artifact:{schema.artifact_id}:{schema.sha256}",
+                    receipt_id=schema.schema_id,
+                    setup_authorization=self._authorization,
+                )
+                receipt = RootNativeRegistrationResultSchemaReceipt(
+                    schema, handle, self._authorization.setup_session_id,
+                    self._authorization.transaction_handle, prepared_setup_receipt_handle,
+                    prepared_generation_id, observation, self._seal,
+                )
+                self._verify_bytes(receipt)
+                self._issued[handle] = receipt
+                output.append(receipt)
+            if len(output) != 8:
+                raise ValueError
+            return tuple(sorted(output, key=lambda row: row.schema.native_tool_name))
+        except NativeRegistrationResultSchemaDenied as exc:
+            raise NativeRegistrationResultSchemaObservationDenied(str(exc)) from None
+        except Exception:
+            raise NativeRegistrationResultSchemaObservationDenied(
+                "root setup schema receipts could not be minted from the exact catalog artifacts") from None
+
+    def resolve(self, receipt: RootNativeRegistrationResultSchemaReceipt, *,
+                prepared_setup_receipt_handle: str, prepared_generation_id: str,
+                setup_authorization: Any) -> bytes:
+        from hermes_installer.authority.bootstrap_enrollment import VerifiedRootSetupAuthorization
+
+        if (os.geteuid() != 0 or type(receipt) is not RootNativeRegistrationResultSchemaReceipt
+                or receipt._registry_seal is not self._seal
+                or self._issued.get(receipt.source_receipt_handle) is not receipt
+                or type(setup_authorization) is not VerifiedRootSetupAuthorization
+                or setup_authorization != self._authorization
+                or receipt.setup_session_id != setup_authorization.setup_session_id
+                or receipt.transaction_handle != setup_authorization.transaction_handle
+                or receipt.prepared_setup_receipt_handle != prepared_setup_receipt_handle
+                or receipt.prepared_generation_id != prepared_generation_id):
+            raise NativeRegistrationResultSchemaObservationDenied(
+                "schema receipt is stale or belongs to another selected prepared setup")
+        try:
+            artifact_id, digest = self._receipts.lookup(receipt.source_receipt_handle, setup_authorization)
+            if (artifact_id != receipt.schema.artifact_id or digest != receipt.schema.sha256
+                    or not self._observer.verify_current(receipt._observation)):
+                raise ValueError
+            return self._verify_bytes(receipt)
+        except Exception:
+            raise NativeRegistrationResultSchemaObservationDenied(
+                "selected setup schema receipt is absent, stale or changed") from None
+
+    def _verify_bytes(self, receipt: RootNativeRegistrationResultSchemaReceipt) -> bytes:
+        if not self._observer.verify_current(receipt._observation):
+            raise ValueError
+        fd = receipt._observation.open_blob()
+        try:
+            data = bytearray()
+            while len(data) <= receipt.schema.size_bytes:
+                block = os.read(fd, min(64 * 1024, receipt.schema.size_bytes + 1 - len(data)))
+                if not block:
+                    break
+                data.extend(block)
+        finally:
+            os.close(fd)
+        raw = bytes(data)
+        if (len(raw) != receipt.schema.size_bytes
+                or hashlib.sha256(raw).hexdigest() != receipt.schema.sha256
+                or json.loads(raw) != receipt.schema.schema
+                or not self._observer.verify_current(receipt._observation)):
+            raise ValueError
+        return raw
+
+
+def observe_root_native_registration_result_schemas(
+        observer: Any,
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[RootNativeRegistrationResultSchemaObservation, ...]:
+    """Observe all eight pinned local result schemas through the root catalog.
+
+    The observer must be a production root catalog observer bound to the
+    selected setup/catalog. Callers cannot
+    supply artifact IDs, hashes, bytes, or parsed schemas.  The returned held
+    observations are source evidence only; active protected selection and
+    action/observer enrollment proofs remain separate required joins.
+    """
+    from hermes_installer.authority.source_artifact_receipts import (
+        RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver,
+    )
+
+    if type(observer) not in {RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver}:
+        raise NativeRegistrationResultSchemaObservationDenied(
+            "a root-bound catalog artifact observer is required")
+    try:
+        schemas = reviewed_local_registration_result_schemas(registrations)
+        output: list[RootNativeRegistrationResultSchemaObservation] = []
+        for schema in schemas:
+            observation = observer.observe(schema.artifact_id, schema.sha256)
+            if (observation.artifact_id != schema.artifact_id
+                    or observation.sha256 != schema.sha256
+                    or observation.size_bytes != schema.size_bytes
+                    or not observer.verify_current(observation)):
+                raise ValueError
+            fd = observation.open_blob()
+            try:
+                data = bytearray()
+                while len(data) <= schema.size_bytes:
+                    block = os.read(fd, min(64 * 1024, schema.size_bytes + 1 - len(data)))
+                    if not block:
+                        break
+                    data.extend(block)
+            finally:
+                os.close(fd)
+            if (len(data) != schema.size_bytes
+                    or hashlib.sha256(data).hexdigest() != schema.sha256
+                    or json.loads(data) != schema.schema
+                    or not observer.verify_current(observation)):
+                observation.close()
+                raise ValueError
+            output.append(RootNativeRegistrationResultSchemaObservation(schema, observation))
+        if {row.schema.native_tool_name for row in output} != {
+                "agent37_discover_skills", "agent37_inspect_skill", "mcp_registry_discover",
+                "mcp_registry_inspect", "resource_overlay_read", "resource_overlay_write",
+                "resource_overlay_history", "resource_overlay_delete"}:
+            raise ValueError
+        return tuple(sorted(output, key=lambda row: row.schema.native_tool_name))
+    except NativeRegistrationResultSchemaDenied as exc:
+        raise NativeRegistrationResultSchemaObservationDenied(str(exc)) from None
+    except Exception:
+        raise NativeRegistrationResultSchemaObservationDenied(
+            "exact reviewed result-schema artifacts are unavailable or stale in the root catalog") from None
+
+
 def reviewed_local_registration_result_schemas(
         registrations: tuple[CapturedHermesRegistration, ...] | None = None,
 ) -> tuple[ReviewedNativeRegistrationResultSchema, ...]:
-    """Load the eight source-pinned local schemas from the v112 artifact map.
+    """Load the eight source-pinned local schemas from the v114 artifact map.
 
     This validates the released source contract and exact schema file bytes.
     The returned rows are not selected protected schema receipts and cannot
@@ -185,7 +426,7 @@ def reviewed_local_registration_result_schemas(
         raise NativeRegistrationResultSchemaDenied("all actual registration sources are required")
     by_name = {row.native_tool_name: row for row in captured}
     root = Path(__file__).resolve().parents[3]
-    map_path = root / "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/native-local-schema-artifact-map-v1.json"
+    map_path = root / "plans/amendments/2026-10-10-native-schema-catalog-identities-v114/native-local-schema-artifact-map-v2.json"
     bounds_path = root / "plans/amendments/2026-10-10-native-local-result-bounds-v110/native-local-registration-results-v1.json"
     try:
         artifact_map = json.loads(map_path.read_text(encoding="utf-8"))
@@ -196,9 +437,9 @@ def reviewed_local_registration_result_schemas(
     schemas = bounds.get("result_schemas") if isinstance(bounds, Mapping) else None
     if (not isinstance(artifact_map, Mapping) or not isinstance(bounds, Mapping)
             or artifact_map.get("schema") != 1 or bounds.get("schema") != 1
-            or not isinstance(rows, list) or len(rows) != 8 or not isinstance(schemas, Mapping)
-            or set(artifact_map) != {"schema", "artifact_rows", "publication", "native_schema_record_join",
-                                    "result_constraints"}
+                or not isinstance(rows, list) or len(rows) != 8 or not isinstance(schemas, Mapping)
+                or set(artifact_map) != {"schema", "artifact_rows", "publication", "native_schema_record_join",
+                                        "result_constraints", "catalog_identity_correction_v114"}
                 or set(bounds) != {"artifact_id", "result_schemas", "schema", "source_pins", "trust",
                                "unavailable_reason", "unavailable_results", "validation_limits", "validators"}):
         raise NativeRegistrationResultSchemaDenied("reviewed local result schema catalog has an unsupported shape")
@@ -236,7 +477,7 @@ def reviewed_local_registration_result_schemas(
         tool = raw["tool_name"]
         if (tool not in expected_handlers or tool in seen or tool not in by_name
                 or raw["handler_kind"] != expected_handlers[tool] or raw["schema_role"] != "result"
-                or raw["schema_id"] != f"installer-native-local-result:{tool}:v1"
+                or raw["schema_id"] != f"installer-native-local-result-{tool}-v1"
                 or raw["artifact_id"] != raw["schema_id"]):
             raise NativeRegistrationResultSchemaDenied("local result schema artifact identity is not source-reviewed")
         relative = raw["path"]
