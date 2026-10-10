@@ -1218,6 +1218,7 @@ class SourceObserverRegistry:
                 or selected_execution is not observation.selected_execution):
             raise AuthorityDenied("source.native_input", "selected input proof does not match its retained selection")
         with self._lock:
+            self._prune_locked(self.service.monotonic())
             expected = self._proofs_pending.get(observation.proof_nonce)
             retained = self._selected_input_proofs.get(observation.proof_nonce)
             if (observation._issuer_token is not self._proof_token
@@ -1240,6 +1241,8 @@ class SourceObserverRegistry:
             if observation.private_consent_selection_handle != getattr(
                     selected_execution, "private_consent_selection_handle", None):
                 raise AuthorityDenied("source.native_input", "private consent selection differs from retained input")
+            if len(self._consumed_selected_input_proofs) >= MAX_RETAINED_CAPSULES:
+                raise AuthorityDenied("source.capacity", "selected input issuance reservations are full")
             self._proofs_pending.pop(observation.proof_nonce, None)
             self._selected_input_proofs.pop(observation.proof_nonce, None)
             self._consumed_selected_input_proofs[observation.proof_nonce] = (
