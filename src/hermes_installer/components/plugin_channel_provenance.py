@@ -22,8 +22,8 @@ class ChannelIngressDenied(PermissionError):
 
 
 _MAX_BODY_BYTES = 256 * 1024
-_MAX_AUDIO_BYTES = 16 * 1024 * 1024
-_MAX_AUDIO_SECONDS = 30
+_MAX_AUDIO_BYTES = 32 * 1024 * 1024
+_MAX_AUDIO_SECONDS = 60
 _MAX_PROOF_LEASE = 60.0
 _OPAQUE_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.")
 _HEX = frozenset("0123456789abcdef")
@@ -201,7 +201,11 @@ class AuthenticatedHttpIngressProducer(_Producer):
         canonical, digest = _canonical_body(body, self.selection.max_body_bytes)
         if not hmac.compare_digest(digest, claims["body_sha256"]):
             raise ChannelIngressDenied("HTTP body differs from root-authenticated request receipt")
-        return ObservedChannelIngress(proof, canonical)
+        event = {"text": claims["text"], "session_id": claims["session_id"],
+                 "request_id": claims["request_id"], "subject_id": claims["subject_id"],
+                 "raw_body_sha256": claims["body_sha256"],
+                 "raw_body_size_bytes": claims["raw_body_size_bytes"]}
+        return ObservedChannelIngress(proof, _canonical_json(event))
 
     def validate_claims(self, proof: object) -> bool:
         try:
@@ -217,7 +221,8 @@ class AuthenticatedHttpIngressProducer(_Producer):
         except (PermissionError, ValueError, TypeError, RuntimeError):
             raise ChannelIngressDenied("HTTP JWT/principal/session is no longer current") from None
         fields = {"schema", "proof_handle", "selection_id", "session_handle",
-                  "authenticated_subject_receipt_handle", "request_receipt_handle", "body_sha256",
+                  "authenticated_subject_receipt_handle", "request_receipt_handle", "request_id",
+                  "session_id", "subject_id", "text", "raw_body_size_bytes", "body_sha256",
                   "controller_identity_digest", "service_generation_digest", "issued_monotonic",
                   "expires_monotonic"}
         if not isinstance(raw, Mapping) or set(raw) != fields or type(raw["schema"]) is not int or raw["schema"] != 1:
@@ -231,14 +236,24 @@ class AuthenticatedHttpIngressProducer(_Producer):
             raise ChannelIngressDenied("HTTP selection, session freshness or lease is invalid")
         body, digest = _canonical_body(
             self.observer.read_verified_http_body(self.selection, proof), self.selection.max_body_bytes)
+        body_value = json.loads(body)
         if not hmac.compare_digest(digest, _digest(raw["body_sha256"], "HTTP body digest")):
             raise ChannelIngressDenied("HTTP body changed after the authenticated request observation")
+        if (set(body_value) != {"text"} or not isinstance(body_value["text"], str)
+                or not 1 <= len(body_value["text"]) <= 65536 or raw["text"] != body_value["text"]
+                or not isinstance(raw["raw_body_size_bytes"], int)
+                or not 1 <= raw["raw_body_size_bytes"] <= self.selection.max_body_bytes):
+            raise ChannelIngressDenied("HTTP event differs from the pinned text-only request schema")
         return {"proof_handle": _opaque(raw["proof_handle"], "HTTP proof handle"),
                 "selection_id": self.selection.id,
                 "session_handle": _opaque(raw["session_handle"], "HTTP session handle"),
                 "authenticated_subject_receipt_handle": _opaque(
                     raw["authenticated_subject_receipt_handle"], "authenticated subject receipt"),
-                "request_receipt_handle": _opaque(raw["request_receipt_handle"], "request receipt"),
+                "request_receipt_handle": _opaque(raw["request_receipt_handle"], "request proof"),
+                "request_id": _opaque(raw["request_id"], "request ID"),
+                "session_id": _opaque(raw["session_id"], "session ID"),
+                "subject_id": _opaque(raw["subject_id"], "subject ID"), "text": body_value["text"],
+                "raw_body_size_bytes": raw["raw_body_size_bytes"],
                 "body_sha256": digest,
                 "controller_identity_digest": _digest(raw["controller_identity_digest"], "controller identity digest"),
                 "service_generation_digest": _digest(raw["service_generation_digest"], "service generation digest"),
@@ -277,13 +292,12 @@ class SelectedAudioIngressProducer(_Producer):
         claims = self._validate(proof)
         # Audio bytes remain in the root-owned artifact store and are never
         # copied into the source event or exposed to the plugin/model.
-        payload = _canonical_json({"audio_artifact_id": claims["audio_artifact_id"],
+        payload = _canonical_json({"session_id": claims["session_handle"], "capture_id": claims["capture_id"],
+                                   "audio_artifact_receipt_handle": claims["audio_artifact_receipt_handle"],
                                    "audio_sha256": claims["audio_sha256"],
-                                   "size_bytes": claims["size_bytes"],
-                                   "format_schema_id": claims["format_schema_id"],
-                                   "session_handle": claims["session_handle"],
-                                   "consent_receipt_handle": claims["consent_receipt_handle"],
-                                   "capture_receipt_handle": claims["capture_receipt_handle"]})
+                                   "audio_size_bytes": claims["size_bytes"],
+                                   "format": "pcm-s16le-mono", "sample_rate_hz": 16000,
+                                   "duration_milliseconds": claims["duration_milliseconds"]})
         return ObservedChannelIngress(proof, payload)
 
     def validate_claims(self, proof: object) -> bool:
@@ -299,8 +313,9 @@ class SelectedAudioIngressProducer(_Producer):
                 self.selection, proof, now_monotonic=float(self._clock()))
         except (PermissionError, ValueError, TypeError, RuntimeError):
             raise ChannelIngressDenied("audio device/session permission or capture is no longer current") from None
-        fields = {"schema", "proof_handle", "selection_id", "session_handle", "consent_receipt_handle",
+        fields = {"schema", "proof_handle", "selection_id", "session_handle", "session_id", "consent_receipt_handle",
                   "capture_receipt_handle", "audio_artifact_id", "audio_sha256", "size_bytes",
+                  "audio_artifact_receipt_handle", "capture_id", "duration_milliseconds",
                   "format_schema_id", "controller_identity_digest", "service_generation_digest",
                   "issued_monotonic", "expires_monotonic"}
         if not isinstance(raw, Mapping) or set(raw) != fields or type(raw["schema"]) is not int or raw["schema"] != 1:
@@ -310,14 +325,23 @@ class SelectedAudioIngressProducer(_Producer):
                            _monotonic(raw["expires_monotonic"], "audio expiry"))
         if (raw["selection_id"] != self.selection.id or raw["format_schema_id"] != self.selection.sample_format_schema_id
                 or type(raw["size_bytes"]) is not int or not 1 <= raw["size_bytes"] <= self.selection.max_capture_bytes
+                or raw["size_bytes"] % 32 != 0
                 or not issued <= now < expires or expires - issued > _MAX_PROOF_LEASE):
             raise ChannelIngressDenied("audio selection, sample format, size or lease is invalid")
+        duration = raw["size_bytes"] // 32
+        if (type(raw["duration_milliseconds"]) is not int or raw["duration_milliseconds"] != duration
+                or not 1 <= duration <= min(60000, self.selection.max_capture_seconds * 1000)):
+            raise ChannelIngressDenied("audio duration differs from bounded sealed PCM byte count")
         return {"proof_handle": _opaque(raw["proof_handle"], "audio proof handle"),
                 "selection_id": self.selection.id,
                 "session_handle": _opaque(raw["session_handle"], "audio session handle"),
                 "consent_receipt_handle": _opaque(raw["consent_receipt_handle"], "audio consent receipt"),
                 "capture_receipt_handle": _opaque(raw["capture_receipt_handle"], "audio capture receipt"),
                 "audio_artifact_id": _opaque(raw["audio_artifact_id"], "audio artifact ID"),
+                "audio_artifact_receipt_handle": _opaque(raw["audio_artifact_receipt_handle"],
+                                                          "audio artifact receipt handle"),
+                "capture_id": _opaque(raw["capture_id"], "capture ID"),
+                "duration_milliseconds": raw["duration_milliseconds"],
                 "audio_sha256": _digest(raw["audio_sha256"], "audio content digest"),
                 "size_bytes": raw["size_bytes"], "format_schema_id": raw["format_schema_id"],
                 "controller_identity_digest": _digest(raw["controller_identity_digest"], "controller identity digest"),

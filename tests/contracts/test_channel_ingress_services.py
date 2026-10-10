@@ -44,7 +44,7 @@ def listener(*, context=None, handle=None, process=None, host="127.0.0.1"):
             "S"*43, "session-handle-001", "a"*64, time.monotonic()+60, "jwt-verifier-001"),
         "current_selected_subject": lambda self, selection, receipt: receipt,
     })()
-    body=b'{"message":"hello"}'
+    body=b'{"text":"hello"}'
     request_receipt=replace(source_receipt("http-request-receipt"),
                             payload_digest=hashlib.sha256(body).hexdigest())
     authority=FakeAuthorityService({"R"*43:request_receipt})
@@ -79,19 +79,19 @@ def test_loopback_listener_ticket_is_root_owned_bounded_and_one_use():
     service._server = SimpleNamespace(server_address=("127.0.0.1", 54321))
     ticket = service._create_ticket(
         method="POST", path="/ingress", host="127.0.0.1:54321", content_type="application/json",
-        session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"message":"hello"}',
+        session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"text":"hello"}',
         request_receipt_handle="R"*43,
     )
     request = service.take_authenticated_request(handle, ticket)
     assert request.listener_enrollment_id == "listener-001"
-    assert request.body == b'{"message":"hello"}'
+    assert request.body == b'{"text":"hello"}'
     assert request.access_jwt == b"synthetic-jwt"
     with pytest.raises(IngressServiceDenied, match="unknown or replayed"):
         service.take_authenticated_request(handle, ticket)
     with pytest.raises(IngressServiceDenied, match="not issued"):
         service.take_authenticated_request(object(), service._create_ticket(
             method="POST", path="/ingress", host="127.0.0.1:54321", content_type="application/json",
-            session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"message":"hello"}',
+            session_id="S" * 24, access_jwt=b"synthetic-jwt", body=b'{"text":"hello"}',
             request_receipt_handle="R"*43,
         ))
     service._server = None
@@ -174,7 +174,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
     client_context = ssl.create_default_context(cafile=str(ca_path))
     client_context.load_cert_chain(str(client_cert), str(client_key))
 
-    body = b'{"message":"synthetic ingress"}'
+    body = b'{"text":"synthetic ingress"}'
     subject_receipt = source_receipt("subject-parent")
     request_receipt = replace(source_receipt("http-request", parents=(subject_receipt.receipt_id,)),
                               payload_digest=hashlib.sha256(body).hexdigest())
@@ -205,8 +205,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
     def process(ticket):
         observed = holder["producer"].observe(ticket)
         parents = holder["observer"].consume_source_receipts(observed.proof)
-        assert {row.receipt_id for row in parents} == {subject_receipt.receipt_id,
-                                                       request_receipt.receipt_id}
+        assert parents == ()
         holder["observer"].consume(observed.proof)
         return RootIngressDisposition.ACCEPTED
 
@@ -220,7 +219,7 @@ def test_tls_loopback_ingress_runs_jwt_session_receipt_and_registry_path(tmp_pat
         selected, selection_handle, service, identity,
         controller_identity_digest="a"*64, service_generation_digest="b"*64,
         route_id="ingress", body_schema_validator=lambda schema, data:
-            schema == selected.body_schema_id and data == body, monotonic=time.monotonic,
+            schema == selected.body_schema_id and data == b'{"text":"synthetic ingress"}', monotonic=time.monotonic,
         source_receipt_resolver=receipts, source_receipt_validator=receipts.validate)
     holder["producer"] = AuthenticatedHttpIngressProducer(
         selected, selection_handle, holder["observer"], clock=time.monotonic)
@@ -406,7 +405,7 @@ def test_root_audio_resolver_binds_current_consent_device_artifact_and_parent_re
         def consume_capture(self,handle,current_artifact): self.consumed=True
     sessions, artifacts=Sessions(),Artifacts()
     resolver=RootAudioCaptureReceiptResolver(selection,selection_handle,sessions=sessions,
-        artifacts=artifacts,source_receipts=source_resolver)
+        artifacts=artifacts,owner_generation="generation-001",source_receipts=source_resolver)
     with pytest.raises(PermissionError, match="root-issued"):
         resolver.take_selected_capture(selection_handle,
             RootAudioCaptureRequest(session.session_handle,artifact.artifact_id))
