@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import secrets
@@ -15,6 +16,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from .types import AuthorityDenied, canonical_bytes
 from .application_runtime import RootApplicationRunReceipt
@@ -48,6 +50,21 @@ def _canonical(raw: bytes) -> Mapping[str, Any]:
     if not isinstance(value, dict) or canonical_bytes(value) != raw:
         raise AuthorityDenied("application.selection", "selected application payload is not canonical JSON")
     return value
+
+
+def _owned_loopback_url(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) > 2048:
+        return False
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
+        return bool(parsed.scheme == "http" and host is not None and port is not None
+            and 1 <= port <= 65535 and parsed.username is None and parsed.password is None
+            and not parsed.query and not parsed.fragment
+            and (host == "localhost" or ipaddress.ip_address(host).is_loopback))
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,7 +515,7 @@ class RootApplicationWorkloadAuthority:
             fixture = self.catalog.resolve_owned_application_fixture(context.fixture_receipt_handle)
             fixture_url = getattr(fixture, "url", None)
             if (getattr(fixture, "handle", None) != context.fixture_receipt_handle
-                    or not isinstance(fixture_url, str) or not fixture_url.startswith("http://127.0.0.1:")):
+                    or not _owned_loopback_url(fixture_url)):
                 raise AuthorityDenied("application.fixture", "owned loopback browser fixture receipt is unavailable")
         elif context.fixture_receipt_handle != "" and not self.catalog.is_empty_fixture_receipt_current(
                 context.fixture_receipt_handle, workflow_id):
@@ -543,6 +560,9 @@ class RootApplicationWorkloadAuthority:
         return request
 
     def is_selected_qualification_request_current(self, request_handle: str) -> bool:
+        return self._qualification_context_current(request_handle, require_unconsumed=True)
+
+    def _qualification_context_current(self, request_handle: str, *, require_unconsumed: bool) -> bool:
         with self._lock:
             record = self._qualification_requests.get(request_handle)
         if record is None:
@@ -550,15 +570,30 @@ class RootApplicationWorkloadAuthority:
         request, context, _payload, selection, session_handle = record
         try:
             workflow = request.workflow_id
-            return bool(request.expires_monotonic > self.service.monotonic()
+            current = bool(request.expires_monotonic > self.service.monotonic()
                 and request.enclosing_service_generation_digest == self.service.service_generation_digest
                 and self.catalog.is_selected_application_qualification_context_current(
                     session_handle, workflow, context) is True
                 and self.catalog.is_selected_application_qualification_consent_current(context, workflow) is True
                 and self.catalog.resolve_selected_application_runtime(request.application_id,
                     profile_id=request.profile_id) == selection
-                and self.controllers.is_binding_current(request.controller_binding_handle) is True
-                and self.journal.is_application_qualification_request_current(request_handle) is True)
+                and self.controllers.is_binding_current(request.controller_binding_handle) is True)
+            if current:
+                for source_handle in request.source_receipt_handles:
+                    self.sources.resolve(source_handle, application_id=request.application_id,
+                        service_generation_digest=request.enclosing_service_generation_digest)
+                self.runtimes.resolve(selection.runtime_receipt_handle,
+                    application_id=request.application_id,
+                    source_receipt_handle=selection.source_generation_receipt_handle,
+                    service_generation_digest=request.enclosing_service_generation_digest)
+                if request.workflow_id == "qualify-browser-use-v1":
+                    fixture = self.catalog.resolve_owned_application_fixture(request.fixture_receipt_handle)
+                    if (getattr(fixture, "handle", None) != request.fixture_receipt_handle
+                            or not _owned_loopback_url(getattr(fixture, "url", None))):
+                        return False
+            if require_unconsumed:
+                current = current and self.journal.is_application_qualification_request_current(request_handle) is True
+            return current
         except Exception:
             return False
 
@@ -603,7 +638,7 @@ class RootApplicationWorkloadAuthority:
                 action = self._admission_actions.get(admission_handle)
                 qualification_handle = self._qualification_admissions.get(admission_handle)
             if qualification_handle is not None:
-                return self.is_selected_qualification_request_current(qualification_handle)
+                return self._qualification_context_current(qualification_handle, require_unconsumed=False)
             verify_action = getattr(self.catalog, "is_selected_workload_action_current", None)
             return bool(invocation is not None and action is not None
                         and self.invocations.is_selected_application_invocation_current(invocation) is True
@@ -617,7 +652,11 @@ class RootApplicationWorkloadAuthority:
             action = self._admission_actions.get(step.admission_handle)
             qualification_handle = self._qualification_admissions.get(step.admission_handle)
             if qualification_handle is not None:
-                request = self.resolve_selected_qualification_request(qualification_handle)
+                record = self._qualification_requests.get(qualification_handle)
+                if record is None or not self._qualification_context_current(
+                        qualification_handle, require_unconsumed=False):
+                    return False
+                request = record[0]
                 return (request.application_id == step.application_id
                     and request.profile_id == step.profile_id
                     and request.profile_generation == step.profile_generation
@@ -976,12 +1015,27 @@ class RootApplicationRuntimeProbeAuthority:
         selection = resolve(preparation_selection_handle)
         if selection is None or getattr(selection, "handle", None) != preparation_selection_handle:
             raise AuthorityDenied("application.probe", "root preparation selection is stale")
-        run = getattr(self.custodian, "run_selected_application_runtime_probe", None)
-        if not callable(run):
-            raise AuthorityDenied("application.probe", "managed application runtime probe is unavailable")
-        receipt = run(selection)
+        step_resolver = getattr(self.preparations, "resolve_application_runtime_probe_step", None)
+        if not callable(step_resolver):
+            raise AuthorityDenied("application.probe", "pre-active selection has no sealed runtime-probe step")
+        step = step_resolver(preparation_selection_handle)
+        if type(step) is not RootApplicationSelectedStep or step.role != "application-runtime-probe":
+            raise AuthorityDenied("application.probe", "pre-active selection returned no typed probe-role step")
+        # There is deliberately no generic custodian command hook. A concrete
+        # probe requires a separately consumed root app-start grant and must
+        # pass through the same PIDFD/cgroup/systemd start and terminal path.
+        execute = getattr(self.runner, "run_selected_runtime_probe_step", None)
+        if not callable(execute):
+            raise AuthorityDenied("application.probe", "distinct root probe grant issuer is not attached")
+        receipt = execute(selection, step, self.custodian)
         if type(receipt) is not RootApplicationRuntimeProbeReceipt:
-            raise AuthorityDenied("application.probe", "custodian returned no typed runtime probe receipt")
+            raise AuthorityDenied("application.probe", "runner returned no typed runtime-probe receipt")
+        if (receipt.preparation_selection_handle != preparation_selection_handle
+                or receipt.application_id != getattr(selection, "application_id", None)
+                or receipt.terminal_receipt_handle == ""):
+            raise AuthorityDenied("application.probe", "managed probe receipt differs from its preparation selection")
+        self.service._verify_root_selected_signature(
+            "root-application-runtime-probe-v1", receipt.claims(), receipt.signature)
         with self._lock:
             if len(self._receipts) >= 512:
                 raise AuthorityDenied("application.probe", "runtime probe receipt registry is full")
@@ -993,7 +1047,9 @@ class RootApplicationRuntimeProbeAuthority:
             item = self._receipts.get(handle)
             if item is None or item[0].expires_monotonic <= self.service.monotonic():
                 raise AuthorityDenied("application.probe", "runtime probe receipt is unavailable")
-            receipt, retained_selection = item
+        receipt, retained_selection = item
+        self.service._verify_root_selected_signature(
+            "root-application-runtime-probe-v1", receipt.claims(), receipt.signature)
         resolve = getattr(self.preparations, "resolve_application_runtime_preparation_selection", None)
         if not callable(resolve):
             raise AuthorityDenied("application.probe", "root preparation currentness resolver is unavailable")
