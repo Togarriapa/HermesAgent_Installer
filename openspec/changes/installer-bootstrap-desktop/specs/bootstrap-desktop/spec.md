@@ -615,3 +615,45 @@ The installer SHALL isolate fixture publication/session/key authority under the 
 #### Scenario: Fixture handle is presented to production consumer
 - **WHEN** a qualification session or signed fixture receipt targets production authority
 - **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted
+
+### Requirement: Health input source delivery v163
+The installer SHALL bind selected health fixture input to the actual started native peer, PRIVATE source context and distinct actual capture/write/EOF/take receipts.
+
+#### Scenario: Captured health source has no completed stdin delivery
+- **WHEN** native input take lacks exact successful write and EOF receipts for the current health peer
+- **THEN** delivery denies and no health success is recorded
+
+### Requirement: Qualification envelope v164
+The installer SHALL verify the exact fixture-only canonical authority/catalog envelope and current owned namespace before parsing enrollment.
+
+#### Scenario: Fixture catalog is swapped
+- **WHEN** catalog bytes disagree with the signed envelope or current fixture pointer
+- **THEN** the dedicated loader denies before creating any authority service
+
+### Requirement: Runtime role publication join v165
+The installer SHALL activate from the same genuine PM and native CAS receipt closure used by strict active compilation and SHALL freshly verify current committed enrollment for runtime health.
+
+#### Scenario: Generated native receipt is presented as static source receipt
+- **WHEN** activation receives a generated output through unrelated static artifact lookup
+- **THEN** it denies until the exact typed producer/CAS/source role projection is resolved
+
+### Requirement: Qualification key signer v166
+The installer SHALL sign only the exact fixture envelope with the genuine held fixture key before constructing its actual authority service.
+
+#### Scenario: Caller requests another signature domain
+- **WHEN** a fixture signer is used for unrelated data or production authority
+- **THEN** the restricted facade denies
+
+### Requirement: Qualification session storage v167
+The installer SHALL retain live fixture session authority only in its current sealed registry and SHALL treat any session file as historical metadata.
+
+#### Scenario: Historical session file is reopened
+- **WHEN** no current genuine fixture lease and session registry membership exist
+- **THEN** the historical file cannot authorize an effect
+
+### Requirement: Native precompile reservation v169
+The installer SHALL authorize and reserve actual generated outputs from genuine current setup source selection before compiling their strict active rows.
+
+#### Scenario: Prepared native package catalog is empty
+- **WHEN** genuine source-backed assembly has produced five valid selected outputs
+- **THEN** authorization resolves the sealed setup selection and never requires future active package policy

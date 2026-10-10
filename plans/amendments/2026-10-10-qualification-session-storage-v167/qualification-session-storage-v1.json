@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T162",
+    "HI-T164",
+    "HI-T166"
+  ],
+  "why": "v164 requested signed fixture session file while v166 correctly restricts signer to enrollment envelope. Live sessions are registry-held current leases, not durable authority restored from file.",
+  "session": "RootQualificationSessionHandle remains in-memory sealed registry membership only, bounded original fixture/controller/environment deadline. RootQualificationSessionStore.begin_selected_fixture_session(publication_receipt_handle) independently verifies actual current fixture publication/lease/installed actor/key/controller and issues a new short current handle within original deadline. No expired process seal/FD/lease restoration.",
+  "file": "fixture-session.json, when retained, is canonical exact v162 session.fields ONLY, no signature. Root-owned0600 nofollow single-link bounded journal metadata; historical diagnostic data never source of live session authority. Supersedes v164 session file plus signature wording. No new signing domain/facade or arbitrary signature API.",
+  "restart": "A read historical session file cannot authorize effect or reconstruct a sealed session. Fresh actor/current held fixture lease/publication/key/source/controller registry must independently establish current facts. Missing actual lease/source evidence leaves qualification incomplete; cleanup may identify journal-owned members without extending authority.",
+  "tasks": [
+    {
+      "id": "HI-T167.1",
+      "owner": "fixture session/publisher/host enrollment",
+      "work": "Keep live sessions sealed/current only; canonical historical file has no signature or authority, and restart/expired-handle negatives deny without fresh actual lease."
+    }
+  ],
+  "acceptance": "All AC open; baseline unchanged."
+}
