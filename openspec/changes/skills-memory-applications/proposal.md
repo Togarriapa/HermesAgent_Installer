@@ -85,3 +85,5 @@ Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-e
 Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
 
 Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.

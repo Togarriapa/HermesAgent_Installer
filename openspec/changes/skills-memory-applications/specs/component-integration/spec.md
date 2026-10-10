@@ -721,3 +721,12 @@ The installer SHALL use v127 actual held root directory/source-member verificati
 
 - **WHEN** no genuine selected owned-directory/source inventory receipt exists
 - **THEN** the registry denies model source observation and does not infer source or deployment proof from a path or served alias
+
+### Requirement: Exact private model protected selection and held directory getters
+
+The installer SHALL resolve v128 exact protected endpoint/model selection records and current owned-directory source getters independently of actual deployment observations.
+
+#### Scenario: A typed caller object lacks registry membership
+
+- **WHEN** a selection object or directory FD is not the exact retained current root selection
+- **THEN** source/model observation is denied even if its fields appear structurally valid
