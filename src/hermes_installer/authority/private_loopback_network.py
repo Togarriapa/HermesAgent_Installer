@@ -901,7 +901,8 @@ def _topology_valid(state: Mapping[str, Any]) -> bool:
                 return False
         if any(row["ifindex"] in template_indices for row in state["neighbors"]):
             return False
-        if state["neighbors"]:
+        if any(not _is_inert_loopback_broadcast_neighbor(row, loopback["ifindex"])
+               for row in state["neighbors"]):
             return False
         return True
     except (KeyError, TypeError, ValueError, OverflowError):
@@ -910,6 +911,23 @@ def _topology_valid(state: Mapping[str, Any]) -> bool:
 
 def _state_digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _is_inert_loopback_broadcast_neighbor(row: Any, loopback_ifindex: int) -> bool:
+    """Identify Linux's empty 0.0.0.0 NUD_NOARP/RTN_BROADCAST sentinel on lo."""
+    return row == {
+        "family": socket.AF_INET, "ifindex": loopback_ifindex,
+        "state": 0x40, "flags": 0, "type": 3,
+        "destination_hex": "00000000", "link_address_hex": "000000000000",
+    }
+
+
+def _canonical_address_neighbor_state(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Fingerprint addresses and real neighbors, ignoring only the inert lo sentinel."""
+    loopback = next(row for row in state["links"] if row["name"] == "lo")
+    neighbors = [row for row in state["neighbors"]
+                 if not _is_inert_loopback_broadcast_neighbor(row, loopback["ifindex"])]
+    return list(state["addresses"]) + neighbors
 
 
 def _set_loopback_up() -> None:
@@ -1049,7 +1067,7 @@ def create_root_namespace(
             network, path, namespace_fd, namespace_info.st_dev, namespace_info.st_ino,
             nft_tool, rules_digest, uuid.uuid4().hex, str(state["kernel_release"]),
             str(state["kernel_version_sha256"]), _state_digest(state["links"]),
-            _state_digest(state["addresses"] + state["neighbors"]),
+            _state_digest(_canonical_address_neighbor_state(state)),
             _state_digest(state["routes"]), observed, expires, state,
         )
     except BaseException:
@@ -1225,7 +1243,7 @@ def _verify_root_network_lease_current(lease: RootPrivateLoopbackNetworkLease) -
             or topology.get("kernel_release") != lease.kernel_release
             or topology.get("kernel_version_sha256") != lease.kernel_version_sha256
             or _state_digest(topology.get("links")) != lease.link_state_sha256
-            or _state_digest(topology.get("addresses", []) + topology.get("neighbors", [])) != lease.address_state_sha256
+            or _state_digest(_canonical_address_neighbor_state(topology)) != lease.address_state_sha256
             or _state_digest(topology.get("routes")) != lease.route_state_sha256):
         raise AuthorityDenied("private_network.namespace", "retained typed kernel topology changed")
     for enrollment_id, proof in lease.member_processes.items():
@@ -1268,7 +1286,7 @@ def renew_root_network_lease(lease: RootPrivateLoopbackNetworkLease,
     lease.kernel_release = str(state["kernel_release"])
     lease.kernel_version_sha256 = str(state["kernel_version_sha256"])
     lease.link_state_sha256 = _state_digest(state["links"])
-    lease.address_state_sha256 = _state_digest(state["addresses"] + state["neighbors"])
+    lease.address_state_sha256 = _state_digest(_canonical_address_neighbor_state(state))
     lease.route_state_sha256 = _state_digest(state["routes"])
     lease.kernel_observed_monotonic = observed
     lease.expires_monotonic = expires

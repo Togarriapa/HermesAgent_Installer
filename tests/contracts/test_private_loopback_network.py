@@ -13,7 +13,7 @@ from hermes_installer.authority.private_loopback_network import (
     validate_private_loopback_networks, _topology_valid, verify_unit_network_readback,
     RootPrivateLoopbackNetworkLease, RootNetworkMemberProof, RootResolvedHostTool,
     create_root_namespace, renew_root_network_lease, verify_root_network_lease,
-    _canonical_link_attributes, _state_digest,
+    _canonical_link_attributes, _canonical_address_neighbor_state, _state_digest,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -138,6 +138,14 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
             "kernel_version_sha256": "a" * 64,
         }
         self.assertTrue(_topology_valid(state))
+        generated_neighbor = {"family": 2, "ifindex": 1, "state": 0x40, "flags": 0,
+                              "type": 3, "destination_hex": "00000000",
+                              "link_address_hex": "000000000000"}
+        local_activity = copy.deepcopy(state)
+        local_activity["neighbors"] = [generated_neighbor]
+        self.assertTrue(_topology_valid(local_activity))
+        self.assertEqual(_state_digest(_canonical_address_neighbor_state(state)),
+                         _state_digest(_canonical_address_neighbor_state(local_activity)))
         mutations = []
         up = copy.deepcopy(state); up["links"][1]["flags"] |= 1; mutations.append(up)
         address = copy.deepcopy(state); address["addresses"].append(
@@ -150,6 +158,9 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
         linked = copy.deepcopy(state); linked["links"][1]["link_ifindex"] = 1; mutations.append(linked)
         unknown = copy.deepcopy(state); unknown["links"].append(
             {**unknown["links"][1], "ifindex": 20, "name": "veth0", "kind": "veth"}); mutations.append(unknown)
+        external_neighbor = copy.deepcopy(local_activity)
+        external_neighbor["neighbors"][0]["destination_hex"] = "0a000001"
+        mutations.append(external_neighbor)
         for mutation in mutations:
             with self.subTest(mutation=mutation["links"][1]):
                 self.assertFalse(_topology_valid(mutation))
@@ -169,6 +180,27 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
         ])
         self.assertEqual(_state_digest(before), _state_digest(after_traffic))
         self.assertNotEqual(_state_digest(before), _state_digest(changed_link))
+
+    def test_topology_ignores_only_kernel_loopback_broadcast_sentinel(self):
+        state = {
+            "links": [{"name": "lo", "ifindex": 1}],
+            "addresses": [{"family": 2, "ifindex": 1, "address_hex": "7f000001"}],
+            "neighbors": [],
+        }
+        with_sentinel = copy.deepcopy(state)
+        sentinel = {"family": 2, "ifindex": 1, "state": 0x40, "flags": 0,
+                    "type": 3, "destination_hex": "00000000",
+                    "link_address_hex": "000000000000"}
+        with_sentinel["neighbors"].append(sentinel)
+        self.assertEqual(_state_digest(_canonical_address_neighbor_state(state)),
+                         _state_digest(_canonical_address_neighbor_state(with_sentinel)))
+        for key, value in (("ifindex", 2), ("state", 0x02), ("flags", 1),
+                           ("type", 1), ("destination_hex", "7f000002"),
+                           ("link_address_hex", "010203040506")):
+            mutation = copy.deepcopy(with_sentinel)
+            mutation["neighbors"][0][key] = value
+            self.assertNotEqual(_state_digest(_canonical_address_neighbor_state(state)),
+                                _state_digest(_canonical_address_neighbor_state(mutation)))
 
     def test_stale_lease_stops_only_retained_owned_units(self):
         network, = validate_private_loopback_networks([self.row], self.services, self.digest)

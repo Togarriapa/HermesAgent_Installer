@@ -286,6 +286,25 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                     _toggle_interface(lease.namespace_fd, template_name, False)
                     verify_root_network_lease(lease)
 
+                # Run the bind probes before any packet is sent to 127.0.0.1:14500.
+                # The later successful TCP exchange leaves that exact tuple in
+                # TIME_WAIT, which can make a second bind fail with EADDRINUSE.
+                bind_ok = _systemd_bind_probe(lease.namespace_path, candidate_uids[0], 14500,
+                                              allowed=True, allowed_port=14500)
+                self.assertEqual(bind_ok.returncode, 0, bind_ok.stdout)
+                self.assertIn("BOUND", bind_ok.stdout)
+                self.assertIn("CAPS_EMPTY", bind_ok.stdout)
+                self.assertIn("TUN_DEVICE_HIDDEN", bind_ok.stdout)
+                wrong_port = _systemd_bind_probe(lease.namespace_path, candidate_uids[0], 14501,
+                                                 allowed=False, allowed_port=14500)
+                self.assertEqual(wrong_port.returncode, 0, wrong_port.stdout)
+                self.assertIn("DENIED:", wrong_port.stdout)
+                client_bind = _systemd_bind_probe(lease.namespace_path, candidate_uids[1], 0,
+                                                  allowed=False, allowed_port=None)
+                self.assertEqual(client_bind.returncode, 0, client_bind.stdout)
+                self.assertIn("DENIED:", client_bind.stdout)
+                verify_root_network_lease(lease)
+
                 host_probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 host_probe.bind(("127.0.0.1", 0))
                 host_probe.listen(1)
@@ -341,25 +360,7 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                 self.assertFalse(worker.is_alive(), "private namespace probes exceeded their fixed bound")
                 if failure:
                     raise failure[0]
-
-                # These are real systemd transient services. A successful
-                # exact bind plus denied wrong-port/client binds demonstrates
-                # the manager attached functioning bind4 cgroup BPF programs;
-                # a show-property string alone would not establish that.
-                bind_ok = _systemd_bind_probe(lease.namespace_path, candidate_uids[0], 14500,
-                                              allowed=True, allowed_port=14500)
-                self.assertEqual(bind_ok.returncode, 0, bind_ok.stdout)
-                self.assertIn("BOUND", bind_ok.stdout)
-                self.assertIn("CAPS_EMPTY", bind_ok.stdout)
-                self.assertIn("TUN_DEVICE_HIDDEN", bind_ok.stdout)
-                wrong_port = _systemd_bind_probe(lease.namespace_path, candidate_uids[0], 14501,
-                                                 allowed=False, allowed_port=14500)
-                self.assertEqual(wrong_port.returncode, 0, wrong_port.stdout)
-                self.assertIn("DENIED:", wrong_port.stdout)
-                client_bind = _systemd_bind_probe(lease.namespace_path, candidate_uids[1], 0,
-                                                  allowed=False, allowed_port=None)
-                self.assertEqual(client_bind.returncode, 0, client_bind.stdout)
-                self.assertIn("DENIED:", client_bind.stdout)
+                verify_root_network_lease(lease)
 
                 member = PrivateLoopbackMember(network, "display", candidate_uids[0], generation_digest)
                 unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
