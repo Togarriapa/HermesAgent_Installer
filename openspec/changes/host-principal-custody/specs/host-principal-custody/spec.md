@@ -1066,3 +1066,17 @@ The installer SHALL bind Assist reads to actual observed selected exposure or un
 #### Scenario: GetLiveContext exposes an unfiltered overview
 - **WHEN** current explicit exposure-set selection or unique reviewed filter proof is absent
 - **THEN** the read remains pending and no entity-ID read or whole-house permission is inferred
+
+### Requirement: Current publication-owned protected core
+
+The installer SHALL use the v201 actual active compiler-produced protected core member and concrete publication owner proof, and preserve distinct fixed acquisition and effect deadlines.
+
+#### Scenario: Current core and acquisition authority
+
+- **WHEN** actual typed source selections produce a schema2 active publication or a new fixed-suite controller issues its original acquisition lease
+- **THEN** the concrete consumer validates the complete protected core and original deadline without copying process-local authority or widening effect leases
+
+#### Scenario: Historical snapshot or renewed lease substituted
+
+- **WHEN** fixed /etc or schema1 bytes are relabelled as published core, caller proof is supplied, or an expired acquisition deadline is renewed
+- **THEN** the operation denies and remains incomplete without runtime acceptance
