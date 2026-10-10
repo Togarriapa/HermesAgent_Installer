@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol
 from types import MappingProxyType
 
+from hermes_installer.registry.resource_jobs import RootResourceJobAdmissionHandle
+
 
 HERMES_RESOURCE_PROFILE_TASK_OPERATION = "hermes-resource-profile-task-v1"
 RESOURCE_PROFILE_TASK_HANDLER_ARTIFACT_ID = "hermes-installer.resource-profile-task.v1"
