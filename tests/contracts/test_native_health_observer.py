@@ -14,7 +14,7 @@ from hermes_installer.authority.native_health_observer import (
     RootSelectedNativeHealthRun,
     RootValidatedNativeHealthResult,
 )
-from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.authority.types import AuthorityDenied, canonical_digest
 
 
 class NativeHealthObserverContracts(unittest.TestCase):
@@ -33,12 +33,13 @@ class NativeHealthObserverContracts(unittest.TestCase):
             service_generation_digest="b" * 64,
             bootstrap_transaction_handle="transaction:1",
             committed_enrollment_receipt_id="receipt:committed",
+            intent_handle=secrets.token_urlsafe(32),
             process_id="process:health", process_pid=411, process_pidfd=fd,
             process_uid=2001, process_identity=identity, package_id="package:selected",
             compiled_closure_sha256="a" * 64, loaded_package_proof=proof,
             fixture_artifact_id="artifact:fixture", fixture_sha256="c" * 64,
             health_action_id="health:local-tool", result_schema_id="schema:health-result",
-            provider_required=True, parent_closure_digest="d" * 64,
+            provider_required=True, parent_closure_digest=None,
             expires_monotonic=190.0,
         )
         refs = {kind: secrets.token_urlsafe(32) for kind in (
@@ -48,6 +49,28 @@ class NativeHealthObserverContracts(unittest.TestCase):
         events = {}
 
         def event(kind, **extra):
+            parent_ids = {
+                "loader-ready": (),
+                "native-request": (refs["loader-ready"],),
+                "provider-result": (refs["native-request"],),
+                "tool-invocation": (refs["provider-result"],),
+                "tool-result": (refs["tool-invocation"],),
+                "terminal": (refs["tool-result"],),
+            }[kind]
+            custody = kind in {"loader-ready", "terminal"}
+            receipt_ids = () if custody else (f"source:{kind}",)
+            receipt_handles = () if custody else (secrets.token_urlsafe(32),)
+            ancestry = {
+                "ancestry_kind": "custody-event-v1" if custody else (
+                    "host-context-lineage-v1" if kind == "native-request" else "source-receipt-ids-v1"),
+                "native_event_handle": secrets.token_urlsafe(32),
+                "native_event_sha256": ("e" if kind == "native-request" else "f") * 64,
+                "causal_parent_event_ids": parent_ids,
+                "source_receipt_handles": receipt_handles,
+                "source_receipt_ids": receipt_ids,
+            }
+            parent_digest = None if custody else (
+                "e" * 64 if kind == "native-request" else canonical_digest(list(receipt_ids)))
             record = RootNativeHealthEvent(
                 event_id=refs[kind], event_kind=kind,
                 operation_id=run.operation_id, enrollment_id=run.enrollment_id,
@@ -56,9 +79,9 @@ class NativeHealthObserverContracts(unittest.TestCase):
                 process_id=run.process_id, process_pid=run.process_pid,
                 process_uid=run.process_uid, package_id=run.package_id,
                 compiled_closure_sha256=run.compiled_closure_sha256,
-                parent_closure_digest=run.parent_closure_digest,
+                parent_closure_digest=parent_digest,
                 observed_monotonic=now[0] - 1, expires_monotonic=now[0] + 30,
-                **extra,
+                **ancestry, **extra,
             )
             events[record.event_id] = record
 
@@ -98,7 +121,7 @@ class NativeHealthObserverContracts(unittest.TestCase):
         return observer, run, events, refs, now, fd
 
     def test_root_joined_events_issue_health_receipt_once(self):
-        observer, _run, _events, refs, _now, fd = self._observer()
+        observer, _run, events, refs, _now, fd = self._observer()
         try:
             handle = observer.begin_selected_health(secrets.token_urlsafe(32))
             for kind in ("loader-ready", "native-request", "provider-result",
@@ -108,6 +131,11 @@ class NativeHealthObserverContracts(unittest.TestCase):
             self.assertEqual(receipt.status, "passed")
             self.assertEqual(receipt.provider_result_event_id, refs["provider-result"])
             self.assertEqual(receipt.tool_result_event_id, refs["tool-result"])
+            self.assertEqual(receipt.schema, 2)
+            self.assertEqual(receipt.parent_closure_digest,
+                             events[refs["tool-result"]].parent_closure_digest)
+            self.assertNotEqual(receipt.parent_closure_digest, "e" * 64)
+            self.assertEqual(len(receipt.health_run_proof_sha256), 64)
             with self.assertRaises(AuthorityDenied):
                 observer.consume_selected_health_receipt(
                     receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
@@ -164,6 +192,24 @@ class NativeHealthObserverContracts(unittest.TestCase):
                 observer.observe_health_event(handle, refs[kind])
             with self.assertRaises(AuthorityDenied):
                 observer.finish_selected_health(handle)
+        finally:
+            os.close(fd)
+
+    def test_causal_parent_swap_is_rejected_even_with_well_formed_native_digests(self):
+        observer, _run, events, refs, _now, fd = self._observer()
+        try:
+            invocation = events[refs["tool-invocation"]]
+            events[refs["tool-invocation"]] = RootNativeHealthEvent(
+                **{**{name: getattr(invocation, name) for name in invocation.__dataclass_fields__},
+                   "causal_parent_event_ids": (refs["native-request"],)},
+            )
+            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
+            for kind in ("loader-ready", "native-request", "provider-result",
+                         "tool-invocation", "tool-result", "terminal"):
+                observer.observe_health_event(handle, refs[kind])
+            with self.assertRaises(AuthorityDenied):
+                observer.finish_selected_health(handle)
+            observer.cancel_selected_health(handle)
         finally:
             os.close(fd)
 
