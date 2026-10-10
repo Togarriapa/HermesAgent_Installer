@@ -539,6 +539,7 @@ class SourceObserverRegistry:
         self._selected_input_selections: dict[str, tuple[Any, Any, float, str]] = {}
         self._selected_input_consents: dict[str, RetainedSelectedInputConsent] = {}
         self._public_input_proofs: dict[str, RootPublicInputSourceMaterial] = {}
+        self._public_input_source_nonces: set[str] = set()
         self._channel_peer_registry: Any = None
         self._resource_controller_registry: Any = None
         self._channel_delivery_tokens: dict[int, RootChannelSourceRegistrationToken] = {}
@@ -951,6 +952,7 @@ class SourceObserverRegistry:
                     self._selected_input_proofs.pop(proof.proof_nonce, None)
                     if public_input_proof is not None:
                         self._public_input_proofs.pop(public_input_proof.observation_handle, None)
+                        self._public_input_source_nonces.discard(proof.proof_nonce)
             raise
         finally:
             if reserved_receipt_slot:
@@ -1831,6 +1833,7 @@ class SourceObserverRegistry:
             retained_pair = self._selected_input_proofs.get(observation.proof_nonce)
             if (retained_pair is None or retained_pair[0] is not selected
                     or retained_pair[1] is None
+                    or observation.proof_nonce in self._public_input_source_nonces
                     or len(self._public_input_proofs) >= MAX_RETAINED_CAPSULES):
                 raise AuthorityDenied("source.public_input", "selected public input material is unavailable")
             proof = RootPublicNativeInputObservation(
@@ -1858,6 +1861,7 @@ class SourceObserverRegistry:
                 tuple(observation.parent_receipt_handles), False,
             )
             self._public_input_proofs[proof.observation_handle] = material
+            self._public_input_source_nonces.add(observation.proof_nonce)
             return proof
 
     def verify_current_public_input_observation(
@@ -1868,6 +1872,13 @@ class SourceObserverRegistry:
         with self._lock:
             material = self._public_input_proofs.get(proof.observation_handle)
             if material is None or material.observation is not proof or material.consumed:
+                return False
+            retained_source = self._selected_input_proofs.get(material.source_proof.proof_nonce)
+            if (self._proofs_pending.get(material.source_proof.proof_nonce)
+                    != id(material.source_proof)
+                    or retained_source is None
+                    or retained_source[0] is not material.selected_execution
+                    or retained_source[1] is not material.selection_registry):
                 return False
         if (material.selected_execution is not selected_execution
                 or proof.retained_input_selection_handle != selected_execution.selection_handle
@@ -2370,6 +2381,7 @@ class SourceObserverRegistry:
             if (material.observation.expires_monotonic <= now
                     or self.service.authority_epoch != material.source_proof.authority_epoch):
                 self._public_input_proofs.pop(handle, None)
+                self._public_input_source_nonces.discard(material.source_proof.proof_nonce)
         for event_id, event in tuple(self._pending.items()):
             if event.expires <= now or event.authority_epoch != self.service.authority_epoch:
                 self._pending.pop(event_id, None)
@@ -2421,6 +2433,7 @@ class SourceObserverRegistry:
             self._selected_input_selections.clear()
             self._selected_input_consents.clear()
             self._public_input_proofs.clear()
+            self._public_input_source_nonces.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
