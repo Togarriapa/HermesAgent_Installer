@@ -198,3 +198,6 @@ v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-en
 ## Gateway source and wheel issuer refinement v244
 
 Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.
+
+
+v247 narrow source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md` / `planning/source-update-entry-source-review-v247.json`. Exact7b7f source root_setup0b7d7203/71543 replaces only two existing static tuple literals after publication. Current verified predecessor/TTY/source actor/FD3 gates and safe fixed source retry retained; no recipe/catalog or broader source approval. Genuine full positive/unexcluded/Pi and all tasks/AC OPEN.

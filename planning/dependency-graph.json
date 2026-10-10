@@ -3734,5 +3734,16 @@
       "runtime activation"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "source_update_entry_source_review_v247": {
+    "contract": "planning/source-update-entry-source-review-v247.json",
+    "source_commit": "7b7f402800b378d9420a6b8da09680cce430a40e",
+    "existing_task_dependencies": {
+      "VD-T242.2": [
+        "BD-T242.1",
+        "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }
