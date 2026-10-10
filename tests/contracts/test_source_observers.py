@@ -142,6 +142,16 @@ class _Service:
         if not isinstance(observation, VerifiedSourceObservation):
             raise AssertionError("service received unverified source DTO")
         self.observation_registry.consume_observation_proof(observation)
+        return self._issue_fixture_receipt(observation)
+
+    def issue_selected_input_source(self, observation):
+        if not isinstance(observation, VerifiedSourceObservation):
+            raise AssertionError("service received unverified selected input DTO")
+        self.observation_registry.consume_selected_input_observation(
+            observation, observation.selected_execution)
+        return self._issue_fixture_receipt(observation)
+
+    def _issue_fixture_receipt(self, observation):
         self.observations.append(observation)
         if self.fail_issuance:
             raise AuthorityDenied("source.issuer", "fixture authority issuance failed")
@@ -237,6 +247,28 @@ def _consumer_context(service, receipt, *, profile="gateway-profile", uid=2002):
 
 
 class SourceObserverContracts(unittest.TestCase):
+    def test_private_provider_route_candidates_are_finite_and_protected(self):
+        fields = dict(
+            observer_enrollment_id="observer.native.primary", source_kind="native-input",
+            origin_id="hermes.primary", profile_id="producer-profile",
+            principal_id="producer-principal", namespace_id="producer-namespace",
+            enrollment_id="producer-enrollment", generation="gen-4", producer_uid=2001,
+            producer_executable_sha256=_digest("b"), package_id="hermes-package",
+            package_sha256=_digest("a"), role_id="hermes-main", role_artifact_id="hermes-main",
+            role_sha256=_digest("b"), channel_id="chat.request",
+            capture_schema_id="schema.capture.request", source_action_id="authenticated-input",
+            target_id="provider.fixed", recipient="public-provider",
+            allowed_parent_source_kinds=[], private_provider_route_ids=["route.private.codex"],
+        )
+        selected = SourceObserverEnrollment.from_protected_record(fields)
+        self.assertEqual(selected.private_provider_route_ids, ("route.private.codex",))
+        legacy = dict(fields)
+        legacy.pop("private_provider_route_ids")
+        self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).private_provider_route_ids, ())
+        with self.assertRaises(AuthorityDenied):
+            SourceObserverEnrollment.from_protected_record(
+                {**fields, "private_provider_route_ids": ["route.private.codex", "route.private.codex"]})
+
     def setUp(self):
         self.service = _Service()
         self.enrollment = _enrollment()
@@ -391,6 +423,9 @@ class SourceObserverContracts(unittest.TestCase):
 
     def test_selected_native_input_capture_uses_root_issued_task_target_without_hi11_pair(self):
         self.registry.target_peer_resolver = None
+        self.enrollment = replace(
+            self.enrollment, private_provider_route_ids=("provider.codex.private",))
+        self.registry.observers[self.enrollment.observer_enrollment_id] = self.enrollment
         package_generation = "package-generation-9"
         self.enrollment = replace(
             self.enrollment, native_package_generation=package_generation)
@@ -410,6 +445,7 @@ class SourceObserverContracts(unittest.TestCase):
             native_package_generation=package_generation,
             source_action_id=self.enrollment.source_action_id,
             service_generation_digest=_digest("2"), expires_monotonic=39.0,
+            private_consent_selection_handle="k" * 43,
         )
         target = SimpleNamespace(
             process_id="managed-task-process", profile_id=self.identity.profile_id,
@@ -439,6 +475,11 @@ class SourceObserverContracts(unittest.TestCase):
             selection_registry=_Selection(),
         )
         self.assertIsInstance(result, SourceReceiptHandle)
+        self.assertIs(self.service.observations[-1].selected_execution, selected)
+        self.assertEqual(self.service.observations[-1].private_provider_route_ids,
+                         ("provider.codex.private",))
+        self.assertEqual(self.service.observations[-1].private_consent_selection_handle,
+                         "k" * 43)
         self.assertEqual(self.registry._pending, {})
         self.assertEqual(self.registry._capsule_bytes, len(b"exact stdin prompt"))
         self.assertIn((733, 901), self.proof_peers)
