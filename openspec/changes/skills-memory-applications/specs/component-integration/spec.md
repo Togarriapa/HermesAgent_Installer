@@ -809,3 +809,10 @@ The installer SHALL distinguish the container interpreter used in dependency rec
 #### Scenario: Container version matches selected PM version
 - **WHEN** the fixture interpreter reports Python3.14.7
 - **THEN** no PM origin or actual setup environment receipt is inferred from that version match
+
+### Requirement: Selected large toolchain source observation v150
+The installer SHALL obtain Node and Bun source bytes through a finite selected-plan-bound held artifact observation before toolchain extraction.
+
+#### Scenario: Toolchain private CAS has no selected source observation
+- **WHEN** an archive was independently fetched without the actual selected source observer
+- **THEN** it cannot mint a trusted toolchain receipt merely from matching local CAS syntax
