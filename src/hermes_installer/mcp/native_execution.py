@@ -30,7 +30,7 @@ from ..authority.types import strict_json_loads
 from ..authority.native_runtime_observer import RootNativeMCPInvocation
 from ..authority.mcp_discovery_registry import MCPDiscoveryObservationRegistry
 from .broker import ProtectedMCPService, mcp_intent
-from .native_dispatch import NativeMCPRegistrationIndex
+from .native_dispatch import NativeMCPRegistrationIndex, NativeMCPToolBinding
 from .native_schema_catalog import NativeMCPProtectedSchemaCatalog
 from .client import (
     SUPPORTED_PROTOCOL_VERSIONS, MCPError, _validate_schema, _validate_value,

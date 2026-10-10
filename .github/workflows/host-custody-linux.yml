@@ -57,8 +57,8 @@ jobs:
             --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=${unit}.service" \
             --setenv="PYTHONDONTWRITEBYTECODE=1" \
             /run/hermes-custody-python/python -m unittest discover \
-              -s "${GITHUB_WORKSPACE}/tests/contracts" \
-              -p 'test_managed_task_custody_linux.py' -v
+             -s "${GITHUB_WORKSPACE}/tests/contracts" \
+               -p 'test_managed_task_custody_linux.py' -v
 
       - name: Exercise root managed build custody
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}

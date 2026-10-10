@@ -20,9 +20,12 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
+
+if TYPE_CHECKING:
+    from .bootstrap_runtime_factory import CompiledRootSetupPublication
 
 
 POLICY_GENERATIONS = Path("/var/lib/hermes-installer/policy-generations")

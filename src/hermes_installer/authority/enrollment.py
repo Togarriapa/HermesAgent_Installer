@@ -1403,6 +1403,28 @@ def _parse_channel_delivery_binding_records(value: Any) -> tuple[Mapping[str, An
     return tuple(result)
 
 
+def _parse_active_generation_record_collections(
+        service_generations: Mapping[str, Any]) -> tuple[
+            tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...],
+            tuple[Mapping[str, Any], ...]]:
+    """Project three active catalogs only after the enclosing snapshot is verified.
+
+    `_validate_service_generations` authenticates the enclosing digest and
+    validates these row shapes. This second stage converts each exact raw
+    catalog into its immutable retained representation for ProtectedEnrollment.
+    """
+    try:
+        return (
+            _parse_native_schema_artifact_records(service_generations["native_schema_artifacts"]),
+            _parse_composio_channel_enrollment_records(service_generations["composio_channel_enrollments"]),
+            _parse_channel_delivery_binding_records(service_generations["channel_delivery_bindings"]),
+        )
+    except (KeyError, TypeError) as exc:
+        raise AuthorityDenied(
+            "enrollment.generation", "active generation record catalogs are unavailable",
+        ) from exc
+
+
 def _validate_service_generations(value: Any) -> dict[str, Any]:
     """Validate the one active, root-owned HI09 catalog snapshot and its digest."""
     keys = {"schema", "generation_id", "service_records", "protected_devices",
@@ -2349,11 +2371,32 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
                            object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise AuthorityDenied("enrollment.schema", "protected authority configuration is malformed") from None
+    return _parse_protected_enrollment_document(
+        value, vault=vault, artifact_catalog_path=ARTIFACT_CATALOG_PATH,
+        artifact_staging_directory=ARTIFACT_STAGING_DIRECTORY,
+    )
+
+
+def _parse_protected_enrollment_document(
+        value: Any, *, vault: RootCredentialVault,
+        artifact_catalog_path: Path, artifact_staging_directory: Path,
+) -> ProtectedEnrollment:
+    """Apply the strict core enrollment validators to an already authenticated document.
+
+    Only source-bound root adapters may call this private parser. The ordinary
+    public loader above remains fixed to the production authority path.
+    """
     root = _exact(value, {"schema", "key_id", "principals", "rules", "authentik", "process_profiles", "provider_enrollments", "mcp_services", "mcp_http_bindings", "memory_providers", "native_bridges", "normalization_policies", "delegations", "service_generations"}, "authority")
     _reject_secret_material(root)
     if type(root["schema"]) is not int or root["schema"] != 1:
         raise AuthorityDenied("enrollment.schema", "protected authority schema version is unsupported")
     service_generations = _validate_service_generations(root["service_generations"])
+    # These catalogs have already passed the closed-schema and active-snapshot
+    # digest checks above. Parse them here as immutable typed rows for the
+    # ProtectedEnrollment projection; the parser temporaries inside
+    # _validate_service_generations are intentionally not in this scope.
+    (native_schema_records, composio_channel_records,
+     channel_delivery_records) = _parse_active_generation_record_collections(service_generations)
     key_id = _read_id(root["key_id"], "key_id")
     if not isinstance(root["principals"], list) or not root["principals"] or len(root["principals"]) > 256:
         raise AuthorityDenied("enrollment.schema", "protected principal catalog is invalid")
@@ -2812,8 +2855,8 @@ def load_protected_enrollment(path: Path = AUTHORITY_CONFIG_PATH, *,
         key_id, bindings, rules, policy, process_profiles,
         catalogs["provider_enrollments"], catalogs["mcp_services"],
         mcp_bindings, delegations, catalogs["memory_providers"],
-        native_bridges, {}, {}, ARTIFACT_CATALOG_PATH,
-        ARTIFACT_STAGING_DIRECTORY,
+        native_bridges, {}, {}, artifact_catalog_path,
+        artifact_staging_directory,
         service_generations["service_records"],
         service_generations["protected_devices"],
         service_generations["protected_build_records"],

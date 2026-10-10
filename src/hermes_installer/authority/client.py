@@ -17,7 +17,7 @@ import stat
 import struct
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
@@ -27,6 +27,9 @@ from .types import (
     VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
 from .process_controls import ProcessControlResponse
+
+if TYPE_CHECKING:
+    from .source_observers import NativeInitialInputDelivery
 
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",

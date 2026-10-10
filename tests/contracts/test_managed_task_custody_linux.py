@@ -263,3 +263,67 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
                 prompt="digest mismatch", expected_hash_override="0" * 64)
         self.assertFalse(fixture.handler._handles)
         self.assertFalse(fixture.handler._starting)
+
+
+class RootTaskNativeFixturePreflightTests(unittest.TestCase):
+    def test_fixture_rejects_noncomposed_runtime_before_systemd_or_actor_probe(self) -> None:
+        from task_native_fixture import (
+            RootInstalledTaskRuntime,
+            TaskNativeFixtureUnavailable,
+        )
+
+        with self.assertRaisesRegex(TaskNativeFixtureUnavailable, "composed RootAuthorityRuntime"):
+            RootInstalledTaskRuntime.bind_current_main_pid(object(), unit_id="fixture.service")
+
+
+class RootTaskQualificationRecipeTests(unittest.TestCase):
+    def test_recipe_is_finite_and_request_schema_is_bounded(self) -> None:
+        from hermes_installer.authority.qualification_resource_cron_recipe import (
+            RECIPE,
+            RECIPE_ID,
+            SCHEMA_ID,
+            SUITE_ID,
+        )
+        from hermes_installer.authority.qualification_resource_cron_schema import (
+            MAX_PROMPT_BYTES,
+            canonical_request,
+        )
+
+        self.assertEqual(SUITE_ID, "resource-cron-task-v1")
+        self.assertEqual(RECIPE["recipe_id"], RECIPE_ID)
+        self.assertEqual(RECIPE["schema_id"], SCHEMA_ID)
+        self.assertEqual(RECIPE["additional_metered_budget"], 0)
+        self.assertNotIn("path", RECIPE)
+        self.assertNotIn("command", RECIPE)
+        self.assertEqual(canonical_request("bounded input"),
+                         b'{"prompt":"bounded input","schema":1}')
+        with self.assertRaises(ValueError):
+            canonical_request("x" * (MAX_PROMPT_BYTES + 1))
+
+    def test_public_selection_and_result_dtos_cannot_be_forged(self) -> None:
+        from hermes_installer.authority.installed_qualification import (
+            RootInstalledQualificationResult,
+            RootOwnedQualificationFixtureSelection,
+        )
+
+        with self.assertRaisesRegex(TypeError, "only be minted by their owning registry"):
+            RootOwnedQualificationFixtureSelection(
+                schema=1, selection_handle="x" * 32, suite_id="resource-cron-task-v1",
+                fixture_recipe_artifact_id="fixture-recipe", fixture_recipe_sha256="0" * 64,
+                fixture_schema_artifact_id="fixture-schema", fixture_schema_sha256="1" * 64,
+                release_deployment_receipt_sha256="2" * 64,
+                root_actor_observation_handle="actor", fixture_root_observation_handle="root",
+                fixture_environment_observation_handle="environment",
+                controller_unit_observation_handle="unit", fixture_generation_id="generation",
+                fixture_namespace_id="namespace", fixture_profile_id="profile",
+                fixture_principal_id="principal", fixture_payload_sha256="3" * 64,
+                issued_monotonic=1.0, expires_monotonic=2.0,
+            )
+        with self.assertRaisesRegex(TypeError, "only be returned by the installed registry"):
+            RootInstalledQualificationResult(
+                schema=1, suite_id="resource-cron-task-v1", fixture_selection_handle=None,
+                fixture_generation_id=None, release_deployment_receipt_sha256="0" * 64,
+                controller_observation_handle=None, parent_receipt_handles=(),
+                terminal_receipt_handle=None, cleanup_receipt_handle=None,
+                evidence_sha256=None, status="passed",
+            )

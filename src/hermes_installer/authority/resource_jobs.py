@@ -17,7 +17,7 @@ import secrets
 import threading
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from hermes_installer.registry.resource_jobs import (
     ResourceChildAdmission,
@@ -33,6 +33,7 @@ from hermes_installer.registry.resource_jobs import (
     ResourceJobNode,
     RootAdmittedTask,
     RootAdmittedTaskSource,
+    _ident,
     RootResourceJobAdmissionHandle,
     RootResourceNodeResultClosure,
     RootTaskController,
