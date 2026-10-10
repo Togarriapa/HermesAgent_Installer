@@ -79,6 +79,15 @@ REVIEWED_SOURCE_MODULES = (
     ("installer-module:hermes_installer.components.public_registries",
      "lib/python/hermes_installer/components/public_registries.py",
      "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+    ("installer-native-invocations-module-v137",
+     "src/hermes_installer/native_invocations.py",
+     "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+    ("installer-native-boundary-module-v137",
+     "src/hermes_installer/native_boundary.py",
+     "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
+    ("installer-native-source-definitions-module-v137",
+     "src/hermes_installer/authority/native_source_definitions.py",
+     "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7", 10_063),
 )
 REVIEWED_SOURCE_ARTIFACTS = (
     ("glm52-artifact-metadata-v1", "planning/glm52-artifact-metadata.json",
@@ -541,9 +550,9 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     if any("bootstrap-policy" in row.roles for row in rows):
         raise InstallerReleaseError("generated bootstrap policy cannot be a base release role")
     modules = [row for row in by_role["module"]]
-    if not modules or any(row.artifact_id != "installer-module:" + _module_name(row.relative_path)
+    if not modules or any(row.artifact_id != _artifact_id_for(row.relative_path, ["module"])
                           for row in modules):
-        raise InstallerReleaseError("installed module IDs differ from exact lib/python imports")
+        raise InstallerReleaseError("installed module IDs differ from the finite source/import mapping")
     module_by_id = {row.artifact_id: row for row in modules}
     for artifact_id, relative_path, digest, size in REVIEWED_SOURCE_MODULES:
         row = module_by_id.get(artifact_id)
@@ -658,6 +667,9 @@ def _artifact_id_for(path: str, roles: list[str]) -> str:
     if "artifact-catalog" in roles and path == ARTIFACT_CATALOG_PATH:
         return "installer-protected-artifact-catalog-v1"
     if "module" in roles:
+        for artifact_id, relative_path, _digest, _size in REVIEWED_SOURCE_MODULES:
+            if path == relative_path:
+                return artifact_id
         return "installer-module:" + _module_name(path)
     return "release-file:" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:32]
 
@@ -686,8 +698,9 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
         raise InstallerReleaseError("release contains an unrecognized installed template path")
     if path.startswith("lib/python/") and roles != ["module"]:
         raise InstallerReleaseError("lib/python release files must have the exact module role")
-    if "module" in roles and not path.startswith("lib/python/"):
-        raise InstallerReleaseError("module role is outside the installed lib/python tree")
+    if "module" in roles and not (path.startswith("lib/python/")
+                                  or path in {item[1] for item in REVIEWED_SOURCE_MODULES}):
+        raise InstallerReleaseError("module role is outside the finite source/import closure")
     if path.startswith("plans/2026-10-09-v1/") and roles != ["baseline"]:
         raise InstallerReleaseError("frozen baseline files must carry only their baseline role")
     if "baseline" in roles and not path.startswith("plans/2026-10-09-v1/"):
@@ -832,6 +845,16 @@ def _verify_actor_path(path: Path, digest: str, device: int, inode: int) -> None
 
 
 def _module_name(relative: str) -> str:
+    source_names = {
+        "src/hermes_installer/components/native_plugins.py": "hermes_installer.components.native_plugins",
+        "src/hermes_installer/components/public_registries.py": "hermes_installer.components.public_registries",
+        "src/hermes_installer/native_invocations.py": "hermes_installer.native_invocations",
+        "src/hermes_installer/native_boundary.py": "hermes_installer.native_boundary",
+        "src/hermes_installer/authority/native_source_definitions.py":
+            "hermes_installer.authority.native_source_definitions",
+    }
+    if relative in source_names:
+        return source_names[relative]
     prefix = "lib/python/"
     if not relative.startswith(prefix) or not relative.endswith(".py"):
         raise InstallerReleaseError("installer module closure path is outside the fixed lib/python tree")

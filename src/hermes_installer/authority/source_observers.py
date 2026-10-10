@@ -2263,15 +2263,58 @@ class SourceObserverRegistry:
                     or proof.expires_monotonic <= self.service.monotonic()
                     or self.service.authority_epoch != material.source_proof.authority_epoch):
                 raise AuthorityDenied("source.public_input", "consumed public input material is stale")
-            try:
-                if material.selection_registry.resolve_current_execution(material.selected_execution) \
-                        is not material.selected_execution:
-                    raise AuthorityDenied("source.public_input", "selected public input is no longer current")
-            except AuthorityDenied:
-                raise
-            except Exception:
-                raise AuthorityDenied("source.public_input", "selected public input is no longer current") from None
+            if not self.verify_consumed_public_input_disclosure(proof, material):
+                raise AuthorityDenied("source.public_input", "consumed TTY disclosure is no longer current")
             return material
+
+    def verify_consumed_public_input_disclosure(
+        self, proof: RootPublicNativeInputObservation,
+        material: RootPublicInputSourceMaterial,
+    ) -> bool:
+        """Revalidate exact post-consume disclosure/source membership without renewal."""
+        if (type(proof) is not RootPublicNativeInputObservation
+                or type(material) is not RootPublicInputSourceMaterial
+                or proof._issuer_token is not self._proof_token
+                or not material.consumed or material.observation is not proof
+                or proof.expires_monotonic <= self.service.monotonic()
+                or self.service.authority_epoch != material.source_proof.authority_epoch
+                or proof.disclosure_observation_handle
+                    != material.disclosure.disclosure_observation_handle
+                or proof.source_observation_handle != material.source_proof.proof_nonce
+                or proof.input_sha256 != hashlib.sha256(material.payload_bytes).hexdigest()
+                or proof.input_size_bytes != len(material.payload_bytes)
+                or proof.parent_source_receipt_handles != material.parent_receipt_handles
+                or any(item.sensitivity is not Sensitivity.PUBLIC
+                       for item in material.parent_receipts)):
+            return False
+        try:
+            with self._lock:
+                if self._public_input_proofs.get(proof.observation_handle) is not material:
+                    return False
+            if (material.selection_registry.resolve_current_execution(material.selected_execution)
+                    is not material.selected_execution):
+                return False
+            from .public_web_selection import RootTTYPublicInputDisclosure
+            if type(material.disclosure) is not RootTTYPublicInputDisclosure:
+                return False
+            verifier = getattr(self._public_input_disclosure_registry,
+                               "verify_consumed_input_disclosure", None)
+            if not callable(verifier):
+                return False
+            if verifier(material.disclosure, material.source_proof,
+                        material.selected_execution) is not True:
+                return False
+            for receipt, handle in zip(material.parent_receipts,
+                                       material.parent_receipt_handles):
+                with self.service._lock:
+                    retained = self.service._source_receipt_handles.get(handle)
+                if retained is not receipt:
+                    return False
+                self.service._verify_source_receipt(
+                    receipt, self.service._binding(receipt.uid))
+        except Exception:
+            return False
+        return True
 
     def retain_selected_public_input_permission(
         self, proof: RootPublicNativeInputObservation, selected_execution: Any,
