@@ -208,6 +208,7 @@ class RootSelectedApplicationToolchainSourceObserver:
                 or not isinstance(preparation_input_selection_handle, str)
                 or not _HANDLE.fullmatch(preparation_input_selection_handle)):
             raise ApplicationToolchainSourceDenied("selected toolchain source request is malformed")
+        self._prune_expired_observations()
         if tool_id not in _PINNED and tool_id != _BUN_LICENSE_ID:
             raise ApplicationToolchainSourceDenied("source ID is outside the finite Node/Bun/license policy")
         pin = _BUN_LICENSE_PIN if tool_id == _BUN_LICENSE_ID else _PINNED[tool_id]
@@ -322,6 +323,23 @@ class RootSelectedApplicationToolchainSourceObserver:
         if not self.verify_current(observation, preparation_input_selection_handle):
             raise ApplicationToolchainSourceDenied("held selected toolchain source is stale or changed")
         return os.dup(observation._fd)
+
+    def release(self, observation: VerifiedApplicationToolchainSourceObservation) -> None:
+        """Close and forget one exact held observation after its consumer is done."""
+        if (type(observation) is not VerifiedApplicationToolchainSourceObservation
+                or observation._seal is not _RECORD_SEAL
+                or observation._observer_id != self._observer_id
+                or self._held.get(observation.observation_handle) is not observation):
+            raise ApplicationToolchainSourceDenied("toolchain observation is not owned by this source observer")
+        del self._held[observation.observation_handle]
+        observation.close()
+
+    def _prune_expired_observations(self) -> None:
+        now = self.monotonic()
+        for handle, observation in tuple(self._held.items()):
+            if observation.expires_monotonic <= now or observation._fd < 0:
+                del self._held[handle]
+                observation.close()
 
     def _resolve_selected(self, prep_handle: str, tool_id: str):
         from .application_runtime_selection import RootApplicationRuntimePreparationInputSelection
