@@ -120,6 +120,55 @@ class RootRuntimeBindings:
     resource_credential_bindings: Mapping[tuple[str, str], ResourceCredentialBinding] = MappingProxyType({})
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     resource_backend_records: tuple[Mapping[str, Any], ...] = ()
+    private_memory_engine_selections: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+
+    @property
+    def service_generation_digest(self) -> str:
+        return self.enrollment_catalog.digest
+
+    def resolve_memory_enrollment(self, memory_enrollment_id: str, *,
+                                  service_generation_digest: str) -> Any:
+        return self.enrollment_catalog.resolve_memory_enrollment(
+            memory_enrollment_id, service_generation_digest=service_generation_digest)
+
+    def resolve_current_public_web_scopes(
+        self, web_scope_ids: tuple[str, ...] | list[str], *, principal_id: str,
+        profile_id: str, profile_generation: str, service_generation_digest: str,
+    ) -> tuple[Any, ...]:
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("public web selection belongs to a stale active generation")
+        scopes = self.enrollment_catalog.resolve_current_public_web_scopes(
+            web_scope_ids, principal_id=principal_id, profile_id=profile_id,
+            profile_generation=profile_generation,
+            service_generation_digest=service_generation_digest,
+        )
+        return tuple(self.resolve_public_web_scope(scope.enrollment_id, scope.generation)
+                     for scope in scopes)
+
+    def resolve_public_web_scope(self, enrollment_id: str, generation: str) -> Any:
+        selected = self.enrollment_catalog.resolve_public_web_scope(enrollment_id, generation)
+        artifact = self.artifact_catalog.artifacts.get(selected.target_contract_artifact_id)
+        if artifact is None or artifact.sha256 != selected.target_contract_sha256:
+            raise EnrollmentDenied("public web target contract is absent from the verified artifact catalog")
+        # Verify the installed root artifact bytes at lookup time. Its separate
+        # source receipt handle stays attached to the selected DTO for the
+        # target-selection registry/currentness join.
+        self.artifact_catalog.resolve(
+            selected.target_contract_artifact_id, selected.target_contract_sha256,
+            self.artifact_staging_directory, expected_uid=0,
+        )
+        return selected
+
+    def resolve_private_memory_engine_selection(self, selection_id: str, *,
+                                                service_generation_digest: str) -> Mapping[str, Any]:
+        if service_generation_digest != self.service_generation_digest:
+            raise EnrollmentDenied("private memory selection belongs to a stale service generation")
+        if not isinstance(selection_id, str) or not selection_id:
+            raise EnrollmentDenied("private memory selection ID is invalid")
+        selected = self.private_memory_engine_selections.get(selection_id)
+        if selected is None:
+            raise EnrollmentDenied("private memory engine selection is unavailable")
+        return selected
     remote_startup_records: tuple[Mapping[str, Any], ...] = ()
     private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
@@ -1318,6 +1367,7 @@ def build_root_runtime_bindings(
         "resource_backend_enrollment_records", "remote_startup_records",
         "private_loopback_network_records", "selected_resource_execution_records",
         "resource_scope_binding_records", "selected_application_runtime_records",
+        "public_web_scope_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
         raise EnrollmentDenied("verified generation, device, and build records are unavailable")
@@ -1343,6 +1393,7 @@ def build_root_runtime_bindings(
         private_memory_model_selections=getattr(
             enrollment, "private_memory_model_selection_records", None,
         ),
+        public_web_scopes=getattr(enrollment, "public_web_scope_records", None),
         native_schema_artifacts=getattr(enrollment, "native_schema_artifact_records", None),
         native_mcp_tool_bindings=getattr(enrollment, "native_mcp_tool_binding_records", None),
     )
@@ -1708,6 +1759,7 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
             "role_source_tree_sha256": process_role.role_source_tree_sha256,
             "target_id": action.target_id, "recipient": action.recipient,
             "private_provider_route_ids": list(issuer.private_provider_route_ids),
+            "public_web_scope_ids": list(getattr(issuer, "public_web_scope_ids", ())),
             "allowed_parent_source_kinds": sorted(parent_kinds),
         }
         if observer_id in result:
