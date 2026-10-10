@@ -86,6 +86,12 @@ REVIEWED_SOURCE_MODULES = (
     ("installer-module:hermes_installer.components.public_registries",
      "lib/python/hermes_installer/components/public_registries.py",
      "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+    ("installer-native-invocations-module-v137",
+     "src/hermes_installer/native_invocations.py",
+     "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+    ("installer-native-boundary-module-v137",
+     "src/hermes_installer/native_boundary.py",
+     "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
 )
 # These modules are imported by the fixed installed launcher before it can
 # verify the current release and dispatch a lifecycle action. Their bytes are
@@ -713,8 +719,9 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
         raise InstallerReleaseError("release contains an unrecognized installed template path")
     if path.startswith("lib/python/") and roles != ["module"]:
         raise InstallerReleaseError("lib/python release files must have the exact module role")
-    if "module" in roles and not path.startswith("lib/python/"):
-        raise InstallerReleaseError("module role is outside the installed lib/python tree")
+    if "module" in roles and not (path.startswith("lib/python/")
+                                   or path in {item[1] for item in REVIEWED_SOURCE_MODULES}):
+        raise InstallerReleaseError("module role is outside the finite source/import closure")
     if path.startswith("runtime/") and path != INTERPRETER_PATH and roles != ["runtime-member"]:
         raise InstallerReleaseError("installed runtime closure member lacks its exact runtime-member role")
     if "runtime-member" in roles and (

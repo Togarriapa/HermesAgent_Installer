@@ -83,6 +83,16 @@ REVIEWED_SOURCE_MODULES = (
      "src/hermes_installer/components/public_registries.py",
      "lib/python/hermes_installer/components/public_registries.py",
      "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+    ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py",
+     "src/hermes_installer/native_invocations.py",
+     "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+    ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py",
+     "src/hermes_installer/native_boundary.py",
+     "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
+    ("hermes_installer.authority.native_source_definitions",
+     "src/hermes_installer/authority/native_source_definitions.py",
+     "src/hermes_installer/authority/native_source_definitions.py",
+     "084ff4e844782234f628f54a566882fb245ef44ae08e6c271d1654fcafe937e7", 10_063),
 )
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
