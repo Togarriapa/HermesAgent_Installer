@@ -158,7 +158,7 @@ def build_root_native_registration_projection(
             if type(receipt) is not RootNativeRegistrationSchemaReceipt:
                 raise ValueError
             payload = receipt.read_current()
-            reviewed_schema = next(row for row in reviewed_local_registration_result_schemas(captured)
+            reviewed_schema = next(row for row in reviewed_packaged_registration_result_schemas(captured)
                                    if row.artifact_id == receipt.artifact_id)
             if (receipt.sha256 != reviewed_schema.sha256
                     or receipt.size_bytes != reviewed_schema.size_bytes
@@ -169,8 +169,8 @@ def build_root_native_registration_projection(
                     or receipt.artifact_id in receipts):
                 raise ValueError
             receipts[receipt.artifact_id] = (receipt, payload)
-        expected_local = {row.artifact_id for row in reviewed_local_registration_result_schemas(captured)}
-        if set(receipts) != expected_local:
+        expected_packaged = {row.artifact_id for row in reviewed_packaged_registration_result_schemas(captured)}
+        if set(receipts) != expected_packaged:
             raise ValueError
 
         schema_bytes = dict(definitions.native_schema_bytes)
@@ -634,9 +634,12 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
     """
 
     def __init__(self, observer: Any, artifact_receipt_registry: Any,
-                 setup_authorization: Any) -> None:
+                 setup_authorization: Any, *, release: Any = None, actor: Any = None) -> None:
         from hermes_installer.authority.bootstrap_enrollment import (
             RootArtifactReceiptRegistry, VerifiedRootSetupAuthorization,
+        )
+        from hermes_installer.authority.installer_release import (
+            RootActorObservation, VerifiedInstallerReleaseReceipt,
         )
         from hermes_installer.authority.source_artifact_receipts import (
             RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver,
@@ -644,12 +647,16 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
 
         if (type(observer) not in {RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver}
                 or type(artifact_receipt_registry) is not RootArtifactReceiptRegistry
-                or type(setup_authorization) is not VerifiedRootSetupAuthorization):
+                or type(setup_authorization) is not VerifiedRootSetupAuthorization
+                or type(release) is not VerifiedInstallerReleaseReceipt
+                or type(actor) is not RootActorObservation):
             raise NativeRegistrationResultSchemaObservationDenied(
-                "root setup authorization, artifact receipt registry and catalog observer are required")
+                "root setup authorization, held release/actor, receipt registry and catalog observer are required")
         self._observer = observer
         self._receipts = artifact_receipt_registry
         self._authorization = setup_authorization
+        self._release = release
+        self._actor = actor
         self._seal = object()
         self._issued: dict[str, RootNativeRegistrationResultSchemaReceipt] = {}
 
@@ -663,12 +670,22 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
                 "current selected prepared setup identity is required")
         try:
             output: list[RootNativeRegistrationResultSchemaReceipt] = []
-            reviewed_schemas = reviewed_local_registration_result_schemas(registrations)
+            reviewed_schemas = reviewed_packaged_registration_result_schemas(registrations)
             if artifact_id is not None:
                 reviewed_schemas = tuple(row for row in reviewed_schemas if row.artifact_id == artifact_id)
                 if len(reviewed_schemas) != 1:
                     raise ValueError
             for schema in reviewed_schemas:
+                from hermes_installer.artifacts import stage_verified_release_artifact
+                staged = stage_verified_release_artifact(
+                    self._observer.catalog, self._observer.artifact_root,
+                    self._release, self._actor,
+                    artifact_id=schema.artifact_id, relative_path=schema.relative_path,
+                    expected_uid=0,
+                )
+                if (staged.artifact_id != schema.artifact_id or staged.sha256 != schema.sha256
+                        or staged.size_bytes != schema.size_bytes):
+                    raise ValueError
                 observation = self._observer.observe(schema.artifact_id, schema.sha256)
                 if (observation.artifact_id != schema.artifact_id
                         or observation.sha256 != schema.sha256
@@ -689,7 +706,7 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
                 self._verify_bytes(receipt)
                 self._issued[handle] = receipt
                 output.append(receipt)
-            if len(output) != (1 if artifact_id is not None else 8):
+            if len(output) != (1 if artifact_id is not None else 10):
                 raise ValueError
             return tuple(sorted(output, key=lambda row: row.schema.native_tool_name))
         except NativeRegistrationResultSchemaDenied as exc:
@@ -900,6 +917,63 @@ def reviewed_local_registration_result_schemas(
         ))
     if seen != set(expected_handlers):
         raise NativeRegistrationResultSchemaDenied("local result schema artifact coverage is incomplete")
+    return tuple(sorted(output, key=lambda row: row.native_tool_name))
+
+
+def reviewed_packaged_registration_result_schemas(
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[ReviewedNativeRegistrationResultSchema, ...]:
+    """Return the exact ten packaged registration result schemas.
+
+    The eight local tools use the v114 catalog identities. Financial data and
+    web use the source-reviewed v121/v120 result schemas. These are source pins
+    only; current root receipts and protected joins remain required.
+    """
+    local = reviewed_local_registration_result_schemas(registrations)
+    root = Path(__file__).resolve().parents[3]
+    try:
+        contract = json.loads((root / "planning/native-package-binding-contract.json").read_text(encoding="utf-8"))
+        v121 = contract["financial_alias_source_bound_v121"]
+        v120 = contract["financial_web_results_v120"]
+        by_tool = {row["tool_name"]: row for row in v120["schema_artifacts"]}
+        rows = [
+            {"tool_name": "financial_data_read", "schema_id": v121["schema_id"],
+             "artifact_id": v121["artifact_id"], "path": v121["path"],
+             "sha256": v121["sha256"], "size_bytes": v121["size_bytes"]},
+            by_tool["web_retrieve"],
+        ]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        raise NativeRegistrationResultSchemaDenied("financial/web result schema source pins are unavailable") from None
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    source_by_name = {row.native_tool_name: row for row in captured}
+    expected_adapters = {"financial_data_read": "financial-data-hub", "web_retrieve": "web"}
+    output = list(local)
+    for row in rows:
+        tool = row["tool_name"]
+        source = source_by_name.get(tool)
+        relative = row["path"]
+        if (source is None or source.adapter_id != expected_adapters[tool]
+                or row["schema_id"] != row["artifact_id"]
+                or not isinstance(relative, str)
+                or not relative.startswith("plans/amendments/2026-10-10-")
+                or type(row["size_bytes"]) is not int or not 1 <= row["size_bytes"] <= 16_384
+                or not isinstance(row["sha256"], str) or len(row["sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in row["sha256"])):
+            raise NativeRegistrationResultSchemaDenied("financial/web result schema identity is not source-reviewed")
+        try:
+            data = (root / relative).read_bytes()
+            schema = json.loads(data)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raise NativeRegistrationResultSchemaDenied("financial/web result schema bytes are unavailable") from None
+        if (len(data) != row["size_bytes"] or hashlib.sha256(data).hexdigest() != row["sha256"]
+                or data not in {_canonical(schema), _canonical(schema) + b"\n"}):
+            raise NativeRegistrationResultSchemaDenied("financial/web result schema differs from its exact source pin")
+        output.append(ReviewedNativeRegistrationResultSchema(
+            tool, row["schema_id"], row["artifact_id"], relative,
+            row["sha256"], row["size_bytes"], "effect-action", schema,
+        ))
+    if len(output) != 10 or len({row.artifact_id for row in output}) != 10:
+        raise NativeRegistrationResultSchemaDenied("packaged registration result schema set is not exact")
     return tuple(sorted(output, key=lambda row: row.native_tool_name))
 
 
