@@ -290,3 +290,23 @@ Existing `HI-T149.1`/`VD-T196.2` and source integration evidence include `plans/
 
 
 Existing HI-T160.1/HI-T197.2/.3/VD-T197.4 include actual protected-core producer/parser/currentness and fixed acquisition-only deadline in `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; remain OPEN.
+
+
+Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-role source input/build/runtime production in `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; remain OPEN.
+
+- [ ] BD-T203.1 Bootstrap owner: exact typed finite-stage diagnostic/redaction/state tests with unchanged trust/failure behavior.
+- [ ] VD-T203.2 Source review/recheck: measured committed future source pins and actual target diagnostic, no inferred DD00 stage/acceptance.
+
+- [ ] BD-T203.1 / VD-T203.2 (v204): Apply only reviewed two leaf tuples, rerun stale-pin test unexcluded and retain actual target diagnostic evidence; no acceptance promotion.
+
+- [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
+- [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
+- [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+
+- [ ] HI-T207.1: Implement v207 exact vendor libc6 signed dependency evidence and concrete per-archive keyring/index currentness, preserving other Debian package provenance.
+- [ ] VD-T207.2: Verify meaningful signed-cache/control/ELF and mutation failures plus actual target evidence separately; no package mutation or runtime acceptance inference.
+
+- [ ] BD-T208.1: Implement final-boundary explicit root TTY reconfirmation and one-use fresh proof with unchanged identity/source/runtime joins.
+- [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v211): Apply exact reviewed root_setup tuple only, run full unexcluded regressions and retain genuine target handoff evidence.

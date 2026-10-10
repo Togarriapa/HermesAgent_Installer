@@ -160,3 +160,39 @@ Existing `HI-T149.1`/`VD-T196.2` and source integration evidence include `plans/
 
 
 Existing HI-T160.1/HI-T197.2/.3/VD-T197.4 include actual protected-core producer/parser/currentness and fixed acquisition-only deadline in `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; remain OPEN.
+
+
+Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-role source input/build/runtime production in `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; remain OPEN.
+
+- [ ] BD-T203.1 Bootstrap owner: exact typed finite-stage diagnostic/redaction/state tests with unchanged trust/failure behavior.
+- [ ] VD-T203.2 Source review/recheck: measured committed future source pins and actual target diagnostic, no inferred DD00 stage/acceptance.
+
+- [ ] BD-T203.1 / VD-T203.2 (v204): Apply only reviewed two leaf tuples, rerun stale-pin test unexcluded and retain actual target diagnostic evidence; no acceptance promotion.
+
+- [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
+- [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
+- [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+
+
+Existing HI-T173.1/HI-T178.2/HI-T197.3/VD-T197.4 include exact fixture subject NSS issuer/custody/cleanup in `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; remain OPEN.
+
+- [ ] HI-T207.1: Implement v207 exact vendor libc6 signed dependency evidence and concrete per-archive keyring/index currentness, preserving other Debian package provenance.
+- [ ] VD-T207.2: Verify meaningful signed-cache/control/ELF and mutation failures plus actual target evidence separately; no package mutation or runtime acceptance inference.
+
+- [ ] BD-T208.1: Implement final-boundary explicit root TTY reconfirmation and one-use fresh proof with unchanged identity/source/runtime joins.
+- [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v211): Apply exact reviewed root_setup tuple only, run full unexcluded regressions and retain genuine target handoff evidence.
+
+- [ ] RB-T213.1: Produce current held-home completed materialization/active source crosswalk joins.
+- [ ] HI-T213.2: Wire selected task/home digest/grant to actual fixed/hermes custody mount.
+- [ ] VD-T213.3: Verify unprivileged delegate effects, isolation, stale/grant/source denial and cleanup.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+- [ ] MC-R0101.5: Implement v210 source-owned fixed HA WS metadata transport plus exact complete-filter or whole-context mode, actual root choice/grant and genuine MCP functional read.
+- [ ] MC-R0101.6: Validate protocol/dependency/TLS/DNS/auth/admin/metadata/scope/currentness failures and actual protected GetLiveContext semantic result separately from setup/acceptance.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v214): Implement exact published source-home vs live selected-task split, current core claim/readback and actual delegate grant/mount evidence.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v215): Implement distinct protected source mapping, typed live admission/home binding, unchanged service identity and genuine prepared/publication claim joins.

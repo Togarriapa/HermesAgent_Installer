@@ -36,6 +36,7 @@ from typing import Any, Iterable, Iterator, Mapping
 
 from .bootstrap_enrollment import (
     BootstrapEnrollmentError, BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+    bootstrap_runtime_error_step,
 )
 from .application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 from .application_effect_source_catalog import (
@@ -101,7 +102,7 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.authority.application_runtime_relocation", "src/hermes_installer/authority/application_runtime_relocation.py", "lib/python/hermes_installer/authority/application_runtime_relocation.py",
      "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc", 12_120, "module"),
     ("hermes_installer.authority.bootstrap_enrollment", "src/hermes_installer/authority/bootstrap_enrollment.py", "lib/python/hermes_installer/authority/bootstrap_enrollment.py",
-     "6a5985a80064b661c93e1be0c62ae27a454eea1d90658be2c09fe0141e7ecedd", 142_594, "module"),
+     "ae307ff841b29322ebd2ad06818e9f56a931f811fe789c1c3369a634188ed404", 144_306, "module"),
     ("hermes_installer.authority.bootstrap_runtime_factory", "src/hermes_installer/authority/bootstrap_runtime_factory.py", "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
      "89fae27c0b8b4eeabc0c43ba0d56baa2780bc62e390a63cc6db8b1f88b028ead", 655_738, "module"),
     ("hermes_installer.authority.client", "src/hermes_installer/authority/client.py", "lib/python/hermes_installer/authority/client.py",
@@ -203,7 +204,7 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.registry.resource_backends", "src/hermes_installer/registry/resource_backends.py", "lib/python/hermes_installer/registry/resource_backends.py",
      "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414", 27_026, "module"),
     ("hermes_installer.root_setup", "src/hermes_installer/root_setup.py", "lib/python/hermes_installer/root_setup.py",
-     "a938ca78933cde596f627986a60b7c270c0093dc6d9edacf2acb467abbd27f9c", 57_764, "module"),
+     "029fcce9573f160bad07fb43e29bf891b36e0e7fea3a7b8e1a04854324390b40", 58_815, "module"),
     ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py", "src/hermes_installer/native_invocations.py",
      "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
     ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py", "src/hermes_installer/native_boundary.py",
@@ -320,12 +321,12 @@ class DistributionFile:
 
 
 class VerifiedInstallerDistributionReceipt:
-    """Sealed, held view of one exact root-owned candidate source tree."""
+    """Sealed view of one root-owned tree, held by root FD and immutable manifest."""
 
     __slots__ = ("candidate_git_sha", "git_tree_sha1", "source_tree_sha256",
                  "baseline_tree_sha256", "amendment_manifest_sha256",
                  "source_catalog_sha256", "files", "root_device", "root_inode",
-                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle", "_file_fds")
+                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle")
 
     def __init__(self, seal: object, *, candidate_git_sha: str, git_tree_sha1: str,
                  source_tree_sha256: str, baseline_tree_sha256: str,
@@ -345,21 +346,15 @@ class VerifiedInstallerDistributionReceipt:
         self.root_device, self.root_inode = info.st_dev, info.st_ino
         self._root_fd, self._seal, self._expected_uid = root_fd, seal, expected_uid
         self._closed, self._handle = False, handle
-        held: dict[str, int] = {}
-        try:
-            for row in files:
-                fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+        for row in files:
+            fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+            try:
                 current = os.fstat(fd)
                 if (current.st_dev != row.device or current.st_ino != row.inode
                         or current.st_ctime_ns != row.ctime_ns):
-                    os.close(fd)
                     raise InstallerReleaseBuildError("candidate source changed while sealing its file custody")
-                held[row.relative_path] = fd
-        except BaseException:
-            for fd in held.values():
+            finally:
                 os.close(fd)
-            raise
-        self._file_fds = held
 
     @property
     def receipt_handle(self) -> str:
@@ -382,51 +377,42 @@ class VerifiedInstallerDistributionReceipt:
             raise InstallerReleaseBuildError("candidate source CAS directory custody changed")
 
     def _verify_row(self, row: DistributionFile) -> None:
-        held_fd = self._file_fds.get(row.relative_path)
-        if held_fd is None:
-            raise InstallerReleaseBuildError("candidate source file custody is not retained")
-        held = os.fstat(held_fd)
-        if (held.st_dev != row.device or held.st_ino != row.inode
-                or held.st_ctime_ns != row.ctime_ns):
-            raise InstallerReleaseBuildError("retained candidate source file identity changed")
+        fd = self._open_verified_file(row)
+        os.close(fd)
+
+    def _open_verified_file(self, row: DistributionFile) -> int:
+        """Open one immutable-manifest member and verify it while holding that FD."""
         fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
         try:
             info = os.fstat(fd)
-            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                     or info.st_uid != self._expected_uid or info.st_dev != row.device
                     or info.st_ino != row.inode or stat.S_IMODE(info.st_mode) != row.mode
-                    or info.st_ctime_ns != row.ctime_ns
+                    or info.st_ctime_ns != row.ctime_ns or info.st_size != row.size_bytes):
+                raise InstallerReleaseBuildError("candidate source CAS file identity changed")
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            if (not stat.S_ISREG(after.st_mode) or after.st_nlink != 1
+                    or after.st_uid != self._expected_uid or after.st_dev != row.device
+                    or after.st_ino != row.inode or stat.S_IMODE(after.st_mode) != row.mode
+                    or after.st_ctime_ns != row.ctime_ns or after.st_size != row.size_bytes
                     or digest != row.sha256 or size != row.size_bytes):
                 raise InstallerReleaseBuildError("candidate source CAS file bytes or ownership changed")
-        finally:
-            os.close(fd)
-
-    def open_file(self, relative_path: str) -> int:
-        self._verify_root_current()
-        row = next((entry for entry in self.files if entry.relative_path == relative_path), None)
-        if row is None:
-            raise InstallerReleaseBuildError("requested source path is outside the verified candidate closure")
-        self._verify_row(row)
-        fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
-        try:
-            info = os.fstat(fd)
-            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-            if (digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device
-                    or info.st_ino != row.inode or info.st_ctime_ns != row.ctime_ns
-                    or info.st_uid != self._expected_uid):
-                raise InstallerReleaseBuildError("candidate source changed while opening a verified file")
             os.lseek(fd, 0, os.SEEK_SET)
             return fd
         except BaseException:
             os.close(fd)
             raise
 
+    def open_file(self, relative_path: str) -> int:
+        self._verify_root_current()
+        row = next((entry for entry in self.files if entry.relative_path == relative_path), None)
+        if row is None:
+            raise InstallerReleaseBuildError("requested source path is outside the verified candidate closure")
+        return self._open_verified_file(row)
+
     def close(self) -> None:
         if not self._closed:
-            for fd in self._file_fds.values():
-                os.close(fd)
-            self._file_fds.clear()
             os.close(self._root_fd)
             self._root_fd, self._closed = -1, True
 
@@ -2982,29 +2968,38 @@ def bootstrap_selected_release(choices: object, candidate_selection_registry: ob
     if (not isinstance(choices, RootSetupExplicitChoices)
             or not isinstance(candidate_selection_registry, RootBootstrapCandidateSelectionRegistry)):
         raise TypeError("first-source bootstrap requires the sealed root TTY choice and its registry")
-    with _bootstrap_os_error_step("bootstrap.tty_selection"):
-        selection = candidate_selection_registry.resolve(choices)
+    with bootstrap_runtime_error_step("bootstrap.tty_selection"):
+        with _bootstrap_os_error_step("bootstrap.tty_selection"):
+            selection = candidate_selection_registry.resolve(choices)
     journal = candidate_selection_registry
-    with _bootstrap_os_error_step("source_cas.construct"):
-        source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
-            journal, fixed_source_origin_policy_for_root_bootstrap())
-    distribution_registry = RootInstallerDistributionRegistry.from_owned_source_CAS(source_cas, journal)
-    distribution_handle = source_cas.acquire_selected(selection.candidate_git_sha)
-    with _bootstrap_os_error_step("source_cas.resolve"):
-        source = distribution_registry.resolve(distribution_handle)
+    with bootstrap_runtime_error_step("source_cas.construct"):
+        with _bootstrap_os_error_step("source_cas.construct"):
+            source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
+                journal, fixed_source_origin_policy_for_root_bootstrap())
+    with bootstrap_runtime_error_step("source_cas.registry"):
+        distribution_registry = RootInstallerDistributionRegistry.from_owned_source_CAS(source_cas, journal)
+    with bootstrap_runtime_error_step("source_cas.acquire"):
+        distribution_handle = source_cas.acquire_selected(selection.candidate_git_sha)
+    with bootstrap_runtime_error_step("source_cas.resolve"):
+        with _bootstrap_os_error_step("source_cas.resolve"):
+            source = distribution_registry.resolve(distribution_handle)
     if source.candidate_git_sha != selection.candidate_git_sha:
         raise InstallerReleaseBuildError("fixed-origin source CAS does not match the root TTY choice")
-    runtime_artifact_registry = RootInstallerRuntimeArtifactRegistry()
-    interpreter_registry = RootInstallerInterpreterRegistry.from_owned_source_CAS(
-        distribution_registry, journal, runtime_artifact_registry)
-    with _bootstrap_os_error_step("installer_runtime.provision"):
-        interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
-    with _bootstrap_os_error_step("bootstrap.handoff"):
-        handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
-            distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
-        handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
-    with _bootstrap_os_error_step("bootstrap.reexec"):
-        handoff_registry.reexec_selected_bootstrap(handoff)
+    with bootstrap_runtime_error_step("installer_runtime.registry"):
+        runtime_artifact_registry = RootInstallerRuntimeArtifactRegistry()
+        interpreter_registry = RootInstallerInterpreterRegistry.from_owned_source_CAS(
+            distribution_registry, journal, runtime_artifact_registry)
+    with bootstrap_runtime_error_step("installer_runtime.provision"):
+        with _bootstrap_os_error_step("installer_runtime.provision"):
+            interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
+    with bootstrap_runtime_error_step("bootstrap.handoff"):
+        with _bootstrap_os_error_step("bootstrap.handoff"):
+            handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
+                distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
+            handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
+    with bootstrap_runtime_error_step("bootstrap.reexec"):
+        with _bootstrap_os_error_step("bootstrap.reexec"):
+            handoff_registry.reexec_selected_bootstrap(handoff)
     raise BootstrapEnrollmentPending("isolated source bootstrap exec returned without replacing the current process")
 
 

@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md",
+  "extends": [
+    "v202",
+    "v206",
+    "v209"
+  ],
+  "tasks": [
+    "RT-T212.1",
+    "RT-T212.2",
+    "VD-T212.3"
+  ],
+  "identity_module": "hermes_installer.authority.remote_service_identity",
+  "identity_type": "RootPreparedRemoteServiceIdentityReceipt",
+  "identity_fields": [
+    "schema",
+    "receipt_handle",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "role",
+    "service_user",
+    "service_uid",
+    "service_gid",
+    "profile_id",
+    "generation",
+    "service_enrollment_id",
+    "nss_receipt_handle",
+    "identity_marker_sha256",
+    "shared_group_receipt_handle",
+    "shared_reader_gid",
+    "home_root_id",
+    "work_root_id",
+    "data_root_id",
+    "roots_device_inode",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "marker_schema": 1,
+  "marker_fields": [
+    "schema",
+    "purpose",
+    "role",
+    "choice_handle",
+    "setup_session_id",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "service_enrollment_id",
+    "profile_id",
+    "generation",
+    "name",
+    "uid",
+    "gid",
+    "home",
+    "shell",
+    "home_root_id",
+    "work_root_id",
+    "data_root_id",
+    "shared_group_name",
+    "shared_group_gid"
+  ],
+  "purpose": "production-remote-role-identity-v1",
+  "shared_group": "hermes-xauthority",
+  "shared_group_marker_fields": [
+    "schema",
+    "purpose",
+    "transaction_handle",
+    "prepared_generation_id",
+    "prepared_generation_digest",
+    "name",
+    "gid"
+  ],
+  "marker_root": "/var/lib/hermes-installer/remote/identities",
+  "marker_mode": "0600",
+  "role_root_template": "/var/lib/hermes-installer/services/remote-{role}/{home,work,data}",
+  "role_root_mode": "0700",
+  "roles": {
+    "display": {
+      "user": "hermes-xpra",
+      "primary_group": "hermes-xpra",
+      "shared_reader_group": true,
+      "operation": "native-display-start-v1",
+      "recipe": "root-selected-xpra-seamless-v1"
+    },
+    "gateway": {
+      "user": "hermes-gateway",
+      "primary_group": "hermes-gateway",
+      "shared_reader_group": false,
+      "operation": "native-remote-gateway-start-v1",
+      "recipe": "root-selected-access-gateway-v1"
+    },
+    "desktop": {
+      "user": "hermes-desktop",
+      "primary_group": "hermes-desktop",
+      "shared_reader_group": true,
+      "operation": "native-desktop-app-start-v1",
+      "recipe": "root-selected-official-hermes-desktop-v1"
+    }
+  },
+  "factory_attribute": "binding.remote_service_identity_registry",
+  "methods": [
+    "prepare_selected_roles(choice)",
+    "resolve_current_role(handle,choice)",
+    "adopt_into_active_publication(role_handles,publication_handle)",
+    "rollback_prepared_roles(choice)",
+    "resolve_current_adoption(adoption_handle)"
+  ],
+  "phases": [
+    "choice-observed",
+    "prepare-intent",
+    "shared-group-prepared",
+    "role-account-prepared",
+    "role-roots-prepared",
+    "prepared-observed",
+    "publication-adopted",
+    "rollback-intent",
+    "rollback-complete",
+    "recovery-pending"
+  ],
+  "root_receipt_fields": [
+    "root_id",
+    "kind",
+    "device",
+    "inode",
+    "mode",
+    "owner_uid",
+    "owner_gid"
+  ],
+  "appdir_member_fields_v209_correction": [
+    "path",
+    "kind",
+    "mode",
+    "size_bytes",
+    "sha256",
+    "executable_role",
+    "target",
+    "target_sha256",
+    "target_size_bytes",
+    "owner_uid",
+    "owner_gid"
+  ],
+  "new_source_pins": null,
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "adoption_type": "RootAdoptedRemoteServiceIdentityReceipt",
+  "adoption_fields": [
+    "schema",
+    "adoption_handle",
+    "role_identity_receipt_handles",
+    "publication_handle",
+    "active_generation_id",
+    "active_generation_digest",
+    "adoption_journal_sha256",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "factory_attach_method": "attach_remote_service_identity_registry(registry)",
+  "factory_attribute_semantics": "read-only current session-backed property, exact binding seal and single retained registry",
+  "build_grant_clarification": {
+    "issuer": "RootRemoteRoleSetupBuildGrantIssuer",
+    "type": "RemoteRoleSetupBuildGrant",
+    "methods": [
+      "issue(inputs)",
+      "consume(grant, inputs)"
+    ],
+    "operation_id": "remote-role-runtime-build-v1",
+    "target_ids": {
+      "display": "root-selected-xpra-runtime-build-v1",
+      "gateway": "root-selected-gateway-runtime-build-v1",
+      "desktop": "root-selected-desktop-runtime-build-v1"
+    },
+    "fields": [
+      "schema",
+      "grant_handle",
+      "selection_handle",
+      "choice_handle",
+      "role",
+      "target_id",
+      "operation_id",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "input_closure_sha256",
+      "recipe_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "custodian_methods": [
+      "bind_remote_role_build_grant_issuer(issuer)",
+      "run_selected_remote_role_build(inputs, *, selection, grant, timeout, cancelled)"
+    ],
+    "membership": "same concrete registry retained exact inputs/FDs, consume once; no caller rows/callbacks"
+  }
+}

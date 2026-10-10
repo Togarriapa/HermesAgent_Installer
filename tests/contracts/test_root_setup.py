@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import hermes_installer.root_setup as root_setup
 from hermes_installer.root_setup import (
@@ -82,6 +82,162 @@ class RootSetupBoundaryTests(unittest.TestCase):
             root_setup._safe_reason(trust_failure),
             "Root setup could not verify its required authority (RuntimeError).",
         )
+
+    def test_bootstrap_runtime_step_diagnostic_is_fixed_and_redacts_details(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import (
+            BootstrapEnrollmentPending, BootstrapRuntimeStepFailure,
+            bootstrap_runtime_error_step,
+        )
+
+        self.assertEqual(BootstrapRuntimeStepFailure.STEPS, frozenset({
+            "bootstrap.tty_selection", "source_cas.construct", "source_cas.registry",
+            "source_cas.acquire", "source_cas.resolve", "installer_runtime.registry",
+            "installer_runtime.provision", "bootstrap.handoff", "bootstrap.reexec",
+            "installed_release.predecessor", "installed_release.import_closure",
+            "installed_release.actor_observation", "installed_release.actor_verification",
+        }))
+        private_detail = "/etc/hermes-installer/credentials/provider-token\nAPI_KEY=sentinel"
+        with self.assertRaises(BootstrapRuntimeStepFailure) as caught:
+            with bootstrap_runtime_error_step("source_cas.acquire"):
+                raise RuntimeError(private_detail)
+        failure = caught.exception
+        safe = root_setup._safe_reason(failure)
+        self.assertEqual(safe, "Root setup failed at source_cas.acquire (RuntimeError).")
+        self.assertNotIn(private_detail, safe)
+        self.assertNotIn(private_detail, str(failure))
+        self.assertEqual(failure.step, "source_cas.acquire")
+        self.assertEqual(failure.error_kind, "RuntimeError")
+
+        for step in BootstrapRuntimeStepFailure.STEPS:
+            with self.subTest(step=step):
+                with self.assertRaises(BootstrapRuntimeStepFailure) as staged:
+                    with bootstrap_runtime_error_step(step):
+                        raise RuntimeError(private_detail)
+                self.assertEqual(root_setup._safe_reason(staged.exception),
+                                 f"Root setup failed at {step} (RuntimeError).")
+                self.assertNotIn(private_detail, root_setup._safe_reason(staged.exception))
+
+        failure.step = private_detail
+        self.assertEqual(
+            root_setup._safe_reason(failure),
+            "Root setup could not verify its required authority (RuntimeError).",
+        )
+        failure.step = object()
+        self.assertEqual(
+            root_setup._safe_reason(failure),
+            "Root setup could not verify its required authority (RuntimeError).",
+        )
+        failure.step = "source_cas.acquire"
+        failure.error_kind = private_detail
+        self.assertEqual(
+            root_setup._safe_reason(failure),
+            "Root setup could not verify its required authority (RuntimeError).",
+        )
+        failure.error_kind = None
+        self.assertEqual(
+            root_setup._safe_reason(failure),
+            "Root setup could not verify its required authority (RuntimeError).",
+        )
+
+        with self.assertRaises(ValueError):
+            with bootstrap_runtime_error_step(private_detail):
+                raise RuntimeError("not reached")
+
+        class UntrustedRuntimeError(RuntimeError):
+            def __str__(self) -> str:
+                raise AssertionError("diagnostic formatter must not stringify exceptions")
+
+        original = UntrustedRuntimeError(private_detail)
+        with self.assertRaises(UntrustedRuntimeError) as unwrapped:
+            with bootstrap_runtime_error_step("bootstrap.reexec"):
+                raise original
+        self.assertIs(unwrapped.exception, original)
+        self.assertEqual(
+            root_setup._safe_reason(original),
+            "Root setup could not verify its required authority (UntrustedRuntimeError).",
+        )
+
+        pending = BootstrapEnrollmentPending(private_detail)
+        with self.assertRaises(BootstrapEnrollmentPending) as pending_error:
+            with bootstrap_runtime_error_step("bootstrap.reexec"):
+                raise pending
+        self.assertIs(pending_error.exception, pending)
+        self.assertEqual(
+            root_setup._safe_reason(pending),
+            "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it.",
+        )
+        with self.assertRaises(PermissionError):
+            with bootstrap_runtime_error_step("bootstrap.reexec"):
+                raise PermissionError(private_detail)
+
+    def test_source_choice_runtime_failure_reports_only_fixed_boundary(self) -> None:
+        predecessor = type("Predecessor", (), {"state": "absent", "verify_current": lambda self: None})()
+        registry = RootBootstrapCandidateSelectionRegistry()
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch.object(root_setup, "RootBootstrapCandidateSelectionRegistry", return_value=registry), \
+             patch.object(registry, "issue_explicit_tty_choice",
+                          side_effect=RuntimeError("/secret/provider-token")), \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release") as bootstrap:
+            result = run_root_setup_action(RootSetupAction.INSTALL)
+        self.assertEqual(result.state, RootSetupState.FAILED)
+        self.assertEqual(result.phase, "distribution")
+        self.assertEqual(result.message,
+                         "Root setup failed at bootstrap.tty_selection (RuntimeError).")
+        self.assertNotIn("provider-token", result.message)
+        bootstrap.assert_not_called()
+
+    def test_installed_actor_observation_runtime_failure_reports_only_fixed_boundary(self) -> None:
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "opaque-handle",
+            "verify_current": lambda self: None,
+        })()
+        held = type("Held", (), {"close": lambda self: None})()
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                   return_value=held), \
+             patch.object(root_setup, "_import_v180_native_support_closure"), \
+             patch.object(root_setup, "_import_v187_listener_activation_closure"), \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   side_effect=RuntimeError("/secret/provider-token")):
+            result = run_root_setup_action(RootSetupAction.INSTALL)
+        self.assertEqual(result.state, RootSetupState.FAILED)
+        self.assertEqual(result.phase, "distribution")
+        self.assertEqual(result.message,
+                         "Root setup failed at installed_release.actor_observation (RuntimeError).")
+        self.assertNotIn("provider-token", result.message)
+
+    def test_installed_actor_verification_runtime_failure_reports_only_fixed_boundary(self) -> None:
+        from types import SimpleNamespace
+
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "opaque-handle",
+            "verify_current": lambda self: None,
+        })()
+        held = type("Held", (), {"close": lambda self: None})()
+        actor = SimpleNamespace(
+            verify_current=Mock(side_effect=RuntimeError("/secret/token")),
+            close=Mock(),
+        )
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                   return_value=held), \
+             patch.object(root_setup, "_import_v180_native_support_closure"), \
+             patch.object(root_setup, "_import_v187_listener_activation_closure"), \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   return_value=(SimpleNamespace(close=Mock()), actor)):
+            result = run_root_setup_action(RootSetupAction.INSTALL)
+        self.assertEqual(result.state, RootSetupState.FAILED)
+        self.assertEqual(result.phase, "runtime")
+        self.assertEqual(result.message,
+                         "Root setup failed at installed_release.actor_verification (RuntimeError).")
+        self.assertNotIn("/secret/token", result.message)
+        actor.close.assert_called_once_with()
 
     def test_fixed_authority_daemon_action_is_finite_and_not_tty_dispatched(self) -> None:
         activation_id = "a" * 32

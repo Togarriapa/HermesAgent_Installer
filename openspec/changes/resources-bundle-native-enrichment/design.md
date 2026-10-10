@@ -177,3 +177,13 @@ Owner overlay operations v172: `plans/amendments/2026-10-10-owner-overlay-operat
 Fixture resource materialization v173: `plans/amendments/2026-10-10-fixture-resource-materialization-v173.md`; actual separately generated fixture source/materialization/discovery, never production-row relabeling.
 
 Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
+
+Jarvis sole user-facing profile v205: direct user requirement and audited supported default/display_name mapping; all208 source profiles preserved,207 protected isolated delegate homes, actual native/UI/default routing and ownership-safe migration required. Contract planning/jarvis-sole-user-profile-contract-v205.json; all acceptance open.
+
+Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+Jarvis214 corrects213 source-home/live-task field split: exact16 published facts; task process/resource/profilegen/context epochs are joined only at actual grant. Core/restart/207delegates/mount scope unchanged; planning/jarvis-published-home-live-task-split-v214.json.
+
+Jarvis source-profile task identity v215: distinct protected source_profile_id/home_binding_id mapping, actual serviceprofile_id unchanged; typed live admission deadlines/currentgrant and prepared-vs-published16facts in planning/jarvis-source-profile-task-identity-v215.json.

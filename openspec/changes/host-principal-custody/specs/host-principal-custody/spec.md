@@ -1060,6 +1060,12 @@ The installer SHALL produce the v199 current setup startup projection from actua
 - **WHEN** caller rows, copied session handles, stale receipts, production activation under fixture authority or publication as source-session prerequisite is attempted
 - **THEN** the operation is denied without a capability proof or acceptance promotion
 
+### Requirement: Home Assistant actual Assist resource scope
+The installer SHALL bind Assist reads to actual observed selected exposure or unique source-supported human resource filters through a typed root choice.
+
+#### Scenario: GetLiveContext exposes an unfiltered overview
+- **WHEN** current explicit exposure-set selection or unique reviewed filter proof is absent
+- **THEN** the read remains pending and no entity-ID read or whole-house permission is inferred
 
 ### Requirement: Current publication-owned protected core
 
@@ -1074,3 +1080,102 @@ The installer SHALL use the v201 actual active compiler-produced protected core 
 
 - **WHEN** fixed /etc or schema1 bytes are relabelled as published core, caller proof is supplied, or an expired acquisition deadline is renewed
 - **THEN** the operation denies and remains incomplete without runtime acceptance
+
+
+### Requirement: Genuine selected remote role source inputs
+
+The installer SHALL issue the v202 root-TTY choice and exactly three source-backed startup role receipts through concrete retained source/runtime/build/NSS owners before compiling protected remote startup authority.
+
+#### Scenario: Actual selected sources form role inputs
+
+- **WHEN** the current fixed choice, principal, source/toolchain/dependency/runtime and build receipts are genuine
+- **THEN** the exact producer may issue compiler inputs, with Xpra patch adoption after core publication and before intent, preserving independent account/native readiness
+
+#### Scenario: Declared identity is substituted for runtime proof
+
+- **WHEN** source archives, future handles, caller rows, missing ARM64 dependencies or unowned Cloudflare configuration are relabelled as ready role receipts
+- **THEN** admission denies without disabling sandbox or wrong-port enforcement or claiming acceptance
+
+### Requirement: Typed finite bootstrap RuntimeError diagnostics v203
+The installer SHALL expose only a reviewed constant stage for exact source-owned typed bootstrap failures while preserving ordinary type-only trust errors and fail-closed behavior.
+
+#### Scenario: Arbitrary RuntimeError or subclass reaches formatter
+- **WHEN** the exception is not the exact validated new diagnostic type
+- **THEN** the previous safe type-only failure behavior remains and no arbitrary message/path/secret is emitted
+
+## ADDED Requirements
+
+### Requirement: Exact typed diagnostic source cohort v204
+The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/typed-bootstrap-diagnostic-source-review-v204.json while preserving v203 fail-closed diagnostics and all other source rows.
+
+#### Scenario: Old expected leaf rejects new source
+- **WHEN** the old pin test rejects the reviewed new bytes
+- **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance
+
+
+### Requirement: Fixture-owned actual NSS subject
+
+The installer SHALL issue the v206 unprivileged fixture subject receipt only from its same child-owned source session, actual NSS identity and scoped protected transaction/controller, separately from normal production setup.
+
+#### Scenario: Actual fixture identity selects discovery subject
+
+- **WHEN** the fixed-suite choice and current child fixture transaction create or own the actual scoped NSS account
+- **THEN** its private issuer may select the observed UID/GID for real discovery custody, with separate process and cleanup evidence
+
+#### Scenario: Production or marker identity is substituted
+
+- **WHEN** an unrelated normal session, production marker, caller UID or copied receipt is offered as fixture authority
+- **THEN** launch denies and preserves unrelated identity/data, without enrollment or acceptance promotion
+
+## ADDED Requirements
+
+### Requirement: Fresh root TTY handoff after acquisition
+The installer SHALL require the independent explicit same-candidate foreground TTY observation in planning/bootstrap-handoff-tty-reconfirmation-v208.json before delayed bootstrap handoff, without extending an expired proof or widening authority.
+
+#### Scenario: Acquisition outlasts initial TTY proof
+- **WHEN** fixed selected source/runtime staging outlasts the initial60s observation
+- **THEN** a new explicit exact-SHA re-entry and same-controller current proof are required before one-use handoff; original expired lineage is not current authorization
+
+#### Scenario: Reconfirmation drifts or repeats
+- **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
+- **THEN** handoff fails closed and preserves owned staged data without acquiring service authority
+
+## ADDED Requirements
+
+### Requirement: Exact reconfirmation source leaf v211
+The installer SHALL apply only the root_setup source tuple in planning/bootstrap-handoff-reconfirmation-source-review-v211.json, preserving all other reviewed members and v208 authority boundaries.
+
+#### Scenario: Previous root setup source pin differs
+- **WHEN** the previous expected tuple rejects committed reconfirmation bytes
+- **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Current selected Jarvis delegate home custody
+The installer SHALL bind each protected selected delegate task to its current held owned home through planning/jarvis-selected-task-home-custody-v213.json and the existing consumed task effect grant.
+
+#### Scenario: Root discovers inaccessible delegate home
+- **WHEN** root discovery succeeds but serviceUID cannot traverse private host ancestors
+- **THEN** custody mounts only the held selected home at fixed/hermes and verifies actual unprivileged native load without loosening root permissions or granting primary rights
+
+#### Scenario: Home or authorization changes
+- **WHEN** home FD/source/materialization/runtime/principal/namespace/policy binding is stale or foreign
+- **THEN** task start fails closed and sibling/primary homes remain inaccessible
+
+## ADDED Requirements
+
+### Requirement: Published home facts and live task proof separation
+The installer SHALL use the corrected field split in planning/jarvis-published-home-live-task-split-v214.json without fabricating future task enrollments in published source-home rows.
+
+#### Scenario: Compile home crosswalk before tasks exist
+- **WHEN** verified source homes are published before task admission
+- **THEN** only actual source/home/runtime/principal/namespace facts are compiled and live task/context/process/resource facts are resolved later through genuine current grants
+
+## ADDED Requirements
+
+### Requirement: Distinct selected source profile and service identity
+The installer SHALL use planning/jarvis-source-profile-task-identity-v215.json to distinguish verified source_profile_id from actual protected service profile_id and derive task home leases from retained typed live admissions.
+
+#### Scenario: Delegate source differs from task service profile
+- **WHEN** a current protected backend selects an internal source profile
+- **THEN** source_profile_id resolves exact current owned home while service profile/principal/namespace/grant checks remain unchanged and no additional serviceprofile identity is fabricated

@@ -268,3 +268,24 @@ The installer SHALL enroll an existing Home Assistant MCP instance only through 
 #### Scenario: Credential is revoked after a successful read
 - **WHEN** reconnect receives unauthorized or revoked credential evidence
 - **THEN** new reads are denied, stale transport handles are retired and HA configuration remains unchanged
+
+### Requirement: Home Assistant actual Assist resource scope
+The installer SHALL bind Assist reads to actual observed selected exposure or unique source-supported human resource filters through a typed root choice.
+
+#### Scenario: GetLiveContext exposes an unfiltered overview
+- **WHEN** current explicit exposure-set selection or unique reviewed filter proof is absent
+- **THEN** the read remains pending and no entity-ID read or whole-house permission is inferred
+
+
+## ADDED Requirements
+
+### Requirement: Source-owned HA metadata and whole context read
+The installer SHALL apply v210 complete metadata rules for selected filters and separately admit explicit whole GetLiveContext permission only through actual root selection, exact current source/schema/credential grants and genuine bounded functional MCP result. It SHALL preserve HA exposure policy and use only fixed authenticated TLS/DNS-pinned metadata WS reads with the reviewed installer-isolated dependency.
+
+#### Scenario: Partial or permission-limited metadata
+- **WHEN** registry aliases/current explicit exposure are incomplete, expose_new is true or metadata admin permission is unavailable
+- **THEN** no unique selected-filter proof is issued and exposure policy remains unchanged; the user may separately select the whole source-approved GetLiveContext resource
+
+#### Scenario: Actual whole-context semantic read
+- **WHEN** informed rootTTY whole-context selection produces a one-use exact Assist GetLiveContext({}) grant and authentic bounded nonempty response
+- **THEN** only its genuine whole-context membership and functional receipt are recorded, with later membership changes denied before worker data release and no entity-ID/admin/control authority inferred

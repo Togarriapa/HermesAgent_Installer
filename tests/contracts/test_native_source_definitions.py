@@ -58,7 +58,10 @@ class _Selection:
     selection_handle = "selection-current"
     selection_sha256 = "a" * 64
     package_id = "hermes-profile"
-    expires_monotonic = time.monotonic() + 60
+
+    @property
+    def expires_monotonic(self):
+        return time.monotonic() + 60
 
 
 def _receipt(session, path, raw, artifact_id=None):

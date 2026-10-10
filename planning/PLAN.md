@@ -118,8 +118,43 @@ Home Assistant existing-instance root enrollment: `plans/amendments/2026-10-10-h
 
 Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; all OPEN.
 
+Actual HA Assist resource scope/typed TTY selector: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; MC-R0101.3/.4 OPEN. Source-derived filtered or explicitly observed exposed-set reads, no synthetic entity-ID API or admin/action shortcut.
 
 Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
 
 
 Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
+
+
+Existing HI160/197 exact remote TTY choice/3role source/build/compiler inputs: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; all OPEN.
+
+Typed bootstrap RuntimeError boundary diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; BD-T203.1/VD-T203.2 OPEN. Exact type/finite stage only; ordinary type-only trust failures and fail-closed exit unchanged. DD00 cause remains unassigned; all AC OPEN.
+
+Typed diagnostic source review v204: plans/amendments/2026-10-10-typed-bootstrap-diagnostic-source-review-v204.md; exact fd09b11d two-leaf replacement, BD-T203.1 / VD-T203.2 open, no DD00 diagnosis/all AC open.
+
+Jarvis sole user-facing profile v205: plans/amendments/2026-10-10-jarvis-sole-user-profile-v205.md; RB-T205.1/.2, VD-T205.3 OPEN; default/Jarvis +207 isolated native delegates, all208 source profiles preserved, no Desktop filter fiction/all AC OPEN.
+
+
+Existing HI173/178/197 actual fixture-subject NSS producer and unprivileged observation: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; all OPEN.
+
+
+Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md; HI-T207.1/VD-T207.2 exact Raspberry Pi libc6 dependency observation only, original HI-T09/HI-T13. Source/installed/kernel states separate; AC01..18 OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
+
+Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md; exact26cf/root_setup sole leaf, BD-T208.1/VD-T208.2 application/tests/targetOPEN; no widercohort/allACOPEN.
+
+Jarvis selected task home custody v213: plans/amendments/2026-10-10-jarvis-selected-task-home-custody-v213.md; RB-T213.1/HI-T213.2/VD-T213.3 OPEN; actualheldhome currenttaskgrant fixed/hermes, all208/soleJarvis preserved/allACOPEN.
+
+
+Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`; RT-T209.1..4 → VD-T209.5, all OPEN. Actual npm/Electron/Xpra/gateway acquisition, managed build and materialized current runtime are distinct; all AC OPEN.
+
+
+Production remote NSS/roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md`; RT-T212.1 → RT-T212.2 → VD-T212.3 OPEN, exact production three identities/owned roots/current adoption/verified-dead rollback; v209 AppDir finite targets corrected, all source pins/AC OPEN.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md extends MC-R0101/MC-F01 with MC-R0101.5/.6 actual WS metadata and genuine whole-context functional read; no HA exposure mutation, source/runtime/account evidence separate, all AC OPEN.
+
+Jarvis source-home/live-task correction v214: plans/amendments/2026-10-10-jarvis-published-home-live-task-split-v214.md; exact16publishedfacts/live taskcontextjoins, RB-T213.1/HI-T213.2/VD-T213.3 OPEN; all207/postsetup required/allACOPEN.
+
+Jarvis source-profile task identity v215: plans/amendments/2026-10-10-jarvis-source-profile-task-identity-v215.md; actualserviceprofile distinctprotectedsourcehome, typedliveadmission, prepared/publishedclaimjoins; existing213tasks/allACOPEN.

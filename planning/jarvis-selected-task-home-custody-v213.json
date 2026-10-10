@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "requirements": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0060"
+  ],
+  "parent_contract": "planning/jarvis-sole-user-profile-contract-v205.json",
+  "actual_source_review": [
+    "de2e8968 /private/tmp/hermes-jarvis-profile-20261010: RootSelectedNativeProfileHomeSource and resolve_selected_native_profile_home_source; source/materialization/PM joins currently setup-bound, no heldFD",
+    "registry/resource_backends.py::SelectedResourceProfileTask has no home binding",
+    "managed_process_custodian.py::start_selected_resource_task and process launch recipe uses fixed/hermes HOME/HERMES_HOME, existing primary home BindPaths",
+    "Root-only native rediscovery does not prove serviceUID traversal through0700 ancestors"
+  ],
+  "active_catalog": {
+    "key": "native_profile_task_homes",
+    "placement": "digest-covered service_generations catalog, at most208 unique source_profile_id/home_binding_id rows",
+    "row_fields": [
+      "home_binding_id",
+      "source_profile_id",
+      "source_revision",
+      "source_manifest_sha256",
+      "role",
+      "native_profile_key",
+      "display_name",
+      "home_selection_handle",
+      "materialization_receipt_handle",
+      "mapping_sha256",
+      "home_generation",
+      "profile_id",
+      "profile_generation",
+      "principal_id",
+      "principal_uid",
+      "principal_gid",
+      "namespace_id",
+      "runtime_receipt_handle",
+      "runtime_identity_sha256",
+      "resource_id",
+      "resource_generation",
+      "process_enrollment_id",
+      "process_generation",
+      "service_generation_digest",
+      "authority_epoch",
+      "policy_revision",
+      "behavioral_manifest_sha256"
+    ],
+    "producer": "Root-owned Jarvis home materializer promotes prepared v205 crosswalk only after actual owned home FD/member manifest/materialization +current selected PM/principal/namespace/process/resource policy receipts exist. Compiler binds same transaction/generation and validates every FK. Prepared source/map is not runnable authority. No future active rows fabricated before receipts.",
+    "constraints": "Exactly one sourcehermes primary native default displayJarvis;207 exact verified specialist sourceIDs retain delegate role native default within separate home. No caller paths, shared Jarvis home relabel or source revision aliases. Principal UID/GID matches current verified NSS/backend selected identity. Row namespace/runtime/profile/process/resource IDs must resolve current exact enrolled records; no receipt flags as authority."
+  },
+  "registry": {
+    "module": "hermes_installer.authority.native_profile_task_homes",
+    "class": "RootNativeProfileTaskHomeRegistry",
+    "factory": "from_root_runtime(active_bindings, owned_profile_home_registry, materialization_registry, pm_runtime_registry, principal_namespace_registry, root_journal)",
+    "resolve": "resolve_selected_resource_task_home(selection: SelectedResourceProfileTask) -> RootSelectedResourceTaskHomeBinding",
+    "verify": "verify_current(binding, selection) -> bool",
+    "fd": "duplicate_home_fd(binding, selection) -> root-only duplicated held directory FD; verify_current first",
+    "ownership": "Exact issuing registry membership/private seal. Active source home resolver reopens/retains owned directory using nofollow root-derived capability, matches actual dev/inode/owner/mode/marker and openat behavioral manifest digests. Public DTO has no path/FD. No expired RootBootstrapSession needed; active committed source/current receipts replace setup-only observation, never lease renewal."
+  },
+  "binding": {
+    "class": "RootSelectedResourceTaskHomeBinding",
+    "fields": [
+      "home_binding_id",
+      "source_profile_id",
+      "source_revision",
+      "source_manifest_sha256",
+      "role",
+      "native_profile_key",
+      "display_name",
+      "home_selection_handle",
+      "materialization_receipt_handle",
+      "mapping_sha256",
+      "home_generation",
+      "profile_id",
+      "profile_generation",
+      "principal_id",
+      "principal_uid",
+      "principal_gid",
+      "namespace_id",
+      "runtime_receipt_handle",
+      "runtime_identity_sha256",
+      "resource_id",
+      "resource_generation",
+      "process_enrollment_id",
+      "process_generation",
+      "service_generation_digest",
+      "authority_epoch",
+      "policy_revision",
+      "behavioral_manifest_sha256",
+      "binding_handle",
+      "binding_sha256",
+      "home_device",
+      "home_inode",
+      "home_owner_uid",
+      "home_owner_gid",
+      "home_mode",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "private_fields": "held directory FD, exact issuer/private seal/current retained row/receipt objects; repr-hidden and not worker RPC",
+    "lifetime": "fresh <=30s, min original task admission deadline and current source/runtime/principal/ns/controller leases; one task/node identity and consumed start request only, no general path authorization",
+    "digest": "SHA256 canonical closed JSON exact public binding fields excluding binding_sha256; existing consumed task start proof/canonical selection request commits binding_handle+binding_sha256 and selected source_profile_id."
+  },
+  "integration": {
+    "selected_task": "Extend SelectedResourceProfileTask with home_binding_id and root-private current home_binding; source_profile_id remains exact source resource identity, distinct service/profile IDs. Runner root-resolves from selected protected task node/backend, not user-provided handle.",
+    "authority": "RootResourceTaskAuthority +VerifiedRootResourceTaskStart verify same selected task/admission/node/principal/ns/resource/process/package and home digest before issue/consume. Current policy identity is EXACT existing RootResourceTaskContext.authority_epoch +policy_revision +service_generation_digest, derived root-side from AuthorityService.authority_epoch and its current policy revision path and rechecked by existing verifier. No caller epoch or parallel policy epoch is introduced; existing effect authorization remains mandatory.",
+    "custody": "start_selected_resource_task receives selected_home_binding from genuine consumed proof/runner. Revalidate same exact registry/current binding at unit creation, duplicate held directoryFD and bind ONLY selected home into private mount namespace at fixed/hermes. Prefer root-held descriptor-to-owned-mount source; if systemd requires path, create exact private root-held mount capability tied to FD/inode, recheck before start and retain through unit; never caller or stale path.",
+    "recipe": "HOME=/hermes,HERMES_HOME=/hermes,cwd=/hermes fixed; selected runtime/source executable mounts unchanged, no caller override. No extra sibling/primary home or root ancestor mount. Existing sanitization, zeroadditionalbudget, public/private route separation, sandbox/network/input/toolpolicy/namespace scopes unchanged.",
+    "access": "Actual unprivileged selected UID/GID must read/load selected native behavioral home and write only selected owned state under/hermes. Root discovery/traversal is insufficient. Keep root0700 ancestors untouched; no chmod/chown global roots. Bound kernel effect tests prove mount/identity and sibling/primary denial."
+  },
+  "tasks": [
+    {
+      "id": "RB-T213.1",
+      "owner": "Jarvis home materializer/factory/compiler",
+      "work": "Jarvis producer actual materialization/migration/source crosswalk; compiler/publisher produce readback-verified immutable core crosswalk member with current receipt claim/FKs."
+    },
+    {
+      "id": "HI-T213.2",
+      "owner": "Jarvis task home custody",
+      "work": "Task home custody owns activation handoff/current durable active registry and restart readback, plus selectedtask/consumed grant fixed/hermes unprivileged mount/current identity namespaces."
+    },
+    {
+      "id": "VD-T213.3",
+      "owner": "verification",
+      "work": "Test actual unprivileged delegate native load/state effect, sibling/primary isolation, stale/replay/foreignFD/mode/hash/controller/runtime/policy denial and cleanup; reviewed sourcepins futuretestedcommit."
+    }
+  ],
+  "acceptance": "All original scope and AC01..18 OPEN; prepared/home discovery alone is not runnable delegate/Pi/Desktop proof.",
+  "activation_bridge": {
+    "class": "RootPublishedAuthorityCore",
+    "publication_member": "native-profile-home-crosswalk-v213.json; canonical closed schema1 containing native_profile_task_homes rows sorted bysource_profile_id, digest-covered in existing publication core member manifest/claim",
+    "producer": "Jarvis setup producer supplies actual source/materialization/migration records to active compiler. Compiler reserves same current owned output/source claim before compiling, emits crosswalk member tied exact publication/transaction/generation and promotes only fully joined current runtime/principal/namespace rows. Publisher readbacks actual immutable member bytes/current pointer; no prepared/sessionseal restoration.",
+    "core_getter": "resolve_current_native_profile_home_crosswalk() -> RootPublishedNativeProfileHomeCrosswalk; exact root-owned core membership/source module verified generation/current pointer/member SHA/size and retained claim are required. Getter exposes typedrows/member digest/publication handle/service generation, held member observation repr-hidden.",
+    "registry_factory": "RootNativeProfileTaskHomeRegistry.from_published_authority_core(core, owned_profile_home_registry, pm_runtime_registry, principal_namespace_registry, root_journal)",
+    "activation": "Registry consumes exact typed core getter, opens root-derived owned homes through nofollow held roots, rehashes source/behavioral members and actual inode/owner/mode/marker, resolves current PM/source/NSS/profile/principal/namespace/policy rows. Runtime from_root_runtime must consume this exact registry, not instantiate from arbitrary row JSON.",
+    "restart": "Reopen current protected publication/member/journal and actual owned home/source/runtime/NSS receipts; no serializedFD, old processseal or expired setup receipt is restored. Fresh task binding leases minted only after current active verification. Source generation update/rollback/revocation invalidates registry bindings/admitted tasks and uses existing owned stop/cleanup, never authorizes stale home.",
+    "scope": "All207 delegate homes must remain native usable after installer setup expiry through this actual producer/resolver; setup-only crosswalk is intermediate not fulfillment."
+  }
+}

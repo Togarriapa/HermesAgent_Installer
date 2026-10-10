@@ -849,3 +849,83 @@ The installer SHALL use the v201 actual active compiler-produced protected core 
 
 - **WHEN** fixed /etc or schema1 bytes are relabelled as published core, caller proof is supplied, or an expired acquisition deadline is renewed
 - **THEN** the operation denies and remains incomplete without runtime acceptance
+
+
+### Requirement: Genuine selected remote role source inputs
+
+The installer SHALL issue the v202 root-TTY choice and exactly three source-backed startup role receipts through concrete retained source/runtime/build/NSS owners before compiling protected remote startup authority.
+
+#### Scenario: Actual selected sources form role inputs
+
+- **WHEN** the current fixed choice, principal, source/toolchain/dependency/runtime and build receipts are genuine
+- **THEN** the exact producer may issue compiler inputs, with Xpra patch adoption after core publication and before intent, preserving independent account/native readiness
+
+#### Scenario: Declared identity is substituted for runtime proof
+
+- **WHEN** source archives, future handles, caller rows, missing ARM64 dependencies or unowned Cloudflare configuration are relabelled as ready role receipts
+- **THEN** admission denies without disabling sandbox or wrong-port enforcement or claiming acceptance
+
+### Requirement: Typed finite bootstrap RuntimeError diagnostics v203
+The installer SHALL expose only a reviewed constant stage for exact source-owned typed bootstrap failures while preserving ordinary type-only trust errors and fail-closed behavior.
+
+#### Scenario: Arbitrary RuntimeError or subclass reaches formatter
+- **WHEN** the exception is not the exact validated new diagnostic type
+- **THEN** the previous safe type-only failure behavior remains and no arbitrary message/path/secret is emitted
+
+## ADDED Requirements
+
+### Requirement: Exact typed diagnostic source cohort v204
+The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/typed-bootstrap-diagnostic-source-review-v204.json while preserving v203 fail-closed diagnostics and all other source rows.
+
+#### Scenario: Old expected leaf rejects new source
+- **WHEN** the old pin test rejects the reviewed new bytes
+- **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance
+
+## ADDED Requirements
+
+### Requirement: Jarvis sole native user entry
+The installer SHALL provide Jarvis as the sole user-facing default profile while preserving all208 imported Resources source profiles as native usable identities through the protected isolated-home mapping in planning/jarvis-sole-user-profile-contract-v205.json.
+
+#### Scenario: Pinned backend lists primary profiles
+- **WHEN** the Jarvis Desktop backend lists its selected owned HERMES_HOME
+- **THEN** only canonical default labelled Jarvis is listed, specialists resolve separately through protected coordinator routing, and no presentation-only filtering claim is used
+
+#### Scenario: Existing unowned identity conflicts
+- **WHEN** migration encounters an unowned Jarvis identity or modified owned state
+- **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
+
+
+## ADDED Requirements
+
+### Requirement: Exact Raspberry Pi vendor dependency evidence
+The installer SHALL admit vendor provenance only for the v207 exact libc6/u3/arm64 tuple in the reviewed Debian nft closure, using the pinned existing keyring and exact signed index/package/control/installed ELF chain. It SHALL preserve other package provenance, bounded metadata time and concrete per-archive keyring currentness, without mutating packages or trust.
+
+#### Scenario: Exact retained signed vendor row
+- **WHEN** the fixed live or protected cache witnesses verify with the exact primary key and still-valid signed complete index digest, selecting the exact installed package and matching all held ELF bytes
+- **THEN** the registry may issue only the existing short selected host-tool observation, subject to unchanged actual kernel/network proof
+
+#### Scenario: Current metadata selects a different libc package
+- **WHEN** only u4, an unsigned u3 package, expired cache, changed trust anchor or mismatched control/installed bytes is available
+- **THEN** selected network capability remains unavailable without version substitution, host package change or acceptance promotion
+
+## ADDED Requirements
+
+### Requirement: Fresh root TTY handoff after acquisition
+The installer SHALL require the independent explicit same-candidate foreground TTY observation in planning/bootstrap-handoff-tty-reconfirmation-v208.json before delayed bootstrap handoff, without extending an expired proof or widening authority.
+
+#### Scenario: Acquisition outlasts initial TTY proof
+- **WHEN** fixed selected source/runtime staging outlasts the initial60s observation
+- **THEN** a new explicit exact-SHA re-entry and same-controller current proof are required before one-use handoff; original expired lineage is not current authorization
+
+#### Scenario: Reconfirmation drifts or repeats
+- **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
+- **THEN** handoff fails closed and preserves owned staged data without acquiring service authority
+
+## ADDED Requirements
+
+### Requirement: Exact reconfirmation source leaf v211
+The installer SHALL apply only the root_setup source tuple in planning/bootstrap-handoff-reconfirmation-source-review-v211.json, preserving all other reviewed members and v208 authority boundaries.
+
+#### Scenario: Previous root setup source pin differs
+- **WHEN** the previous expected tuple rejects committed reconfirmation bytes
+- **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference

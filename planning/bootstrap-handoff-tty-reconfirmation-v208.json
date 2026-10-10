@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F02",
+    "HI-T149.1",
+    "BD-T203.1",
+    "VD-T203.2"
+  ],
+  "source_review": {
+    "candidate": "5ed development candidate; exact full candidate bound by actual evidence owner",
+    "source_checkout": "/private/tmp/hermes-pi-bootstrap-handoff-5ed",
+    "methods": [
+      "root_setup.RootBootstrapCandidateSelectionRegistry.issue_explicit_tty_choice/resolve/consume_verified_selection",
+      "root_setup._capture_root_tty_proof/_verify_root_tty_proof",
+      "installer_release_build.bootstrap_selected_release",
+      "RootBootstrapRuntimeHandoffRegistry.create_for_current_process",
+      "_verify_current_selection_snapshot"
+    ],
+    "fact": "Root TTY proof expires60s; source CAS acquisition/runtime provision precede consume at handoff. Actual target reports bootstrap.handoff(RuntimeError); this establishes boundary only, not internal cause."
+  },
+  "api": {
+    "module": "hermes_installer.root_setup",
+    "registry": "RootBootstrapCandidateSelectionRegistry",
+    "method": "reconfirm_for_handoff(selection: VerifiedRootBootstrapCandidateSelection) -> VerifiedRootBootstrapCandidateSelection",
+    "ownership": "Exact issuing registry membership and original sealed selection retained; returned replacement selection has new independent foreground proof, same original candidate SHA/lifecycle/choice digest and one-use membership. Original selection becomes consumed/replaced and cannot handoff again."
+  },
+  "order": [
+    "Original root foreground TTY candidate SHA + finite install/resume/update choice is resolved before fixed-origin staging. Preserve exact proof/controller descriptors and selected SHA/action as lineage; expiry is not renewed.",
+    "Perform only already authorized fixed-origin selected source acquisition and selected installer runtime provisioning; no account/service/enrollment effects.",
+    "After provisioning, before create_for_current_process, call reconfirm_for_handoff inside existing bootstrap.handoff diagnostic boundary. Display original exact candidate SHA and finite lifecycle action; require root TTY re-entry of exact same40 lowercase hex SHA. No default/prefill/argv/environment/caller response.",
+    "Capture new root TTY proof, verify original held controller/process/TTY identity and NEW current foreground observation, compare exact answer/candidate/action; return newly minted selection backed by fresh<=60s proof.",
+    "Existing handoff consume verifies/consumes fresh proof and exact source/runtime candidate joins, finiteaction/input_origin/choice digest, held PIDFD/TTY, sealedFD3 same-process reexec. Post-reexec snapshot verifier keeps fresh proof original expiry; no TTL extension."
+  ],
+  "controller_invariants": [
+    "Linux real/effective UID0",
+    "same PID and process start ticks",
+    "same UID/GID/session/process-group",
+    "same controlling stdin/stderr character TTY device/inode/rdevice",
+    "original and fresh held PIDFD live",
+    "current foreground process group",
+    "same boot identity where existing handoff snapshot retains it; no restart rehydration"
+  ],
+  "expired_original": "Permitted only as retained same-registry source-choice/controller lineage for explicit new observation; never call old expiry check as proof of current authority, never mutate old issued/expires or treat prompt-free refresh as authorization. Recheck non-time identity and live held descriptors independently. Close consumed original and failed fresh descriptors; retain no reusable bearer.",
+  "failures": "Mismatch/cancel/EOF/foreign or consumed selection/changed controller/TTY/boot/dead PIDFD/new60s expiry deny transition and close descriptors. Preserve already owned stagedCAS for safe subsequent retry; no overwrite or unrelated cleanup. New capture is one use, original action cannot change, source/runtime joins unchanged.",
+  "bounded_scope": "No generic renewal API or arbitrary purpose/timeout. Initial selection proof60s and fresh transition proof60s unchanged. Reconfirmation is necessary only at delayed source-to-isolated-runtime transition, not repeated routine account/provider approvals. Successful same-process handoff remains required; no caller-selected interpreter/module/path.",
+  "tasks": [
+    {
+      "id": "BD-T208.1",
+      "owner": "ARM64 bootstrap source owner",
+      "work": "Implement exact final-boundary reconfirm API, retained lineage/current proof split and one-use replacement without extending oldTTL; source/runtime/controller joins preserved."
+    },
+    {
+      "id": "VD-T208.2",
+      "owner": "source review/recheck",
+      "work": "Test acquisition beyond60s then genuine fresh exact re-entry, mismatch/cancel/controller drift/deadFD/stale newproof/replay; review final committed source pins and actual isolated target result separately."
+    }
+  ],
+  "acceptance": "All AC01..AC18 OPEN; no inferred inner cause or successful installation; immutable baseline unchanged; source pins pending actual tested commit."
+}
