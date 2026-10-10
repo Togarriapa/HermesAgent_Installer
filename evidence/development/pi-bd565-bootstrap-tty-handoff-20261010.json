@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_bootstrap_tty_handoff_attempts",
+  "state": "failed_before_account_enrollment_report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "host-principal-custody", "verification-documentation"],
+  "task_ids": ["BD-T208.1", "VD-T208.2"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "executor_uid": 0,
+    "executor_gid": 0
+  },
+  "candidate": {
+    "commit": "bd56513e3ba18ba81d360c68dc73ae7a52aea419",
+    "tree": "e05f7d2e33917be3d44e2a0c53d8e0f3b0eefc94",
+    "source_archive_sha256": "018b1ffd0be3c1ada7d7b25d64c2ddcfdf42afdd771df61d8c94b01137e7996e",
+    "frozen_tag": "hermes-installer-plan-2026-10-09-v1",
+    "frozen_tag_object": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",
+    "frozen_tag_peeled_commit": "653ac5fbc7a02613c9951859a7d794599603459b",
+    "frozen_annotated_tag_verified": true,
+    "staged_checkout_verified": true,
+    "checkout_path": null,
+    "checkout_path_status": "not supplied"
+  },
+  "attempts": [
+    {
+      "timestamp": null,
+      "timestamp_status": "not supplied",
+      "source_sha_prompt_timing": "delayed",
+      "reported_failure_stage": "bootstrap.tty_selection before acquisition",
+      "exact_output": null,
+      "claim_limit": "Only the named stage and that acquisition had not begun were reported; no exact output or inner cause was supplied."
+    },
+    {
+      "timestamp": null,
+      "timestamp_status": "not supplied",
+      "same_verified_checkout": true,
+      "source_sha_prompt_timing": "entered immediately",
+      "submitted_source_commit": "bd56513e3ba18ba81d360c68dc73ae7a52aea419",
+      "fresh_second_confirmation_reached": true,
+      "observed_output": "Traceback <string> line 20: descriptor=os.fstat(3); OSError [Errno 9] Bad file descriptor",
+      "root_prompt_returned": true,
+      "account_or_enrollment_prompt_reached": false,
+      "release_positive_observed": false,
+      "inner_cause": "unknown; not inferred from the traceback summary"
+    }
+  ],
+  "installer_source_fix": {
+    "owner": "Luna",
+    "status": "assigned; no fix commit or Pi result supplied"
+  },
+  "not_observed": [
+    "successful bootstrap handoff or installed-release publication",
+    "account or enrollment prompts",
+    "positive release/deployment receipt",
+    "native runtime qualification or authenticated target Result",
+    "source/resource deletion safety"
+  ],
+  "resource_delete_safe": false,
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "This report distinguishes two failed TTY-selection/handoff attempts. It does not determine the second exception's cause or prove installation. All AC01-AC18 remain open."
+}
