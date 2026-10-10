@@ -237,3 +237,77 @@ The implementation SHALL apply the exact root registry, principal-selection and 
 #### Scenario: Static selection lacks actual runtime proof
 - **WHEN** an actual current role, display, source event or terminal execution receipt is absent
 - **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Fixed selected display and loopback startup
+The installer SHALL launch only enrolled official Desktop/display/gateway recipes with exact Xauthority mount and private loopback role/port bindings.
+
+#### Scenario: Ambient display or broad network substitution
+- **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
+- **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Root selected startup and predecessor custody
+The installer SHALL use actual root source CAS/predecessor proofs and finite selected startup admission with fresh role-specific child grants.
+
+#### Scenario: Unbound startup or deployment predecessor
+- **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
+- **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual selected Xpra root credential
+The installer SHALL prevent selected Xpra from regenerating or exposing root display cookie and verify the fixed readonly root credential is used by its owned virtual X server and official Desktop.
+
+#### Scenario: Writable cookie or secret argv fallback
+- **WHEN** selected startup falls back to a generated cookie or passes secret cookie values in argv/logs
+- **THEN** startup fails closed and remote readiness is not asserted
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
+
+Xpra root overlay receipt API v73: `plans/amendments/2026-10-10-xpra-overlay-root-receipt-api-v73.md`; existing RT/HI tasks remain open pending actual source/runtime proof.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
+
+Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+### Requirement: Current installed network tool proof
+The system SHALL use v105 HostToolObservationRegistry to authenticate exact installed nft and its complete dependency closure against signed package evidence, retaining root-owned descriptors and revalidating current selection and expiry before each effect.
+
+#### Scenario: Source measurement alone
+- **WHEN** only an archived package measurement exists without actual host and kernel proof
+- **THEN** private network execution remains unavailable.
+
+### Requirement: Finite managed Xpra transformation
+The system SHALL execute only the v106 selected empty-parameter Xpra build recipe under actual official PM runtime and pinned installed transform module, retaining original source and distinct regular staging closure. It SHALL require actual managed terminal and dynamic output attestation before overlay publication.
+
+#### Scenario: Archive hash presented as executable identity
+- **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
+- **THEN** build admission or publication is denied.
+
+### Requirement: Exact regular Xpra build topology
+The system SHALL use the v109 source-verified transform module and exact original regular staging directory topology, mount the PM builder executable as a file and publish the archive as non-executable data.
+
+#### Scenario: Missing source topology
+- **WHEN** staging omits a required original manifest directory or changes the selected source links
+- **THEN** transformation denies instead of changing source identity.
+
+### Requirement: Exact selected link target bytes
+The system SHALL verify all five selected Xpra link target strings, SHA256 and byte sizes against the original source manifest before reconstruction using the v111 committed module.
+
+#### Scenario: Link target hash mismatch
+- **WHEN** any target byte digest or size differs
+- **THEN** build staging denies without broadening symlink authority.
+
+### Requirement: Only usable loopback topology with inert kernel fallback templates
+
+The installer SHALL enforce v122 exact current topology, nft and subject invariants, permitting only the finite verified inert kernel fallback records alongside usable loopback.
+
+#### Scenario: Fallback interface becomes usable
+
+- **WHEN** an optional fallback interface becomes UP, addressed, routed, linked or configured, or actual nft/subject proof is missing
+- **THEN** the root namespace lease is denied or revoked and owned selected subjects are stopped; diagnostic interface names alone never authorize startup

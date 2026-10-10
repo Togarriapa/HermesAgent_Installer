@@ -18,6 +18,9 @@ from hermes_installer.authority.resource_source_controllers import (
     RootResourceJobContextRequest,
     _RootEventRecord,
 )
+from hermes_installer.authority.root_controller_custody import (
+    RootIngressControllerProof, RootSelectedIngressBinding,
+)
 from hermes_installer.authority.service import (
     AuthorityService, EffectRule, PrincipalBinding,
 )
@@ -63,11 +66,15 @@ class _CustodyResolver:
         self.generation_digest = generation_digest
         self.controller = controller
         self.proofs = []
+        self._ingress_proofs = {}
 
     def resolve_for_event(self, _event_handle, _node_id):
         proof = _ControllerProof(self.role, self.generation_digest, self.controller)
         self.proofs.append(proof)
         return proof
+
+    def revalidate_ingress_proof(self, proof_handle):
+        return proof_handle in self._ingress_proofs
 
 
 def _case(*, selected_generation=None, consent_revision=None):
@@ -141,12 +148,15 @@ def _case(*, selected_generation=None, consent_revision=None):
     node = SimpleNamespace(
         node_id="node-1", action_id="run-action", effect=operation, target=target,
         recipient=None, action_digest=hashlib.sha256(b"selected action").hexdigest(),
-        backend_enrollment_id="backend-1", body_recipe_id="recipe-demo",
+        backend_enrollment_id="backend-1", body_recipe_id="recipe-demo", depends_on=(),
     )
     backend = SimpleNamespace(
         backend_id="backend-1", operation=operation, target_id=target, recipient=None,
         approved_action_ids=frozenset({"run-action"}), handler_sha256=hashlib.sha256(b"handler").hexdigest(),
         scope_binding_id="scope-1", maximum_request_bytes=512,
+        resource_id="demo", profile_id=binding.profile_id, principal_id=binding.principal_id,
+        generation=generation, source_issuer_channel_id="source-scheduler",
+        observer_enrollment_id="observer-schedule",
     )
     enrollment = SimpleNamespace(
         resource_id="demo", kind="crons", generation=generation,
@@ -162,6 +172,7 @@ def _case(*, selected_generation=None, consent_revision=None):
         source_kind="schedule-event", origin_id="schedule-demo",
         profile_id=binding.profile_id, principal_id=binding.principal_id,
         generation=profile_generation, channel_id=enrollment.source_issuer_channel_id,
+        capture_schema_id="resource-ingress-capture-v1",
         allowed_parent_source_kinds=frozenset(),
     )
     role = RootControllerRoleEnrollment(
@@ -206,6 +217,7 @@ def _case(*, selected_generation=None, consent_revision=None):
     body = recipe.render(backend=backend, scope_bindings={}, validators={validator.validator_id: validator},
                          event_fields={"event": "timer-fire"}, parent_results={})
     request_token = object()
+    admission_token = object()
     request = RootResourceJobContextRequest(
         root_event=event, event_payload=payload, event_fields=record.event_fields,
         parent_context=event_context, parent_receipts=(receipt,), resource_enrollment=enrollment,
@@ -213,6 +225,7 @@ def _case(*, selected_generation=None, consent_revision=None):
         canonical_payload_sha256=canonical_digest(body),
         service_generation_digest=service_generation, authority_epoch=service.authority_epoch,
         issuer_token=request_token,
+        admission_handle=admission_token,
     )
     registry = object.__new__(RootResourceControllerRegistry)
     registry.service = service
@@ -226,7 +239,7 @@ def _case(*, selected_generation=None, consent_revision=None):
     registry._lock = __import__("threading").RLock()
     registry._event_issuer = None
     registry._event_issuer_capability = None
-    registry.job_enrollments = {}
+    registry.job_enrollments = {(enrollment.resource_id, enrollment.generation): enrollment}
     registry.selected_specs = {(enrollment.resource_id, enrollment.generation): record.selected_spec}
     registry._resolve_event_node = lambda _event, _node: (record, enrollment, node, backend)
     registry._select_role = lambda **_kwargs: role
@@ -237,11 +250,15 @@ def _case(*, selected_generation=None, consent_revision=None):
     registry._profile_binding = lambda _enrollment: binding
     registry.custody_resolver = _CustodyResolver(role, service_generation, controller)
     reservation = RootResourceContextReservation(
-        request, record, enrollment, node, backend, role, controller,
+        request, record, enrollment, node, backend, role, controller, admission_token,
     )
     registry.consume_context_request = lambda candidate: (
         reservation if registry._pending_context_requests.pop(id(candidate), None) is candidate
         and candidate.issuer_token is registry._context_issuer_token else None
+    )
+    service.resource_job_authority = SimpleNamespace(
+        is_root_admission_current=lambda event_handle, admission: (
+            event_handle is event and admission is admission_token),
     )
     issuer = ResourceEventContextIssuer(
         service=service, controller_registry=registry,
@@ -253,8 +270,9 @@ def _case(*, selected_generation=None, consent_revision=None):
 
 def test_root_event_issuer_signs_exact_fresh_effect_and_commits_full_private_lineage():
     issuer, request, registry, service, record = _case()
+    service.attach_resource_event_context_issuer(issuer)
 
-    context, grant = issuer.issue(request)
+    context, grant = service.issue_resource_job_context(request)
 
     assert context.operation == "resource.cron.run"
     assert context.final_payload_digest == request.canonical_payload_sha256
@@ -317,27 +335,181 @@ def test_root_event_issuer_rejects_incomplete_or_unrelated_parent_receipt_closur
         ), binding, service.monotonic())
 
 
-def test_initial_source_proof_is_producer_bound_opaque_and_one_use():
+def test_generic_boolean_validator_and_caller_selected_mint_are_not_exposed():
+    from hermes_installer.authority.resource_event_issuance import RootValidatedRawObservation
+
     issuer, _request, _registry, _service, _record = _case()
-    producer = object()
-    provenance = SimpleNamespace(accepted=True, native_id="message-9")
-    capability = issuer.register_source_producer(
-        producer, source_kind="schedule-event",
-        observer_enrollment_id="observer-schedule",
-        validate_provenance=lambda value: value is provenance and value.accepted is True,
+    assert not hasattr(issuer, "register_source_producer")
+    assert not hasattr(issuer, "mint_source_proof")
+    with pytest.raises(TypeError):
+        RootValidatedRawObservation("raw", b"body", "event", "0" * 64, 1.0, {})
+
+
+def test_issuer_sealed_raw_observation_is_immutable_and_requires_exact_seal():
+    import hermes_installer.authority.resource_event_issuance as module
+
+    fields = module.ResourceEventContextIssuer._freeze_json({"event": {"count": 2}})
+    sealed = module.RootValidatedRawObservation._from_issuer(
+        module._RAW_OBSERVATION_SEAL,
+        raw_observation_handle=secrets.token_urlsafe(32), raw_payload=b"exact raw bytes",
+        event_id=secrets.token_urlsafe(32), replay_key_sha256="a" * 64,
+        observed_monotonic=10.0, event_data=fields,
     )
-    proof = issuer.mint_source_proof(
-        capability, event_id="e" + secrets.token_urlsafe(32), resource_id="demo",
-        resource_generation=_record.handle.resource_generation,
-        source_observer_enrollment_id="observer-schedule",
-        payload=b'{"event":"timer-fire"}', provenance=provenance,
+    assert sealed.event_data["event"]["count"] == 2
+    with pytest.raises(TypeError):
+        sealed.event_data["event"]["count"] = 3
+    with pytest.raises(TypeError):
+        module.RootValidatedRawObservation._from_issuer(
+            object(), raw_observation_handle=secrets.token_urlsafe(32),
+            raw_payload=b"raw", event_id=secrets.token_urlsafe(32),
+            replay_key_sha256="b" * 64, observed_monotonic=10.0,
+            event_data=module.MappingProxyType({}),
+        )
+
+
+def test_cron_protocol_event_requires_exact_selected_occurrence_replay_key():
+    import hermes_installer.authority.resource_event_issuance as module
+
+    issuer, _request, _registry, _service, record = _case()
+    event_id = secrets.token_urlsafe(32)
+    data = module.MappingProxyType({
+        "schedule_enrollment_id": "schedule-demo",
+        "scheduled_time_unix": 100,
+        "due_time_unix": 100,
+        "fired_time_unix": 101,
+        "event_id": event_id,
+        "occurrence_sequence": 1,
+        "action_graph_sha256": "c" * 64,
+    })
+    replay = canonical_digest({
+        "resource_id": "demo", "resource_generation": record.handle.resource_generation,
+        "schedule_enrollment_id": "schedule-demo", "scheduled_time_unix": 100,
+    })
+    observation = module.RootValidatedRawObservation._from_issuer(
+        module._RAW_OBSERVATION_SEAL, raw_observation_handle=secrets.token_urlsafe(32),
+        raw_payload=b"raw timer record", event_id=event_id, replay_key_sha256=replay,
+        observed_monotonic=100.5, event_data=data,
     )
-    assert "message-9" not in repr(proof) and "timer-fire" not in repr(proof)
-    issuer.controller_registry.job_enrollments = {}
-    with pytest.raises(AuthorityDenied, match="not currently selected"):
-        issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
-    with pytest.raises(AuthorityDenied, match="stale or already consumed"):
-        issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
+    selected = SimpleNamespace(backend=SimpleNamespace(resource_id="demo"),
+                               resource_generation=record.handle.resource_generation)
+    producer = SimpleNamespace(protocol_schema_id="resource-cron-tick-v1",
+                               protocol_schema_sha256=module._PROTOCOL_SCHEMAS["resource-cron-tick-v1"],
+                               source_kind="schedule-event")
+    issuer._validate_protocol_event_data(observation, selected, producer)
+    bad = module.RootValidatedRawObservation._from_issuer(
+        module._RAW_OBSERVATION_SEAL,
+        raw_observation_handle=observation.raw_observation_handle,
+        raw_payload=observation.raw_payload, event_id=observation.event_id,
+        replay_key_sha256="d" * 64, observed_monotonic=observation.observed_monotonic,
+        event_data=observation.event_data,
+    )
+    with pytest.raises(AuthorityDenied, match="replay key changed"):
+        issuer._validate_protocol_event_data(bad, selected, producer)
+
+
+def test_selected_producer_mints_one_use_proof_only_for_retained_live_ingress_custody():
+    issuer, _request, registry, service, record = _case()
+    enrollment = registry.job_enrollments[("demo", record.handle.resource_generation)]
+    backend = SimpleNamespace(
+        resource_id="demo", profile_id=enrollment.profile_id, principal_id=enrollment.principal_id,
+        backend_id="backend-1", generation=enrollment.generation,
+        source_issuer_channel_id=enrollment.source_issuer_channel_id,
+        observer_enrollment_id=enrollment.observer_enrollment_id,
+        operation="resource.cron.run",
+    )
+    observer = registry.source_observers.observers[enrollment.observer_enrollment_id]
+    role = registry.roles["role-scheduler"]
+    source_issuer = SimpleNamespace(
+        issuer_channel_id=enrollment.source_issuer_channel_id,
+        observer_enrollment_id=observer.observer_enrollment_id,
+        producer_profile_id=observer.profile_id,
+        capture_schema_id="resource-ingress-capture-v1",
+    )
+    now = service.monotonic()
+    selected = RootSelectedIngressBinding(
+        role=role, source_issuer=source_issuer, source_observer=observer,
+        backend=backend, resource_generation=enrollment.generation,
+        service_generation_digest=service.service_generation_digest,
+        authority_epoch=service.authority_epoch,
+        selected_ingress_binding_id="ingress-binding-1", expires_monotonic=now + 20,
+    )
+    resolver = registry.custody_resolver
+    resolver._selected_ingress_binding_resolver = lambda *_args: selected
+    from hermes_installer.authority.root_controller_custody import RootControllerRoleResolver
+    resolver._ingress_join = RootControllerRoleResolver._ingress_join
+    proof = RootIngressControllerProof(
+        schema=1, proof_handle="proof-handle-" + secrets.token_urlsafe(24),
+        controller_role_id=role.id, controller_kind=role.controller_kind,
+        controller_generation=role.controller_generation,
+        source_issuer_id=source_issuer.issuer_channel_id,
+        backend_enrollment_id=backend.backend_id,
+        resource_generation=enrollment.generation,
+        service_generation_digest=service.service_generation_digest,
+        authority_epoch=service.authority_epoch, pid=111, pidfd=os.open("/dev/null", os.O_RDONLY), uid=0,
+        live_peer_identity=SimpleNamespace(pid=111), role_artifact_id=role.role_module_artifact_id,
+        role_artifact_sha256=role.role_module_sha256, namespace_id="namespace-root",
+        selected_ingress_binding_id=selected.selected_ingress_binding_id,
+        issued_monotonic=now - 1, expires_monotonic=now + 10, _resolver=resolver,
+    )
+    resolver._ingress_proofs[proof.proof_handle] = SimpleNamespace(proof=proof)
+    replay_key = canonical_digest({
+        "resource_id": "demo", "resource_generation": enrollment.generation,
+        "schedule_enrollment_id": "schedule-1", "scheduled_time_unix": 100,
+    })
+    raw_record = object()
+    event_id = secrets.token_urlsafe(32)
+
+    class _Producer:
+        def __init__(self):
+            self.used = False
+
+        def consume_verified_raw_observation(self, candidate, custody):
+            assert candidate is raw_record and custody is proof
+            if self.used:
+                raise ValueError("replayed raw observation")
+            self.used = True
+            return SimpleNamespace(
+                raw_observation_handle=secrets.token_urlsafe(32),
+                raw_payload=b"signed/root timer observation", event_id=event_id,
+                replay_key_sha256=replay_key, observed_monotonic=now,
+                event_data={
+                    "schedule_enrollment_id": "schedule-1", "scheduled_time_unix": 100,
+                    "due_time_unix": 100, "fired_time_unix": 101,
+                    "event_id": event_id, "occurrence_sequence": 1,
+                    "action_graph_sha256": "e" * 64,
+                },
+            )
+
+    producer = _Producer()
+    # The occurrence ID is generated before event_data is returned and is
+    # tied to the same actual one-use timer record.
+    cap = issuer.register_selected_source_producer(producer, selected_ingress_binding=selected)
+    with pytest.raises(AuthorityDenied, match="custody is stale or mismatched"):
+        issuer.mint_selected_source_proof(
+            cap, controller_proof=replace(proof), raw_observation=raw_record,
+        )
+    assert producer.used is False
+    issuer.selected_generation = lambda _resource_id: "stale-generation"
+    with pytest.raises(AuthorityDenied, match="selection or consent revision changed"):
+        issuer.mint_selected_source_proof(cap, controller_proof=proof, raw_observation=raw_record)
+    assert producer.used is False
+    issuer.selected_generation = lambda _resource_id: enrollment.generation
+    minted = issuer.mint_selected_source_proof(
+        cap, controller_proof=proof, raw_observation=raw_record,
+    )
+    assert minted.controller_proof_handle == proof.proof_handle
+    assert minted.resource_id == enrollment.resource_id
+    assert issuer.resolve_validated_source_event_data(minted, issuer._registry_capability)["event_id"] == event_id
+    with pytest.raises(AuthorityDenied, match="stale or consumed"):
+        issuer.resolve_validated_source_event_data(replace(minted), issuer._registry_capability)
+    with pytest.raises(AuthorityDenied, match="observation was not verified"):
+        issuer.mint_selected_source_proof(cap, controller_proof=proof, raw_observation=raw_record)
+    os.close(proof.pidfd)
+
+
+def test_source_proof_discard_rejects_non_proof_objects():
+    issuer, _request, _registry, _service, _record = _case()
+    assert issuer.discard_source_proof(object()) is False
 
 
 def test_initial_source_resolves_only_signed_current_parent_receipts_from_exact_observer():
@@ -358,18 +530,10 @@ def test_initial_source_resolves_only_signed_current_parent_receipts_from_exact_
             return (parent,)
 
     producer = SimpleNamespace(observer=_Observer())
-    binding = issuer.register_source_producer(
-        producer, source_kind="schedule-event", observer_enrollment_id="observer-schedule",
-        validate_provenance=lambda candidate: candidate is provenance,
-    )
-    proof = issuer.mint_source_proof(
-        binding, event_id="e" + secrets.token_urlsafe(32), resource_id="demo",
-        resource_generation=record.handle.resource_generation,
-        source_observer_enrollment_id="observer-schedule",
-        payload=b'{"event":"timer-fire"}', provenance=provenance,
-    )
+    proof = SimpleNamespace(verified_provenance=provenance)
+    producer_binding = SimpleNamespace(producer=producer)
     resolved = issuer._resolve_parent_receipts(
-        proof, issuer._producer_bindings[id(producer)],
+        proof, producer_binding,
         SimpleNamespace(resource_id="demo", generation=record.handle.resource_generation,
                         observer_enrollment_id="observer-schedule", profile_id=base.profile_id,
                         principal_id=base.principal_id), base,
@@ -380,7 +544,7 @@ def test_initial_source_resolves_only_signed_current_parent_receipts_from_exact_
     producer.observer.consume_source_receipts = lambda _candidate: (tampered,)
     with pytest.raises(AuthorityDenied, match="signature is invalid"):
         issuer._resolve_parent_receipts(
-            proof, issuer._producer_bindings[id(producer)],
+            proof, producer_binding,
             SimpleNamespace(resource_id="demo", generation=record.handle.resource_generation,
                             observer_enrollment_id="observer-schedule", profile_id=base.profile_id,
                             principal_id=base.principal_id), base,

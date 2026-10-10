@@ -35,6 +35,10 @@ class RootJournalSelection:
 
     root_id: str
     path: Path
+    device: int | None = None
+    inode: int | None = None
+    generation: str | None = None
+    service_generation_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.root_id, str) or not _ID.fullmatch(self.root_id):
@@ -70,10 +74,35 @@ def resolve_memory_state_directory(enrollment: object,
             state_id, expected_active_generation_digest=expected_active_generation_digest)
     except Exception:
         raise MemoryStateDenied("active root journal catalog did not resolve the selected ID") from None
-    if (not isinstance(selection, RootJournalSelection)
-            or selection.root_id != state_id):
+    from hermes_installer.protected_enrollment import (
+        RootJournalSelection as ProtectedRootJournalSelection,
+    )
+    if not isinstance(selection, (RootJournalSelection, ProtectedRootJournalSelection)):
+        raise MemoryStateDenied("authority state-root selection is not a protected catalog result")
+    # The protected enrollment loader returns its own typed selection. Accept
+    # that exact shape and normalize it here instead of requiring a parallel
+    # memory-only wrapper type. Device/inode are retained and checked again
+    # after the fd-anchored open below, closing the catalog-to-open race.
+    if (getattr(selection, "root_id", None) != state_id
+            or not isinstance(getattr(selection, "path", None), Path)):
         raise MemoryStateDenied("authority state-root ID is not in the protected root journal catalog")
-    return MemoryAuthorityStateDirectory(selection, profile_id, expected_uid=expected_uid)
+    device = getattr(selection, "device", None)
+    inode = getattr(selection, "inode", None)
+    generation = getattr(selection, "generation", None)
+    catalog_digest = getattr(selection, "service_generation_digest", None)
+    if ((device is None) != (inode is None)
+            or device is not None and (type(device) is not int or type(inode) is not int
+                                       or device < 0 or inode <= 0)
+            or catalog_digest is not None and catalog_digest != expected_active_generation_digest):
+        raise MemoryStateDenied("protected root journal selection identity is malformed or stale")
+    if (isinstance(selection, ProtectedRootJournalSelection)
+            and (not isinstance(generation, str) or not generation
+                 or catalog_digest != expected_active_generation_digest)):
+        raise MemoryStateDenied("protected root journal selection lacks active generation binding")
+    normalized = RootJournalSelection(
+        state_id, selection.path, device, inode, generation, catalog_digest,
+    )
+    return MemoryAuthorityStateDirectory(normalized, profile_id, expected_uid=expected_uid)
 
 
 class MemoryAuthorityStateDirectory:
@@ -91,7 +120,7 @@ class MemoryAuthorityStateDirectory:
         self.profile_id = profile_id
         self.profile_key = hashlib.sha256(profile_id.encode("utf-8")).hexdigest()
         self.expected_uid = expected_uid
-        self._root_fd = self._open_root(selection.path, expected_uid)
+        self._root_fd = self._open_root(selection, expected_uid)
         self._fd = -1
         try:
             authority_fd = self._open_or_create_dir(self._root_fd, "authority", expected_uid)
@@ -125,7 +154,8 @@ class MemoryAuthorityStateDirectory:
         raise MemoryStateDenied("platform has no descriptor-anchored filesystem path")
 
     @classmethod
-    def _open_root(cls, path: Path, expected_uid: int) -> int:
+    def _open_root(cls, selection: RootJournalSelection, expected_uid: int) -> int:
+        path = selection.path
         if not path.is_absolute():
             raise MemoryStateDenied("root journal selection must be absolute")
         fd = os.open(path.anchor, _DIRECTORY_FLAGS)
@@ -149,6 +179,9 @@ class MemoryAuthorityStateDirectory:
                 if final:
                     if info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o700:
                         raise MemoryStateDenied("selected root journal must be UID-owned mode 0700")
+                    if (selection.device is not None
+                            and (info.st_dev != selection.device or info.st_ino != selection.inode)):
+                        raise MemoryStateDenied("selected root journal inode changed after catalog resolution")
                 elif (info.st_uid not in ({0, expected_uid})
                       or (stat.S_IMODE(info.st_mode) & 0o022
                           and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX))):

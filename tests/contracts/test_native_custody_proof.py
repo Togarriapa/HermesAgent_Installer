@@ -508,6 +508,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
                 _self.start_ticks = self.identity.start_ticks
                 _self.cgroup_identity = self.identity.cgroup_identity
                 _self.executable_sha256 = self.identity.executable_sha256
+                _self.mount_namespace_inode = int(self.identity.namespace_identity.split(";")[0].split(":")[1])
+                _self.network_namespace_inode = int(self.identity.namespace_identity.split(";")[1].split(":")[1])
                 _self.expires_monotonic = time.monotonic() + 10
                 _self.closed = False
 
@@ -658,13 +660,23 @@ class RootLoaderObservationContracts(unittest.TestCase):
         observer = _observer(producer_uid=self.uid)
         context = _context(self.identity)
         pair_holder = []
+        gateway_child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        gateway_pidfd = os.pidfd_open(gateway_child.pid)
+        gateway_identity = LivePeerIdentity(
+            "gateway-profile", "gateway-generation", self.uid, 456,
+            _ROLE, "gateway-cgroup-test", "mnt:456;net:567",
+        )
 
         class _Broker:
             def resolve_pending_pair_for_context(_self, exact_context):
                 if exact_context != context:
                     return None
                 producer_fd = os.dup(self.child_pidfd)
-                gateway_fd = os.dup(self.child_pidfd)
+                gateway_fd = os.dup(gateway_pidfd)
                 pair = _PendingPair(
                     1, "pair-id", "bridge-id", "native-request",
                     canonical_digest(context.to_wire()), context.grant_id,
@@ -673,24 +685,41 @@ class RootLoaderObservationContracts(unittest.TestCase):
                     _PendingPeer("producer", "principal", observer.profile_id,
                                  observer.generation, self.child.pid, producer_fd,
                                  self.uid, self.identity, "loader-role", _ROLE),
-                    _PendingPeer("gateway", "principal", observer.profile_id,
-                                 observer.generation, self.child.pid, gateway_fd,
-                                 self.uid, self.identity, "loader-role", _ROLE),
+                    _PendingPeer("gateway", "principal", gateway_identity.profile_id,
+                                 gateway_identity.generation, gateway_child.pid, gateway_fd,
+                                 self.uid, gateway_identity, "gateway-loader-role", _ROLE),
                     (_DeliveryBinding(observer.observer_enrollment_id, "gateway"),),
                     time.monotonic() + 5,
                 )
                 pair_holder.append(pair)
                 return pair
 
-        selector = native_bridge_source_target_selector(_Broker())
-        selected = selector(observer, context)
-        self.assertEqual(selected.pid, self.child.pid)
-        self.assertEqual(selected.profile_id, observer.profile_id)
-        self.assertNotEqual(selected.pidfd, pair_holder[0].producer.pidfd)
-        with self.assertRaises(OSError):
-            os.fstat(pair_holder[0].producer.pidfd)
-        self.assertGreater(os.fstat(selected.pidfd).st_ino, 0)
-        os.close(selected.pidfd)
+        try:
+            selector = native_bridge_source_target_selector(_Broker())
+            selected = selector(observer, context)
+            self.assertEqual(selected.pid, gateway_child.pid)
+            self.assertNotEqual(selected.pid, pair_holder[0].producer.pid)
+            self.assertEqual(selected.profile_id, gateway_identity.profile_id)
+            self.assertEqual(selected.pidfd, pair_holder[0].gateway.pidfd)
+            with self.assertRaises(OSError):
+                os.fstat(pair_holder[0].producer.pidfd)
+            self.assertGreater(os.fstat(selected.pidfd).st_ino, 0)
+            os.close(selected.pidfd)
+        finally:
+            for peer in (pair_holder[0].gateway,) if pair_holder else ():
+                try:
+                    os.close(peer.pidfd)
+                except OSError:
+                    pass
+            try:
+                os.close(gateway_pidfd)
+            except OSError:
+                pass
+            try:
+                gateway_child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                gateway_child.kill()
+                gateway_child.wait(timeout=2)
 
 
 class NativeInputTargetResolverContracts(unittest.TestCase):
@@ -758,6 +787,8 @@ class NativeInputTargetResolverContracts(unittest.TestCase):
                 _self.start_ticks = identity.start_ticks
                 _self.cgroup_identity = identity.cgroup_identity
                 _self.executable_sha256 = identity.executable_sha256
+                _self.mount_namespace_inode = 42
+                _self.network_namespace_inode = 43
                 _self.expires_monotonic = time.monotonic() + 10
                 _self.closed = False
 
@@ -821,6 +852,26 @@ class NativeInputTargetResolverContracts(unittest.TestCase):
             self.assertTrue(leases[0].closed)
         finally:
             os.close(target.peer_pidfd)
+
+    def test_target_denies_stale_namespace_and_expired_loader_proof_and_closes_lease(self):
+        resolver, execution, proof, leases = self._fixture()
+        stale_identity = replace(proof.target_peer_identity, namespace_identity="mnt:99;net:99")
+        with mock.patch.object(resolver.custody_resolver, "resolve_live_peer", return_value=stale_identity), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertTrue(leases[0].closed)
+
+        resolver, execution, proof, leases = self._fixture()
+        expired_proof = replace(proof, expires_monotonic=time.monotonic() - 1)
+        with mock.patch.object(resolver.loader_observations, "resolve_loaded_package_closure",
+                               return_value=expired_proof), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_target", return_value=4242), \
+                mock.patch.object(RootNativeLoaderObservationStore, "_pidfd_exited", return_value=False):
+            with self.assertRaises(AuthorityDenied):
+                resolver.resolve_selected_native_input_target(execution)
+        self.assertTrue(leases[0].closed)
 
     def test_root_selected_task_target_rejects_unregistered_selection_and_observer_mismatch(self):
         resolver, execution, _proof, leases = self._fixture()
