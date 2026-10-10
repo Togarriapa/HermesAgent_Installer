@@ -90,9 +90,9 @@ class RootTaskNativeObservationRegistry:
     """Join actual input, native bridge, tool-result, custody and job evidence.
 
     Dependencies are concrete root registries, not worker callbacks. The
-    registry starts capture after custody has delivered the exact admitted
-    stdin frame and EOF, then watches the root-owned native response records
-    while that exact process remains live.
+    registry binds the root coordinator's captured and delivered input before
+    custody writes stdin, then watches root-owned native response records while
+    that exact process remains live.
     """
 
     def __init__(self, source_observer_registry: Any, native_bridge_broker: Any,
@@ -117,7 +117,7 @@ class RootTaskNativeObservationRegistry:
             raise AuthorityDenied("resource.native_observer", "root task native observation dependencies are unavailable")
         input_observer = (getattr(source_observer_registry, "native_input_observer", None)
                           or getattr(source_observer_registry, "input_observer", None))
-        if not callable(getattr(input_observer, "record_admitted_task_input", None)):
+        if not callable(getattr(input_observer, "resolve_task_input_receipt", None)):
             raise AuthorityDenied("resource.native_observer", "root task input observer is unavailable")
         invocations = native_bridge_broker.provider_response_registry
         if not all(isinstance(getattr(invocations, name, None), dict)
@@ -208,6 +208,10 @@ class RootTaskNativeObservationRegistry:
                 != run.service_generation_digest
                 or self.monotonic() >= run.deadline):
             raise AuthorityDenied("resource.native_binding", "running task selection binding is stale")
+        if not self._source_snapshot_current(
+                admission_handle, run.admitted_task, run.source_closure,
+                require_controller=False):
+            raise AuthorityDenied("resource.native_binding", "running task source closure is stale")
         state = self.process_custody._resolve_task_handle(task_handle)
         if getattr(state, "handle", None) is not run.process_handle:
             raise AuthorityDenied("resource.native_binding", "running task process identity changed")
@@ -338,6 +342,7 @@ class RootTaskNativeObservationRegistry:
         with self._lock:
             self._runs.pop(task_handle.handle_id, None)
             key = (task_handle.handle_id, terminal_receipt_handle)
+            self._prune_receipts_locked()
             if (key in self._consumed_terminals
                     or task_handle.handle_id in self._completed_tasks
                     or len(self._issued) >= 4096):
@@ -347,11 +352,36 @@ class RootTaskNativeObservationRegistry:
             self._issued[receipt.native_execution_receipt_handle] = receipt
         return receipt
 
+    def cancel_task_input(self, task_handle: Any, initial_input_receipt: Any) -> None:
+        """Stop observations when custody rejects the already-bound input phase."""
+        from ..managed_process_custodian import ManagedTaskHandle
+        from ..registry.resource_jobs import RootTaskInitialInputReceipt
+
+        if (type(task_handle) is not ManagedTaskHandle
+                or type(initial_input_receipt) is not RootTaskInitialInputReceipt):
+            raise AuthorityDenied("resource.native_cancel", "task input cancellation reference is malformed")
+        with self._lock:
+            run = self._runs.get(task_handle.handle_id)
+            if (run is None or run.task_handle is not task_handle
+                    or run.initial_input_receipt is not initial_input_receipt
+                    or initial_input_receipt.task_handle != task_handle.handle_id):
+                raise AuthorityDenied("resource.native_cancel", "task input receipt is unknown or already consumed")
+            self._runs.pop(task_handle.handle_id, None)
+            self._completed_tasks[task_handle.handle_id] = run.deadline
+            run.stop.set()
+        if run.watcher is not None and run.watcher is not threading.current_thread():
+            run.watcher.join(timeout=1.0)
+            if run.watcher.is_alive():
+                raise AuthorityDenied("resource.native_timeout", "cancelled task native observer did not stop")
+
     def verify_receipt(self, receipt: RootTaskNativeExecutionReceipt) -> bool:
         """Check exact in-memory issuance; a copied or reconstructed DTO is not accepted."""
         if type(receipt) is not RootTaskNativeExecutionReceipt:
             return False
         with self._lock:
+            self._prune_receipts_locked()
+            if self._closed:
+                return False
             if self._issued.get(receipt.native_execution_receipt_handle) is not receipt:
                 return False
             self._issued.pop(receipt.native_execution_receipt_handle, None)
@@ -362,10 +392,21 @@ class RootTaskNativeObservationRegistry:
             self._closed = True
             runs = tuple(self._runs.values())
             self._runs.clear()
+            self._issued.clear()
+            self._completed_tasks.clear()
         for run in runs:
             run.stop.set()
             if run.watcher is not None and run.watcher is not threading.current_thread():
                 run.watcher.join(timeout=1.0)
+
+    def _prune_receipts_locked(self) -> None:
+        now = self.monotonic()
+        for handle_id, expiry in tuple(self._completed_tasks.items()):
+            if expiry <= now:
+                self._completed_tasks.pop(handle_id, None)
+        for receipt_handle, receipt in tuple(self._issued.items()):
+            if self._completed_tasks.get(receipt.task_handle, 0) <= now:
+                self._issued.pop(receipt_handle, None)
 
     def _watch(self, run: _TaskRun) -> None:
         while not run.stop.wait(_POLL_SECONDS):
@@ -390,7 +431,8 @@ class RootTaskNativeObservationRegistry:
             native_calls = dict(getattr(invocations, "_invocations", {}))
         response_records = {id(item): item for item in (*responses.values(), *deliveries.values())}
         for item in response_records.values():
-            if not self._matches_task(run, item):
+            if (not self._matches_task(run, item)
+                    or getattr(item, "metadata_taken", False) is not True):
                 continue
             request_id = getattr(item, "native_request_handle", None)
             response_handle = getattr(item, "handle", None)
@@ -476,9 +518,12 @@ class RootTaskNativeObservationRegistry:
             closure = self._receipt_closure(selected, receipts)
         except (KeyError, AuthorityDenied):
             return False
-        expected = {self._receipt_for(handle).receipt_id
-                    for handle in run.source_closure.verified_source_receipt_handles
-                    if self._receipt_for(handle) is not None}
+        source_receipts = tuple(self._receipt_for(handle)
+                                for handle in run.source_closure.verified_source_receipt_handles)
+        if (not source_receipts or any(receipt is None for receipt in source_receipts)
+                or len({receipt.receipt_id for receipt in source_receipts}) != len(source_receipts)):
+            return False
+        expected = {receipt.receipt_id for receipt in source_receipts}
         input_receipt = self._receipt_for(run.input_event.source_receipt_handle)
         if input_receipt is None:
             return False
@@ -507,7 +552,13 @@ class RootTaskNativeObservationRegistry:
         except (KeyError, AuthorityDenied):
             return False
         input_receipt = self._receipt_for(run.input_event.source_receipt_handle)
-        return bool(input_receipt and input_receipt.receipt_id in {item.receipt_id for item in closure})
+        root = closure[0] if closure else None
+        return bool(input_receipt and root
+                    and input_receipt.receipt_id in {item.receipt_id for item in closure}
+                    and root.profile_id == run.profile_id
+                    and root.process_generation == run.admitted_task.process_generation
+                    and root.native_process_identity == run.native_process_identity
+                    and all(item.monotonic_expires_at > self.monotonic() for item in closure))
 
     def _receipt_closure(self, roots: list[Any], by_handle: Mapping[str, Any]) -> tuple[Any, ...]:
         by_id = {item.receipt_id: item for item in by_handle.values()}
@@ -592,14 +643,7 @@ class RootTaskNativeObservationRegistry:
         if not isinstance(events, Mapping):
             return None
         matches = [event for event in events.values()
-                   if getattr(event, "input_origin_kind", None) == "root-admitted-task"
-                   and getattr(event, "source_receipt_handle", None) == receipt.source_receipt_handle
-                   and getattr(event, "payload_sha256", None) == task.stdin_sha256
-                   and getattr(event, "payload_size_bytes", None) == task.stdin_size_bytes
-                   and getattr(event, "producer_profile_id", None) == run.profile_id
-                   and getattr(event, "producer_generation", None) == task.process_generation
-                   and getattr(event, "parent_closure_digest", None) == run.source_closure.lineage_hash
-                   and getattr(event, "expires_monotonic", 0) >= receipt.expires_monotonic]
+                   if self._matches_initial_input_event(run, receipt, event)]
         if len(matches) != 1:
             return None
         event = matches[0]
@@ -616,17 +660,7 @@ class RootTaskNativeObservationRegistry:
                 peer_pid=pid, peer_pidfd=pidfd)
         except Exception:
             return None
-        process_bindings = getattr(self.source_observers, "_receipt_process_bindings", {})
-        process_binding = (process_bindings.get(getattr(input_receipt, "receipt_id", ""))
-                           if isinstance(process_bindings, Mapping) else None)
-        loaded_closure = getattr(process_binding, "loaded_package_proof", None)
         if (delivered != receipt.producer_context_delivery_handle
-                or process_binding is None
-                or getattr(loaded_closure, "package_id", None) != task.native_package_id
-                or getattr(loaded_closure, "profile_id", None) != run.profile_id
-                or getattr(loaded_closure, "generation", None) != task.process_generation
-                or getattr(loaded_closure, "target_peer_identity", None) != identity
-                or getattr(loaded_closure, "loader_ready_event_id", None) != ready_event_id
                 or not self._receipt_live(input_receipt, now)
                 or not self._receipt_descends_from_task(run, input_receipt)):
             return None
@@ -641,6 +675,20 @@ class RootTaskNativeObservationRegistry:
         else:
             return None
         return event, identity, native_identity, package_proof
+
+    @staticmethod
+    def _matches_initial_input_event(run: _TaskRun, receipt: Any, event: Any) -> bool:
+        task = run.admitted_task
+        return (getattr(event, "input_origin_kind", None) == "root-admitted-task"
+                and getattr(event, "source_receipt_handle", None) == receipt.source_receipt_handle
+                and getattr(event, "payload_sha256", None) == task.stdin_sha256
+                and getattr(event, "payload_size_bytes", None) == task.stdin_size_bytes
+                and getattr(event, "producer_profile_id", None) == run.profile_id
+                and getattr(event, "producer_generation", None) == task.process_generation
+                and getattr(event, "parent_closure_digest", None) == task.parent_closure_digest
+                and getattr(event, "native_loader_ready_event_id", None)
+                == receipt.native_loader_ready_event_id
+                and getattr(event, "expires_monotonic", 0) >= receipt.expires_monotonic)
 
     def _source_snapshot_current(self, admission_handle: Any, task: Any, source: Any,
                                  *, require_controller: bool = True) -> bool:
@@ -803,6 +851,9 @@ class RootTaskNativeObservationRegistry:
                 or self.process_custody.resolve_task_terminal(
                     run.task_handle.handle_id, terminal_handle) is not terminal
                 or not self._admitted_task_current(task, run.profile_id)
+                or not self._source_snapshot_current(
+                    run.admission_handle, task, run.source_closure,
+                    require_controller=False)
                 or current_service.authority_epoch != run.authority_epoch
                 or current_service.service_generation_digest != run.service_generation_digest
                 or now >= run.deadline or now >= run.input_event.expires_monotonic
