@@ -186,3 +186,5 @@ Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-captu
 Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
 
 Prepared build service selection v115: `plans/amendments/2026-10-10-prepared-build-service-selection-v115.md`; source-owned setup-only exact build subject/current NSS/root selection before activeprofile, no fabricated worker. Existing build/setup/acceptance tasks remain open.
+
+Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-runtime-release-asset-redirect-v116.md`; one exact publicCPython GitHub302 officialasset hop with TLS/header/query/integrity checks, all other NoRedirect unchanged. Existing actualbootstrap/acceptance tasks remain open.
