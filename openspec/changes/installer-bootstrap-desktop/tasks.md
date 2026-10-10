@@ -201,3 +201,5 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 - [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
 
 - [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.
+
+- [ ] HI-T162.1 Controller custody/fixture publisher/host authority/entrypoint: genuine finite fixture compiler/key/publication/session/runtime adapter and namespace/currentness negative tests.

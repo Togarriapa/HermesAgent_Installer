@@ -245,3 +245,7 @@ Native capture profiles v158: `plans/amendments/2026-10-10-native-capture-profil
 Root native health start v159: `plans/amendments/2026-10-10-root-native-health-start-v159.md`; actual committed runnable authority then root health admission/control before fixture input, normal enablement withheld.
 
 Installed local qualification v160: `plans/amendments/2026-10-10-installed-local-qualification-v160.md`; finite installed source-owned fixture dispatcher with genuine production actor/receipts and cleanup, distinct Pi acceptance.
+
+Application build admission v161: `plans/amendments/2026-10-10-application-build-admission-v161.md`; finite actual setup managed app profile/input/output/grant and fixed source driver recipe, post-terminal output/probe evidence.
+
+Qualification root adapter v162: `plans/amendments/2026-10-10-qualification-root-adapter-v162.md`; dedicated source-bound held root/publication/session/key namespace, actual core authority validation and untouched production constants.
