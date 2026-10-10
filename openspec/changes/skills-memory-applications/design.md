@@ -108,3 +108,5 @@ Private model selection projections v128: `plans/amendments/2026-10-10-private-m
 Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
 
 Application offline runtime build v132: `plans/amendments/2026-10-10-application-offline-runtime-build-v132.md`; exact four setup-only source/build targets and actual offline package/environment/probe receipts, separate Python versus Bun/Node; reviewed resource ceilings are not measured compatibility. All AC remain open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.

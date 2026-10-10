@@ -1,0 +1,3 @@
+# Setup selectors and private profile v133
+
+HI-T03/SK-T01/SK-F02/R0067/R0138/AC12: actual factory compares short-lived principal/namespace receipt identities through long preparation, and v124 has no private-profile issuer. Stable setup intent selectors are separate from freshly authenticated <=30s authority snapshots. A distinct private-purpose selection is genuinely minted from adopted principal/native service profile and the verified v91 owner-private namespace source, within the same actual root TTY memory/model configuration choice. No Resources alias, new phantom profile, receipt lease extension, public egress, capture consent or start authority is inferred. Adjacent exact APIs/fields/open tasks; frozen baseline/all AC unchanged.
