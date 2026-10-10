@@ -19,6 +19,33 @@ from hermes_installer.authority.setup_policy_publication import (
 )
 
 
+def _home_crosswalk():
+    rows = []
+    source_ids = [f"resource-profile-{index:03d}" for index in range(207)] + ["hermes"]
+    for index, source_id in enumerate(sorted(source_ids)):
+        row = {
+            "source_profile_id": source_id, "source_revision": "a" * 40,
+            "source_manifest_sha256": "b" * 64,
+            "role": "jarvis-primary-home" if source_id == "hermes" else "resource-delegate-home",
+            "native_profile_key": "default",
+            "display_name": "Jarvis" if source_id == "hermes" else source_id,
+            "home_selection_handle": f"S{index:042d}",
+            "materialization_receipt_handle": f"M{index:042d}",
+            "home_generation": "prepared-v1", "principal_id": "principal-1",
+            "namespace_id": "namespace-1", "runtime_receipt_handle": "R" * 43,
+            "runtime_identity_sha256": "c" * 64,
+            "behavioral_manifest_sha256": "d" * 64,
+        }
+        row["mapping_sha256"] = _sha(_canonical(row))
+        row["home_binding_id"] = _sha(
+            b"jarvis-published-native-home-v214\0" + bytes.fromhex(row["mapping_sha256"]))
+        rows.append(row)
+    raw = _canonical({"schema": 1, "rows": rows})
+    return raw, {"schema": 1,
+                 "relative_path": "authority/native-profile-home-crosswalk-v213.json",
+                 "sha256": _sha(raw), "size_bytes": len(raw)}
+
+
 class PolicyPublicationFilesystemTests(unittest.TestCase):
     def test_published_core_cannot_be_constructed_from_caller_fields(self):
         from hermes_installer.authority.setup_policy_publication import RootPublishedAuthorityCore
@@ -48,6 +75,57 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             if reference is not None and reference() is core:
                 publication._AUTHORITY_CORE_MEMBERSHIP.pop(id(core), None)
 
+    def test_published_profile_home_crosswalk_parser_checks_exact_source_row_bindings(self):
+        from hermes_installer.authority.setup_policy_publication import (
+            _parse_native_profile_home_crosswalk,
+        )
+
+        raw, _binding = _home_crosswalk()
+        parsed = _parse_native_profile_home_crosswalk(raw)
+        self.assertEqual(len(parsed), 208)
+        self.assertEqual(parsed[0].source_profile_id, "hermes")
+        self.assertEqual(parsed[0].to_record()["native_profile_key"], "default")
+        self.assertEqual(sum(row.role == "resource-delegate-home" for row in parsed), 207)
+
+        document = __import__("json").loads(raw)
+        document["rows"][0]["home_binding_id"] = "0" * 64
+        tampered = _canonical(document)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            _parse_native_profile_home_crosswalk(tampered)
+
+        document = __import__("json").loads(raw)
+        document["rows"][1]["home_selection_handle"] = document["rows"][0]["home_selection_handle"]
+        # Recompute only the row's mapping fields so the duplicate is caught by
+        # the table-level uniqueness check rather than a stale row digest.
+        row = document["rows"][1]
+        mapping_fields = (
+            "source_profile_id", "source_revision", "source_manifest_sha256", "role",
+            "native_profile_key", "display_name", "home_selection_handle",
+            "materialization_receipt_handle", "home_generation", "principal_id",
+            "namespace_id", "runtime_receipt_handle", "runtime_identity_sha256",
+            "behavioral_manifest_sha256",
+        )
+        row["mapping_sha256"] = _sha(_canonical({name: row[name] for name in mapping_fields}))
+        row["home_binding_id"] = _sha(
+            b"jarvis-published-native-home-v214\0" + bytes.fromhex(row["mapping_sha256"]))
+        with self.assertRaises(BootstrapEnrollmentPending):
+            _parse_native_profile_home_crosswalk(_canonical(document))
+
+    def test_selected_current_core_accessor_uses_fixed_current_receipt_resolver(self):
+        from hermes_installer.authority import setup_policy_publication as publication
+        receipt = object()
+        core = object()
+        calls = []
+
+        with patch.object(publication.PolicyPublicationReceiptResolver, "resolve_current",
+                          return_value=receipt), \
+             patch.object(publication.PolicyPublicationReceiptResolver,
+                          "resolve_current_authority_core",
+                          side_effect=lambda value: calls.append(value) or core):
+            result = publication.PolicyPublicationReceiptResolver.resolve_selected_current_authority_core()
+        self.assertIs(result, core)
+        self.assertEqual(calls, [receipt])
+
     def _publisher_for_active_claim(self, compiled, registry):
         publisher = object.__new__(RootSetupPolicyGenerationPublisher)
         publisher.registry = registry
@@ -63,6 +141,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
         observed, runtime, materialized = ("o" * 64, "r" * 64, "m" * 64)
         source = (runtime, materialized, runtime) if duplicate else (runtime, materialized)
         selection = {"catalog_sha256": "e" * 64}
+        crosswalk_bytes, crosswalk_binding = _home_crosswalk()
         return SimpleNamespace(
             publication_handle="p" * 64, claim_digest="c" * 64,
             prepared_generation_id="prepared-v1", transaction_handle="t" * 64,
@@ -73,6 +152,10 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             authority_core_bytes=b'{"schema":1}',
             authority_core_sha256=_sha(b'{"schema":1}'), authority_core_size_bytes=12,
             authority_core_schema=1,
+            native_profile_home_crosswalk_bytes=crosswalk_bytes,
+            native_profile_home_crosswalk_sha256=crosswalk_binding["sha256"],
+            native_profile_home_crosswalk_size_bytes=crosswalk_binding["size_bytes"],
+            native_profile_home_crosswalk_schema=1,
             policy_bytes=b"{}", artifact_catalog_bytes=b"{}", selection_document=selection,
             plan_sha256="f" * 64, plan_artifact_id="installer-root-setup-plan-v1",
             release_commit="1" * 40, observed_root_receipt_handle=observed,
@@ -83,6 +166,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
 
     def _active_receipt(self, claim):
         source = (claim.observed_root_receipt_handle, *claim.source_receipt_handles)
+        _crosswalk_bytes, crosswalk_binding = _home_crosswalk()
         return RootSetupPublicationReceipt(
             1, "q" * 64, claim.transaction_handle,
             "installer-bootstrap-policy-generation-v1", "2" * 64,
@@ -95,6 +179,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             authority_core_sha256=claim.authority_core_sha256,
             authority_core_size_bytes=claim.authority_core_size_bytes,
             authority_core_schema=claim.authority_core_schema,
+            native_profile_home_crosswalk=crosswalk_binding,
         )
 
     def test_active_pointer_cas_failure_reconciles_from_durable_journal_without_release(self):
@@ -282,6 +367,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
 
     def _active_record(self):
         digest = "a" * 64
+        _crosswalk_bytes, crosswalk_binding = _home_crosswalk()
         return {
             "schema": 1, "transaction_handle": "t" * 64,
             "publication_sha256": digest, "publication_receipt_handle": "r" * 64,
@@ -301,6 +387,8 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             "authority_core_sha256": "5" * 64,
             "authority_core_size_bytes": 128,
             "authority_core_schema": 1,
+            "native_profile_home_crosswalk": crosswalk_binding,
+            "native_profile_home_crosswalk": crosswalk_binding,
         }
 
     def test_active_receipt_binds_claim_generation_and_native_receipts(self):
@@ -314,6 +402,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                                "sha256": receipt.authority_core_sha256,
                                "size_bytes": receipt.authority_core_size_bytes,
                                "authority_schema": receipt.authority_core_schema},
+            "native_profile_home_crosswalk": dict(receipt.native_profile_home_crosswalk),
             "inputs": {
                 "publication_handle": receipt.publication_handle,
                 "claim_digest": receipt.claim_digest,
@@ -328,6 +417,11 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
             "owner_overlay_observer_records": [],
         }
         _verify_active_receipt_descriptor(receipt, descriptor)
+        altered_crosswalk = dict(descriptor)
+        altered_crosswalk["native_profile_home_crosswalk"] = dict(
+            descriptor["native_profile_home_crosswalk"], sha256="9" * 64)
+        with self.assertRaises(BootstrapEnrollmentError):
+            _verify_active_receipt_descriptor(receipt, altered_crosswalk)
         no_observer_table = dict(descriptor)
         no_observer_table.pop("owner_overlay_observer_records")
         with self.assertRaises(BootstrapEnrollmentError):
@@ -407,6 +501,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                                          "sha256": receipt.authority_core_sha256,
                                          "size_bytes": receipt.authority_core_size_bytes,
                                          "authority_schema": receipt.authority_core_schema},
+                      "native_profile_home_crosswalk": dict(receipt.native_profile_home_crosswalk),
                       "authority_core": {"relative_path": "authority/enrollment.json",
                                          "sha256": receipt.authority_core_sha256,
                                          "size_bytes": receipt.authority_core_size_bytes,
