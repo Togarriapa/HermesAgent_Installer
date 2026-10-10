@@ -3423,6 +3423,66 @@ def _open_secure_directory(path: Path, *, expected_uid: int) -> int:
             os.close(current)
 
 
+def ensure_initial_setup_fixed_prefixes() -> None:
+    """Create only the two fixed first-install config directories, without repair.
+
+    The installed root actor needs these directories before constructing its
+    credential-vault and first-selection registries. Existing objects are
+    observed and must already have the exact reviewed owner, group, and mode;
+    this routine never chmods, chowns, follows, or replaces an existing path.
+    """
+    if os.geteuid() != 0 or not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("initial setup prefixes require the installed Linux root actor")
+    etc_fd = _open_secure_directory(Path("/etc"), expected_uid=0)
+    try:
+        _ensure_owned_child_directory(etc_fd, "hermes-installer", 0o755)
+        setup_fd = os.open("hermes-installer", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=etc_fd)
+        try:
+            _ensure_owned_child_directory(setup_fd, "credentials", 0o700)
+        finally:
+            os.close(setup_fd)
+    finally:
+        os.close(etc_fd)
+
+
+def _ensure_owned_child_directory(parent_fd: int, name: str, mode: int, *,
+                                  expected_uid: int = 0, expected_gid: int = 0) -> None:
+    if (name not in {"hermes-installer", "credentials"}
+            or (name == "hermes-installer" and mode != 0o755)
+            or (name == "credentials" and mode != 0o700)
+            or type(expected_uid) is not int or type(expected_gid) is not int):
+        raise InstallerReleaseBuildError("first-install directory is outside its fixed layout")
+    created = False
+    try:
+        os.mkdir(name, mode, dir_fd=parent_fd)
+        created = True
+    except FileExistsError:
+        pass
+    try:
+        child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=parent_fd)
+    except OSError:
+        raise InstallerReleaseBuildError("fixed first-install directory is not a real directory") from None
+    try:
+        info = os.fstat(child_fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise InstallerReleaseBuildError("fixed first-install path is not a directory")
+        if created:
+            # Only the directory exclusively created above may be normalized.
+            os.fchown(child_fd, expected_uid, expected_gid)
+            os.fchmod(child_fd, mode)
+            os.fsync(child_fd)
+            info = os.fstat(child_fd)
+        if (info.st_uid != expected_uid or info.st_gid != expected_gid
+                or stat.S_IMODE(info.st_mode) != mode):
+            raise InstallerReleaseBuildError("fixed first-install directory has conflicting custody or mode")
+    finally:
+        os.close(child_fd)
+    if created:
+        os.fsync(parent_fd)
+
+
 def _relative_below(root: Path, path: Path) -> str:
     try:
         resolved_root = root.resolve(strict=True)
