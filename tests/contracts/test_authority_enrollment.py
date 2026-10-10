@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+from unittest import mock
+import time
 import stat
 import tempfile
-import time
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
-from unittest import mock
 
 from hermes_installer.authority.enrollment import (
     AUTHORITY_CONFIG_PATH, CREDENTIAL_DIRECTORY, RootCredentialVault,
@@ -18,7 +17,6 @@ from hermes_installer.authority.enrollment import (
     _parse_source_issuers, _parse_native_schema_artifact_records,
     _parse_composio_channel_enrollment_records, _parse_channel_delivery_binding_records,
     _validate_root_key_selection,
-    RootSetupChoiceSigner,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
