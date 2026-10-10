@@ -287,3 +287,7 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T159.1 factory/entrypoint/startup/custody/health observer: Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement.
 
 - [ ] HI-T159.2 native fixture/observer/registration source owners: Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests.
+
+- [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
+
+- [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.

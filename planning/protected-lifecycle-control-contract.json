@@ -1617,5 +1617,99 @@
       }
     ],
     "acceptance": "All original AC remain open; genuine health operation and semantic receipt still required, no prepared start or acceptance inferred; baseline unchanged."
+  },
+  "installed_local_qualification_v160": {
+    "schema": 1,
+    "requirements": [
+      "HI-T09",
+      "HI-T13",
+      "RB-T07",
+      "BD-F03",
+      "LC-F03"
+    ],
+    "why": "The installed fixed launcher has only mutating install/resume/update actions; unittest interpreter cannot satisfy genuine installed actor/MainPID. Production task/display positive fixtures need a bounded fixed source-owned dispatcher, not PYTHONPATH/sitecustomize or synthetic actor/grant DTOs.",
+    "launcher": {
+      "action": "qualify",
+      "argv": "Exact fixed installed bin/hermes-installer-root-setup qualify --suite <finite suite ID>; no other qualification options",
+      "suites": [
+        "resource-cron-task-v1",
+        "display-xauthority-v1"
+      ],
+      "module": "hermes_installer.authority.installed_qualification",
+      "entrypoint": "run_selected_installed_qualification(suite_id)->RootInstalledQualificationResult",
+      "actor": "Call InstalledRootReleaseVerifier.from_current_root_process inside actual fixed installed launcher with installed isolated interpreter and closed source import origins. Actual root UID/PIDFD/starttime/current release, root namespaces and genuine systemd current MainPID/executable required wherever controller contract demands them. Qualification action is only a finite dispatcher selector, never authority. No alternate executable/test Python/import interception/actor test bypass.",
+      "source": "Root entrypoint imports only reviewed installed source module/closure. Fixed suite recipe/schema assets must be genuine held release members with exact source-reviewed IDs/hashes/size/roles; actual source owner implements assets and Sol reviews measured pins before execution. No invented fixture digest, caller test path/module/code/JSON/env or arbitrary executable. Missing source asset stays pending."
+    },
+    "fixture_producer": {
+      "owner": "task kernel fixture + display fixture + root controller custody; root entrypoint owns dispatcher",
+      "class": "RootOwnedQualificationFixtureRegistry",
+      "constructor": "from_current_installed_actor(verified_installer_release,current_actor_observation,selected_fixture_source_catalog,root_journal,managed_process_custody)",
+      "observe": "observe_owned_fixture(suite_id)->RootOwnedQualificationFixtureSelection",
+      "verify": "verify_current(selection)->current held fixture/source/environment proof",
+      "fields": [
+        "schema",
+        "selection_handle",
+        "suite_id",
+        "fixture_recipe_artifact_id",
+        "fixture_recipe_sha256",
+        "fixture_schema_artifact_id",
+        "fixture_schema_sha256",
+        "release_deployment_receipt_sha256",
+        "root_actor_observation_handle",
+        "fixture_root_observation_handle",
+        "fixture_environment_observation_handle",
+        "controller_unit_observation_handle",
+        "fixture_generation_id",
+        "fixture_namespace_id",
+        "fixture_profile_id",
+        "fixture_principal_id",
+        "fixture_payload_sha256",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "source": "Exact fixed suite recipe source owns fixture package/action/profile/source/observer/backend/operation/schema and bounded expected results. The registry observes/creates only that recipe-owned ephemeral root journal child qualification/<root-generated run ID>, held nofollow private FDs and immutable source members, actual identified isolated Linux fixture environment and unit/MainPID/cgroup/namespace receipts. Existing unrelated unit/data/profile/policy is never adopted or modified. Root-generated fixture IDs are not receipt proof until registry membership/current physical observations. Caller suite ID selects only closed source recipe, not target authority.",
+      "environment": "No privileged development Mac execution. Require an identified isolated Linux fixture deployment and genuine observed environment/owned unit/root/source boundaries; a Docker label, caller bool or arbitrary namespace inode is insufficient. Fail closed when capabilities/systemd/source/native prerequisites absent. Create only owned ephemeral fixture UID/profile/cgroup/network/mount/root selected by recipe and actual observations; no global module/network/service replacement. Keep real deployment/fixture identities in evidence.",
+      "publication": "Source-owned fixture runtime producer compiles exact reviewed fixture selection through real policy/source/materialization/current signer and atomic publication APIs into a separate owned fixture authority generation under the held fixture journal root. Never production /etc authority pointer or existing setup choices. Genuine RootSetupSessionStore/committed enrollment/publication handles come from that source-bound fixture producer using existing verifier/registry mechanisms; never manually constructed seals/SimpleNamespace. Scope/purpose is qualification only and cannot authorize normal install/account/provider effects. Actual source key/custody/signature evidence required, not _FixtureSigner. Missing concrete producer stays pending, never counterfeit production session."
+    },
+    "runtime": {
+      "resource-cron-task-v1": "Actual RootControllerRoleRuntime with installed actor/current unit/MainPID and reviewed role member proof, actual source-pinned Resources discovery/materialization selected row/current source issuers/backend/DAG. Run RootSelectedCronProducer -> ResourceJobAuthority genuine RootResourceJobAdmissionHandle -> selected child claim/backend -> RootResourceTaskRunner/root task authority/custody -> RootTaskInputCoordinator exact stdin write+EOF -> actual terminal/result capsule. No test injected admitted task/controller/loader resolver. Retain cancel/expiry/hash mismatch and cgroup/descendant/terminal cleanup assertions.",
+      "display-xauthority-v1": "Actual selected remote startup/network/Xpra source+overlay/Xauthority fixture closure, real fixture publication/setup session and RootSelectedDisplayLaunchAuthority.admit_selected_start(session_handle,selected_remote_enrollment_id), actual issue_role_grant and AuthorityService.issue_root_selected_service_effect/consume, custody mount/start and observed cookie/inode/display semantics. No _root_selected_effect, fake signer, preconstructed VerifiedRootSelectedServiceEffect or fake mount/source proof. No Cloudflare/account/public tunnel/Desktop host shell mutation.",
+      "boundaries": "Use existing managed process original deadlines/resource limits and zero additional metered budget. Input effects limited exact owned fixture schema/roots/recipes; no messaging/accounts/model download/public egress. After success/failure/cancel deadline, close owned input and clean exact retained PIDFD/cgroup/namespace/root closure; preserve unrelated services and evidence. Unavailable prerequisites produce incomplete with exact missing source/capability, not skipped success."
+    },
+    "result": {
+      "type": "RootInstalledQualificationResult",
+      "fields": [
+        "schema",
+        "suite_id",
+        "fixture_selection_handle",
+        "fixture_generation_id",
+        "release_deployment_receipt_sha256",
+        "controller_observation_handle",
+        "parent_receipt_handles",
+        "terminal_receipt_handle",
+        "cleanup_receipt_handle",
+        "evidence_sha256",
+        "status"
+      ],
+      "status": [
+        "passed",
+        "failed",
+        "incomplete"
+      ],
+      "semantics": "Root registry retains actual production effect/source/observer/terminal/cleanup closure; typed presentation cannot manufacture evidence. Passed requires exact expected semantic result and successful owned cleanup. Local container fixture qualification does not close Pi/hardware/external account/full MVP AC or authorize normal enablement."
+    },
+    "tasks": [
+      {
+        "id": "HI-T160.1",
+        "owner": "root entrypoint/task kernel fixture/display fixture/controller custody",
+        "work": "Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts."
+      },
+      {
+        "id": "HI-T160.2",
+        "owner": "task/display fixture owners",
+        "work": "Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance."
+      }
+    ],
+    "acceptance": "Source/action scope refinement only; no actual fixture qualification or Pi acceptance claimed. All original AC open, baseline immutable."
   }
 }

@@ -654,3 +654,10 @@ The installer SHALL admit health only from genuine committed runnable enrollment
 #### Scenario: Only a prepared generation is available
 - **WHEN** health is requested without a current committed runnable enrollment receipt
 - **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created
