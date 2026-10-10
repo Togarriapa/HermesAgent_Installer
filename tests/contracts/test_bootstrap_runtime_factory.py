@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import unittest
 import os
+import json
+from types import SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import (
-    BootstrapEnrollmentPending, EnrollmentPolicy, ServiceIdentity, VerifiedRootSetupAuthorization, _generation,
+    BootstrapEnrollmentPending, EnrollmentPolicy, EnrollmentReceipt, ServiceIdentity,
+    VerifiedRootSetupAuthorization, _generation,
 )
 from hermes_installer.authority.bootstrap_runtime_factory import (
     InstalledBootstrapPolicyResolver,
@@ -13,11 +16,101 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
+    RootInitialCompilationRegistry,
+    RootBootstrapSession,
+    VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_active_enrollment_accessor_rejects_prepared_and_returns_only_current_commit(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="a" * 64)
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 64, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 100.0)
+        session._last_receipt = prepared
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._resolve_current_active_enrollment()
+
+        committed = EnrollmentReceipt(
+            1, "a" * 64, "d" * 64, "active-generation", "e" * 64,
+            "c" * 64, "committed", ("selected-enrollment",), 2.0, 100.0)
+        session._last_receipt = committed
+        self.assertIs(session._resolve_current_active_enrollment(), committed)
+
+    def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
+        import hermes_installer.authority.bootstrap_runtime_factory as factory_module
+
+        raw = Path("plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/"
+                   "reviewed-native-capability-map-v1.json").read_bytes()
+        session = SimpleNamespace(compilation_session_handle="a" * 64)
+        registry = object.__new__(RootInitialCompilationRegistry)
+        registry._seal = "test-registry-seal"
+        registry.resolve_initial_session = lambda handle: session
+        registry.verify_initial_session = lambda value: self.assertIs(value, session)
+        descriptor = SimpleNamespace(
+            relative_path=factory_module._CAPABILITY_MAP_TEMPLATE_PATH,
+            sha256=factory_module._CAPABILITY_MAP_TEMPLATE_SHA256,
+            size_bytes=factory_module._CAPABILITY_MAP_TEMPLATE_SIZE,
+            roles=("template",))
+        registry._release_file = lambda artifact_id: (descriptor, raw)
+
+        result = registry.resolve_reviewed_capability_map("a" * 64)
+        self.assertIsInstance(result, VerifiedReviewedNativeCapabilityMap)
+        self.assertEqual(result.artifact_id, "installer-reviewed-native-capability-map-v1")
+        self.assertEqual(result._session_handle, session.compilation_session_handle)
+        self.assertEqual(result.document["prepared_capabilities"], [])
+        self.assertEqual(json.dumps(dict(result.document), sort_keys=True, separators=(",", ":"),
+                                    ensure_ascii=False).encode() + b"\n", raw)
+
+        registry._release_file = lambda artifact_id: (descriptor, raw + b" ")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            registry.resolve_reviewed_capability_map("a" * 64)
+
+    def test_adopted_capability_map_rechecks_live_handoff_and_session(self):
+        import hermes_installer.authority.bootstrap_runtime_factory as factory_module
+        from hermes_installer.authority.bootstrap_enrollment import RootSetupSessionHandle
+
+        raw = Path("plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/"
+                   "reviewed-native-capability-map-v1.json").read_bytes()
+        handle = RootSetupSessionHandle("c" * 64, "fixture-session-seal")
+        authorization = SimpleNamespace(transaction_handle="d" * 64, plan_digest="e" * 64)
+        live = object()
+        actor = SimpleNamespace(verify_current=lambda release: None)
+        descriptor = SimpleNamespace(
+            relative_path=factory_module._CAPABILITY_MAP_TEMPLATE_PATH,
+            sha256=factory_module._CAPABILITY_MAP_TEMPLATE_SHA256,
+            size_bytes=factory_module._CAPABILITY_MAP_TEMPLATE_SIZE,
+            roles=("template",))
+        handoff = factory_module.RootInitialPublicationHandoff(
+            1, "f" * 64, "a" * 64, "b" * 64, "g" * 64, "h" * 64,
+            "e" * 64, "i" * 64, "j" * 64, (), 1.0, 1e20,
+            handle.session_id, authorization.transaction_handle)
+        registry = object.__new__(RootInitialCompilationRegistry)
+        registry._session_store = SimpleNamespace(
+            _live=lambda actual: live,
+            _proof=lambda actual: authorization)
+        registry._adopted_handoffs = {handle.session_id: handoff}
+        registry.actor, registry.release = actor, object()
+        registry._validate_release_closure = lambda: None
+        registry._release_file = lambda artifact_id: (descriptor, raw)
+        registry._seal = "fixture-registry-seal"
+
+        result = registry.resolve_adopted_reviewed_capability_map(handle)
+        self.assertIsInstance(result, VerifiedReviewedNativeCapabilityMap)
+        self.assertEqual(result._session_handle, handle.session_id)
+        self.assertEqual(result._registry_seal, registry._seal)
+        self.assertEqual(result.document["prepared_capabilities"], [])
+
+        registry._session_store._proof = lambda actual: SimpleNamespace(
+            transaction_handle="x" * 64, plan_digest="e" * 64)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            registry.resolve_adopted_reviewed_capability_map(handle)
+
     def test_prepared_authority_base_accepts_only_exact_empty_root_snapshot(self):
         root = {"root_id": "installer-authority-journal-v1",
                 "absolute_path": "/var/lib/hermes-installer/authority-journal",
