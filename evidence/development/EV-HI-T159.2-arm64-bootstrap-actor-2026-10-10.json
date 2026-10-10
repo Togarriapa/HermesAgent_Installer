@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "evidence_id": "EV-HI-T159.2-ARM64-BOOTSTRAP-ACTOR-2026-10-10",
+  "date": "2026-10-10",
+  "change_id": "installer-bootstrap-desktop",
+  "related_tasks": ["BD-F03", "HI-T149.1", "HI-T159.2"],
+  "state": "pending-at-real-operator-intake-boundary",
+  "acceptance_record_emitted": false,
+  "acceptance_ids": {"AC01-AC18": "open"},
+  "candidate": {
+    "sha": "0a0789de8d1d4ddb639b0135c7f41c49abc01194",
+    "tree": "54f04091889a467c3b1fa57e0c730671dfb8ec06",
+    "published_ref": "codex/luna-installer-development"
+  },
+  "execution": {
+    "command_argv": [
+      "docker", "exec", "-it", "hermes-installer-recheck-0a0789de",
+      "/workspace/scripts/hermes-installer-root-setup", "install"
+    ],
+    "started_at": "2026-10-10T11:42:44Z",
+    "ended_at": "2026-10-10T11:44:03Z",
+    "exit_code": 4,
+    "exit_reason": "EOF was sent at the displayed existing-account prompt to stop without inventing target input.",
+    "target_account_prompt_observed": true,
+    "target_account_value_entered": false,
+    "authentik_origin_or_group_values_entered": false,
+    "credentials_created_or_read": false,
+    "environment_values_recorded": false,
+    "transcript": {
+      "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/bootstrap-transcript-0a0789de.txt",
+      "sha256": "50bedfe27b25f7427b5feb7acde7a122ed719d04cec49715efda868a22a29349"
+    },
+    "metadata": {
+      "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/run-metadata-0a0789de.txt",
+      "sha256": "3f946ddba0ad7c292e6a40be2aaa4121bee4321af80a9fcb0f4bd9bd6c6c9eb7"
+    },
+    "post_run_observation": {
+      "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/post-run-tree-0a0789de.txt",
+      "sha256": "0ed3390938936a67c5fc1e6fa42e6fc36ae66ec0e1e415def2d2f24e8a948bdb"
+    }
+  },
+  "isolated_target": {
+    "kind": "linux-arm64-docker-container",
+    "container": "hermes-installer-recheck-0a0789de",
+    "container_id": "6e29de074c999b4443eaad26e2c88a6ec5bfe39e272f520e54915e53f330c21c",
+    "image_id": "sha256:7f3e7c1a64166f729c3b350d40446b03e65ada0abdeae1ee89b4ba00f978c16f",
+    "source_mount": "/workspace:ro",
+    "state_volume": "hermes-installer-recheck-0a0789de-state",
+    "release_volume": "hermes-installer-recheck-0a0789de-releases",
+    "other_attempts_modified": false
+  },
+  "observed_progress": {
+    "runtime": "Pinned ARM64 CPython 3.14.7 and PyYAML were present in the root-owned isolated runtime.",
+    "handoff": "Same-PID sealed FD3 reexec reached the selected source runtime.",
+    "publication": "The selected immutable release and deployment pointer were published and verified.",
+    "release_manifest_sha256": "a9982813144ae89e6b70f7cba6edb0acb7923d09aaee941e45e5717e5c14741f",
+    "deployment_receipt_sha256": "0f39536954dff3e050e91882fb6c99b499f11161a9b3d3316ff7696c85eaa77f",
+    "source_receipt_sha256": "9ced126006330653c7ef2fb98a42cbcd733daa960e6538681c16b87d6b5e74ac",
+    "source_manifest_sha256": "7394bd634240d46c8680a25f8ae801ba60521f628d77209d15a744cb4008fea9",
+    "published_release_regular_file_count": 5211,
+    "installed_actor_verification": "The actual command displayed the account intake prompt after actor verification in root_setup.py and created the fixed /etc/hermes-installer and mode-0700 credentials directories. This is observed control-flow evidence; no persistent actor receipt is emitted.",
+    "account_or_service_setup": "not performed"
+  },
+  "prior_attempts": {
+    "evidence_commit": "5fa236a152e54780f7b4751a8c96b437c9fcdea6",
+    "evidence_path": "evidence/development/EV-HI-T159.2-arm64-bootstrap-recheck-2026-10-10.json",
+    "summary": "The ffc0c9c4 attempt stopped at publication because native-health-fixture was omitted from the publisher role allowlist. The 9f052a39 attempt published, then failed actor verification due to the runtime-factory import order. Their transcripts and hashes remain recorded in the prior evidence item."
+  },
+  "claim_limit": "This is an isolated ARM64 container run, not Raspberry Pi or account acceptance. All AC01-AC18 remain open."
+}
