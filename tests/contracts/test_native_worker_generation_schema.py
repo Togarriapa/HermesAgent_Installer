@@ -120,6 +120,19 @@ def test_active_network_owner_refuses_unobserved_runtime():
             RootActiveNetworkGenerationOwner.from_root_runtime(runtime)
 
 
+def test_active_network_owner_denies_when_v97_policy_has_no_held_release_member():
+    from types import SimpleNamespace
+    from hermes_installer.authority.active_network_generation import RootActiveNetworkGenerationOwner
+
+    owner = object.__new__(RootActiveNetworkGenerationOwner)
+    owner._release = SimpleNamespace(files=())
+    with pytest.raises(ValueError, match="exact held installer template member"):
+        owner._verify_selected_policy_source({
+            "policy_artifact_id": "installer-private-loopback-nft-v1",
+            "policy_sha256": "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc",
+        })
+
+
 def _sha(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
                                    ensure_ascii=False, allow_nan=False).encode()).hexdigest()

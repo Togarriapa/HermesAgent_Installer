@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import secrets
+import stat
 import time
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -162,6 +165,7 @@ class RootActiveNetworkGenerationOwner:
                 network_id, profile_id,
                 service_generation_digest=bindings.enrollment_catalog.digest,
             )
+            self._verify_selected_policy_source(network)
             adopted = self._choices.resolve_current_adopted_choice(
                 active["source_choice_selection_handle"],
                 "native-policy-preparation", publication,
@@ -278,6 +282,43 @@ class RootActiveNetworkGenerationOwner:
             raise
         except Exception:
             raise AuthorityDenied("network_generation.current", "selected active network generation is unavailable") from None
+
+    def _verify_selected_policy_source(self, network: Mapping[str, Any]) -> None:
+        """Reopen the exact installed v97 policy bytes; row hashes are not their source."""
+        from .private_loopback_network import POLICY_ID, POLICY_SHA256
+
+        if (network.get("policy_artifact_id") != POLICY_ID
+                or network.get("policy_sha256") != POLICY_SHA256):
+            raise ValueError("selected worker network policy differs from the finite v97 policy")
+        rows = [item for item in self._release.files if item.artifact_id == POLICY_ID]
+        if (len(rows) != 1 or rows[0].roles != ("template",)
+                or rows[0].relative_path != "templates/private-loopback-policy-v1.json"
+                or rows[0].sha256 != POLICY_SHA256 or rows[0].size_bytes != 1482):
+            raise ValueError("selected worker network policy has no exact held installer template member")
+        fd = self._release.open_file(POLICY_ID)
+        try:
+            info = os.fstat(fd)
+            chunks = bytearray()
+            while len(chunks) <= 4096:
+                block = os.read(fd, min(1024, 4097 - len(chunks)))
+                if not block:
+                    break
+                chunks.extend(block)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or (info.st_dev, info.st_ino, info.st_size, stat.S_IMODE(info.st_mode))
+                    != (rows[0].device, rows[0].inode, 1482, 0o444)
+                    or len(chunks) != 1482
+                    or hashlib.sha256(chunks).hexdigest() != POLICY_SHA256):
+                raise ValueError("selected worker network policy template bytes or custody changed")
+            document = json.loads(bytes(chunks).decode("utf-8"))
+            if (not isinstance(document, dict) or document.get("id") != POLICY_ID
+                    or document.get("schema") != 1
+                    or document.get("mechanism") != "isolated-netns-nftables-systemd-bind-v1"
+                    or "SocketBindDeny=any" not in document.get("bind_enforcement", "")
+                    or "BPF attachments" not in document.get("bind_enforcement", "")):
+                raise ValueError("selected worker network policy source does not match fixed semantics")
+        finally:
+            os.close(fd)
 
 
 def _same_projection_inputs(left: RootActiveNetworkGenerationProjection,
