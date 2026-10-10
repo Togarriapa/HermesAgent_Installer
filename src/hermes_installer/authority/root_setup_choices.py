@@ -54,6 +54,8 @@ class RootSetupChoiceSnapshot:
     source_member_receipt_handles: tuple[str, ...]
     choice_payload: Mapping[str, Any] = field(repr=False)
     choice_payload_sha256: str
+    signed_record_sha256: str
+    release_deployment_receipt_sha256: str
     choice_epoch: int
     revocation_epoch: int
     issued_at_unix: float
@@ -275,11 +277,45 @@ class RootSetupChoiceRegistry:
             private_profile_selection_handle=row["private_profile_selection_handle"],
             source_member_receipt_handles=tuple(row["source_member_receipt_handles"]),
             choice_payload=dict(row["choice_payload"]), choice_payload_sha256=row["choice_payload_sha256"],
+            signed_record_sha256=hashlib.sha256(_canonical(row)).hexdigest(),
+            release_deployment_receipt_sha256=row["release_deployment_receipt_sha256"],
             choice_epoch=row["choice_epoch"], revocation_epoch=row["revocation_epoch"],
             issued_at_unix=row["issued_at_unix"], setup_deadline_unix=row["setup_deadline_unix"],
             adoption_publication_receipt_handle=row["adoption_publication_receipt_handle"],
             _registry_seal=_SEAL,
         )
+
+    def resolve_current_session_choices(self, current_setup_selection: Any
+                                        ) -> tuple[RootSetupChoiceSnapshot, ...]:
+        """Enumerate only exact current signed choices for this live setup.
+
+        The publisher/compiler can join the finite retained set to its prepared
+        catalog without reading this registry's private row map. Stale, expired,
+        revoked, or not-yet-reattached choices are omitted; malformed stored
+        signatures still fail closed through `_verify_row`.
+        """
+        self._verify_current_setup(current_setup_selection)
+        session_handle = self._setup_session_handle_for_selection(current_setup_selection)
+        with self._lock:
+            handles = tuple(sorted(
+                handle for handle, row in self._rows.items()
+                if row.get("setup_session_handle") == session_handle
+                and row.get("purpose") in _DOMAIN_PURPOSES
+            ))
+        current: list[RootSetupChoiceSnapshot] = []
+        for handle in handles:
+            row = self._rows.get(handle)
+            if row is None:
+                continue
+            self._verify_row(row)
+            if row.get("revocation_epoch") != 1:
+                continue
+            try:
+                snapshot = self.resolve_current_setup_choice(handle, row["purpose"])
+            except AuthorityDenied:
+                continue
+            current.append(snapshot)
+        return tuple(current)
 
     def reattach_current_setup_selection(self, selection_handle: str,
                                          current_setup_selection: Any) -> None:
