@@ -26,7 +26,7 @@ from .application_effect_source_catalog import (
     APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
     APPLICATION_EFFECT_SOURCE_MEMBERS,
 )
-from .installer_release_roles import RELEASE_MEMBER_ROLES
+from .installer_release_roles import NETWORK_STARTUP_HELPER, RELEASE_MEMBER_ROLES
 
 DEPLOYMENT_RECEIPT_PATH = Path("/var/lib/hermes-installer/deployments/current.json")
 RELEASE_STORE_ROOT = Path("/usr/lib/hermes-installer/releases")
@@ -645,6 +645,21 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     for role in ("launcher", "interpreter", "runtime-member", "module", "source-module", "template", "plan", "artifact-catalog", "baseline", "amendment", "native-health-fixture", "application-effect-fixture", "application-build-driver"):
         if role not in by_role:
             raise InstallerReleaseError(f"installed release is missing required {role} closure")
+    helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = NETWORK_STARTUP_HELPER
+    helper_rows = by_role.get(helper_role, [])
+    if (helper_digest is None) != (helper_size is None):
+        raise InstallerReleaseError("network startup helper review pin is incomplete")
+    if helper_digest is None:
+        if helper_rows:
+            raise InstallerReleaseError("network startup helper source pin is pending final review")
+    else:
+        if helper_role not in by_role:
+            raise InstallerReleaseError("installed release is missing its reviewed network startup helper")
+        if (len(helper_rows) != 1 or (helper_rows[0].artifact_id, helper_rows[0].relative_path,
+                                      helper_rows[0].sha256, helper_rows[0].size_bytes,
+                                      helper_rows[0].mode, helper_rows[0].roles) !=
+                (helper_id, helper_path, helper_digest, helper_size, 0o444, (helper_role,))):
+            raise InstallerReleaseError("installed network startup helper differs from its exact reviewed member")
     if len(by_role["launcher"]) != 1 or len(by_role["interpreter"]) != 1:
         raise InstallerReleaseError("installed release launcher/interpreter role is ambiguous")
     expected_fixed = {
@@ -811,6 +826,11 @@ def _amendment_digest(rows: list[VerifiedReleaseFile]) -> str:
 def _artifact_id_for(path: str, roles: list[str]) -> str:
     if "application-build-driver" in roles and path == APPLICATION_BUILD_DRIVER[1]:
         return APPLICATION_BUILD_DRIVER[0]
+    helper_id, _helper_source, helper_path, _helper_digest, _helper_size, helper_role = NETWORK_STARTUP_HELPER
+    if helper_role in roles:
+        if roles != [helper_role] or path != helper_path:
+            raise InstallerReleaseError("network startup helper ID requires its one exact fixed member")
+        return helper_id
     if "launcher" in roles:
         return "installer-root-setup-launcher-v1"
     if "interpreter" in roles:
@@ -857,6 +877,16 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
     fixed_templates = {relative_path: (artifact_id, expected_digest, expected_size)
                        for artifact_id, relative_path, expected_digest, expected_size in FIXED_TEMPLATES}
     expected_fixed_role = fixed_paths.get(path)
+    helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = NETWORK_STARTUP_HELPER
+    if path == helper_path or helper_role in roles:
+        if (roles != [helper_role] or path != helper_path
+                or helper_digest is None or helper_size is None
+                or not isinstance(helper_digest, str)
+                or not _SHA.fullmatch(helper_digest)
+                or type(helper_size) is not int or helper_size <= 0
+                or (digest, size) != (helper_digest, helper_size)
+                or (mode is not None and mode != 0o444)):
+            raise InstallerReleaseError("network startup helper differs from its reviewed read-only member")
     if expected_fixed_role is not None and roles != [expected_fixed_role[0]]:
         raise InstallerReleaseError("fixed release artifact must carry only its exact role")
     role_paths = {role: relative_path for relative_path, (role, _artifact_id) in fixed_paths.items()}

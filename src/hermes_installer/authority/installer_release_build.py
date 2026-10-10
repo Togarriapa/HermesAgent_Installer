@@ -39,7 +39,7 @@ from .application_effect_source_catalog import (
     APPLICATION_EFFECT_SOURCE_CATALOG_PATH, APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
     APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
 )
-from .installer_release_roles import RELEASE_MEMBER_ROLES
+from .installer_release_roles import NETWORK_STARTUP_HELPER, RELEASE_MEMBER_ROLES
 
 
 SOURCE_ORIGIN = "https://github.com/Togarriapa/HermesAgent_Installer.git"
@@ -2712,6 +2712,9 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("fixed installed template differs from its reviewed bytes")
             self._copy_source(source, output_fd, source_path, target, (role,))
             staged.append(self._last_output_row)
+        helper_row = self._stage_network_startup_helper(source, output_fd)
+        if helper_row is not None:
+            staged.append(helper_row)
         # The v175 descriptor selects the exact setup-only effect source rows.
         effect_catalog = source_files.get(APPLICATION_EFFECT_SOURCE_CATALOG_PATH)
         if (effect_catalog is None or effect_catalog.sha256 != APPLICATION_EFFECT_SOURCE_CATALOG_SHA256
@@ -2791,6 +2794,36 @@ class RootInstalledReleaseBuilder:
                 self._copy_source(source, output_fd, source_rel, source_rel, (role,))
                 staged.append(self._last_output_row)
                 staged_paths.add(source_rel)
+
+    def _stage_network_startup_helper(
+        self, source: VerifiedInstallerDistributionReceipt,
+        output_fd: int,
+    ) -> tuple[str, str, int, int, tuple[str, ...]] | None:
+        artifact_id, source_path, target_path, expected_digest, expected_size, role = NETWORK_STARTUP_HELPER
+        if (role != "network-startup-helper"
+                or artifact_id != "installer-private-loopback-worker-gate-v180"
+                or source_path != "helpers/private-loopback-worker-gate.py"
+                or target_path != source_path):
+            raise InstallerReleaseBuildError("fixed native worker helper source policy is malformed")
+        if expected_digest is None and expected_size is None:
+            # The native launch owner has no approved installed helper in a
+            # release until review seals the final coherent source tuple.
+            return None
+        if (not isinstance(expected_digest, str) or not _SHA256.fullmatch(expected_digest)
+                or type(expected_size) is not int or expected_size <= 0):
+            raise InstallerReleaseBuildError("fixed native worker helper source policy is malformed")
+        row = next((item for item in source.files if item.relative_path == source_path), None)
+        if row is None or (row.sha256, row.size_bytes) != (expected_digest, expected_size):
+            raise InstallerReleaseBuildError("fixed native worker helper source differs from its reviewed pin")
+        fd = source.open_file(source_path)
+        try:
+            body = _read_exact_fd(fd, expected_size)
+        finally:
+            os.close(fd)
+        if hashlib.sha256(body).hexdigest() != expected_digest:
+            raise InstallerReleaseBuildError("fixed native worker helper bytes differ from its reviewed pin")
+        _write_relative(output_fd, target_path, body, mode=0o444)
+        return (target_path, expected_digest, expected_size, 0o444, (role,))
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
                      source_path: str, target_path: str, roles: tuple[str, ...],

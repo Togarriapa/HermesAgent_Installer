@@ -238,6 +238,88 @@ def test_release_builder_stages_only_the_exact_native_health_fixture_members():
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
+def test_network_startup_helper_stager_is_exact_and_read_only(tmp_path, monkeypatch):
+    repo = Path(__file__).parents[2]
+    source_path = "helpers/private-loopback-worker-gate.py"
+    body = (repo / source_path).read_bytes()
+    source_root = tmp_path / "source"
+    target = source_root / source_path
+    target.parent.mkdir(parents=True)
+    os.chmod(source_root, 0o700)
+    target.write_bytes(body)
+    os.chmod(target, 0o755)
+    digest = hashlib.sha256(body).hexdigest()
+    size = len(body)
+    info = target.stat()
+    source_fd = os.open(source_root, os.O_RDONLY | os.O_DIRECTORY)
+    source = release_build.VerifiedInstallerDistributionReceipt(
+        release_build._SEAL,
+        candidate_git_sha="a" * 40,
+        git_tree_sha1="b" * 40,
+        source_tree_sha256="c" * 64,
+        baseline_tree_sha256="d" * 64,
+        amendment_manifest_sha256="e" * 64,
+        source_catalog_sha256="f" * 64,
+        files=(release_build.DistributionFile(
+            source_path, digest, size, 0o755,
+            info.st_dev, info.st_ino, info.st_ctime_ns),),
+        root_fd=source_fd,
+        expected_uid=os.geteuid(),
+        handle="h" * 43,
+    )
+
+    output = tmp_path / "worker-helper-output"
+    output.mkdir()
+    output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    builder = object.__new__(release_build.RootInstalledReleaseBuilder)
+    try:
+        # Without the finalized source pin, the builder omits the helper; once
+        # reviewed, the exact source row is staged under that approved tuple.
+        production_pin = release_build.NETWORK_STARTUP_HELPER
+        if production_pin[3] is None:
+            assert production_pin[4] is None
+            assert builder._stage_network_startup_helper(source, output_fd) is None
+            assert not (output / source_path).exists()
+        else:
+            assert production_pin[3:5] == (digest, size)
+            assert builder._stage_network_startup_helper(source, output_fd) == (
+                source_path, digest, size, 0o444, ("network-startup-helper",))
+            assert (output / source_path).read_bytes() == body
+            (output / source_path).unlink()
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", source_path, source_path,
+            digest, None, "network-startup-helper"))
+        with pytest.raises(release_build.InstallerReleaseBuildError,
+                           match="source policy is malformed"):
+            builder._stage_network_startup_helper(source, output_fd)
+
+        # A test-only fixed descriptor exercises the actual held-byte copy and
+        # mode policy without changing or approving the production source pin.
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", source_path, source_path,
+            digest, size, "network-startup-helper"))
+        row = builder._stage_network_startup_helper(source, output_fd)
+        assert row == (source_path, digest, size, 0o444, ("network-startup-helper",))
+        assert (output / source_path).read_bytes() == body
+        assert (output / source_path).stat().st_mode & 0o777 == 0o444
+
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", source_path, source_path,
+            "0" * 64, size, "network-startup-helper"))
+        with pytest.raises(release_build.InstallerReleaseBuildError,
+                           match="source differs from its reviewed pin"):
+            builder._stage_network_startup_helper(source, output_fd)
+
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", "helpers/unreviewed.py",
+            "helpers/unreviewed.py", digest, size, "network-startup-helper"))
+        with pytest.raises(release_build.InstallerReleaseBuildError, match="policy is malformed"):
+            builder._stage_network_startup_helper(source, output_fd)
+    finally:
+        source.close()
+        os.close(output_fd)
+
+
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
 def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
     repository = tmp_path / "repository"
