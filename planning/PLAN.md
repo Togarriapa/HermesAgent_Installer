@@ -171,4 +171,10 @@ Officialremote roledefinition222: plans/amendments/2026-10-10-official-remote-ro
 CurrentpublishedPMhome runtime221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existingfreshresolver exactprojection/FDcustody nooldseal/all207/allACOPEN.
 
 
+Xpra native source producers v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; RT-T219.1 → RT-T219.2 → VD-T219.3 OPEN, actual signed native+isolatedPM314 acquisition and independent session qualification; no gap-only completion/all AC OPEN.
+
+
+Gateway tested source v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md`; RT-T223.1 → RT-T223.2 → VD-T223.3 OPEN. Exact tested leaf/schema pins/heldlibpython/finitegatewaylink and synthetic-authorityARM64fixture distinguished; productionruntime/AC OPEN.
+
+
 Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN. HI-T217.1/.2 and VD-T217.3 remain OPEN.

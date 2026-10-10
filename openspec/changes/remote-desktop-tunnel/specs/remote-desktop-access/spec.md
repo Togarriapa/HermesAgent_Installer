@@ -363,3 +363,27 @@ The installer SHALL use planning/official-remote-role-definition-producer-v222.j
 #### Scenario: Prepared enrollment has no runnable records
 - **WHEN** initial remote role preparation occurs with empty preparedrecords
 - **THEN** exact source-only definitions issue actualtransaction identityselections and only complete observedNSS/runtime/network/source joins may be promoted
+
+
+### Requirement: Actual Xpra native dependency and toolchain producer v219
+The installer SHALL implement the exact retained signed-native/isolated-PM314/transform/config/build/qualification producer contract in `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; permanently missing producer handlers SHALL NOT count as completion.
+
+#### Scenario: Native source or transform proof substituted
+- **WHEN** unsigned/stale/wrong-architecture native data, distribution-Python bindings, a transform module alias or caller acquisition/qualification rows replace genuine current owner receipts
+- **THEN** build/runtime issuance SHALL deny without global install, feature weakening, ambient tool fallback or fabricated readiness
+
+#### Scenario: Fixed isolated build qualified
+- **WHEN** exact current source/transform/PM/native dependency/recipe joins and actual manager-observed ELF/server-session effects are verified
+- **THEN** the owner SHALL publish only independently inspected package/build evidence, retaining separate CAS/materialization/role/loaded/target gates
+
+
+### Requirement: Exact tested gateway source members and finite runtime joins v223
+The installer SHALL apply only exact tested source/schema tuples and complete config/import/toolchain/output/link contracts in `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md`, preserving separate fixture and production authority.
+
+#### Scenario: Actual fixture build mistaken for production runtime
+- **WHEN** the Docker package/import result or synthetic DTO/complete flag is presented without genuine current source-CAS/PM/native receipts, one-use managed grant and final materialization
+- **THEN** runnable role issuance SHALL deny while retaining only that exact fixture evidence
+
+#### Scenario: CPython or link closure substituted
+- **WHEN** libpython/stdlib/native loader closure is missing, source/schema bytes differ or any link differs from the exact gateway lib64-to-lib held-directory case
+- **THEN** build/package/runtime admission SHALL deny without generic directory-link permission or ambient dependency substitution

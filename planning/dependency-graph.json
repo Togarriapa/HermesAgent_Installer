@@ -3287,6 +3287,36 @@
     },
     "acceptance": "All AC OPEN"
   },
+  "xpra_native_build_acquisition_v219": {
+    "contract": "planning/xpra-native-build-acquisition-v219.json",
+    "amendment": "plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md",
+    "tasks": {
+      "RT-T219.1": [],
+      "RT-T219.2": [
+        "RT-T219.1"
+      ],
+      "VD-T219.3": [
+        "RT-T219.1",
+        "RT-T219.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "tested_gateway_source_members_v223": {
+    "contract": "planning/tested-gateway-source-members-v223.json",
+    "amendment": "plans/amendments/2026-10-10-tested-gateway-source-members-v223.md",
+    "tasks": {
+      "RT-T223.1": [],
+      "RT-T223.2": [
+        "RT-T223.1"
+      ],
+      "VD-T223.3": [
+        "RT-T223.1",
+        "RT-T223.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
   "qualification_compiler_terminal_custody_v217": {
     "contract": "planning/qualification-compiler-terminal-custody-v217.json",
     "tasks": {

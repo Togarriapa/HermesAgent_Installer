@@ -113,3 +113,21 @@ Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-pr
 - [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
 - [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
 - [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.
+
+
+Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md` / `planning/xpra-native-build-acquisition-v219.json`; owner implements actual signed native/PM314 backend/transform receipt producers, corrected fixed offline recipe and independent qualification. New source pins and all AC OPEN.
+
+- [ ] `RT-T219.1` Implement genuine signed native package and isolated CP314 Python backend acquisition/receipt producer under v219; all acceptance OPEN.
+
+- [ ] `RT-T219.2` Wire exact source/transform/PM/member/config joins and corrected offline native build/qualification under v219; all acceptance OPEN.
+
+- [ ] `VD-T219.3` Verify isolated ARM64 real build/session and specified signature/ABI/source/currentness/RPATH/cleanup failures under v219; all acceptance OPEN.
+
+
+Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+- [ ] `RT-T223.1` Apply exact tested gateway source/schema tuples and complete runtime import/sourcegroup closure under v223; all runtime/target acceptance OPEN.
+
+- [ ] `RT-T223.2` Complete genuine current source/PM/wheel/native config/CAS/final-runtime joins and exact gateway-only directory-link policy under v223; all runtime/target acceptance OPEN.
+
+- [ ] `VD-T223.3` Verify real sealed source/build/materialization joins and specified source/ELF/link/currentness/fake-authority failures under v223; all runtime/target acceptance OPEN.
