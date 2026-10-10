@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import errno
+import hashlib
 import io
 import importlib
 import os
@@ -21,6 +22,7 @@ from hermes_installer.root_setup import (
     RootSetupExplicitChoices,
     RootSetupResult,
     RootSetupState,
+    VerifiedRootBootstrapCandidateSelection,
     launcher_status,
     main,
     run_root_setup_action,
@@ -412,6 +414,113 @@ class RootSetupBoundaryTests(unittest.TestCase):
         snapshot.close()
         with self.assertRaises(RuntimeError):
             registry.consume_verified_selection(receipt)
+
+    def test_handoff_reconfirmation_mints_fresh_same_controller_proof(self) -> None:
+        registry = RootBootstrapCandidateSelectionRegistry()
+        sha = "b" * 40
+
+        def make_proof(*, inode: int, expires: float) -> root_setup._RootTTYProof:
+            stdin_fd = os.open(os.devnull, os.O_RDONLY)
+            pidfd = os.open(os.devnull, os.O_RDONLY)
+            tty = os.fstat(stdin_fd)
+            return root_setup._RootTTYProof(
+                stdin_fd, pidfd, os.getpid(), 1, 0, 0, 1, os.getpgrp(), tty.st_dev,
+                inode, tty.st_rdev, time.monotonic() - 120, expires,
+            )
+
+        old = make_proof(inode=123, expires=time.monotonic() - 60)
+        fresh = make_proof(inode=123, expires=time.monotonic() + 60)
+        original = VerifiedRootBootstrapCandidateSelection(
+            sha, RootSetupAction.INSTALL,
+            hashlib.sha256(b"install\0" + sha.encode("ascii")).hexdigest(),
+            _seal=root_setup._CHOICE_SEAL,
+        )
+        registry._selection_proofs[id(original)] = (original, old)
+        with patch("hermes_installer.root_setup.sys.platform", "linux"), \
+             patch("hermes_installer.root_setup.os.getuid", return_value=0), \
+             patch("hermes_installer.root_setup.os.geteuid", return_value=0), \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch("hermes_installer.root_setup._verify_root_tty_lineage") as lineage, \
+             patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=fresh), \
+             patch("hermes_installer.root_setup._verify_root_tty_proof") as verify, \
+             patch.object(builtins, "input", return_value=sha) as read_sha:
+            replacement = registry.reconfirm_for_handoff(original)
+
+        self.assertIsNot(replacement, original)
+        self.assertEqual(replacement.candidate_git_sha, sha)
+        self.assertIs(replacement.lifecycle_action, RootSetupAction.INSTALL)
+        self.assertEqual(replacement.choice_sha256, original.choice_sha256)
+        read_sha.assert_called_once_with(
+            f"Re-enter exact candidate SHA {sha} for install: "
+        )
+        lineage.assert_called_once_with(old)
+        verify.assert_called_once_with(fresh)
+        self.assertEqual((old.stdin_fd, old.pidfd), (-1, -1))
+        self.assertNotIn(id(original), registry._selection_proofs)
+        with patch("hermes_installer.root_setup._verify_root_tty_proof"):
+            snapshot = registry.consume_verified_selection(replacement)
+        self.assertEqual(snapshot.candidate_git_sha, sha)
+        snapshot.close()
+        self.assertEqual((fresh.stdin_fd, fresh.pidfd), (-1, -1))
+
+    def test_handoff_reconfirmation_mismatch_consumes_and_closes_original(self) -> None:
+        registry = RootBootstrapCandidateSelectionRegistry()
+        sha = "d" * 40
+        stdin_fd = os.open(os.devnull, os.O_RDONLY)
+        pidfd = os.open(os.devnull, os.O_RDONLY)
+        tty = os.fstat(stdin_fd)
+        old = root_setup._RootTTYProof(
+            stdin_fd, pidfd, os.getpid(), 1, 0, 0, 1, os.getpgrp(), tty.st_dev,
+            tty.st_ino, tty.st_rdev, time.monotonic() - 120, time.monotonic() - 60,
+        )
+        selection = VerifiedRootBootstrapCandidateSelection(
+            sha, RootSetupAction.UPDATE,
+            hashlib.sha256(b"update\0" + sha.encode("ascii")).hexdigest(),
+            _seal=root_setup._CHOICE_SEAL,
+        )
+        registry._selection_proofs[id(selection)] = (selection, old)
+        with patch("hermes_installer.root_setup._verify_root_tty_lineage"), \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch.object(builtins, "input", return_value="f" * 40):
+            with self.assertRaisesRegex(RuntimeError, "did not match"):
+                registry.reconfirm_for_handoff(selection)
+        self.assertEqual((old.stdin_fd, old.pidfd), (-1, -1))
+        self.assertNotIn(id(selection), registry._selection_proofs)
+
+    def test_handoff_reconfirmation_rejects_controller_drift_and_closes_both_proofs(self) -> None:
+        registry = RootBootstrapCandidateSelectionRegistry()
+        sha = "9" * 40
+
+        def make_proof(inode: int) -> root_setup._RootTTYProof:
+            stdin_fd = os.open(os.devnull, os.O_RDONLY)
+            pidfd = os.open(os.devnull, os.O_RDONLY)
+            tty = os.fstat(stdin_fd)
+            return root_setup._RootTTYProof(
+                stdin_fd, pidfd, os.getpid(), 1, 0, 0, 1, os.getpgrp(), tty.st_dev,
+                inode, tty.st_rdev, time.monotonic() - 120, time.monotonic() + 60,
+            )
+
+        old = make_proof(12)
+        fresh = make_proof(13)
+        selection = VerifiedRootBootstrapCandidateSelection(
+            sha, RootSetupAction.RESUME,
+            hashlib.sha256(b"resume\0" + sha.encode("ascii")).hexdigest(),
+            _seal=root_setup._CHOICE_SEAL,
+        )
+        registry._selection_proofs[id(selection)] = (selection, old)
+        with patch("hermes_installer.root_setup._verify_root_tty_lineage"), \
+             patch("hermes_installer.root_setup._verify_root_tty_proof"), \
+             patch("hermes_installer.root_setup._capture_root_tty_proof", return_value=fresh), \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch.object(builtins, "input", return_value=sha):
+            with self.assertRaisesRegex(RuntimeError, "changed its controller or terminal"):
+                registry.reconfirm_for_handoff(selection)
+        self.assertEqual((old.stdin_fd, old.pidfd), (-1, -1))
+        self.assertEqual((fresh.stdin_fd, fresh.pidfd), (-1, -1))
+        self.assertNotIn(id(selection), registry._selection_proofs)
 
     def test_candidate_choice_rejects_forgery_and_noncanonical_sha(self) -> None:
         with self.assertRaises(TypeError):

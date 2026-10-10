@@ -2994,6 +2994,7 @@ def bootstrap_selected_release(choices: object, candidate_selection_registry: ob
             interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
     with bootstrap_runtime_error_step("bootstrap.handoff"):
         with _bootstrap_os_error_step("bootstrap.handoff"):
+            selection = candidate_selection_registry.reconfirm_for_handoff(selection)
             handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
                 distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
             handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)

@@ -322,6 +322,61 @@ class RootBootstrapCandidateSelectionRegistry:
         finally:
             proof.close()
 
+    def reconfirm_for_handoff(
+        self, selection: VerifiedRootBootstrapCandidateSelection
+    ) -> VerifiedRootBootstrapCandidateSelection:
+        """Require fresh exact root-TTY intent after bounded source/runtime staging.
+
+        The original proof remains lineage only: it must still identify the same
+        live controller and terminal, but its short authorization lifetime is
+        never extended. A new foreground observation and exact SHA re-entry
+        mint the one-use proof consumed by the existing handoff.
+        """
+        proof_row = self._selection_proofs.pop(id(selection), None)
+        if proof_row is None:
+            raise RuntimeError("candidate selection proof is foreign, absent, or already consumed")
+        original = proof_row[1]
+        fresh: _RootTTYProof | None = None
+        try:
+            if (proof_row[0] is not selection or selection._seal is not _CHOICE_SEAL
+                    or not isinstance(selection.candidate_git_sha, str)
+                    or not _CANDIDATE_SHA.fullmatch(selection.candidate_git_sha)
+                    or type(selection.lifecycle_action) is not RootSetupAction
+                    or selection.lifecycle_action not in {
+                        RootSetupAction.INSTALL, RootSetupAction.RESUME, RootSetupAction.UPDATE,
+                    }
+                    or selection.input_origin != "root_tty_explicit"
+                    or selection.choice_sha256 != hashlib.sha256(
+                        selection.lifecycle_action.value.encode("ascii") + b"\0"
+                        + selection.candidate_git_sha.encode("ascii")
+                    ).hexdigest()):
+                raise RuntimeError("candidate selection proof is malformed or no longer authoritative")
+            _verify_root_tty_lineage(original)
+            if not (sys.stdin.isatty() and sys.stderr.isatty()):
+                raise RuntimeError("root candidate reconfirmation requires the controlling terminal")
+            entered_sha = input(
+                f"Re-enter exact candidate SHA {selection.candidate_git_sha} "
+                f"for {selection.lifecycle_action.value}: "
+            )
+            if entered_sha != selection.candidate_git_sha:
+                raise RuntimeError("root candidate reconfirmation did not match the selected SHA")
+            fresh = _capture_root_tty_proof()
+            _verify_root_tty_proof(fresh)
+            _require_same_root_tty_controller(original, fresh)
+            replacement = VerifiedRootBootstrapCandidateSelection(
+                selection.candidate_git_sha,
+                selection.lifecycle_action,
+                selection.choice_sha256,
+                _seal=_CHOICE_SEAL,
+            )
+            self._selection_proofs[id(replacement)] = (replacement, fresh)
+            fresh = None
+            return replacement
+        finally:
+            original.close()
+            if fresh is not None:
+                fresh.close()
+
     def close(self) -> None:
         for proof in (*self._choice_proofs.values(), *(row[1] for row in self._selection_proofs.values())):
             proof.close()
@@ -985,12 +1040,18 @@ def _capture_root_tty_proof() -> _RootTTYProof:
 
 
 def _verify_root_tty_proof(proof: _RootTTYProof) -> None:
+    if (time.monotonic() >= proof.expires_monotonic
+            or proof.expires_monotonic - proof.issued_monotonic > 60.0):
+        raise RuntimeError("root TTY candidate selection is stale or belongs to another controller")
+    _verify_root_tty_lineage(proof)
+
+
+def _verify_root_tty_lineage(proof: _RootTTYProof) -> None:
+    """Validate held controller/TTY identity without treating an old TTL as live authority."""
     if (not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0
             or proof.controller_pid != os.getpid()
             or proof.controller_uid != os.getuid() or proof.controller_gid != os.getgid()
             or proof.session_id != os.getsid(0) or proof.process_group_id != os.getpgrp()
-            or time.monotonic() >= proof.expires_monotonic
-            or proof.expires_monotonic - proof.issued_monotonic > 60.0
             or proof.controller_start_ticks != _process_start_ticks(proof.controller_pid)):
         raise RuntimeError("root TTY candidate selection is stale or belongs to another controller")
     try:
@@ -1003,6 +1064,15 @@ def _verify_root_tty_proof(proof: _RootTTYProof) -> None:
             raise RuntimeError("root controlling terminal changed after candidate selection")
     except OSError:
         raise RuntimeError("root controlling terminal proof is no longer available") from None
+
+
+def _require_same_root_tty_controller(original: _RootTTYProof, fresh: _RootTTYProof) -> None:
+    fields = (
+        "controller_pid", "controller_start_ticks", "controller_uid", "controller_gid",
+        "session_id", "process_group_id", "tty_device", "tty_inode", "tty_rdevice",
+    )
+    if any(getattr(original, name) != getattr(fresh, name) for name in fields):
+        raise RuntimeError("root candidate reconfirmation changed its controller or terminal")
 
 
 def _process_start_ticks(pid: int) -> int:
