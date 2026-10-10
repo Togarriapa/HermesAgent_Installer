@@ -261,7 +261,6 @@ class RootNativeTurnObservationRegistry:
     def __init__(self, *, service: Any, selected_execution_registry: Any,
                  input_observer: Any, source_observers: Any,
                  process_custody: Any, response_resolver: Callable[[str], Any],
-                 transcript_builder: Callable[[tuple[RootTurnTranscriptEvent, ...]], bytes] | None = None,
                  native_bridge_broker: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (service is None
@@ -273,7 +272,6 @@ class RootNativeTurnObservationRegistry:
                 or not callable(response_resolver)
                 or (native_bridge_broker is not None and not callable(
                     getattr(native_bridge_broker, "resolve_native_request_observation", None)))
-                or (transcript_builder is not None and not callable(transcript_builder))
                 or not callable(monotonic)):
             raise ValueError("root native turn observation dependencies are incomplete")
         self.service = service
@@ -283,7 +281,7 @@ class RootNativeTurnObservationRegistry:
         self.process_custody = process_custody
         self.response_resolver = response_resolver
         self.native_bridge_broker = native_bridge_broker
-        self.transcript_builder = transcript_builder or build_root_turn_transcript
+        self.transcript_builder = build_root_turn_transcript
         self.monotonic = monotonic
         self._turns: dict[str, _Turn] = {}
         self._by_source: dict[str, set[str]] = {}
