@@ -110,6 +110,7 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
         self.assertIn("installer-native-input-capture-profile-v1", bundle.missing_prerequisite_ids)
         self.assertIn("installer-native-tool-result-capture-profile-v1", bundle.missing_prerequisite_ids)
         self.assertIn("installer-native-provider-result-capture-profile-v1", bundle.missing_prerequisite_ids)
+        self.assertIn("installer-native-mcp-discovery-capture-profile-v171", bundle.missing_prerequisite_ids)
         self.assertEqual(
             tuple(row.module_name for row in bundle.declarations),
             ("hermes_installer.native_invocations", "hermes_installer.native_boundary"),
@@ -157,7 +158,9 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
         receipts = []
         for profile in _CAPTURE_PROFILES:
             raw = (Path(__file__).parents[2] / profile.relative_path).read_bytes()
-            self.assertEqual(json.loads(raw)["capture_schema_id"], profile.capture_schema_id)
+            document = json.loads(raw)
+            declaration = (document["profile"] if profile.artifact_id.endswith("v171") else document)
+            self.assertEqual(declaration["capture_schema_id"], profile.capture_schema_id)
             receipts.append(_receipt(session, profile.relative_path, raw, profile.artifact_id))
         session._resolve_prepared_native_capture_profile_receipts = lambda: tuple(receipts)
         registry = RootNativeSourceDefinitionRegistry(
@@ -170,11 +173,15 @@ class NativeSourceDefinitionContracts(unittest.TestCase):
         bundle = registry.prepare_for_policy(_Selection())
 
         self.assertEqual(bundle.capture_profiles, _CAPTURE_PROFILES)
-        self.assertEqual(len(bundle.capture_profile_receipts), 3)
+        self.assertEqual(len(bundle.capture_profile_receipts), 4)
         self.assertNotIn("installer-native-input-capture-profile-v1", bundle.missing_prerequisite_ids)
         tool = next(row for row in bundle.capture_profiles if row.capture_schema_id == "native-registered-tool-result-v1")
         self.assertEqual(tool.source_action_ids, ())
         self.assertIn("selected-tool-result-schema-action-join", bundle.missing_prerequisite_ids)
+        discovery = next(row for row in bundle.capture_profiles
+                         if row.artifact_id == "installer-native-mcp-discovery-capture-profile-v171")
+        self.assertEqual(discovery.source_action_ids, ("root-mcp-tools-list-discovery-v1",))
+        self.assertEqual(discovery.call_site, "dispatch_native_mcp_tool_call")
 
     def test_capture_profile_changed_bytes_are_rejected_even_with_a_held_receipt(self):
         from hermes_installer.authority.native_source_definitions import _CAPTURE_PROFILES, _REGISTRY_SEAL

@@ -865,6 +865,12 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native source definition receipt is not owned by this setup session")
         return self._session._resolve_prepared_native_source_definition_module_receipt()
 
+    def resolve_prepared_native_capture_profile_receipts(
+            self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("native capture profile receipts are not owned by this setup session")
+        return self._session._resolve_prepared_native_capture_profile_receipts()
+
     def mint_native_registration_schema_receipt(self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
         """Fetch and receipt only one of the exact reviewed local result schemas."""
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -1395,6 +1401,7 @@ class RootNativeBootstrapAssemblySelection:
     resources_source_receipt_handle: str
     definitions_handle: str
     definitions_sha256: str
+    native_policy_preparation_handle: str
     issued_monotonic: float
     expires_monotonic: float
     _registry_seal: object = field(repr=False, compare=False)
@@ -1418,6 +1425,24 @@ class RootNativeAssemblyDefinitions:
     selection_handle: str
     definitions_sha256: str
     adapter_records: tuple[Mapping[str, Any], ...]
+    dependency_records: tuple[Mapping[str, Any], ...]
+    source_issuer_records: tuple[Mapping[str, Any], ...]
+    native_schema_records: tuple[Mapping[str, Any], ...]
+    action_registration_records: tuple[Mapping[str, Any], ...]
+    registration_records: tuple[Mapping[str, Any], ...]
+    candidate_records: tuple[Mapping[str, Any], ...]
+    process_role_records: tuple[Mapping[str, Any], ...]
+    boundary_overlay_bytes: bytes
+    boundary_overlay_source_commit: str
+    closure_members: tuple[RootNativeAssemblyMember, ...]
+    native_schema_bytes: tuple[tuple[str, bytes], ...]
+    effect_selection_receipt_handles: tuple[str, ...]
+    action_records: tuple[Mapping[str, Any], ...]
+    workflow_records: tuple[Mapping[str, Any], ...]
+    result_schema_receipts: tuple["RootNativeRegistrationSchemaReceipt", ...]
+    release_module_receipts: tuple[RootReleaseModuleReceipt, ...]
+    native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    _registry_seal: object = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -7634,7 +7659,7 @@ class RootBootstrapSession:
 
     def _resolve_prepared_native_capture_profile_receipts(
             self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
-        """Read the three exact v158 capture profiles from the held release.
+        """Read the three v158 profiles and exact v171 discovery profile.
 
         These amendment files define capture validation limits and source IDs;
         the receipts prove only their selected-release bytes. They do not
@@ -7657,6 +7682,9 @@ class RootBootstrapSession:
             ("installer-native-provider-result-capture-profile-v1",
              "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
              "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
+            ("installer-native-mcp-discovery-capture-profile-v171",
+             "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+             "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4601),
         )
         release, actor = self._factory._release, self._factory._actor
         actor.verify_current(release)
