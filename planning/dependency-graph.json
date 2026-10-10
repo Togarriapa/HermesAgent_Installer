@@ -3439,5 +3439,19 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "qualification_source_before_process_custody_v230": {
+    "contract": "planning/qualification-source-before-process-custody-v230.json",
+    "tasks": [
+      "HI-T230.1",
+      "VD-T230.2"
+    ],
+    "depends_on": [
+      "HI-T197.3",
+      "HI-T217.1",
+      "HI-T217.2"
+    ],
+    "owner": "luna_resource_runtime",
+    "acceptance": "All AC OPEN"
   }
 }

@@ -168,3 +168,8 @@ Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal
 
 
 Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.
+
+
+## Qualification ordering v230
+
+Source-owned qualification lease observation precedes source session/PM/NSS/home acquisition; genuine fixture process custody attaches once only after strict current source/runtime/identity/publication bindings. See `planning/qualification-source-before-process-custody-v230.json`. Original guards, deadlines, cleanup and all acceptance remain unchanged.

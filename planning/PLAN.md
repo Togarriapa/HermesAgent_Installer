@@ -196,3 +196,6 @@ Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xp
 
 
 Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; RT-T229.1 → RT-T229.2 → VD-T229.3 OPEN. Exact separately reviewed types-only auxiliary artifact and owned workspace projection, unchanged originalsource/lock; actualARM64compiler/native/AppDir/AC separate.
+## v230 Qualification source-before-custody ordering
+
+`planning/qualification-source-before-process-custody-v230.json` resolves the actual handler/lease/source-session construction cycle. HI-T230.1/VD-T230.2 remain open; source-only lease grants no effects, actual prepared custody requires current genuine bindings, and all AC remain open.

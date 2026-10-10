@@ -220,3 +220,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 
 
 - [ ] HI-T217.1 / HI-T217.2 / VD-T217.3 (v224): Implement exact source-owned row serializer/recipe selection, genuine fixture NSS policy/catalog and strict complete indexing; verify actual native outcome and missing-route incomplete without fake Authentik/rows/source proof.
+
+
+- [ ] HI-T230.1: Separate source-only fixture lease issuance from one-time genuine prepared process custody attachment under v230.
+- [ ] VD-T230.2: Verify pre-attachment denial, exact current owner joins, original expiry and both cleanup phases; target acceptance remains open.
