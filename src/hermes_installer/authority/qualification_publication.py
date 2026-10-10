@@ -31,6 +31,13 @@ _ENTRIES = {
     "fixture-policy/generation.json": ("file", 0o600),
     "fixture-policy/selection.json": ("file", 0o600),
 }
+_ENROLLMENT_DOMAIN = b"hermes-installer.qualification-enrollment.v1\x00"
+_PUBLICATION_FIELDS = frozenset({
+    "schema", "publication_receipt_handle", "fixture_selection_handle", "fixture_run_id",
+    "authority_root_id", "fixture_generation_id", "policy_sha256", "catalog_sha256",
+    "source_recipe_sha256", "key_id", "controller_lease_handle", "issued_monotonic",
+    "expires_monotonic",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +301,52 @@ class RootQualificationAuthorityKeyRegistry:
                 pass
             raise
 
+    def sign_qualification_enrollment(
+        self, observation: RootQualificationAuthorityKeyObservation, *,
+        publication_fields: dict[str, object], authority_sha256: str,
+        catalog_sha256: str, generation_sha256: str,
+    ) -> str:
+        """Sign only the closed v164 fixture enrollment envelope.
+
+        This is intentionally the sole signing operation exposed for an
+        ephemeral qualification key.  It cannot sign effect grants, generic
+        payloads, or normal authority publication records.
+        """
+        self.verify_current(observation)
+        if (not isinstance(publication_fields, dict)
+                or set(publication_fields) != _PUBLICATION_FIELDS
+                or publication_fields.get("schema") != 1
+                or publication_fields.get("fixture_selection_handle") != self.selection.selection_handle
+                or publication_fields.get("fixture_run_id") != observation.fixture_run_id
+                or publication_fields.get("authority_root_id") != observation.authority_root_id
+                or publication_fields.get("source_recipe_sha256") != observation.source_recipe_sha256
+                or publication_fields.get("key_id") != observation.key_id
+                or publication_fields.get("controller_lease_handle")
+                != self.selection.controller_unit_observation_handle
+                or any(not isinstance(value, str) or not _SHA256.fullmatch(value)
+                       for value in (authority_sha256, catalog_sha256, generation_sha256))
+                or publication_fields.get("policy_sha256") != authority_sha256
+                or publication_fields.get("catalog_sha256") != catalog_sha256):
+            raise ValueError("qualification publication is outside the fixed enrolled source and key")
+        issued = publication_fields.get("issued_monotonic")
+        expires = publication_fields.get("expires_monotonic")
+        if (type(issued) not in (int, float) or type(expires) not in (int, float)
+                or not math.isfinite(issued) or not math.isfinite(expires)
+                or issued < observation.issued_monotonic
+                or expires > observation.expires_monotonic or expires <= time.monotonic()):
+            raise ValueError("qualification enrollment signature lifetime is outside its held key lease")
+        envelope = {
+            "schema": 1,
+            "publication": publication_fields,
+            "authority_sha256": authority_sha256,
+            "catalog_sha256": catalog_sha256,
+            "generation_sha256": generation_sha256,
+        }
+        payload = _canonical_json(envelope)
+        self.verify_current(observation)
+        key = self._observations[observation.key_observation_handle][3]
+        return hmac.new(bytes(key), _ENROLLMENT_DOMAIN + payload, hashlib.sha256).hexdigest()
+
     def verify_current(self, observation: RootQualificationAuthorityKeyObservation) -> bool:
         if self._closed or type(observation) is not RootQualificationAuthorityKeyObservation:
             raise ValueError("qualification key registry is closed or proof malformed")
@@ -339,3 +392,9 @@ class RootQualificationAuthorityKeyRegistry:
 def _zero(value: bytearray) -> None:
     for index in range(len(value)):
         value[index] = 0
+
+
+def _canonical_json(value: object) -> bytes:
+    import json
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
