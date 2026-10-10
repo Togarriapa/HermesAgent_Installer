@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md",
+  "event_additive_fields": [
+    "ancestry_kind",
+    "native_event_handle",
+    "native_event_sha256",
+    "causal_parent_event_ids",
+    "source_receipt_handles",
+    "source_receipt_ids"
+  ],
+  "ancestry_kinds": [
+    "host-context-lineage-v1",
+    "source-receipt-ids-v1",
+    "custody-event-v1"
+  ],
+  "receipt_and_completion_addition": "health_run_proof_sha256",
+  "extended_durable_schema": 2,
+  "maximum_health_events": 6,
+  "tasks": [
+    "HI-T194.1",
+    "HI-T194.2",
+    "VD-T194.3"
+  ],
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "source_pins": "pending coherent committed cohort",
+  "acceptance": "AC01..AC18 OPEN"
+}

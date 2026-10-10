@@ -411,3 +411,5 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T192.1 Implement exact dual-path native view projection and actual selected mount custody. See `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; acceptance OPEN.
 
 - [ ] HI-T193.1 Implement exact source/target native member view compatibility and private observed APIs. See `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; acceptance OPEN.
+
+- [ ] HI-T194.1/2 Implement exact causal native event resolver/proof and matching receipt/completion consumer. See `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; acceptance OPEN.
