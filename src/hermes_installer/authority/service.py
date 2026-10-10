@@ -569,7 +569,8 @@ class AuthorityService:
         if (self.selected_application_router is not None
                 or type(router) is not RootSelectedApplicationRuntimeRouter
                 or router.service is not self
-                or not callable(getattr(router, "dispatch_workload", None))):
+                or not callable(getattr(router, "dispatch_workload", None))
+                or not callable(getattr(router, "dispatch_qualification", None))):
             raise AuthorityDenied("application.dispatch", "root selected application router is invalid")
         self.selected_application_router = router
 
@@ -608,6 +609,38 @@ class AuthorityService:
             raise AuthorityDenied("application.dispatch", "selected application invocation failed") from None
         if type(receipt) is not RootApplicationRunReceipt or cancelled():
             raise AuthorityDenied("application.dispatch", "application receipt is not root retained")
+        return receipt
+
+    def dispatch_application_qualification(
+        self, setup_session_handle: str, workflow_id: str, *, peer_uid: int,
+        peer_pid: int, peer_pidfd: int | None, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Run one fixed installer-owned application qualification workflow."""
+        from .application_runtime import RootApplicationRunReceipt
+
+        router = self.selected_application_router
+        if (router is None or not isinstance(setup_session_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", setup_session_handle)
+                or workflow_id not in {
+                    "qualify-browser-use-v1", "qualify-graphify-v1",
+                    "qualify-hyperframes-v1", "qualify-scrapegraph-v1",
+                }
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("application.qualification", "application qualification is unavailable")
+        try:
+            receipt = router.dispatch_qualification(
+                setup_session_handle, workflow_id, peer_uid=peer_uid,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.qualification", "application qualification failed") from None
+        if type(receipt) is not RootApplicationRunReceipt or cancelled():
+            raise AuthorityDenied("application.qualification", "application result receipt is not root retained")
         return receipt
 
     def attach_native_input_delivery_registry(self, registry: Any) -> None:
@@ -2191,6 +2224,23 @@ class AuthorityService:
                 raise AuthorityDenied("application.dispatch", "selected application arguments exceed their bound")
             receipt = self.dispatch_selected_application(
                 payload["invocation_handle"], arguments, peer_uid=uid,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+            )
+            return receipt.to_wire()
+        if operation == "application.qualify":
+            expected = {"schema", "setup_session_handle", "workflow_id"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("setup_session_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["setup_session_handle"])
+                    or payload.get("workflow_id") not in {
+                        "qualify-browser-use-v1", "qualify-graphify-v1",
+                        "qualify-hyperframes-v1", "qualify-scrapegraph-v1",
+                    }
+                    or peer_pidfd is None):
+                raise AuthorityDenied("application.qualification", "application qualification request is malformed")
+            receipt = self.dispatch_application_qualification(
+                payload["setup_session_handle"], payload["workflow_id"], peer_uid=uid,
                 peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
             )
             return receipt.to_wire()

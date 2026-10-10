@@ -205,6 +205,39 @@ def test_authority_application_rpc_uses_kernel_peer_and_no_caller_selector() -> 
         )
 
 
+def test_authority_qualification_rpc_is_a_separate_finite_root_workflow() -> None:
+    from hermes_installer.authority.service import AuthorityService
+
+    receipt = RootApplicationRunReceipt(
+        1, "r" * 40, "graphify", "profile", "generation", "f" * 64,
+        "s" * 40, "u" * 40, "operation.graphify.v1", "a" * 64,
+        "t" * 40, "c" * 40, "complete", 10.0, 20.0,
+    )
+    calls = []
+
+    class Router:
+        def dispatch_qualification(self, session, workflow, **kwargs):
+            calls.append((session, workflow, kwargs))
+            return receipt
+
+    service = object.__new__(AuthorityService)
+    service.selected_application_router = Router()
+    payload = {"schema": 1, "setup_session_handle": "h" * 40,
+               "workflow_id": "qualify-graphify-v1"}
+    result = service._dispatch(501, 77, 8, "application.qualify", payload,
+                               cancelled=lambda: False)
+    assert result == receipt.to_wire()
+    assert calls[0][0:2] == ("h" * 40, "qualify-graphify-v1")
+    assert calls[0][2]["peer_uid"] == 501
+    assert calls[0][2]["peer_pid"] == 77
+    assert calls[0][2]["peer_pidfd"] == 8
+    with pytest.raises(Exception, match="malformed"):
+        service._dispatch(
+            501, 77, 8, "application.qualify",
+            {**payload, "workload_id": "graphify-code-fixture"}, cancelled=lambda: False,
+        )
+
+
 @dataclass(frozen=True)
 class SimpleSourceReceipt:
     application_id: str
