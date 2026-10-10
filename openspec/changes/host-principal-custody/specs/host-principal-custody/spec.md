@@ -1215,3 +1215,14 @@ The installer SHALL use planning/current-published-pm-home-runtime-v221.json to 
 #### Scenario: Setup receipt expires before delegate task
 - **WHEN** the installedcurrentpublication remainsvalid aftersetup expiry or daemonrestart
 - **THEN** the existingcommittedPMresolver reopens currentreceipt/executable/fullclosure and issues fresh typedproof matching exacthomeprojection; oldsetupseal is not restored
+- **WHEN** the installed current publication remains valid after setup expiry or daemon restart
+- **THEN** the existing committed PM resolver reopens current receipt, executable and full closure and issues a fresh typed proof matching the exact home projection; an old setup seal is not restored
+
+## ADDED Requirements
+
+### Requirement: Current retained active enrollment projection
+The installer SHALL retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication according to planning/active-authority-receipt-aggregate-v231.json.
+
+#### Scenario: Current source receipts join active compilation
+- **WHEN** the prepared catalog is dormant and a selected worker/local policy is complete
+- **THEN** the pure root renderer derives actual service/process/effect rows and keeps the aggregate nonactive until the same current publication and enrollment CAS commit

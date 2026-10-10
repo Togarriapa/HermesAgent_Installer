@@ -330,3 +330,4 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 - [ ] VD-T230.2: Verify pre-attachment denial, exact current owner joins, original expiry and both cleanup phases; target acceptance remains open.
 - [ ] BD-T232.1: Source owner implements exact BootstrapPendingStepFailure and nine fixed boundaries/formatter with actor, account, redaction, subclass and malformed-field failures.
 - [ ] VD-T232.2: Review actual coherent committed diagnostic bytes under v228 and next target evidence independently; no source/acceptance promotion.
+- [ ] BD-T231.2 (v231): Consume only the issuer-current v231 active authority aggregate, bind its actual canonical core bytes/hash/size and reuse its exact generation at activation. Genuine pipeline/failure evidence VD-T231.3 and target acceptance separately OPEN.

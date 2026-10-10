@@ -3257,21 +3257,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "official_remote_role_definition_producer_v222": {
-    "contract": "planning/official-remote-role-definition-producer-v222.json",
-    "tasks": {
-      "RT-T222.1": [
-        "HI-T197.2"
-      ],
-      "RT-T222.2": [
-        "RT-T222.1"
-      ],
-      "VD-T222.3": [
-        "RT-T222.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "current_published_pm_home_runtime_v221": {
     "contract": "planning/current-published-pm-home-runtime-v221.json",
     "tasks": {
@@ -3283,6 +3268,21 @@
       ],
       "VD-T221.3": [
         "HI-T221.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_remote_role_definition_producer_v222": {
+    "contract": "planning/official-remote-role-definition-producer-v222.json",
+    "tasks": {
+      "RT-T222.1": [
+        "HI-T197.2"
+      ],
+      "RT-T222.2": [
+        "RT-T222.1"
+      ],
+      "VD-T222.3": [
+        "RT-T222.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3466,5 +3466,26 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "active_authority_receipt_aggregate_v231": {
+    "contract": "planning/active-authority-receipt-aggregate-v231.json",
+    "changes": [
+      "resources-bundle-native-enrichment",
+      "host-principal-custody",
+      "installer-bootstrap-desktop"
+    ],
+    "tasks": {
+      "HI-T231.1": [
+        "HI-T09",
+        "RB-T213.1"
+      ],
+      "BD-T231.2": [
+        "HI-T231.1"
+      ],
+      "VD-T231.3": [
+        "BD-T231.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN; implementation and target evidence separate"
   }
 }

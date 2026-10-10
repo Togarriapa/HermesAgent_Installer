@@ -497,3 +497,17 @@ The installer SHALL use planning/current-published-pm-home-runtime-v221.json to 
 #### Scenario: Setup receipt expires before delegate task
 - **WHEN** the installedcurrentpublication remainsvalid aftersetup expiry or daemonrestart
 - **THEN** the existingcommittedPMresolver reopens currentreceipt/executable/fullclosure and issues fresh typedproof matching exacthomeprojection; oldsetupseal is not restored
+### Requirement: Retained receipt producer for active authority core
+The installer SHALL implement planning/active-authority-receipt-aggregate-v231.json: derive an active core only from the exact issuer-retained current source/runtime/service identity/effect policy aggregate, validate it using the complete active identity-domain parser, and reuse its exact generation for publication and enrollment CAS. Prepared enrollment SHALL remain dormant.
+
+#### Scenario: Genuine retained source closure becomes publishable
+- **WHEN** actual current principal/namespace, service NSS, PM, five native output roles, selected source/effect/package rows and 208 source-home receipts join the same precompile reservation
+- **THEN** the root produces a sealed prepublication aggregate, validates complete active core bytes, and the compiler binds those actual bytes and separate crosswalk to its immutable publication claim without provisioning runtime authority during rendering
+
+#### Scenario: Selected authority dependency is missing or stale
+- **WHEN** a selected source, effect policy, identity-domain adapter, role, runtime member or optional selected remote prerequisite is missing, altered, revoked or expired
+- **THEN** compilation reports the exact unavailable producer and emits no substituted core, fabricated row, Authentik identity, active receipt or runtime start
+
+#### Scenario: Optional remote is absent and local identity remains distinct
+- **WHEN** no remote choice is selected and the actual local-owner policy adapter validates the selected local effects
+- **THEN** remote catalogs remain empty, the local identity domain is preserved, and no account-dependent authority or extra user-facing delegate service is inferred

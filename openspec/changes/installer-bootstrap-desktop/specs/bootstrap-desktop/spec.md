@@ -1003,3 +1003,11 @@ The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json`
 #### Scenario: Diagnostic field changed after construction
 - **WHEN** the step is non-string or absent from the finite catalog
 - **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation
+## ADDED Requirements
+
+### Requirement: Actual core bytes in active compiler claim
+The installer SHALL consume only the issuer-current v231 active authority aggregate, bind its actual canonical core bytes/hash/size and reuse its exact generation at activation according to planning/active-authority-receipt-aggregate-v231.json.
+
+#### Scenario: Current source receipts join active compilation
+- **WHEN** the current sealed aggregate and exact native precompile reservation have been validated
+- **THEN** the compiler binds the real core and distinct crosswalk members without resolving an already published policy to obtain its own inputs
