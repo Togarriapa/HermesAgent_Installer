@@ -557,3 +557,16 @@ The installer SHALL apply planning/remote-source-active-digest-acyclic-v246.json
 #### Scenario: Component or prepared digest cannot authorize active runtime
 - **WHEN** a subset hash, prepared digest, unexpected source digest field or altered selector is supplied under the active domain
 - **THEN** publication or adoption rejects it without omitting selector rows, rewriting hashed source bytes or weakening current source validation
+
+## ADDED Requirements
+
+### Requirement: Origin-bound Xpra dependency sysroot and official HTML5
+The implementation SHALL materialize only the exact v245 signed origin-bound graph in a private bounded sysroot and SHALL install only held verified official HTML5 source assets. Native diagnostic success and static asset presence SHALL NOT prove managed session/runtime acceptance.
+
+#### Scenario: Required dependency link or license cannot resolve
+- **WHEN** a consumed graph path escapes, cycles, conflicts, remains dangling or lacks current signed origin/license proof
+- **THEN** the buildable closure SHALL deny without host aliases, package installation or inferred targets
+
+#### Scenario: Exact private transform and source assets
+- **WHEN** pinned glibc script and official HTML5 bytes match their held policy and independent graph/transform observer
+- **THEN** only the single reviewed private token transform and source-data copy SHALL be admitted; actual native/Xvfb/HTML5 session qualification remains required

@@ -1,0 +1,200 @@
+[
+  {
+    "member": {
+      "path": "LICENSE",
+      "mode": 436,
+      "size_bytes": 16726,
+      "sha256": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/FileSaver.js",
+      "mode": 436,
+      "size_bytes": 5649,
+      "sha256": "d759ba55403a8ba527cbd68ab924b8e83d9e118a97a2a489c0b256cbdcc45c58"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/StreamSaver.js",
+      "mode": 436,
+      "size_bytes": 10245,
+      "sha256": "c7c8d3b7cd75529ab7c2974b3b010eafbe9cee15bad80d2c75c93f874a6b0fe1"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/aurora/aac.js",
+      "mode": 436,
+      "size_bytes": 154207,
+      "sha256": "8581374c101cfd492717be587a7f4c56ec7e753440e9c0eb8e00dbc29da2a5b9"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/aurora/aurora-xpra.js",
+      "mode": 436,
+      "size_bytes": 1248,
+      "sha256": "57f803b5154db1614939b0206d08e99a29f6014fa868fa05463d584fb3e8b9f5"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/aurora/aurora.js",
+      "mode": 436,
+      "size_bytes": 328520,
+      "sha256": "9e7106d2ac764daa603d20e05c8eb1ed287b11b17c8cabeede8b6c0402bd6db1"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/aurora/flac.js",
+      "mode": 436,
+      "size_bytes": 26877,
+      "sha256": "26958f81ab7631fd35b847ab9bd4296f1dbc1492814f926a133c8b0dcdffe4d8"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/aurora/mp3.js",
+      "mode": 436,
+      "size_bytes": 207552,
+      "sha256": "e650e36d9aa24bb885729920f0a9aec53bc138776d401ff19020e165ba3452a6"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/brotli_decode.js",
+      "mode": 509,
+      "size_bytes": 204675,
+      "sha256": "8b5494ee4d157a328e835643e7071adb2a1860824b2ba4475f0763a64514fd8f"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/detect-zoom.js",
+      "mode": 436,
+      "size_bytes": 9221,
+      "sha256": "7a980f785c0f4bd4bf8d09c419085c581ea89d2ec0480de0a907c1a4da5b3965"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/hmac.js",
+      "mode": 436,
+      "size_bytes": 7226,
+      "sha256": "5fee1ce0ff7ddd4d3dcca7ca09a644039d86be28b41c05d18b7918dd7507ac3d"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/jquery-transform-draggable.js",
+      "mode": 436,
+      "size_bytes": 5366,
+      "sha256": "a28c5db76f0c62dcd3a10a477bd99ed30068d9759faf546ba47c6b2297b7e6dc"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/jquery-ui.js",
+      "mode": 436,
+      "size_bytes": 529158,
+      "sha256": "45482764af53f960b53b0f26e19e58ad58a6a924ff5a713a8048feb9a0e5fda9"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/jquery.ba-throttle-debounce.js",
+      "mode": 436,
+      "size_bytes": 10254,
+      "sha256": "df0bb4f2d98e441a6c420464184d5a0dd5f800934a2bd30cc0bc7dfd35613ca3"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/jquery.js",
+      "mode": 436,
+      "size_bytes": 285314,
+      "sha256": "78a85aca2f0b110c29e0d2b137e09f0a1fb7a8e554b499f740d6744dc8962cfe"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/jsmpeg.js",
+      "mode": 436,
+      "size_bytes": 121112,
+      "sha256": "4247a836808ff1d15476f785260af7a1caddb34a29b842e5e0e727c349363f0d"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/lz4.js",
+      "mode": 436,
+      "size_bytes": 17728,
+      "sha256": "93222ae45232d9710fe2df9b1d601e50a0a9308282392d0ca18822e024ba68ce"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/rencode.js",
+      "mode": 436,
+      "size_bytes": 14349,
+      "sha256": "a90d046e840c7eff0592efcc4da21a4612c1b391a76ea91bc3102e09bca4360f"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/simple-keyboard.js",
+      "mode": 436,
+      "size_bytes": 287629,
+      "sha256": "09283200f7a730039fa13d69f8a962d1563865e85e0d3c67379a5c8e26a54444"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/slick.js",
+      "mode": 436,
+      "size_bytes": 88955,
+      "sha256": "9baa573e4378873b7ac81ccb1d954ce9bb2b1a933947ad3012263ddc604d8505"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "html5/js/lib/web-streams-ponyfill.es6.js",
+      "mode": 436,
+      "size_bytes": 190167,
+      "sha256": "aa9f537f78684921a60a17e8965f554f46452baf1768da0198732709dfde8945"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  },
+  {
+    "member": {
+      "path": "packaging/debian/copyright",
+      "mode": 436,
+      "size_bytes": 588,
+      "sha256": "01e4ada5bb722595b2bdd8b89ad4808883dfa5879432edc8a890ae909d0a4006"
+    },
+    "evidence": "upstream license/copyright or bundled third-party member; full component license proof required before positive HTML5 closure"
+  }
+]

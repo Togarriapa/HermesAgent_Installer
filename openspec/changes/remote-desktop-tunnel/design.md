@@ -154,6 +154,10 @@ Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.js
 
 
 ## Gateway source and wheel issuer refinement v244
+## v245 Xpra source graph and HTML5
 
 Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.
 Remote source digest v246: planning/remote-source-active-digest-acyclic-v246.json removes impossible source self-dependency through exact source schema2, preserves prepared lineage and full active generation algorithm, and requires post-publication receipt/core/claim/adoption joins via actual active_service_generation fields. All AC OPEN.
+Use exact origin-bound archive links within an owned virtual-root sysroot, independent graph observer and one pinned glibc linker token transformation. Separately held immutable official HTML5 source copies only html5/ into actual output without ambient installer/minifier/assets; full mixed-license/native/session proofs remain required.
+
+Exact contract: `planning/xpra-sysroot-html5-v245.json`.

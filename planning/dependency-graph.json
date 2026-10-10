@@ -3491,6 +3491,23 @@
     },
     "acceptance": "All AC OPEN"
   },
+  "official_desktop_measured_headers_managed_plan_v240": {
+    "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
+    "tasks": {
+      "RT-T240.1": [
+        "RT-T226.1"
+      ],
+      "RT-T240.2": [
+        "RT-T240.1",
+        "RT-T237.1"
+      ],
+      "VD-T240.3": [
+        "RT-T240.1",
+        "RT-T240.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
   "qualification_source_before_process_custody_v230": {
     "contract": "planning/qualification-source-before-process-custody-v230.json",
     "tasks": [
@@ -3678,23 +3695,6 @@
     },
     "acceptance": "All AC OPEN"
   },
-  "official_desktop_measured_headers_managed_plan_v240": {
-    "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
-    "tasks": {
-      "RT-T240.1": [
-        "RT-T226.1"
-      ],
-      "RT-T240.2": [
-        "RT-T240.1",
-        "RT-T237.1"
-      ],
-      "VD-T240.3": [
-        "RT-T240.1",
-        "RT-T240.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "gateway_source_wheel_issuers_v244": {
     "amendment": "plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md",
     "contract": "planning/gateway-source-wheel-issuers-v244.json",
@@ -3742,6 +3742,23 @@
       "VD-T242.2": [
         "BD-T242.1",
         "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_sysroot_html5_v245": {
+    "contract": "planning/xpra-sysroot-html5-v245.json",
+    "tasks": {
+      "RT-T245.1": [
+        "RT-T238.1"
+      ],
+      "RT-T245.2": [
+        "RT-T238.1"
+      ],
+      "VD-T245.3": [
+        "RT-T245.1",
+        "RT-T245.2",
+        "RT-T238.2"
       ]
     },
     "acceptance": "All AC OPEN"
