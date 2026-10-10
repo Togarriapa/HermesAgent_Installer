@@ -224,8 +224,58 @@ def build_root_native_registration_projection(
             definitions.source_issuer_records, "observer_enrollment_id",
             {"issuer_channel_id", "producer_profile_id", "producer_role_artifact_id",
              "producer_role_sha256", "capture_schema_id", "allowed_parent_channels", "generation",
-             "observer_enrollment_id", "source_action_ids"}, allow_optional={"private_provider_route_ids"},
+            "observer_enrollment_id", "source_action_ids"}, allow_optional={"private_provider_route_ids"},
         )
+        for action_id, action in action_rows.items():
+            if (action_id != f"{action['adapter_id']}:action:{action['action_id']}"
+                    or action["generation"] != selection.native_package_generation
+                    or not isinstance(action["effect_enrollment_id"], str)
+                    or not action["effect_enrollment_id"]
+                    or not isinstance(action["operation"], str) or not action["operation"]
+                    or not isinstance(action["capability"], str) or not action["capability"]
+                    or not isinstance(action["target_id"], str) or not action["target_id"]
+                    or (action["recipient"] is not None
+                        and (not isinstance(action["recipient"], str) or not action["recipient"]))
+                    or any(not isinstance(action[field], str) or len(action[field]) != 64
+                           or any(ch not in "0123456789abcdef" for ch in action[field])
+                           for field in ("manifest_sha256", "adapter_sha256"))
+                    or not isinstance(action["observer_enrollment_ids"], (tuple, list))):
+                raise ValueError
+        for workflow_id, workflow in workflow_rows.items():
+            step_ids = workflow["step_action_binding_ids"]
+            if (workflow_id != workflow["id"]
+                    or workflow["generation"] != selection.native_package_generation
+                    or not isinstance(workflow["registration_id"], str)
+                    or not isinstance(workflow["workflow_artifact_id"], str)
+                    or not workflow["workflow_artifact_id"]
+                    or not isinstance(workflow["workflow_sha256"], str)
+                    or len(workflow["workflow_sha256"]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in workflow["workflow_sha256"])
+                    or not isinstance(workflow["workflow_source_receipt_handle"], str)
+                    or not workflow["workflow_source_receipt_handle"]
+                    or not isinstance(step_ids, (tuple, list)) or not 1 <= len(step_ids) <= 16
+                    or len(set(step_ids)) != len(step_ids)
+                    or any(step_id not in action_rows for step_id in step_ids)):
+                raise ValueError
+        for observer_id, issuer in issuer_rows.items():
+            if (observer_id != issuer["observer_enrollment_id"]
+                    or issuer["generation"] != selection.service_generation
+                    or issuer["producer_profile_id"] != selection.service_profile_id
+                    or not isinstance(issuer["source_action_ids"], (tuple, list))
+                    or not issuer["source_action_ids"]):
+                raise ValueError
+        if len(action_rows) != 61 or len(workflow_rows) != 2:
+            raise ValueError
+        expected_families = {
+            "agent-live-wallet", "agent-sandbox-wallet", "agent37-discovery",
+            "authentik-authorization", "cloudflare-homelab", "codex", "composio",
+            "ebook-toolchain", "epic-kanban", "financial-data-hub",
+            "financial-execution-gateway", "github", "homelab-ops-broker",
+            "kobo-bridge", "mcp-registry", "resource-overlay-store",
+            "voice-pipeline", "web",
+        }
+        if {row.family for row in reviewed} != expected_families:
+            raise ValueError
         registration_rows = tuple(definitions.registration_records)
         if len(registration_rows) != 42:
             raise ValueError
