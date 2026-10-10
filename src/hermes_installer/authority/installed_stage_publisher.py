@@ -262,10 +262,13 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
                 "original_start_ticks": controller_snapshot.get("controller_start_ticks"),
                 "expires_monotonic": controller_snapshot.get("expires_monotonic"),
             })
-        _replace_receipt(receipt_path, raw, expected_uid, predecessor)
-        _fsync_dir(receipt_path.parent)
         if transaction is not None:
             try:
+                # Once replace begins, every failure is inside the owned
+                # conditional rollback boundary. _replace_receipt may report
+                # a directory-fsync error after the atomic rename succeeded.
+                _replace_receipt(receipt_path, raw, expected_uid, predecessor)
+                _fsync_dir(receipt_path.parent)
                 published_raw, published_info = _read_record(receipt_path, expected_uid)
                 if published_raw != raw:
                     raise BootstrapEnrollmentPending("published candidate pointer differs from its transaction")
@@ -296,6 +299,9 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
                         transaction_root, transaction_handle, receipt_path, expected_uid,
                         expected_current_bytes=raw, lock_is_held=True)
                 raise
+        else:
+            _replace_receipt(receipt_path, raw, expected_uid, predecessor)
+            _fsync_dir(receipt_path.parent)
     finally:
         os.close(lock_fd)
 
