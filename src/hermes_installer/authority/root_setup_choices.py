@@ -201,7 +201,11 @@ class RootSetupChoiceRegistry:
         record = {
             "schema": 1,
             "selection_handle": handle,
-            "purpose": "memory-service-enablement",
+            # The signer domain and durable row must agree with the concrete
+            # retained TTY choice.  A memory choice, native policy choice and
+            # application qualification are different intents and cannot be
+            # relabelled into the memory lifecycle purpose.
+            "purpose": purpose,
             "key_id": self.signer.key_id,
             "release_deployment_receipt_sha256": release_identity,
             "setup_session_handle": self._setup_session_handle_for_selection(current_setup_selection),
