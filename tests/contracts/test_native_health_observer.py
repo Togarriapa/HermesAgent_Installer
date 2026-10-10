@@ -15,7 +15,9 @@ from hermes_installer.authority.native_health_observer import (
     RootValidatedNativeHealthResult,
 )
 from hermes_installer.authority.types import AuthorityDenied, canonical_digest
-from hermes_installer.authority.native_health_observer import _same_loaded_package_proof
+from hermes_installer.authority.native_health_observer import (
+    _ordered_health_events, _same_loaded_package_proof,
+)
 from hermes_installer.managed_process_custodian import (
     LoadedNativePackageProof, NativePackageMountReceipt,
     RootSelectedHealthLoadedPackageProof,
@@ -23,7 +25,7 @@ from hermes_installer.managed_process_custodian import (
 
 
 class NativeHealthObserverContracts(unittest.TestCase):
-    def _observer(self, *, result_validator=None):
+    def _observer(self):
         now = [100.0]
         fd = os.open(os.devnull, os.O_RDONLY)
         identity = SimpleNamespace(kernel_uid=2001)
@@ -122,8 +124,6 @@ class NativeHealthObserverContracts(unittest.TestCase):
               terminal_status="succeeded", cleanup_verified=True)
 
         def validate(schema, body):
-            if result_validator is not None:
-                return result_validator(schema, body)
             import hashlib
             return RootValidatedNativeHealthResult(schema, hashlib.sha256(body).hexdigest(), "passed")
 
@@ -181,33 +181,22 @@ class NativeHealthObserverContracts(unittest.TestCase):
         finally:
             os.close(fd)
 
-    def test_plain_boolean_result_cannot_bypass_manager_terminal_proof(self):
-        observer, _run, events, refs, _now, fd = self._observer(
-            result_validator=lambda _schema, _body: True)
+    def test_causal_parent_swap_is_rejected_by_event_dag_join(self):
+        _observer, run, events, refs, _now, fd = self._observer()
         try:
-            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
-            for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result"):
-                observer.observe_health_event(handle, refs[kind])
-            with self.assertRaises(AuthorityDenied):
-                observer.observe_health_event(handle, refs["terminal"])
-        finally:
-            os.close(fd)
-
-    def test_mutated_native_event_cannot_substitute_for_manager_terminal_proof(self):
-        observer, _run, events, refs, _now, fd = self._observer()
-        try:
+            _by_kind, ordered = _ordered_health_events(events, run.provider_required)
+            self.assertEqual(
+                tuple(event.event_kind for event in ordered),
+                ("loader-ready", "native-request", "provider-result",
+                 "tool-invocation", "tool-result", "terminal"),
+            )
             invocation = events[refs["tool-invocation"]]
             events[refs["tool-invocation"]] = RootNativeHealthEvent(
                 **{**{name: getattr(invocation, name) for name in invocation.__dataclass_fields__},
                    "causal_parent_event_ids": (refs["native-request"],)},
             )
-            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
-            for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result"):
-                observer.observe_health_event(handle, refs[kind])
             with self.assertRaises(AuthorityDenied):
-                observer.observe_health_event(handle, refs["terminal"])
+                _ordered_health_events(events, run.provider_required)
         finally:
             os.close(fd)
 

@@ -1831,6 +1831,42 @@ def _health_run_proof_digest(run: RootSelectedNativeHealthRun,
     return hashlib.sha256(canonical_bytes(projection)).hexdigest()
 
 
+def _ordered_health_events(events: Mapping[str, RootNativeHealthEvent],
+                           provider_required: bool
+                           ) -> tuple[dict[str, RootNativeHealthEvent], list[RootNativeHealthEvent]]:
+    by_kind: dict[str, RootNativeHealthEvent] = {}
+    for event in events.values():
+        if event.event_kind in by_kind:
+            raise AuthorityDenied("native.health.ambiguous", "health run has duplicate semantic event kinds")
+        by_kind[event.event_kind] = event
+    required = {"loader-ready", "native-request", "tool-invocation", "tool-result", "terminal"}
+    if provider_required:
+        required.add("provider-result")
+    if required - set(by_kind):
+        raise AuthorityDenied("native.health.incomplete", "selected health run lacks required native events")
+    loader, request = by_kind["loader-ready"], by_kind["native-request"]
+    invocation, tool_result, terminal = (
+        by_kind["tool-invocation"], by_kind["tool-result"], by_kind["terminal"])
+    provider = by_kind.get("provider-result")
+    ordered = [loader, request]
+    if provider is not None:
+        ordered.append(provider)
+    ordered.extend((invocation, tool_result, terminal))
+    expected_parents = {
+        "loader-ready": (),
+        "native-request": (loader.event_id,),
+        "provider-result": (request.event_id,),
+        "tool-invocation": ((provider.event_id,) if provider is not None else (request.event_id,)),
+        "tool-result": (invocation.event_id,),
+        "terminal": (tool_result.event_id,),
+    }
+    if any(not _validate_event_ancestry(event)
+           or event.causal_parent_event_ids != expected_parents[event.event_kind]
+           for event in ordered):
+        raise AuthorityDenied("native.health.lineage", "health event ancestry or causal parent DAG is invalid")
+    return by_kind, ordered
+
+
 class RootNativeHealthObserver:
     """Join actual selected loader, request, result, tool, and terminal events."""
 
@@ -1841,6 +1877,7 @@ class RootNativeHealthObserver:
                  result_validator: Callable[[str, bytes], Any],
                  selected_run_canceller: Callable[[RootSelectedNativeHealthRun], None],
                  terminal_proof_resolver: Callable[[str, str], Any] | None = None,
+                 completed_event_resolver: Callable[[str, str, Any], RootNativeHealthEvent] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (not all(callable(value) for value in (
                 selected_health_resolver, event_resolver, process_resolver,
@@ -1854,6 +1891,7 @@ class RootNativeHealthObserver:
         self.result_validator = result_validator
         self.selected_run_canceller = selected_run_canceller
         self.terminal_proof_resolver = terminal_proof_resolver
+        self.completed_event_resolver = completed_event_resolver
         self.monotonic = monotonic
         self._observations: dict[str, _HealthObservation] = {}
         self._receipts: dict[str, RootNativeHealthReceipt] = {}
@@ -2134,44 +2172,29 @@ class RootNativeHealthObserver:
                 raise AuthorityDenied("native.health.current", "selected run changed before causal proof closure")
         for event in observation.events.values():
             try:
-                current_event = self.event_resolver(health_observation_handle, event.event_id)
+                if terminal_events:
+                    if self.completed_event_resolver is None:
+                        raise AuthorityDenied(
+                            "native.health.current", "post-cleanup event issuer resolver is unavailable")
+                    current_event = self.completed_event_resolver(
+                        health_observation_handle, event.event_id,
+                        observation.completed_terminal_proof,
+                    )
+                else:
+                    current_event = self.event_resolver(health_observation_handle, event.event_id)
             except Exception:
                 raise AuthorityDenied("native.health.current", "native source event changed before causal proof closure") from None
             if type(current_event) is not RootNativeHealthEvent or current_event is not event:
                 raise AuthorityDenied("native.health.current", "native source event lost exact retained membership")
-        by_kind: dict[str, RootNativeHealthEvent] = {}
-        for event in observation.events.values():
-            if event.event_kind in by_kind:
-                raise AuthorityDenied("native.health.ambiguous", "health run has duplicate semantic event kinds")
-            by_kind[event.event_kind] = event
-        required = {"loader-ready", "native-request", "tool-invocation", "tool-result", "terminal"}
-        if run.provider_required:
-            required.add("provider-result")
-        missing = required - set(by_kind)
-        if missing:
-            raise AuthorityDenied("native.health.incomplete", "selected health run lacks required native events")
+        by_kind, ordered_events = _ordered_health_events(
+            observation.events, run.provider_required,
+        )
         loader = by_kind["loader-ready"]
         request = by_kind["native-request"]
         invocation = by_kind["tool-invocation"]
         tool_result = by_kind["tool-result"]
         terminal = by_kind["terminal"]
         provider = by_kind.get("provider-result")
-        ordered_events = [loader, request]
-        if provider is not None:
-            ordered_events.append(provider)
-        ordered_events.extend((invocation, tool_result, terminal))
-        expected_parents = {
-            "loader-ready": (),
-            "native-request": (loader.event_id,),
-            "provider-result": (request.event_id,),
-            "tool-invocation": ((provider.event_id,) if provider is not None else (request.event_id,)),
-            "tool-result": (invocation.event_id,),
-            "terminal": (tool_result.event_id,),
-        }
-        if any(not _validate_event_ancestry(event)
-               or event.causal_parent_event_ids != expected_parents[event.event_kind]
-               for event in ordered_events):
-            raise AuthorityDenied("native.health.lineage", "health event ancestry or causal parent DAG is invalid")
         if (loader.loader_ready_event_id != loader.event_id
                 or loader.loaded_proof_id != getattr(observation.loaded_package_proof, "proof_id", None)
                 or request.native_request_event_id != request.event_id
