@@ -556,3 +556,10 @@ The system SHALL distinguish stable root setup principal/namespace/private-purpo
 #### Scenario: Identity changes during preparation
 - **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
 - **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Authenticated selected process-role delivery
+The system SHALL deliver exact v123 role records through the v134 verified manifest and resolver digest join, and accept loaded-role proof only from actual selected import observations independently checked against held closure/source/current process custody.
+
+#### Scenario: Manifest role has not been imported
+- **WHEN** a catalog role exists but the current loader has no matching actual module origin observation
+- **THEN** the role is unavailable for source issuance and no loaded proof is inferred from an adapter.
