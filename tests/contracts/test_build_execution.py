@@ -150,6 +150,51 @@ def test_application_pm_runtime_stages_only_held_in_tree_symlinks(tmp_path):
         os.close(link_fd)
 
 
+def test_application_input_fingerprint_binds_receipt_and_held_inode(tmp_path):
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    first_path.write_bytes(b"same bytes, distinct held artifact")
+    second_path.write_bytes(first_path.read_bytes())
+    first_fd = os.open(first_path, os.O_RDONLY)
+    duplicate_fd = os.dup(first_fd)
+    second_fd = os.open(second_path, os.O_RDONLY)
+    try:
+        member = SimpleNamespace(relative_path="runtime/member", sha256="a" * 64,
+            size_bytes=4, executable=False, receipt_handle="receipt-" + "a" * 40,
+            kind="file", link_target=None)
+        scalar_names = (
+            "selection_handle application_id build_profile_id target_id operation_id "
+            "runtime_preparation_selection_handle plan_sha256 setup_session_id transaction_handle "
+            "prepared_generation_id prepared_generation_digest source_receipt_handle source_manifest_sha256 "
+            "pm_runtime_closure_sha256 lock_receipt_handle lock_sha256 package_closure_receipt_handle "
+            "build_backend_closure_receipt_handle recipe_sha256 builder_receipt_handle builder_sha256 "
+            "builder_size_bytes driver_receipt_handle driver_sha256 driver_size_bytes recipe_config_sha256 "
+            "output_root_id output_owner_uid output_owner_gid build_service_id build_service_selection_handle "
+            "build_service_generation runtime_toolchain_receipt_handles controller_binding_handle "
+            "controller_pid controller_start_ticks controller_uid controller_gid uv_sha256 uv_size_bytes "
+            "uv_source_receipt_handle uv_artifact_id"
+        ).split()
+
+        def projection(fd):
+            member.fd = fd
+            values = {name: "fixed" for name in scalar_names}
+            values.update(recipe_config_bytes=b"config", builder_fd=fd, uv_fd=fd, driver_fd=fd,
+                output_root_fd=fd, controller_pidfd=fd, source_members=(member,),
+                package_members=(), backend_members=(), python_runtime_members=(),
+                recipe_member=member, python_executable_member=member)
+            return SimpleNamespace(**values)
+
+        same_artifact = ManagedBuildJobRunner._application_inputs_fingerprint(projection(duplicate_fd))
+        first_artifact = ManagedBuildJobRunner._application_inputs_fingerprint(projection(first_fd))
+        second_artifact = ManagedBuildJobRunner._application_inputs_fingerprint(projection(second_fd))
+        assert same_artifact == first_artifact
+        assert first_artifact != second_artifact
+    finally:
+        os.close(first_fd)
+        os.close(duplicate_fd)
+        os.close(second_fd)
+
+
 def _test_temp_parent() -> str:
     # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
     # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
