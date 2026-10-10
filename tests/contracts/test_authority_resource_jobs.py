@@ -358,10 +358,19 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
         )
 
     service.launch_resource_profile_task = launcher
-    service.consume_resource_task_completion = lambda _receipt, *, cancelled: {
-        "status": 200, "body": b'{"ok":true}', "headers": {"content-type": "application/json"},
-        "receipt_id": "root-result-receipt", "result_fields": {"ok": True},
-    }
+    capsule_digest_resolved = []
+    service.consume_resource_task_completion = lambda _receipt, *, cancelled: (
+        pytest.fail("result capsule was consumed before its digest was resolved")
+        if not capsule_digest_resolved else {
+            "status": 200, "body": b'{"ok":true}', "headers": {"content-type": "application/json"},
+            "receipt_id": "root-result-receipt", "result_fields": {"ok": True},
+        }
+    )
+    service.resource_task_runner = SimpleNamespace(
+        resolve_result_capsule_sha256=lambda _receipt: (
+            capsule_digest_resolved.append(True) or hashlib.sha256(b'{"ok":true}').hexdigest()
+        ),
+    )
     authority = ResourceJobAuthority(
         service=service, enrollments={("demo", enrollment.generation): enrollment},
         ledger=ledger, selected_generation=lambda _resource: enrollment.generation,
@@ -580,6 +589,11 @@ def test_root_event_admission_requires_exact_registry_handle_and_persists_once(t
     authority._event_field_bytes = 0
     authority._root_event_admissions = {}
     authority._root_admission_objects = {}
+    authority._root_event_by_job = {}
+    authority._root_source_context_by_job = {}
+    authority._root_job_handles = {}
+    authority._result_capsules_by_job = {}
+    authority._root_result_closures = {}
 
     forged = replace(handle, event_id="forged-event")
     with pytest.raises(AuthorityDenied, match="stale or not selected"):

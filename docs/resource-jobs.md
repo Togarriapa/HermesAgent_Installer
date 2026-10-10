@@ -103,11 +103,22 @@ effects.
 # Root source-event authority
 
 Root timer, webhook, and channel adapters must be attached to the active
-`ResourceEventContextIssuer` inside the authority process. An attached producer
-receives an opaque per-instance capability and can create a one-use
-`RootResourceSourceEventProof` only at its native accepted-event seam. The
-proof is not serializable and carries the exact canonical event bytes plus an
-opaque producer observation that is revalidated when consumed. Before an
+`ResourceEventContextIssuer` inside the authority process by
+`register_selected_source_producer(producer, selected_ingress_binding=...)`.
+The issuer accepts only the exact protected `RootSelectedIngressBinding` and a
+concrete producer with a one-use `consume_verified_raw_observation` method;
+there is no caller-supplied boolean validator or caller-selected mint API.
+After live custody resolution, the producer passes its exact pending opaque
+observation to `mint_selected_source_proof(capability,
+controller_proof=proof, raw_observation=observation)`. The issuer creates a
+sealed immutable raw snapshot and one-use `RootResourceSourceEventProof` whose
+payload is the exact original input bytes. It separately derives the canonical
+v67 envelope from the selected schema and validated event fields; the signed
+receipt covers the envelope while the retained record binds the raw bytes,
+digest, replay key, and observation time. Webhook event schemas are selected by
+the root-only `selected_protocol_schema(resource_id, generation,
+source_issuer_id, source_kind)` resolver and checked against the pinned
+artifact IDs/hashes; an absent or unknown mapping denies registration. Before an
 event or receipt exists, `RootResourceControllerRegistry` resolves the
 selected role/issuer/backend through `resolve_selected_ingress_controller` and
 retains a one-use `RootIngressControllerProof` backed by live systemd MainPID,
@@ -133,3 +144,14 @@ or timer claims cannot enter this path. A producer without a concrete native
 provenance verifier and the root registry's pre-event custody proof remains
 unavailable. HTTP and audio channel inputs use distinct v40 typed selection
 and observation proofs; they cannot reuse Telegram/Discord or webhook proof.
+
+The selected webhook adapter preserves the exact signed HTTP body separately
+from the parsed protocol fields. It checks the selected GitHub/registry event
+schema and root-selected repository scope before claiming a durable replay key
+bound to resource ID, resource generation, and delivery ID. The returned
+object is retained by identity and can be consumed once by its issuer-registered
+per-route producer while a matching live ingress-controller PIDFD proof is in
+force. The issuer, not this adapter, mints the v67 source proof and canonical
+event envelope. `accept_request` alone still does not create a source receipt,
+admit a job, or dispatch a task; production requires root composition to attach
+the selected bindings, issuer, custody registry, and durable replay store.
