@@ -24,6 +24,7 @@ class _SelectedRoutes:
     profile_id: str = "profile:one"
     namespace_id: str = "namespace:one"
     memory_provider: str = "agentmemory"
+    memory_enrollment_id: str = "service-enrollment:one"
     memory_owner_generation: int = 3
     service_generation_digest: str = "a" * 64
     extract_route_id: str = "private:extract:fixture"
@@ -67,6 +68,7 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         provider_pkg.__path__ = []
         provider_mod = types.ModuleType("hermes_installer.providers.private_memory")
         provider_mod.RootSelectedPrivateMemoryEngineRoutes = _SelectedRoutes
+        provider_mod.PrivateMemoryRouteDenied = type("PrivateMemoryRouteDenied", (PermissionError,), {})
         with patch.dict(sys.modules, {
             "hermes_installer.providers": provider_pkg,
             "hermes_installer.providers.private_memory": provider_mod,
@@ -154,6 +156,20 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
                 timeout=5, cancelled=lambda: False,
             )
 
+    def test_engine_registry_rejects_route_from_another_memory_enrollment(self):
+        target = MemoryTarget.from_enrollment(
+            MemoryServiceEnrollment.from_protected_record(
+                enrollment_record(),
+            )
+        )
+        routes = _SelectedRoutes(memory_enrollment_id="service-enrollment:other")
+        with self.assertRaises(ValueError):
+            _build_private_engine_registry(
+                {(target.profile_id, target.namespace_id, target.provider): target},
+                lambda *_: (routes, _Dispatcher([])),
+                "a" * 64,
+            )
+
     def test_missing_or_malformed_job_handle_denies_before_dispatch(self):
         dispatcher = _Dispatcher([])
         engine = self._engine(dispatcher)
@@ -169,6 +185,7 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         target_key = (target.profile_id, target.namespace_id, target.provider)
         routes = replace(
             _SelectedRoutes(), profile_id=target.profile_id, namespace_id=target.namespace_id,
+            memory_enrollment_id=enrollment.service_enrollment_id,
             memory_owner_generation=enrollment.memory_owner_generation,
             service_generation_digest="c" * 64,
             extract_route_id=enrollment.private_extraction_embedding_routes["extract"],
@@ -179,6 +196,7 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         provider_pkg.__path__ = []
         provider_mod = types.ModuleType("hermes_installer.providers.private_memory")
         provider_mod.RootSelectedPrivateMemoryEngineRoutes = _SelectedRoutes
+        provider_mod.PrivateMemoryRouteDenied = type("PrivateMemoryRouteDenied", (PermissionError,), {})
         with patch.dict(sys.modules, {
             "hermes_installer.providers": provider_pkg,
             "hermes_installer.providers.private_memory": provider_mod,
@@ -201,6 +219,16 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
             )
         self.assertEqual(denied, {})
         self.assertIn("no eligible selected route", reasons[target_key])
+
+        from hermes_installer.providers.private_memory import PrivateMemoryRouteDenied
+        unavailable, reasons = _build_private_engine_registry(
+            {target_key: target},
+            lambda *_: (_ for _ in ()).throw(
+                PrivateMemoryRouteDenied("no current private selection")
+            ), "c" * 64,
+        )
+        self.assertEqual(unavailable, {})
+        self.assertIn("no current private selection", reasons[target_key])
 
 
 if __name__ == "__main__":

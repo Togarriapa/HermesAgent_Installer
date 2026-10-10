@@ -47,6 +47,7 @@ class RootSelectedPrivateMemoryEngineRoutes:
     selection_id: str
     profile_id: str
     namespace_id: str
+    memory_enrollment_id: str
     memory_provider: str
     memory_owner_generation: int
     service_generation_digest: str
@@ -62,7 +63,7 @@ class RootSelectedPrivateMemoryEngineRoutes:
     expires_monotonic: float
 
     def __init__(self, *, _issuer: object, selection_id: str, profile_id: str,
-                 namespace_id: str, memory_provider: str,
+                 namespace_id: str, memory_enrollment_id: str, memory_provider: str,
                  memory_owner_generation: int, service_generation_digest: str,
                  extract_route_id: str, embed_route_id: str,
                  extraction_served_model_id: str, embedding_served_model_id: str,
@@ -87,6 +88,7 @@ class VerifiedPrivateProviderRoute:
     provider_id: str
     recipient_id: str
     endpoint_receipt_handle: str
+    effect_target: str
     credential_reference_id: str | None
     expires_monotonic: float
     additional_metered_budget_usd: float
@@ -102,6 +104,38 @@ class VerifiedPrivateModelDeployment:
     capability: str
     dimensions: int | None
     expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class PrivateMemoryDispatchSelection:
+    """Root-selected provider effect tuple for one fixed memory model body.
+
+    This carries opaque enrollment identities only. It contains no endpoint
+    URL, credential, or authority grant and is revalidated by the service
+    immediately before authorizing egress.
+    """
+
+    selected: RootSelectedPrivateMemoryEngineRoutes
+    route: VerifiedPrivateProviderRoute
+    deployment: VerifiedPrivateModelDeployment
+    action: str
+    stage_operation: str
+    purpose: str
+    capability: str
+    operation: str
+    target: str
+    recipient: str
+    model_id: str
+
+    def __init__(self, *, _issuer: object, selected: RootSelectedPrivateMemoryEngineRoutes,
+                 route: VerifiedPrivateProviderRoute, deployment: VerifiedPrivateModelDeployment,
+                 action: str, stage_operation: str, purpose: str, capability: str,
+                 operation: str, target: str, recipient: str, model_id: str):
+        if _issuer is not _MINT:
+            raise TypeError("private memory dispatch selections are minted by the root resolver")
+        for name, value in locals().copy().items():
+            if name not in {"self", "_issuer"}:
+                object.__setattr__(self, name, value)
 
 
 class PrivateProviderRouteRegistry(Protocol):
@@ -205,6 +239,85 @@ class RootPrivateMemoryRouteResolver:
         return cls(bindings, provider_route_registry, private_consent_registry,
                    model_deployment_registry, root_effect_broker, monotonic=monotonic)
 
+    @property
+    def bindings(self) -> Any:
+        """Root runtime binding object, exposed read-only for composition checks."""
+        return self._bindings
+
+    @property
+    def effect_broker(self) -> PrivateMemoryEffectBroker:
+        """Exact injected root broker; never a worker-selected transport."""
+        return self._broker
+
+    def resolve_dispatch_selection(self, job_handle: str, payload: bytes) -> PrivateMemoryDispatchSelection:
+        """Resolve a canonical provider body to one current protected route.
+
+        The caller-supplied job handle is only syntax-checked here. The
+        AuthorityService must independently resolve it against the durable
+        queue and compare its profile, namespace, owner generation, source
+        closure, and consent before minting a grant.
+        """
+        if not isinstance(job_handle, str) or not _HANDLE.fullmatch(job_handle):
+            raise PrivateMemoryRouteDenied("durable memory job handle is malformed")
+        if not isinstance(payload, bytes) or not payload or len(payload) > 1_114_112:
+            raise PrivateMemoryRouteDenied("private memory dispatch body is invalid or oversized")
+        try:
+            parsed = strict_json_loads(payload.decode("utf-8", errors="strict"))
+            import json
+            canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"),
+                                   ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (UnicodeError, ValueError, TypeError):
+            raise PrivateMemoryRouteDenied("private memory dispatch body is not strict canonical JSON") from None
+        if not isinstance(parsed, Mapping) or canonical != payload:
+            raise PrivateMemoryRouteDenied("private memory dispatch body is not a canonical object")
+        messages = parsed.get("messages")
+        inputs = parsed.get("input")
+        if isinstance(messages, list) and "input" not in parsed:
+            action, model_capability = "extract", "text-generation"
+        elif isinstance(inputs, list) and "messages" not in parsed:
+            action, model_capability = "embed", "embedding"
+        else:
+            raise PrivateMemoryRouteDenied("private memory body does not select one supported operation")
+        model_id = parsed.get("model")
+        if not isinstance(model_id, str) or not _MODEL.fullmatch(model_id):
+            raise PrivateMemoryRouteDenied("private memory body model identity is malformed")
+        now = self._monotonic()
+        matches = [entry for entry in self._cache.values()
+                   if entry[0].expires_monotonic > now
+                   and ((action == "extract" and entry[0].extraction_served_model_id == model_id)
+                        or (action == "embed" and entry[0].embedding_served_model_id == model_id))]
+        if len(matches) != 1:
+            raise PrivateMemoryRouteDenied("private memory model has no unique root-selected route")
+        selected, _consent, extract_route, embed_route, extract_model, embed_model = matches[0]
+        if not self.is_current(selected):
+            raise PrivateMemoryRouteDenied("private memory route selection is no longer current")
+        if action == "extract":
+            route, deployment = extract_route, extract_model
+            route_id, purpose, stage_operation = (
+                selected.extract_route_id, "memory-extraction", "memory.extract")
+        else:
+            route, deployment = embed_route, embed_model
+            route_id, purpose, stage_operation = (
+                selected.embed_route_id, "memory-embedding", "memory.embed")
+        target = getattr(route, "effect_target", None)
+        if not isinstance(target, str) or not _ID.fullmatch(target):
+            raise PrivateMemoryRouteDenied("protected private provider effect target is unavailable")
+        recipient = getattr(route, "recipient_id", None)
+        if not isinstance(recipient, str) or not _ID.fullmatch(recipient):
+            raise PrivateMemoryRouteDenied("protected private provider recipient is unavailable")
+        if (route.route_id != route_id or route.capability != model_capability
+                or route.additional_metered_budget_usd != 0
+                or route.endpoint_receipt_handle != selected.endpoint_selection_receipt_handle
+                or deployment.served_model_id != model_id
+                or deployment.capability != model_capability):
+            raise PrivateMemoryRouteDenied("selected route or deployment does not match the fixed request")
+        return PrivateMemoryDispatchSelection(
+            _issuer=_MINT, selected=selected, route=route, deployment=deployment, action=action,
+            stage_operation=stage_operation, purpose=purpose,
+            capability="provider-inference", operation="provider.dispatch",
+            target=target, recipient=recipient, model_id=model_id,
+        )
+
     def _active_rows(self) -> tuple[Mapping[str, Any], ...]:
         rows = getattr(self._bindings, "private_memory_engine_selections", None)
         if isinstance(rows, Mapping):
@@ -298,6 +411,10 @@ class RootPrivateMemoryRouteResolver:
             endpoint_receipt = _require_handle(row["endpoint_selection_receipt_handle"], "endpoint receipt handle")
             if (extract_route.endpoint_receipt_handle != endpoint_receipt
                     or embed_route.endpoint_receipt_handle != endpoint_receipt
+                    or not isinstance(extract_route.effect_target, str)
+                    or not _ID.fullmatch(extract_route.effect_target)
+                    or not isinstance(embed_route.effect_target, str)
+                    or not _ID.fullmatch(embed_route.effect_target)
                     or extract_route.additional_metered_budget_usd != 0
                     or embed_route.additional_metered_budget_usd != 0
                     or extract_route.provider_id != embed_route.provider_id
@@ -343,6 +460,7 @@ class RootPrivateMemoryRouteResolver:
             selected = RootSelectedPrivateMemoryEngineRoutes(
                 _issuer=_MINT, selection_id=_require_id(row["id"], "private memory selection ID"),
                 profile_id=enrollment.profile_id, namespace_id=enrollment.namespace_identity,
+                memory_enrollment_id=enrollment_id,
                 memory_provider=enrollment.provider, memory_owner_generation=owner_generation,
                 service_generation_digest=generation_digest,
                 extract_route_id=row["extract_route_id"], embed_route_id=row["embed_route_id"],
@@ -402,6 +520,7 @@ class RootPrivateMemoryRouteResolver:
                        != selected.extraction_model_deployment_receipt_handle
                     or row.get("embedding_model_deployment_receipt_handle")
                        != selected.embedding_model_deployment_receipt_handle
+                    or cache_key[0] != selected.memory_enrollment_id
                     or enrollment.profile_id != selected.profile_id
                     or enrollment.namespace_identity != selected.namespace_id
                     or enrollment.provider != selected.memory_provider
@@ -425,6 +544,12 @@ class RootPrivateMemoryRouteResolver:
                 if (current_route.route_id != expected_route
                         or current_route.capability != expected_capability
                         or current_route.additional_metered_budget_usd != 0
+                        or current_route.endpoint_receipt_handle != selected.endpoint_selection_receipt_handle
+                        or current_route.effect_target != route.effect_target
+                        or current_route.provider_id != route.provider_id
+                        or current_route.recipient_id != route.recipient_id
+                        or current_route.credential_reference_id != route.credential_reference_id
+                        or current_deployment.receipt_handle != deployment.receipt_handle
                         or current_deployment.served_model_id != expected_model
                         or current_deployment.capability != expected_capability
                         or (action == "extract" and current_deployment.source_model_id != "zai-org/GLM-5.2")
@@ -486,6 +611,7 @@ class RootPrivateMemoryRouteResolver:
         if match is None:
             raise PrivateMemoryRouteDenied("private memory route or model is outside the root selection")
         _, _, purpose, operation, capability, route, deployment = match
+        original_route, original_deployment = route, deployment
         if context.purpose != purpose or context.operation != operation:
             raise PrivateMemoryRouteDenied("private memory context does not match route capability")
         if context.sensitivity.value not in {"private", "confidential", "unknown"}:
@@ -493,7 +619,8 @@ class RootPrivateMemoryRouteResolver:
         if capability == "text-generation":
             messages = parsed.get("messages")
             if (set(parsed) != {"model", "messages", "stream", "temperature", "max_tokens"}
-                    or parsed.get("stream") is not False or parsed.get("temperature") != 0
+                    or parsed.get("stream") is not False
+                    or type(parsed.get("temperature")) is not int or parsed["temperature"] != 0
                     or type(parsed.get("max_tokens")) is not int or parsed["max_tokens"] != 4096
                     or not isinstance(messages, list) or len(messages) != 2
                     or messages[0] != {"role": "system", "content": _EXTRACTION_SYSTEM}
@@ -503,6 +630,8 @@ class RootPrivateMemoryRouteResolver:
                     or not isinstance(messages[1].get("content"), str)
                     or not messages[1]["content"]):
                 raise PrivateMemoryRouteDenied("private extraction body differs from the fixed protocol")
+            if len(messages[1]["content"].encode("utf-8")) > 1_048_576:
+                raise PrivateMemoryRouteDenied("private extraction transcript exceeds its fixed byte bound")
         else:
             inputs = parsed.get("input")
             if (set(parsed) != {"model", "input", "encoding_format"}
@@ -510,6 +639,9 @@ class RootPrivateMemoryRouteResolver:
                     or not isinstance(inputs, list) or not inputs or len(inputs) > 64
                     or any(not isinstance(value, str) or not value for value in inputs)):
                 raise PrivateMemoryRouteDenied("private embedding body differs from the fixed protocol")
+            if (sum(len(value.encode("utf-8")) for value in inputs) > 65_536
+                    or any(len(value.encode("utf-8")) > 4_096 for value in inputs)):
+                raise PrivateMemoryRouteDenied("private embedding input exceeds its fixed byte bound")
         consent = self._consent.revalidate_private_engine_selection(
             consent, profile_id=selected.profile_id, namespace_id=selected.namespace_id,
             memory_provider=selected.memory_provider, owner_generation=selected.memory_owner_generation,
@@ -524,6 +656,11 @@ class RootPrivateMemoryRouteResolver:
             service_generation_digest=selected.service_generation_digest,
         )
         if (route.capability != capability or route.additional_metered_budget_usd != 0
+                or route.endpoint_receipt_handle != selected.endpoint_selection_receipt_handle
+                or route.provider_id != original_route.provider_id
+                or route.recipient_id != original_route.recipient_id
+                or route.credential_reference_id != original_route.credential_reference_id
+                or deployment.receipt_handle != original_deployment.receipt_handle
                 or deployment.capability != capability
                 or deployment.served_model_id != model_id
                 or (capability == "embedding" and deployment.dimensions != selected.embedding_dimensions)

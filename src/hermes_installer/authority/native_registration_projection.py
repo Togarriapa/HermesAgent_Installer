@@ -11,8 +11,11 @@ import hashlib
 import inspect
 import json
 import os
+import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from hermes_installer.components.native_plugins import (
@@ -55,6 +58,16 @@ class NativeRegistrationActionBinding:
     workflow_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class RootNativeRegistrationActionBinding:
+    """Exact v113 registration-to-selected action/workflow foreign keys."""
+
+    selector_values: Mapping[str, str]
+    action_binding_id: str | None
+    argument_projection: tuple[tuple[str, str], ...]
+    workflow_id: str | None
+
+
 _ROOT_PROJECTION_SEAL = object()
 
 
@@ -81,13 +94,509 @@ class RootNativeRegistrationProjection:
     handler_kind: str
     handler_id: str
     selector_fields: tuple[str, ...]
-    action_bindings: tuple[NativeRegistrationActionBinding, ...]
+    action_bindings: tuple[RootNativeRegistrationActionBinding, ...]
     observer_enrollment_ids: tuple[str, ...]
     _seal: object = field(repr=False, compare=False, default=None)
 
     def __post_init__(self) -> None:
         if self._seal is not _ROOT_PROJECTION_SEAL:
             raise TypeError("native registration projection rows are issued by the root resolver")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeRegistrationProjectionBundle:
+    """The exact registration tuple and its one-to-one candidate projection."""
+
+    registrations: tuple[RootNativeRegistrationProjection, ...]
+    candidate_records: tuple[Mapping[str, Any], ...]
+
+
+class NativeRegistrationProjectionDenied(PermissionError):
+    """Selected registration, result schema, action or observer joins are incomplete."""
+
+
+_SOURCE_COVERAGE_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeRegistrationSourceCoverage:
+    """Actual registration calls joined to current held source-module receipts."""
+
+    captured_registrations: tuple[CapturedHermesRegistration, ...]
+    source_observations: tuple["RootNativeRegistrationSourceObservation", ...]
+    reviewed_definitions: tuple["ReviewedNativeRegistrationDefinition", ...]
+    component_ids: tuple[str, ...]
+    source_receipt_handles: tuple[str, ...]
+    prepared_generation_id: str
+    issued_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _SOURCE_COVERAGE_SEAL:
+            raise TypeError("native registration source coverage is root registry issued")
+
+
+class RootNativeRegistrationProjectionRegistry:
+    """Session-bound producer and currentness registry for actual registrations.
+
+    `resolve_source_coverage` joins the real 42 `register_tool` calls to held
+    release member receipts and produces source-only coverage. `build_selected`
+    invokes the strict executable projection only after the factory supplies a
+    sealed current selection and the complete typed definitions DTO.
+    """
+
+    def __init__(self, selected_installation_binding: Any, root_journal: Path):
+        from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
+
+        if (type(selected_installation_binding) is not RootSelectedInstallationBinding
+                or not isinstance(root_journal, Path) or not root_journal.is_absolute()):
+            raise ValueError("native registration projection requires the exact root installation binding")
+        self._binding = selected_installation_binding
+        self._journal = root_journal
+        self._seal = object()
+        self._coverage: dict[str, RootNativeRegistrationSourceCoverage] = {}
+        self._bundles: dict[str, RootNativeRegistrationProjectionBundle] = {}
+
+    @classmethod
+    def from_root_setup(cls, selected_installation_binding: Any,
+                        root_journal: Path) -> "RootNativeRegistrationProjectionRegistry":
+        return cls(selected_installation_binding, root_journal)
+
+    def resolve_source_coverage(self) -> RootNativeRegistrationSourceCoverage:
+        """Observe all actual registration modules; never elevate source maps to authority."""
+        try:
+            from hermes_installer.authority.bootstrap_runtime_factory import RootReleaseModuleReceipt
+            receipts = self._binding.resolve_prepared_release_module_receipts()
+            if not isinstance(receipts, tuple) or not receipts or any(
+                    type(item) is not RootReleaseModuleReceipt for item in receipts):
+                raise ValueError
+            prepared_generations = {item._prepared_generation_id for item in receipts}
+            if len(prepared_generations) != 1 or None in prepared_generations:
+                raise ValueError
+            captured = capture_actual_hermes_registrations()
+            source = observe_root_native_registrations(receipts, captured)
+            definitions = reviewed_native_registration_definitions(captured)
+            component_ids = reviewed_native_component_ids(captured)
+            if (len(source) != 42 or len(definitions) != 42 or len(component_ids) != 18
+                    or {row.native_tool_name for row in source}
+                       != {row.native_tool_name for row in captured}):
+                raise ValueError
+            for receipt in receipts:
+                receipt.read_current()
+            prepared_generation_id = next(iter(prepared_generations))
+            coverage = RootNativeRegistrationSourceCoverage(
+                captured, source, definitions, component_ids,
+                tuple(row.source_receipt_handle for row in receipts),
+                prepared_generation_id, time.monotonic(), _SOURCE_COVERAGE_SEAL,
+            )
+            self._coverage[prepared_generation_id] = coverage
+            return coverage
+        except Exception:
+            raise NativeRegistrationSourceObservationDenied(
+                "actual registration source coverage lacks a current prepared release receipt") from None
+
+    def build_selected(self, selection: Any, definitions: Any
+                       ) -> RootNativeRegistrationProjectionBundle:
+        try:
+            current = self._binding.resolve_current_native_bootstrap_assembly(selection.selection_handle)
+            if current is not selection:
+                raise ValueError
+            coverage = self.resolve_source_coverage()
+            if (coverage.prepared_generation_id != selection.prepared_generation_id
+                    or selection._registry_seal is not
+                       self._binding._session._factory._native_assembly_seal):
+                raise ValueError
+            bundle = build_root_native_registration_projection(selection, definitions)
+            self._bundles[selection.selection_handle] = bundle
+            return bundle
+        except NativeRegistrationProjectionDenied:
+            raise
+        except Exception:
+            raise NativeRegistrationProjectionDenied(
+                "root-selected native registration definitions are stale or incomplete") from None
+
+    def resolve_current(self, selection_handle: str) -> RootNativeRegistrationProjectionBundle:
+        try:
+            selection = self._binding.resolve_current_native_bootstrap_assembly(selection_handle)
+            bundle = self._bundles.get(selection_handle)
+            if bundle is None:
+                raise ValueError
+            # Rebuild from the current factory DTO so schema/source receipt
+            # changes cannot leave a cached executable candidate live.
+            definitions = self._binding.resolve_native_assembly_definitions(selection_handle)
+            current = build_root_native_registration_projection(selection, definitions)
+            if current != bundle:
+                raise ValueError
+            return current
+        except Exception:
+            raise NativeRegistrationProjectionDenied(
+                "current native registration projection is absent or stale") from None
+
+
+def build_root_native_registration_projection(
+        selection: Any, definitions: Any,
+) -> RootNativeRegistrationProjectionBundle:
+    """Build the complete executable all-42 projection from a sealed factory DTO.
+
+    This is called only by the root setup session after current-selection
+    revalidation. It consumes the factory's distinct v113 action, workflow,
+    registration, schema, observer, and setup-receipt rows; source maps and
+    inventory captures cannot be passed independently as authority.
+    """
+    from hermes_installer.authority.bootstrap_runtime_factory import (
+        RootNativeAssemblyDefinitions, RootNativeBootstrapAssemblySelection,
+    )
+
+    if (type(selection) is not RootNativeBootstrapAssemblySelection
+            or type(definitions) is not RootNativeAssemblyDefinitions
+            or selection.selection_handle != definitions.selection_handle
+            or not selection.selection_handle):
+        raise NativeRegistrationProjectionDenied("root selected native assembly definitions are absent or stale")
+    from hermes_installer.authority.bootstrap_runtime_factory import RootNativeRegistrationSchemaReceipt
+
+    required_tuples = (
+        definitions.registration_records, definitions.action_records,
+        definitions.workflow_records, definitions.action_registration_records,
+        definitions.native_schema_records, definitions.native_schema_bytes,
+        definitions.source_issuer_records, definitions.result_schema_receipts,
+        definitions.release_module_receipts, definitions.native_mcp_tool_bindings,
+    )
+    if any(not isinstance(value, tuple) for value in required_tuples):
+        raise NativeRegistrationProjectionDenied("selected registration source/schema/action joins are unavailable")
+
+    try:
+        captured = capture_actual_hermes_registrations()
+        source_rows = observe_root_native_registrations(definitions.release_module_receipts, captured)
+        source_by_name = {row.native_tool_name: row for row in source_rows}
+        reviewed = reviewed_native_registration_definitions(captured)
+        reviewed_by_name = {row.native_tool_name: row for row in reviewed}
+        if len(source_by_name) != 42 or len(reviewed_by_name) != 42:
+            raise ValueError
+
+        receipts: dict[str, tuple[Any, bytes]] = {}
+        for receipt in definitions.result_schema_receipts:
+            if type(receipt) is not RootNativeRegistrationSchemaReceipt:
+                raise ValueError
+            payload = receipt.read_current()
+            reviewed_schema = next(row for row in reviewed_packaged_registration_result_schemas(captured)
+                                   if row.artifact_id == receipt.artifact_id)
+            if (receipt.sha256 != reviewed_schema.sha256
+                    or receipt.size_bytes != reviewed_schema.size_bytes
+                    or receipt.relative_path != reviewed_schema.relative_path
+                    or len(payload) != reviewed_schema.size_bytes
+                    or hashlib.sha256(payload).hexdigest() != reviewed_schema.sha256
+                    or json.loads(payload) != reviewed_schema.schema
+                    or receipt.artifact_id in receipts):
+                raise ValueError
+            receipts[receipt.artifact_id] = (receipt, payload)
+        expected_packaged = {row.artifact_id for row in reviewed_packaged_registration_result_schemas(captured)}
+        if set(receipts) != expected_packaged:
+            raise ValueError
+
+        schema_bytes = dict(definitions.native_schema_bytes)
+        schema_rows: dict[str, list[Mapping[str, Any]]] = {}
+        for raw in definitions.native_schema_records:
+            if not isinstance(raw, Mapping):
+                raise ValueError
+            required_schema_fields = {
+                "id", "artifact_id", "sha256", "schema_kind", "native_package_id",
+                "native_package_generation", "adapter_id", "action_id", "source_receipt_handle",
+                "size_bytes", "derivation_receipt_handle",
+            }
+            if set(raw) != required_schema_fields:
+                raise ValueError
+            schema_rows.setdefault(raw["id"], []).append(raw)
+        parsed_schemas: dict[str, Mapping[str, Any]] = {}
+        for schema_id, rows in schema_rows.items():
+            body = schema_bytes.get(schema_id)
+            if not isinstance(body, bytes) or not rows:
+                raise ValueError
+            parsed = json.loads(body)
+            canonical = _canonical(parsed)
+            if body not in {canonical, canonical + b"\n"}:
+                raise ValueError
+            digest = hashlib.sha256(body).hexdigest()
+            for row in rows:
+                if (row["native_package_id"] != selection.package_id
+                        or row["native_package_generation"] != selection.native_package_generation
+                        or row["sha256"] != digest or row["size_bytes"] != len(body)
+                        or not isinstance(row["source_receipt_handle"], str)
+                        or not row["source_receipt_handle"]):
+                    raise ValueError
+            parsed_schemas[schema_id] = parsed
+        if set(schema_bytes) != set(schema_rows):
+            raise ValueError
+
+        action_rows = _index_projection_records(
+            definitions.action_records, "action_binding_id",
+            {"action_binding_id", "adapter_id", "action_id", "manifest_sha256",
+             "adapter_artifact_id", "adapter_sha256", "argument_schema_id", "result_schema_id",
+             "effect_enrollment_id", "operation", "capability", "target_id", "recipient",
+             "generation", "observer_enrollment_ids"},
+        )
+        workflow_rows = _index_projection_records(
+            definitions.workflow_records, "id",
+            {"id", "registration_id", "external_argument_schema_id", "external_result_schema_id",
+             "workflow_artifact_id", "workflow_sha256", "workflow_source_receipt_handle",
+             "step_action_binding_ids", "generation"},
+        )
+        issuer_rows = _index_projection_records(
+            definitions.source_issuer_records, "observer_enrollment_id",
+            {"issuer_channel_id", "producer_profile_id", "producer_role_artifact_id",
+             "producer_role_sha256", "capture_schema_id", "allowed_parent_channels", "generation",
+            "observer_enrollment_id", "source_action_ids"}, allow_optional={"private_provider_route_ids"},
+        )
+        for action_id, action in action_rows.items():
+            if (action_id != f"{action['adapter_id']}:action:{action['action_id']}"
+                    or action["generation"] != selection.native_package_generation
+                    or not isinstance(action["effect_enrollment_id"], str)
+                    or not action["effect_enrollment_id"]
+                    or not isinstance(action["operation"], str) or not action["operation"]
+                    or not isinstance(action["capability"], str) or not action["capability"]
+                    or not isinstance(action["target_id"], str) or not action["target_id"]
+                    or (action["recipient"] is not None
+                        and (not isinstance(action["recipient"], str) or not action["recipient"]))
+                    or any(not isinstance(action[field], str) or len(action[field]) != 64
+                           or any(ch not in "0123456789abcdef" for ch in action[field])
+                           for field in ("manifest_sha256", "adapter_sha256"))
+                    or not isinstance(action["observer_enrollment_ids"], (tuple, list))):
+                raise ValueError
+        for workflow_id, workflow in workflow_rows.items():
+            step_ids = workflow["step_action_binding_ids"]
+            if (workflow_id != workflow["id"]
+                    or workflow["generation"] != selection.native_package_generation
+                    or not isinstance(workflow["registration_id"], str)
+                    or not isinstance(workflow["workflow_artifact_id"], str)
+                    or not workflow["workflow_artifact_id"]
+                    or not isinstance(workflow["workflow_sha256"], str)
+                    or len(workflow["workflow_sha256"]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in workflow["workflow_sha256"])
+                    or not isinstance(workflow["workflow_source_receipt_handle"], str)
+                    or not workflow["workflow_source_receipt_handle"]
+                    or not isinstance(step_ids, (tuple, list)) or not 1 <= len(step_ids) <= 16
+                    or len(set(step_ids)) != len(step_ids)
+                    or any(step_id not in action_rows for step_id in step_ids)):
+                raise ValueError
+        for observer_id, issuer in issuer_rows.items():
+            if (observer_id != issuer["observer_enrollment_id"]
+                    or issuer["generation"] != selection.service_generation
+                    or issuer["producer_profile_id"] != selection.service_profile_id
+                    or not isinstance(issuer["source_action_ids"], (tuple, list))
+                    or not issuer["source_action_ids"]):
+                raise ValueError
+        if len(action_rows) != 61 or len(workflow_rows) != 2:
+            raise ValueError
+        expected_families = {
+            "agent-live-wallet", "agent-sandbox-wallet", "agent37-discovery",
+            "authentik-authorization", "cloudflare-homelab", "codex", "composio",
+            "ebook-toolchain", "epic-kanban", "financial-data-hub",
+            "financial-execution-gateway", "github", "homelab-ops-broker",
+            "kobo-bridge", "mcp-registry", "resource-overlay-store",
+            "voice-pipeline", "web",
+        }
+        if {row.family for row in reviewed} != expected_families:
+            raise ValueError
+        registration_rows = tuple(definitions.registration_records)
+        if len(registration_rows) != 42:
+            raise ValueError
+
+        projections: list[RootNativeRegistrationProjection] = []
+        candidates: list[Mapping[str, Any]] = []
+        names_seen: set[str] = set()
+        known_handler_kinds = {"effect-action", "finite-selector", "finite-workflow",
+                               "public-registry-read", "owner-overlay", "mcp-dispatch"}
+        for raw in registration_rows:
+            fields = {
+                "registration_id", "native_tool_name", "toolset", "family", "adapter_id",
+                "argument_schema_id", "result_schema_id", "native_schema_sha256",
+                "registration_source_artifact_id", "registration_source_sha256",
+                "registration_source_receipt_handle", "handler_kind", "handler_id",
+                "selector_fields", "action_bindings", "observer_enrollment_ids", "generation",
+            }
+            if not isinstance(raw, Mapping) or set(raw) != fields:
+                raise ValueError
+            name = raw["native_tool_name"]
+            source = source_by_name.get(name)
+            reviewed_row = reviewed_by_name.get(name)
+            source_definition = reviewed_row
+            if (source is None or source_definition is None or name in names_seen
+                    or raw["registration_id"] != source.registration_id
+                    or raw["adapter_id"] != source.adapter_id
+                    or raw["toolset"] != source.toolset or raw["family"] != source.family
+                    or raw["handler_kind"] != source.handler_kind
+                    or raw["handler_kind"] not in known_handler_kinds
+                    or raw["handler_id"] != source.handler_id
+                    or raw["native_schema_sha256"] != source.native_schema_sha256
+                    or raw["registration_source_artifact_id"] != source.registration_source_artifact_id
+                    or raw["registration_source_sha256"] != source.registration_source_sha256
+                    or raw["registration_source_receipt_handle"] != source.registration_source_receipt_handle
+                    or raw["generation"] != selection.native_package_generation
+                    or tuple(raw["selector_fields"]) != source_definition.selector_fields):
+                raise ValueError
+            names_seen.add(name)
+
+            argument_id, result_id = raw["argument_schema_id"], raw["result_schema_id"]
+            argument_schema = parsed_schemas.get(argument_id)
+            result_schema = parsed_schemas.get(result_id)
+            if (not isinstance(argument_schema, Mapping) or not isinstance(result_schema, Mapping)
+                    or _canonical(argument_schema) != _canonical(source.argument_schema)
+                    or hashlib.sha256(_canonical(argument_schema)).hexdigest() != source.native_schema_sha256
+                    or not any(row["schema_kind"] == "arguments" and row["adapter_id"] == source.adapter_id
+                               and row["action_id"] == source.registration_id
+                               for row in schema_rows[argument_id])
+                    or not any(row["schema_kind"] == "result" and row["adapter_id"] == source.adapter_id
+                               and row["action_id"] == source.registration_id
+                               for row in schema_rows[result_id])):
+                raise ValueError
+
+            local_receipt = receipts.get(result_id)
+            if local_receipt is not None:
+                receipt, payload = local_receipt
+                matching = [row for row in schema_rows[result_id]
+                            if row["schema_kind"] == "result" and row["adapter_id"] == source.adapter_id]
+                if (not matching or any(row["artifact_id"] != receipt.artifact_id
+                                        or row["sha256"] != receipt.sha256
+                                        or row["size_bytes"] != receipt.size_bytes
+                                        or row["source_receipt_handle"] != receipt.artifact_receipt_handle
+                                        for row in matching)
+                        or json.loads(payload) != result_schema):
+                    raise ValueError
+
+            raw_bindings = raw["action_bindings"]
+            if not isinstance(raw_bindings, (tuple, list)) or len(raw_bindings) != len(source_definition.action_bindings):
+                raise ValueError
+            selected_workflows = [row for row in workflow_rows.values()
+                                  if row["registration_id"] == source.registration_id]
+            workflow_id = None
+            if source_definition.handler_kind == "finite-workflow":
+                if len(selected_workflows) != 1:
+                    raise ValueError
+                workflow = selected_workflows[0]
+                workflow_id = workflow["id"]
+                if (workflow["generation"] != selection.native_package_generation
+                        or workflow["external_argument_schema_id"] != argument_id
+                        or workflow["external_result_schema_id"] != result_id
+                        or not workflow["workflow_source_receipt_handle"]):
+                    raise ValueError
+            elif selected_workflows:
+                raise ValueError
+
+            projected_bindings: list[RootNativeRegistrationActionBinding] = []
+            for raw_binding, source_binding in zip(raw_bindings, source_definition.action_bindings, strict=True):
+                expected_fields = {"selector_values", "action_binding_id", "argument_projection", "workflow_id"}
+                if not isinstance(raw_binding, Mapping) or set(raw_binding) != expected_fields:
+                    raise ValueError
+                if dict(raw_binding["selector_values"]) != dict(source_binding.selector_values):
+                    raise ValueError
+                expected_id: str | None
+                expected_workflow: str | None
+                if source_definition.handler_kind in {"public-registry-read", "owner-overlay", "mcp-dispatch"}:
+                    expected_id, expected_workflow = None, None
+                elif source_definition.handler_kind == "finite-workflow":
+                    expected_id, expected_workflow = None, workflow_id
+                else:
+                    expected_id = f"{source.adapter_id}:action:{source_binding.action_id}"
+                    expected_workflow = None
+                    action = action_rows.get(expected_id)
+                    if (action is None or action["adapter_id"] != source.adapter_id
+                            or action["action_id"] != source_binding.action_id
+                            or action["generation"] != selection.native_package_generation):
+                        raise ValueError
+                expected_projection = tuple(source_binding.argument_projection)
+                actual_projection = tuple((item["name"], item["source_field"])
+                                          for item in raw_binding["argument_projection"])
+                if (raw_binding["action_binding_id"] != expected_id
+                        or raw_binding["workflow_id"] != expected_workflow
+                        or actual_projection != expected_projection):
+                    raise ValueError
+                projected_bindings.append(RootNativeRegistrationActionBinding(
+                    MappingProxyType(dict(source_binding.selector_values)), expected_id,
+                    expected_projection, expected_workflow,
+                ))
+
+            observer_ids = raw["observer_enrollment_ids"]
+            if (not isinstance(observer_ids, (tuple, list)) or not observer_ids
+                    or len(set(observer_ids)) != len(observer_ids)):
+                raise ValueError
+            lexical_action = (source_definition.action_bindings[0].action_id
+                              if source_definition.handler_kind == "effect-action"
+                              else source.registration_id)
+            if source_definition.handler_kind != "mcp-dispatch":
+                for observer_id in observer_ids:
+                    issuer = issuer_rows.get(observer_id)
+                    if (issuer is None or issuer["generation"] != selection.service_generation
+                            or lexical_action not in issuer["source_action_ids"]):
+                        raise ValueError
+
+            native_server_name = "hermes-installer"
+            if source_definition.handler_kind == "mcp-dispatch":
+                matches = [row for row in definitions.native_mcp_tool_bindings
+                           if row.get("native_tool_name") == name
+                           and row.get("native_schema_sha256") == source.native_schema_sha256]
+                if len(matches) != 1:
+                    raise ValueError
+                native_server_name = matches[0]["native_server_name"]
+                lexical_action = matches[0]["id"]
+                if any(lexical_action not in issuer_rows[observer_id]["source_action_ids"]
+                       for observer_id in observer_ids):
+                    raise ValueError
+
+            projection = RootNativeRegistrationProjection(
+                registration_id=source.registration_id,
+                native_tool_name=name,
+                native_server_name=native_server_name,
+                toolset=source.toolset,
+                family=source.family,
+                adapter_id=source.adapter_id,
+                argument_schema=MappingProxyType(dict(argument_schema)),
+                result_schema=MappingProxyType(dict(result_schema)),
+                native_schema_sha256=source.native_schema_sha256,
+                registration_source_artifact_id=source.registration_source_artifact_id,
+                registration_source_sha256=source.registration_source_sha256,
+                registration_source_receipt_handle=source.registration_source_receipt_handle,
+                handler_kind=source_definition.handler_kind,
+                handler_id=source.handler_id,
+                selector_fields=tuple(source_definition.selector_fields),
+                action_bindings=tuple(projected_bindings),
+                observer_enrollment_ids=tuple(observer_ids),
+                _seal=_ROOT_PROJECTION_SEAL,
+            )
+            projections.append(projection)
+            lexical = (source_definition.action_bindings[0].action_id
+                       if source_definition.handler_kind == "effect-action"
+                       else lexical_action)
+            candidates.append(MappingProxyType({
+                "native_tool_name": name, "adapter_id": source.adapter_id,
+                "action_id": lexical, "argument_schema": dict(argument_schema),
+                "result_schema": dict(result_schema), "native_schema_sha256": source.native_schema_sha256,
+                "observer_enrollment_ids": list(observer_ids), "native_server_name": native_server_name,
+                "description": source.description, "registration_id": source.registration_id,
+                "toolset": source.toolset, "family": source.family,
+                "handler_kind": source_definition.handler_kind,
+            }))
+
+        if names_seen != set(source_by_name) or len(projections) != 42:
+            raise ValueError
+        return RootNativeRegistrationProjectionBundle(tuple(projections), tuple(candidates))
+    except NativeRegistrationProjectionDenied:
+        raise
+    except Exception:
+        raise NativeRegistrationProjectionDenied(
+            "actual registrations lack a current selected result-schema, action, workflow or observer join") from None
+
+
+def _index_projection_records(rows: tuple[Any, ...], key: str, fields: set[str], *,
+                              allow_optional: set[str] = set()) -> dict[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {}
+    if not isinstance(rows, tuple):
+        raise ValueError
+    for row in rows:
+        if (not isinstance(row, Mapping) or frozenset(row) not in {frozenset(fields),
+                                                                   frozenset(fields | allow_optional)}
+                or not isinstance(row.get(key), str) or not row[key] or row[key] in result):
+            raise ValueError
+        result[row[key]] = row
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +712,23 @@ def observe_root_native_registrations(
     return tuple(sorted(output, key=lambda row: row.native_tool_name))
 
 
+def reviewed_native_component_ids(
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[str, ...]:
+    """Return source-derived component coverage for the actual 42 registrations.
+
+    This inventory is suitable for configurable-pending coverage only. It is
+    not target, account, permission, effect, observer, or candidate authority.
+    """
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    definitions = reviewed_native_registration_definitions(captured)
+    components = {row.family for row in definitions}
+    if len(definitions) != 42 or components != set(_PLUGIN_IDS) or len(components) != 18:
+        raise NativeRegistrationDefinitionDenied(
+            "actual registration source does not cover the exact 18 reviewed components")
+    return tuple(sorted(components))
+
+
 class NativeRegistrationResultSchemaDenied(ValueError):
     """The reviewed bounded local result-schema artifacts drifted."""
 
@@ -247,9 +773,12 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
     """
 
     def __init__(self, observer: Any, artifact_receipt_registry: Any,
-                 setup_authorization: Any) -> None:
+                 setup_authorization: Any, *, release: Any = None, actor: Any = None) -> None:
         from hermes_installer.authority.bootstrap_enrollment import (
             RootArtifactReceiptRegistry, VerifiedRootSetupAuthorization,
+        )
+        from hermes_installer.authority.installer_release import (
+            RootActorObservation, VerifiedInstallerReleaseReceipt,
         )
         from hermes_installer.authority.source_artifact_receipts import (
             RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver,
@@ -257,16 +786,21 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
 
         if (type(observer) not in {RootCatalogArtifactObserver, RootSetupCatalogArtifactObserver}
                 or type(artifact_receipt_registry) is not RootArtifactReceiptRegistry
-                or type(setup_authorization) is not VerifiedRootSetupAuthorization):
+                or type(setup_authorization) is not VerifiedRootSetupAuthorization
+                or type(release) is not VerifiedInstallerReleaseReceipt
+                or type(actor) is not RootActorObservation):
             raise NativeRegistrationResultSchemaObservationDenied(
-                "root setup authorization, artifact receipt registry and catalog observer are required")
+                "root setup authorization, held release/actor, receipt registry and catalog observer are required")
         self._observer = observer
         self._receipts = artifact_receipt_registry
         self._authorization = setup_authorization
+        self._release = release
+        self._actor = actor
         self._seal = object()
         self._issued: dict[str, RootNativeRegistrationResultSchemaReceipt] = {}
 
     def mint(self, *, prepared_setup_receipt_handle: str, prepared_generation_id: str,
+             artifact_id: str | None = None,
              registrations: tuple[CapturedHermesRegistration, ...] | None = None
              ) -> tuple[RootNativeRegistrationResultSchemaReceipt, ...]:
         if (not isinstance(prepared_setup_receipt_handle, str) or not prepared_setup_receipt_handle
@@ -275,7 +809,22 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
                 "current selected prepared setup identity is required")
         try:
             output: list[RootNativeRegistrationResultSchemaReceipt] = []
-            for schema in reviewed_local_registration_result_schemas(registrations):
+            reviewed_schemas = reviewed_packaged_registration_result_schemas(registrations)
+            if artifact_id is not None:
+                reviewed_schemas = tuple(row for row in reviewed_schemas if row.artifact_id == artifact_id)
+                if len(reviewed_schemas) != 1:
+                    raise ValueError
+            for schema in reviewed_schemas:
+                from hermes_installer.artifacts import stage_verified_release_artifact
+                staged = stage_verified_release_artifact(
+                    self._observer.catalog, self._observer.artifact_root,
+                    self._release, self._actor,
+                    artifact_id=schema.artifact_id, relative_path=schema.relative_path,
+                    expected_uid=0,
+                )
+                if (staged.artifact_id != schema.artifact_id or staged.sha256 != schema.sha256
+                        or staged.size_bytes != schema.size_bytes):
+                    raise ValueError
                 observation = self._observer.observe(schema.artifact_id, schema.sha256)
                 if (observation.artifact_id != schema.artifact_id
                         or observation.sha256 != schema.sha256
@@ -296,7 +845,7 @@ class RootNativeRegistrationResultSchemaReceiptRegistry:
                 self._verify_bytes(receipt)
                 self._issued[handle] = receipt
                 output.append(receipt)
-            if len(output) != 8:
+            if len(output) != (1 if artifact_id is not None else 10):
                 raise ValueError
             return tuple(sorted(output, key=lambda row: row.schema.native_tool_name))
         except NativeRegistrationResultSchemaDenied as exc:
@@ -507,6 +1056,71 @@ def reviewed_local_registration_result_schemas(
         ))
     if seen != set(expected_handlers):
         raise NativeRegistrationResultSchemaDenied("local result schema artifact coverage is incomplete")
+    return tuple(sorted(output, key=lambda row: row.native_tool_name))
+
+
+def reviewed_packaged_registration_result_schemas(
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[ReviewedNativeRegistrationResultSchema, ...]:
+    """Return the exact ten packaged registration result schemas.
+
+    The eight local tools use the v114 catalog identities. Financial data and
+    web use the source-reviewed v121/v120 result schemas. These are source pins
+    only; current root receipts and protected joins remain required.
+    """
+    local = reviewed_local_registration_result_schemas(registrations)
+    root = Path(__file__).resolve().parents[3]
+    try:
+        contract = json.loads((root / "planning/native-package-binding-contract.json").read_text(encoding="utf-8"))
+        v121 = contract["financial_alias_source_bound_v121"]
+        v120 = contract["financial_web_results_v120"]
+        v140 = contract["registration_source_pin_refinement_v140"]["source_record"]
+        v141 = contract["registration_source_pin_refinement_v141"]["source_record"]
+        by_tool = {row["tool_name"]: row for row in v120["schema_artifacts"]}
+        rows = [
+            {"tool_name": "financial_data_read", "schema_id": v121["schema_id"],
+             "artifact_id": v121["artifact_id"], "path": v121["path"],
+             "sha256": v121["sha256"], "size_bytes": v121["size_bytes"]},
+            by_tool["web_retrieve"],
+        ]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        raise NativeRegistrationResultSchemaDenied("financial/web result schema source pins are unavailable") from None
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    source_by_name = {row.native_tool_name: row for row in captured}
+    expected_adapters = {"financial_data_read": "financial-data-hub", "web_retrieve": "web"}
+    expected_source_paths = {
+        "financial_data_read": (v141["relative_path"], v141["sha256"]),
+        "web_retrieve": (v140["relative_path"], v140["sha256"]),
+    }
+    output = list(local)
+    for row in rows:
+        tool = row["tool_name"]
+        source = source_by_name.get(tool)
+        relative = row["path"]
+        if (source is None or source.adapter_id != expected_adapters[tool]
+                or ("src/" + source.registration_source_path, source.registration_source_sha256)
+                   != expected_source_paths[tool]
+                or row["schema_id"] != row["artifact_id"]
+                or not isinstance(relative, str)
+                or not relative.startswith("plans/amendments/2026-10-10-")
+                or type(row["size_bytes"]) is not int or not 1 <= row["size_bytes"] <= 16_384
+                or not isinstance(row["sha256"], str) or len(row["sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in row["sha256"])):
+            raise NativeRegistrationResultSchemaDenied("financial/web result schema identity is not source-reviewed")
+        try:
+            data = (root / relative).read_bytes()
+            schema = json.loads(data)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raise NativeRegistrationResultSchemaDenied("financial/web result schema bytes are unavailable") from None
+        if (len(data) != row["size_bytes"] or hashlib.sha256(data).hexdigest() != row["sha256"]
+                or data not in {_canonical(schema), _canonical(schema) + b"\n"}):
+            raise NativeRegistrationResultSchemaDenied("financial/web result schema differs from its exact source pin")
+        output.append(ReviewedNativeRegistrationResultSchema(
+            tool, row["schema_id"], row["artifact_id"], relative,
+            row["sha256"], row["size_bytes"], "effect-action", schema,
+        ))
+    if len(output) != 10 or len({row.artifact_id for row in output}) != 10:
+        raise NativeRegistrationResultSchemaDenied("packaged registration result schema set is not exact")
     return tuple(sorted(output, key=lambda row: row.native_tool_name))
 
 

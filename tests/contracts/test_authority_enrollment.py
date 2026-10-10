@@ -86,23 +86,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**dynamic, "derivation_receipt_handle": None}])
 
-    def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
-        row = {
-            "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
-            "producer_role_artifact_id": "role-artifact", "producer_role_sha256": "a" * 64,
-            "capture_schema_id": "capture-schema", "allowed_parent_channels": [],
-            "generation": "process-g1", "observer_enrollment_id": "observer-a",
-            "source_action_ids": ["authenticated-input"],
-        }
-        legacy = _parse_source_issuers([row])[0]
-        self.assertEqual(legacy.private_provider_route_ids, ())
-        selected = _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"]}])[0]
-        self.assertEqual(selected.private_provider_route_ids, ("provider-route-a",))
-        with self.assertRaises(AuthorityDenied):
-            _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
-        with self.assertRaises(AuthorityDenied):
-            _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
-
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,
@@ -122,6 +105,23 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
                 _validate_root_key_selection(invalid)
+
+    def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
+        row = {
+            "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
+            "producer_role_artifact_id": "role-artifact", "producer_role_sha256": "a" * 64,
+            "capture_schema_id": "capture-schema", "allowed_parent_channels": [],
+            "generation": "process-g1", "observer_enrollment_id": "observer-a",
+            "source_action_ids": ["authenticated-input"],
+        }
+        legacy = _parse_source_issuers([row])[0]
+        self.assertEqual(legacy.private_provider_route_ids, ())
+        selected = _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"]}])[0]
+        self.assertEqual(selected.private_provider_route_ids, ("provider-route-a",))
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
 
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
@@ -184,7 +184,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_backend_enrollments": [], "resource_body_recipes": [],
                 "resource_scope_bindings": [], "resource_validators": [], "root_journal_roots": [],
                 "resource_controller_roles": [], "native_mcp_tool_bindings": bindings,
-                "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+                "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -253,7 +253,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -287,6 +287,13 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         self.assertEqual(parsed[0].source_action_ids, ("registered-tool-result",))
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**source, "source_action_ids": ["root-timer-event"]}])
+        public = _parse_source_issuers([{**source, "public_web_scope_ids": ["scope-a", "scope-b"]}])[0]
+        self.assertEqual(public.public_web_scope_ids, ("scope-a", "scope-b"))
+        for bad_scopes in (["scope-b", "scope-a"], ["scope-a", "scope-a"], ["bad\nidentifier"]):
+            with self.subTest(bad_scopes=bad_scopes), self.assertRaises(AuthorityDenied):
+                _parse_source_issuers([{**source, "public_web_scope_ids": bad_scopes}])
+        with self.assertRaises(AuthorityDenied):
+            _parse_source_issuers([{**source, "public_web_scope_ids": [f"scope-{i:02d}" for i in range(33)]}])
         same_channel_other_adapter = {**source, "observer_enrollment_id": "observer-b",
                                       "producer_role_artifact_id": "role-b",
                                       "producer_role_sha256": "b" * 64}
@@ -305,7 +312,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -315,6 +322,16 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         changed["source_issuers"] = []
         with self.assertRaises(AuthorityDenied):
             _validate_service_generations(changed)
+        public_snapshot = dict(snapshot)
+        public_snapshot["source_issuers"] = [{**source, "public_web_scope_ids": ["scope-a"]}]
+        public_snapshot["generation_digest"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in public_snapshot.items() if key != "generation_digest"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        _validate_service_generations(public_snapshot)
+        public_snapshot["source_issuers"][0]["public_web_scope_ids"] = ["scope-b"]
+        with self.assertRaises(AuthorityDenied):
+            _validate_service_generations(public_snapshot)
 
     def test_active_remote_session_catalog_rejects_unknown_or_duplicate_records(self):
         fields = {
@@ -375,7 +392,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "resource_scope_bindings": [], "resource_validators": [],
                 "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -491,7 +508,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -565,7 +582,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "remote_observation_enrollments": [], "native_schema_artifacts": [],
             "composio_channel_enrollments": [], "channel_delivery_bindings": [],
             "remote_startup_enrollments": [], "private_loopback_networks": [],
-            "selected_resource_executions": [selected], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "selected_resource_executions": [selected], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(
             snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -618,7 +635,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "composio_channel_enrollments": [], "channel_delivery_bindings": [],
             "remote_startup_enrollments": [], "private_loopback_networks": [],
             "selected_resource_executions": [], "selected_application_runtimes": [row],
-            "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
 
         def sign(value):
@@ -676,6 +693,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
                 "selected_resource_executions": [], "selected_application_runtimes": [],
                 "private_memory_endpoint_selections": endpoint_rows,
                 "private_memory_model_selections": model_rows,
+                "public_web_scopes": [],
             }
             value["generation_digest"] = hashlib.sha256(json.dumps(
                 value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -717,7 +735,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [scope], "resource_validators": [validator],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
 
         def sign(value):
@@ -771,7 +789,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
 
         def sign(value):
@@ -804,7 +822,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             "resource_scope_bindings": [], "resource_validators": [],
             "root_journal_roots": [root],
             "resource_controller_roles": [], "native_mcp_tool_bindings": [],
-            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+            "remote_observation_enrollments": [], "native_schema_artifacts": [], "composio_channel_enrollments": [], "channel_delivery_bindings": [], "remote_startup_enrollments": [], "private_loopback_networks": [], "selected_resource_executions": [], "selected_application_runtimes": [], "private_memory_endpoint_selections": [], "private_memory_model_selections": [], "public_web_scopes": [],
         }
         unsigned = dict(snapshot)
         snapshot["generation_digest"] = hashlib.sha256(json.dumps(

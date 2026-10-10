@@ -67,9 +67,8 @@ class Adapter:
     def register(self, ctx, runtime_context):
         ctx.register_tool(
             name="installer_native_fixture", toolset="hermes-installer",
-            schema={"name": "installer_native_fixture", "description": "Protected installer action",
-                    "parameters": {"type": "object", "properties": {"key": {"type": "string"}},
-                                   "required": ["key"], "additionalProperties": False}},
+            schema={"type": "object", "properties": {"key": {"type": "string"}},
+                    "required": ["key"], "additionalProperties": False},
             handler=lambda args: runtime_context.plugin_effects.invoke(
                 "native-fixture", "lookup", args),
             description="Protected installer action",
@@ -77,7 +76,7 @@ class Adapter:
 
 class ProgressWriter:
     def __init__(self):
-        self.frames = [{"sequence": 0, "phase": "entrypoint-imported", "registered_action_ids": ()}]
+        self.frames = [{"sequence": 0, "phase": "entrypoint-imported", "registered_registration_ids": ()}]
         self.closed = False
     def emit(self, **frame):
         self.frames.append(frame)
@@ -202,8 +201,8 @@ expected_registrations = (
     "hermes-installer.native-mcp-dispatch.v1:tool:mcp__selected__read",
     "native-fixture:tool:installer_native_fixture",
 )
-assert progress.frames[1]["registered_action_ids"] == expected_registrations
-assert progress.frames[2]["registered_action_ids"] == expected_registrations
+assert progress.frames[1]["registered_registration_ids"] == expected_registrations
+assert progress.frames[2]["registered_registration_ids"] == expected_registrations
 assert progress.closed
 from tools.registry import registry
 from hermes_installer.native_invocations import (

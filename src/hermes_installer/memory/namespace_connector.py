@@ -158,6 +158,7 @@ class MemoryNamespaceConnector:
     def __init__(self, *, catalog: Any, process_manager: Any,
                  vault: Any,
                  route_resolver: Callable[[Any, str], Any] | None = None,
+                 private_network_lease_resolver: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (catalog is None or process_manager is None
                 or not callable(getattr(vault, "resolve_reference", None))):
@@ -166,6 +167,11 @@ class MemoryNamespaceConnector:
         self.process_manager = process_manager
         self.vault = vault
         self.route_resolver = route_resolver or self._resolve_route
+        if private_network_lease_resolver is not None:
+            from hermes_installer.authority.memory_runtime_composition import RootMemoryNetworkLeaseResolver
+            if type(private_network_lease_resolver) is not RootMemoryNetworkLeaseResolver:
+                raise ValueError("private memory requires the exact root network lease resolver")
+        self.private_network_lease_resolver = private_network_lease_resolver
         self.monotonic = monotonic
 
     def _connect(self, lease: Any, port: int, timeout: float,
@@ -245,7 +251,14 @@ class MemoryNamespaceConnector:
         route_recipe = enrollment.fixed_route_map[route_id]
         if getattr(binding, "memory_route", route_recipe) != route_recipe:
             raise MemoryNamespaceDenied("active connector route recipe differs from memory enrollment")
-        lease = self.process_manager.resolve_namespace_lease(binding)
+        if self.private_network_lease_resolver is not None:
+            try:
+                lease = self.private_network_lease_resolver.resolve_for_enrollment(enrollment)
+            except Exception:
+                raise MemoryNamespaceUnavailable(
+                    "selected private memory network lease is unavailable") from None
+        else:
+            lease = self.process_manager.resolve_namespace_lease(binding)
         if lease is None:
             raise MemoryNamespaceUnavailable("selected supervised memory service has no live namespace lease")
         sock = None
@@ -254,6 +267,12 @@ class MemoryNamespaceConnector:
                     or lease.namespace_identity != enrollment.namespace_identity
                     or not callable(getattr(lease, "close", None))):
                 raise MemoryNamespaceDenied("supervised memory service generation or namespace changed")
+            verify_network_lease = getattr(lease, "verify_current", None)
+            if self.private_network_lease_resolver is not None:
+                from hermes_installer.authority.memory_runtime_composition import RootMemoryNetworkNamespaceLease
+                if type(lease) is not RootMemoryNetworkNamespaceLease:
+                    raise MemoryNamespaceDenied("private memory requires a custody-owned network lease view")
+                verify_network_lease()
             public_probe = ((enrollment.provider == "openviking" and route_id == "openviking-ready")
                             or (enrollment.provider == "agentmemory" and route_id == "agentmemory-ready"))
             secret = None if public_probe else self.vault.resolve_reference(
@@ -270,18 +289,25 @@ class MemoryNamespaceConnector:
             # The one-use grant is spent at the exact socket-connect boundary.
             # Its signed request digest contains the serializer's complete
             # method/path/header/body digest, and the frame was rebuilt here.
-            sock = self._connect(
-                lease, route.port, remaining,
-                before_connect=lambda: before_connect(__import__(
-                    "hashlib").sha256(frame).hexdigest()))
+            def authorize_connect(frame_sha256: str) -> None:
+                if callable(verify_network_lease):
+                    verify_network_lease()
+                before_connect(frame_sha256)
+
+            sock = self._connect(lease, route.port, remaining,
+                                 before_connect=lambda: authorize_connect(
+                                     __import__("hashlib").sha256(frame).hexdigest()))
             if cancelled() or self.monotonic() >= deadline:
                 raise MemoryNamespaceUnavailable("memory service operation expired after connect")
             sock.settimeout(min(remaining, max(0.01, deadline - self.monotonic())))
             sock.sendall(frame)
-            return read_bounded_http_response(
+            response = read_bounded_http_response(
                 sock, maximum_body=enrollment.limits["response_bytes"],
                 deadline=min(deadline, self.monotonic() + enrollment.limits["operation_timeout_seconds"]),
                 cancelled=cancelled, monotonic=self.monotonic)
+            if callable(verify_network_lease):
+                verify_network_lease()
+            return response
         except (AuthorityDenied, MemoryNamespaceDenied, MemoryNamespaceUnavailable):
             raise
         except Exception:
