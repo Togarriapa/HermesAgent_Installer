@@ -42,6 +42,59 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         session._last_receipt = committed
         self.assertIs(session._resolve_current_active_enrollment(), committed)
 
+    def test_prepared_enrollment_accessor_rechecks_the_durable_current_receipt(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="a" * 64)
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 48, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 1e20)
+        session._last_receipt = prepared
+        session._read_current_prepared_checkpoint_receipt = lambda: prepared
+        self.assertIs(session._resolve_current_prepared_enrollment(), prepared)
+
+        changed = EnrollmentReceipt(
+            1, "a" * 64, "d" * 48, "replacement-generation", "e" * 64,
+            None, "prepared", (), 2.0, 1e20)
+        session._read_current_prepared_checkpoint_receipt = lambda: changed
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._resolve_current_prepared_enrollment()
+
+    def test_resume_reissues_only_a_fresh_prepared_receipt(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(mode="resume")
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 48, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 1e20)
+        session._read_current_prepared_checkpoint_receipt = lambda: prepared
+        self.assertIs(session._restore_current_prepared_checkpoint(), prepared)
+        self.assertIs(session._last_receipt, prepared)
+
+        session._authorization = SimpleNamespace(mode="install")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._restore_current_prepared_checkpoint()
+
+    def test_active_compiler_composition_requires_adopted_principal_before_dependencies(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        prepared = SimpleNamespace(state="prepared", enrollment_ids=())
+        session._resolve_current_prepared_enrollment = lambda: prepared
+        session._adopted_principal_registry = None
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "adopted normal-session principal"):
+            session._resolve_current_active_policy_compilation_registry()
+
+    def test_active_compiler_binding_checks_session_seal(self):
+        from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
+
+        session = SimpleNamespace(_seal="right")
+        binding = RootSelectedInstallationBinding(session, "wrong")
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "active policy compiler"):
+            binding.resolve_current_active_policy_compilation_registry()
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 
@@ -141,6 +194,30 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             mutate(invalid)
             with self.subTest(invalid=invalid), self.assertRaises(BootstrapEnrollmentPending):
                 InstalledBootstrapPolicyResolver._validate_authority_base_template(invalid)
+
+    def test_active_catalog_rows_must_match_digest_bound_generation(self):
+        root = {"root_id": "installer-authority-journal-v1",
+                "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 1,
+                "inode": 2, "generation": "journal-fixture", "purpose": "authority-journal"}
+        generation = _generation(EnrollmentPolicy(
+            service_profile_id="profile", principal_id="principal", generation_id="active-fixture",
+            source_artifact_id="source", records=(), resource_controller_roles=(),
+            native_mcp_tool_bindings=(), remote_observation_enrollments=(),
+            root_journal_roots=(root,), activation_state="active"))
+        base = {"service_generations": generation}
+        catalogs = {name: tuple(generation[name]) for name in (
+            "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
+            "operation_parameter_schemas", "source_issuers", "resource_jobs",
+            "remote_session_enrollments", "resource_backend_enrollments", "resource_body_recipes",
+            "resource_scope_bindings", "resource_validators", "root_journal_roots",
+            "resource_controller_roles", "native_mcp_tool_bindings", "remote_observation_enrollments",
+            "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
+            "selected_resource_executions", "selected_application_runtimes")}
+        InstalledBootstrapPolicyResolver._validate_active_catalog_selections(catalogs, base)
+        catalogs["composio_channel_enrollments"] = ({"unverified": True},)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            InstalledBootstrapPolicyResolver._validate_active_catalog_selections(catalogs, base)
 
     def test_composio_catalog_projection_is_pinned_version_and_strictly_bounded(self):
         authority = object.__new__(RootComposioSetupSelectionAuthority)

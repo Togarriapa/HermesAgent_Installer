@@ -263,3 +263,39 @@ class ManagedTaskCustodyLinuxTests(unittest.TestCase):
                 prompt="digest mismatch", expected_hash_override="0" * 64)
         self.assertFalse(fixture.handler._handles)
         self.assertFalse(fixture.handler._starting)
+
+
+class RootTaskNativeFixturePreflightTests(unittest.TestCase):
+    def test_fixture_rejects_noncomposed_runtime_before_systemd_or_actor_probe(self) -> None:
+        from task_native_fixture import (
+            RootInstalledTaskRuntime,
+            TaskNativeFixtureUnavailable,
+        )
+
+        with self.assertRaisesRegex(TaskNativeFixtureUnavailable, "composed RootAuthorityRuntime"):
+            RootInstalledTaskRuntime.bind_current_main_pid(object(), unit_id="fixture.service")
+
+
+class RootTaskQualificationRecipeTests(unittest.TestCase):
+    def test_recipe_is_finite_and_request_schema_is_bounded(self) -> None:
+        from hermes_installer.authority.qualification_resource_cron_recipe import (
+            RECIPE,
+            RECIPE_ID,
+            SCHEMA_ID,
+            SUITE_ID,
+        )
+        from hermes_installer.authority.qualification_resource_cron_schema import (
+            MAX_PROMPT_BYTES,
+            canonical_request,
+        )
+
+        self.assertEqual(SUITE_ID, "resource-cron-task-v1")
+        self.assertEqual(RECIPE["recipe_id"], RECIPE_ID)
+        self.assertEqual(RECIPE["schema_id"], SCHEMA_ID)
+        self.assertEqual(RECIPE["additional_metered_budget"], 0)
+        self.assertNotIn("path", RECIPE)
+        self.assertNotIn("command", RECIPE)
+        self.assertEqual(canonical_request("bounded input"),
+                         b'{"prompt":"bounded input","schema":1}')
+        with self.assertRaises(ValueError):
+            canonical_request("x" * (MAX_PROMPT_BYTES + 1))
