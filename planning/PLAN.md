@@ -283,3 +283,8 @@ Integrated source admission v255: `plans/amendments/2026-10-11-integrated-setup-
 ## Durable source custody and fresh Xpra observation v256
 
 `planning/durable-source-custody-fresh-xpra-observation-v256.json`; RT-T256.1/.2/VD-T256.3 OPEN. Private content facts never authorize builds; new genuine wholeclosure current source/license proof avoids earliest package expiry while preserving original acquisition/context limits. All AC OPEN.
+
+
+## Visible working MVP priority v259
+
+Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v259.json`; native Jarvis app visible, real eligible chat, OTP protected app-only domain and owned durable restart/reconnect first. BD259.1/PR259.2/RT259.3/LC259.4/VD259.5 OPEN. Broad work preserved/deferred; full baseline AC OPEN; no provenance/security/budget shortcut.

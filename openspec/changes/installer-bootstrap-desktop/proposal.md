@@ -318,3 +318,8 @@ Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed histori
 
 
 Integrated two-leaf source review v255: `plans/amendments/2026-10-11-integrated-setup-compiler-source-review-v255.md` and `planning/integrated-setup-compiler-source-review-v255.json` admit only exact committed root_setup and corrected active_policy_compiler source bytes. BD-T255.1 applies existing tuple literals after fresh equality; VD-T255.2 verifies coherent source and drift evidence separately from genuine functionality/target acceptance. Intermediate5744 compiler is rejected for missing pre-CAS projection currentness; no broader/future source admission. All AC01..18 OPEN.
+## Jarvis visible MVP priority stage v259
+
+User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.
+
+Manual owned MVP source/package/configuration/runtime evidence may establish this separate stage without counterfeit full installer authority; Debian-signed isolated display/gateway runtime preserves Hermes PM3.14 and actual sustained owned unit/session controls.

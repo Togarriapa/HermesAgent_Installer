@@ -91,3 +91,10 @@ Root-owned sealed source/account/target observations feed the v231 active aggreg
 
 
 v253b source API review: `planning/native-plugin-producer-sealed-api-v253b.json` requires retained sealed vault/journal dependency getter, independent current result schema FK, fixed new GitHub /user observer and pending writes until actual attestor. No acceptance change.
+
+
+## Jarvis visible MVP priority stage v259
+
+User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.
+
+Manual owned MVP source/package/configuration/runtime evidence may establish this separate stage without counterfeit full installer authority; Debian-signed isolated display/gateway runtime preserves Hermes PM3.14 and actual sustained owned unit/session controls.

@@ -1123,3 +1123,16 @@ The installer SHALL apply only the two existing member hash/size tuples identifi
 #### Scenario: Reviewed source is applied to an integrated candidate
 - **WHEN** only the exact two reviewed leaf tuples are applied and source fixtures pass
 - **THEN** broader modules and future bytes remain unadmitted and qualification, remote activation, account and Pi acceptance remain separately OPEN
+
+## ADDED Requirements
+
+### Requirement: Visible Jarvis MVP staging v259
+The installer SHALL prioritize verified official native Jarvis Desktop visibility, real eligible zero-additional-budget chat, Access OTP app-only domain and owned durable restart. Broader scope remains deferred OPEN. Provenance, sandbox, privacy, currentness and existing data/conflict protections remain mandatory.
+
+#### Scenario: Actual MVP end-to-end operation
+- **WHEN** all four v259 milestones have actual correlated owned Pi/browser/chat/restart evidence
+- **THEN** record MVP staging separately and leave original full installer/model/Coral/profile/plugin/account AC OPEN
+
+#### Scenario: Retained diagnostic artifact only
+- **WHEN** official AppDir build or local visibility exists without current installation custody, eligible chat, Access enforcement or durable restart
+- **THEN** preserve it as partial evidence and finish only the concrete missing deployment joins without claiming stage completion or weakening security
