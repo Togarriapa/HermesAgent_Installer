@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -53,6 +54,21 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
             receipt.verify_current()
     finally:
         receipt.close()
+
+
+@pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
+def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    body = b"candidate source blob\n" * 32
+    blob = subprocess.run(["/usr/bin/git", "-C", str(repository), "hash-object", "-w", "--stdin"],
+                          input=body, stdout=subprocess.PIPE, check=True).stdout.decode("ascii").strip()
+    # Repeated IDs are valid cat-file requests and drive both pipes beyond
+    # their usual capacity while keeping the test's Git object store tiny.
+    result = release_build.RootInstallerDistributionRegistry._git_batch(repository, [blob] * 2048)
+    assert len(result) == 2048
+    assert all(item == body for item in result)
 
 
 def test_build_receipt_is_single_use_and_detects_output_mutation(tmp_path):
