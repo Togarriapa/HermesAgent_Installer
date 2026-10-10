@@ -3034,6 +3034,16 @@
         "VD-T197.4"
       ],
       "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md",
+      "tasks": [
+        "HI-T173.1",
+        "HI-T178.2",
+        "HI-T197.3",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
     }
   ],
   "home_assistant_root_enrollment_mc_r0101": {
@@ -3081,6 +3091,39 @@
         "RB-T205.2"
       ]
     },
+    "acceptance": "All AC OPEN"
+  },
+  "raspberry_pi_nft_dependency_v207": {
+    "contract": "planning/raspberry-pi-nft-dependency-observation-v207.json",
+    "tasks": {
+      "HI-T207.1": [
+        "HI-T09",
+        "HI-T13"
+      ],
+      "VD-T207.2": [
+        "HI-T207.1"
+      ]
+    },
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "bootstrap_handoff_tty_reconfirmation_v208": {
+    "contract": "planning/bootstrap-handoff-tty-reconfirmation-v208.json",
+    "tasks": {
+      "BD-T208.1": [
+        "BD-T203.1"
+      ],
+      "VD-T208.2": [
+        "BD-T208.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "bootstrap_handoff_reconfirmation_source_review_v211": {
+    "contract": "planning/bootstrap-handoff-reconfirmation-source-review-v211.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
     "acceptance": "All AC OPEN"
   },
   "concrete_remote_runtime_substrate_v209": {

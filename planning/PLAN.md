@@ -135,4 +135,14 @@ Typed diagnostic source review v204: plans/amendments/2026-10-10-typed-bootstrap
 Jarvis sole user-facing profile v205: plans/amendments/2026-10-10-jarvis-sole-user-profile-v205.md; RB-T205.1/.2, VD-T205.3 OPEN; default/Jarvis +207 isolated native delegates, all208 source profiles preserved, no Desktop filter fiction/all AC OPEN.
 
 
+Existing HI173/178/197 actual fixture-subject NSS producer and unprivileged observation: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; all OPEN.
+
+
+Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md; HI-T207.1/VD-T207.2 exact Raspberry Pi libc6 dependency observation only, original HI-T09/HI-T13. Source/installed/kernel states separate; AC01..18 OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
+
+Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md; exact26cf/root_setup sole leaf, BD-T208.1/VD-T208.2 application/tests/targetOPEN; no widercohort/allACOPEN.
+
+
 Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`; RT-T209.1..4 → VD-T209.5, all OPEN. Actual npm/Electron/Xpra/gateway acquisition, managed build and materialized current runtime are distinct; all AC OPEN.
