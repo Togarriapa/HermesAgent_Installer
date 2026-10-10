@@ -302,6 +302,101 @@ class MemoryBrokerTests(unittest.TestCase):
             self.assertEqual(consent_calls[0]["provider_id"], "agentmemory")
             self.assertEqual(consent_calls[0]["owner_generation"], 7)
 
+    def test_active_private_job_resolution_is_attempt_and_consent_bound(self):
+        import time
+        from hermes_installer.authority.types import HostContext, Sensitivity, SourceReceipt
+
+        t = target("p1", "n1", "service-one")
+        now = [100.0]
+        owner = {"value": ("agentmemory", 7)}
+        receipt_id = "R" * 43
+        source_receipt = SourceReceipt(
+            receipt_id=receipt_id, issuer_id="root-issuer", source_kind="native-input",
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            origin_id="native-turn", process_generation="generation-one",
+            payload_digest=hashlib.sha256(b"synthetic source").hexdigest(),
+            sensitivity=Sensitivity.PRIVATE, parent_lineage_hash="a" * 64,
+            policy_revision="policy-one", recipient_ceiling=frozenset(),
+            issued_at_monotonic=1.0, monotonic_expires_at=200.0,
+            signature="fixture-signature", enrollment_id="native-one",
+            native_process_identity="process-one", nonce="source-nonce",
+        )
+        context = HostContext(
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            purpose="memory-capture", intent_id="memory-capture-one", trace_id="trace-one",
+            sensitivity=Sensitivity.PRIVATE, lineage_hash="b" * 64, policy_revision="policy-one",
+            capabilities=frozenset({"memory-capture"}), issued_at_monotonic=1.0,
+            monotonic_expires_at=200.0, nonce="context-nonce", grant_id="context-grant",
+            signature="fixture-signature", source_receipts=(source_receipt,),
+            operation="memory.capture",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            queue = DurableMemoryQueue(
+                Path(directory) / "queue", owner_state=lambda _profile: owner["value"],
+                consent_issuer=lambda **_: {"consent_id": "consent-active", "signature": "signed"},
+                clock=lambda: now[0],
+            )
+            job_handle = queue.enqueue(target=t, context=context, body={
+                "schema": 1, "event": "turn", "session_id": "session-one",
+                "user_content": "synthetic user statement",
+                "assistant_content": "synthetic response statement",
+            })
+            queue.claim(lease_seconds=60)
+            record = queue.resolve_active_job(job_handle)
+            self.assertEqual(record.job_handle, job_handle)
+            self.assertEqual(record.source_receipt_handles, (receipt_id,))
+            self.assertEqual(record.source_closure_sha256, context.lineage_hash)
+            self.assertEqual(record.attempt, 1)
+            self.assertTrue(queue.is_current(record))
+            self.assertNotIn(b"synthetic user statement", repr(record).encode())
+            owner["value"] = ("agentmemory", 8)
+            self.assertFalse(queue.is_current(record))
+            owner["value"] = ("agentmemory", 7)
+            queue.revoke_owner("p1", "agentmemory", 7)
+            self.assertFalse(queue.is_current(record))
+
+    def test_active_private_job_resolution_denies_expired_lease(self):
+        from hermes_installer.authority.types import HostContext, Sensitivity, SourceReceipt
+
+        t = target("p1", "n1", "service-one")
+        now = [100.0]
+        source_receipt = SourceReceipt(
+            receipt_id="Q" * 43, issuer_id="root-issuer", source_kind="native-input",
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            origin_id="native-turn", process_generation="generation-one",
+            payload_digest=hashlib.sha256(b"source").hexdigest(),
+            sensitivity=Sensitivity.PRIVATE, parent_lineage_hash="a" * 64,
+            policy_revision="policy-one", recipient_ceiling=frozenset(),
+            issued_at_monotonic=1.0, monotonic_expires_at=200.0,
+            signature="fixture-signature", enrollment_id="native-one",
+            native_process_identity="process-one", nonce="source-nonce",
+        )
+        context = HostContext(
+            principal_id="principal", profile_id="p1", namespace_id="n1", uid=1001,
+            purpose="memory-capture", intent_id="memory-capture-two", trace_id="trace-two",
+            sensitivity=Sensitivity.PRIVATE, lineage_hash="c" * 64, policy_revision="policy-one",
+            capabilities=frozenset({"memory-capture"}), issued_at_monotonic=1.0,
+            monotonic_expires_at=200.0, nonce="context-nonce-two", grant_id="context-grant-two",
+            signature="fixture-signature", source_receipts=(source_receipt,),
+            operation="memory.capture",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            queue = DurableMemoryQueue(
+                Path(directory) / "queue", owner_state=lambda _profile: ("agentmemory", 7),
+                consent_issuer=lambda **_: {"consent_id": "consent-expiring", "signature": "signed"},
+                clock=lambda: now[0],
+            )
+            handle = queue.enqueue(target=t, context=context, body={
+                "schema": 1, "event": "turn", "session_id": "session-two",
+                "user_content": "synthetic", "assistant_content": "synthetic",
+            })
+            queue.claim(lease_seconds=1)
+            record = queue.resolve_active_job(handle)
+            now[0] = 102.0
+            self.assertFalse(queue.is_current(record))
+            with self.assertRaises(BrokerDenied):
+                queue.resolve_active_job(handle)
+
     def test_prepared_owner_transition_blocks_worker_without_consuming_job(self):
         t = target("p1", "n1", "service-one")
         with tempfile.TemporaryDirectory() as directory:

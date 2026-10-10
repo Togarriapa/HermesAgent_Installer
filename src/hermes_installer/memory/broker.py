@@ -9,7 +9,7 @@ import re
 import secrets
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 
@@ -96,6 +96,43 @@ class PrivateEngine(Protocol):
                 cancelled: Callable[[], bool]) -> list[str]: ...
     def embed(self, *, facts: list[str], context: HostContext, job_handle: str, timeout: float,
               cancelled: Callable[[], bool]) -> list[list[float]]: ...
+
+
+_MEMORY_JOB_RECORD_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class MemoryJobAuthorityRecord:
+    """Root-only snapshot proving a durable job is actively leased for one attempt."""
+
+    job_handle: str
+    profile_id: str
+    namespace_id: str
+    provider: str
+    owner_generation: int
+    source_context_wire: bytes = field(repr=False)
+    consent_wire: bytes = field(repr=False)
+    consent_id: str
+    attempt: int
+    lease_until: float
+    event_sha256: str
+    source_receipt_handles: tuple[str, ...]
+    source_closure_sha256: str
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _MEMORY_JOB_RECORD_SEAL:
+            raise TypeError("memory job authority records are resolved by the root queue")
+        if (not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.job_handle)
+                or self.provider not in PROVIDERS or self.owner_generation < 1 or self.attempt < 1
+                or not re.fullmatch(r"[0-9a-f]{64}", self.event_sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.source_closure_sha256)
+                or not self.source_receipt_handles or len(set(self.source_receipt_handles)) != len(self.source_receipt_handles)
+                or not self.source_context_wire or not self.consent_wire):
+            raise BrokerDenied("active memory job authority record is malformed")
+
+    def __repr__(self) -> str:
+        return "MemoryJobAuthorityRecord(<root-private>)"
 
 
 def _build_private_engine_registry(
@@ -535,6 +572,87 @@ class DurableMemoryQueue:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 value = None
         return {"found": True, "status": row[0], "result": value, "error": row[2]}
+
+    def resolve_active_job(self, job_handle: str, *, now: float | None = None) -> MemoryJobAuthorityRecord:
+        """Resolve a currently processing job without returning its transcript bytes."""
+        if (not isinstance(job_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", job_handle)):
+            raise BrokerDenied("root durable memory job handle is malformed")
+        current_time = self.clock() if now is None else now
+        if isinstance(current_time, bool) or not isinstance(current_time, (int, float)) or not math.isfinite(current_time):
+            raise BrokerDenied("memory job clock is invalid")
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                row = db.execute(
+                    "SELECT profile,namespace,provider,owner_generation,source_context,consent,event,status,attempts,lease_until,consent_id "
+                    "FROM jobs WHERE id=?", (job_handle,)).fetchone()
+                if row is None:
+                    raise BrokerDenied("memory job is not retained")
+                (profile, namespace, provider, owner_generation, source_wire,
+                 consent_wire, event_wire, status, attempt, lease_until, consent_id) = row
+                if (status != "processing" or not isinstance(lease_until, (int, float))
+                        or lease_until <= current_time or type(attempt) is not int or attempt < 1
+                        or not isinstance(consent_id, str) or not consent_id):
+                    raise BrokerDenied("memory job is not in a live processing attempt")
+                consent_row = db.execute(
+                    "SELECT profile,provider,owner_generation,active FROM consents WHERE consent_id=?",
+                    (consent_id,)).fetchone()
+                if (consent_row is None or consent_row[3] != 1
+                        or consent_row[:3] != (profile, provider, owner_generation)):
+                    raise BrokerDenied("memory job consent is not active for its owner")
+                owner, generation = self.owner_state(str(profile))
+                if owner != provider or generation != owner_generation:
+                    raise BrokerDenied("memory job owner or generation is stale")
+                source_bytes, consent_bytes, event_bytes = bytes(source_wire), bytes(consent_wire), bytes(event_wire)
+            finally:
+                db.close()
+        from hermes_installer.authority.types import HostContext
+        try:
+            source = HostContext.from_wire(json.loads(source_bytes.decode("utf-8")))
+            consent = json.loads(consent_bytes.decode("utf-8"))
+        except Exception:
+            raise BrokerDenied("memory job source or consent wire is malformed") from None
+        receipt_handles = tuple(receipt.receipt_id for receipt in source.source_receipts)
+        if (source.profile_id != profile or source.namespace_id != namespace
+                or not receipt_handles or not isinstance(consent, dict)
+                or consent.get("consent_id") != consent_id):
+            raise BrokerDenied("memory job source closure or consent differs from its durable row")
+        return MemoryJobAuthorityRecord(
+            job_handle=job_handle, profile_id=profile, namespace_id=namespace,
+            provider=provider, owner_generation=owner_generation,
+            source_context_wire=source_bytes, consent_wire=consent_bytes,
+            consent_id=consent_id, attempt=attempt, lease_until=float(lease_until),
+            event_sha256=hashlib.sha256(event_bytes).hexdigest(),
+            source_receipt_handles=receipt_handles, source_closure_sha256=source.lineage_hash,
+            _seal=_MEMORY_JOB_RECORD_SEAL,
+        )
+
+    def is_current(self, record: MemoryJobAuthorityRecord, *, now: float | None = None) -> bool:
+        """Recheck exact attempt, lease, consent and owner immediately before an effect."""
+        if type(record) is not MemoryJobAuthorityRecord or record._seal is not _MEMORY_JOB_RECORD_SEAL:
+            return False
+        current_time = self.clock() if now is None else now
+        if current_time >= record.lease_until:
+            return False
+        try:
+            resolved = self.resolve_active_job(record.job_handle, now=current_time)
+            owner, generation = self.owner_state(record.profile_id)
+        except Exception:
+            return False
+        return (owner == record.provider and generation == record.owner_generation
+                and resolved.profile_id == record.profile_id
+                and resolved.namespace_id == record.namespace_id
+                and resolved.provider == record.provider
+                and resolved.owner_generation == record.owner_generation
+                and resolved.consent_id == record.consent_id
+                and resolved.attempt == record.attempt
+                and resolved.lease_until == record.lease_until
+                and resolved.event_sha256 == record.event_sha256
+                and resolved.source_context_wire == record.source_context_wire
+                and resolved.consent_wire == record.consent_wire
+                and resolved.source_receipt_handles == record.source_receipt_handles
+                and resolved.source_closure_sha256 == record.source_closure_sha256)
 
     def claim(self, lease_seconds: int = 60) -> dict[str, Any] | None:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
