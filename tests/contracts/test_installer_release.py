@@ -15,7 +15,8 @@ from unittest.mock import patch
 from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
-    REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, LAUNCHER_PATH, INTERPRETER_PATH,
+    REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, APPLICATION_BUILD_DRIVER,
+    LAUNCHER_PATH, INTERPRETER_PATH,
     PLAN_PATH, ARTIFACT_CATALOG_PATH, REQUIRED_LAUNCHER_MODULES, _fixed_roles, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
     _artifact_id_for, _module_name, _validate_fixed_layout_role,
@@ -211,9 +212,39 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "installer-native-boundary-module-v137": (
                 "src/hermes_installer/native_boundary.py",
                 "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
-            "installer-native-source-definitions-module-v137": (
+            "installer-module:hermes_installer.authority.native_source_definitions": (
                 "lib/python/hermes_installer/authority/native_source_definitions.py",
-                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
+                "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c", 23_672, "module"),
+            "installer-module:hermes_installer.authority.bootstrap_runtime_factory": (
+                "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
+                "1156ea17992ddfd0b04819dc5afbc9426611cc2a745ebfb61800df86b08a0c14", 579_669, "module"),
+            "installer-module:hermes_installer.authority.local_resource_effects": (
+                "lib/python/hermes_installer/authority/local_resource_effects.py",
+                "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6", 47_854, "module"),
+            "installer-module:hermes_installer.authority.native_assembler": (
+                "lib/python/hermes_installer/authority/native_assembler.py",
+                "311e07fb52ae001e44d4be17cf4ed8a09277118e0aca34b6ff45c22b9b6e2055", 21_265, "module"),
+            "installer-module:hermes_installer.authority.native_output_receipts": (
+                "lib/python/hermes_installer/authority/native_output_receipts.py",
+                "37f18a0d9c2e7082955f82bb27221dae3ae4781c6278b5e0c1a254233fbf7b5f", 109_864, "module"),
+            "installer-module:hermes_installer.authority.native_policy_preparation": (
+                "lib/python/hermes_installer/authority/native_policy_preparation.py",
+                "93695570e20218ea1e40a0707ef7d6f51e1646e74e5c5338ba1fd83fef737752", 60_196, "module"),
+            "installer-module:hermes_installer.authority.native_registration_projection": (
+                "lib/python/hermes_installer/authority/native_registration_projection.py",
+                "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b", 82_047, "module"),
+            "installer-module:hermes_installer.authority.native_definition_composition": (
+                "lib/python/hermes_installer/authority/native_definition_composition.py",
+                "a60e3b2dadb8e1733767035209f988c2fcbb9feb0ff15e5fd0539da9877d16aa", 8_355, "module"),
+            "installer-module:hermes_installer.authority.application_runtime_archive": (
+                "lib/python/hermes_installer/authority/application_runtime_archive.py",
+                "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197", 31_457, "module"),
+            "installer-module:hermes_installer.authority.application_runtime_relocation": (
+                "lib/python/hermes_installer/authority/application_runtime_relocation.py",
+                "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc", 12_120, "module"),
+            "installer-module:hermes_installer.authority.remote_observations": (
+                "lib/python/hermes_installer/authority/remote_observations.py",
+                "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31", 93_746, "module"),
         }
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
@@ -231,9 +262,14 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                     for i, (artifact_id, path, digest, size) in enumerate(FIXED_TEMPLATES))
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 100 + i, 0o444)
                     for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_MODULES))
+        rows.append(VerifiedReleaseFile(APPLICATION_BUILD_DRIVER[0], (APPLICATION_BUILD_DRIVER[4],),
+                                        APPLICATION_BUILD_DRIVER[1], APPLICATION_BUILD_DRIVER[2],
+                                        APPLICATION_BUILD_DRIVER[3], 1, 250, 0o444))
+        reviewed_module_ids = {item[0] for item in REVIEWED_SOURCE_MODULES if item[4] == "module"}
         rows.extend(VerifiedReleaseFile(artifact_id, ("module",), path, f"{i + 8:064x}", 100 + i,
                                         1, 300 + i, 0o444)
-                    for i, (artifact_id, path) in enumerate(REQUIRED_LAUNCHER_MODULES))
+                    for i, (artifact_id, path) in enumerate(REQUIRED_LAUNCHER_MODULES)
+                    if artifact_id not in reviewed_module_ids)
         rows.append(VerifiedReleaseFile("runtime-member:python3", ("runtime-member",),
                                         "runtime/bin/python3", "7" * 64, 1, 1, 7, 0o555))
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 150 + i, 0o444)
@@ -268,6 +304,21 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                                                row.sha256, row.size_bytes, row.device, row.inode, row.mode)
         with self.assertRaises(InstallerReleaseError):
             _fixed_roles(bad_role, "closure.json")
+
+    def test_application_build_driver_is_one_exact_execution_only_member(self):
+        artifact_id, path, digest, size, role = APPLICATION_BUILD_DRIVER
+        self.assertEqual(_artifact_id_for(path, [role]), artifact_id)
+        _validate_fixed_layout_role(path, digest, size, [role], mode=0o444)
+        for changed_path, changed_digest, roles, mode in (
+            (path, "0" * 64, [role], 0o444),
+            (path, digest, ["module"], 0o444),
+            (path, digest, [role, "module"], 0o444),
+            ("lib/python/hermes_installer/authority/not_the_driver.py", digest, [role], 0o444),
+            (path, digest, [role], 0o555),
+        ):
+            with self.subTest(path=changed_path, roles=roles, mode=mode), \
+                    self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(changed_path, changed_digest, size, roles, mode=mode)
 
     def test_glm_source_artifact_ids_bind_exact_baseline_and_amendment_members(self):
         repo = Path(__file__).parents[2]

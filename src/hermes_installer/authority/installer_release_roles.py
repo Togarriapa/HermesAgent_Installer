@@ -19,4 +19,5 @@ RELEASE_MEMBER_ROLES = frozenset({
     "runtime-member",
     "native-health-fixture",
     "application-effect-fixture",
+    "application-build-driver",
 })
