@@ -67,7 +67,7 @@ class NativeTurnObservationContracts(unittest.TestCase):
         }
         registry._begun_inputs = {_handle("i"): 80.0}
         registry._completed = {}
-        registry._used_final_responses = set()
+        registry._used_final_responses = {}
         registry._lock = threading.RLock()
         registry._closed = False
         registry.response_resolver = lambda handle: response

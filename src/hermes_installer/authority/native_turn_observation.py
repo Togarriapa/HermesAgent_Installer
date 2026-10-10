@@ -241,9 +241,9 @@ class RootNativeTurnObservationRegistry:
         self._turns: dict[str, _Turn] = {}
         self._by_source: dict[str, set[str]] = {}
         self._begun_inputs: dict[str, float] = {}
-        self._completed: dict[str, tuple[RootCompletedNativeTurn, bytes]] = {}
+        self._completed: dict[str, tuple[RootCompletedNativeTurn, bytearray]] = {}
         self._persisting_completed: set[str] = set()
-        self._used_final_responses: set[str] = set()
+        self._used_final_responses: dict[str, float] = {}
         self._memory_capture_coordinator: Any | None = None
         self._lock = threading.RLock()
         self._closed = False
@@ -656,8 +656,8 @@ class RootNativeTurnObservationRegistry:
             if current_turn is not turn or turn.finished or final_response_delivery_handle in self._used_final_responses:
                 raise AuthorityDenied("native.turn.replay", "turn completion raced another consumer")
             turn.finished = True
-            self._used_final_responses.add(final_response_delivery_handle)
-            self._completed[receipt_handle] = (completed, transcript)
+            self._used_final_responses[final_response_delivery_handle] = turn.expires_monotonic
+            self._completed[receipt_handle] = (completed, bytearray(transcript))
             return RootCompletedNativeTurnPresentation(
                 schema=1, receipt_handle=receipt_handle, turn_handle=turn.handle,
                 state="completed", expires_monotonic=completed.expires_monotonic,
@@ -697,7 +697,9 @@ class RootNativeTurnObservationRegistry:
             row = self._completed.pop(completed_turn_handle, None)
             if row is None or row[0].expires_monotonic <= self.monotonic():
                 raise AuthorityDenied("native.turn.completed", "completed turn handle is unavailable")
-            return row
+            payload = bytes(row[1])
+            row[1][:] = b"\0" * len(row[1])
+            return row[0], payload
 
     def persist_completed_turn(self, completed_turn_handle: str, *,
                                memory_capture_coordinator: Any,
@@ -732,7 +734,7 @@ class RootNativeTurnObservationRegistry:
                 raise AuthorityDenied("native.turn.memory", "selected memory persistence path is unavailable")
             record, transcript = row
             result = persist(
-                record, transcript, completed_turn_handle=completed_turn_handle,
+                record, bytes(transcript), completed_turn_handle=completed_turn_handle,
                 selected_memory_enrollment_id=selected_memory_enrollment_id,
                 background_consent_handle=background_consent_handle,
             )
@@ -749,6 +751,7 @@ class RootNativeTurnObservationRegistry:
                 raise AuthorityDenied("native.turn.memory", "completed turn changed during persistence")
             self._completed.pop(completed_turn_handle, None)
             self._persisting_completed.discard(completed_turn_handle)
+            row[1][:] = b"\0" * len(row[1])
             return result
 
     def cancel_selected_turn(self, turn_handle: str) -> bool:
@@ -907,9 +910,14 @@ class RootNativeTurnObservationRegistry:
                     self._by_source[source].discard(handle)
                     if not self._by_source[source]:
                         self._by_source.pop(source, None)
-        for handle, (record, _payload) in tuple(self._completed.items()):
+        for handle, (record, payload) in tuple(self._completed.items()):
             if record.expires_monotonic <= now:
                 self._completed.pop(handle, None)
+                payload[:] = b"\0" * len(payload)
+                self._persisting_completed.discard(handle)
+        for handle, expires in tuple(self._used_final_responses.items()):
+            if expires <= now:
+                self._used_final_responses.pop(handle, None)
 
     @staticmethod
     def _valid_handle(value: Any) -> bool:
