@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_source_update_attempt_and_predecessor_verification_failure",
+  "state": "source_update_failed_before_candidate_tty_selection",
+  "observation_date": "2026-10-10",
+  "timestamp": null,
+  "change_ids": ["installer-bootstrap-desktop", "verification-documentation"],
+  "task_ids": ["BD-T242.1", "VD-T242.2"],
+  "candidate": {
+    "commit": "9dd53e823058cfc7c516075572aad6fb510cfcc8",
+    "tree": "0f31e5aaf71a8fe4aebcb2aa556406d558b93650",
+    "source_staging": "reported exact, root-owned staged source",
+    "root_setup_source_commit": "0b7d71543 (short SHA as supplied)"
+  },
+  "pi_attempt": {
+    "command_summary": "Actual /bin/sh source-launcher source-update invocation; exact launcher path and full argv not supplied.",
+    "candidate_prompt_reached": false,
+    "failure": "InstallerReleaseBuildError before candidate TTY selection",
+    "reported_cause": "Present deployment predecessor failed the newest InstalledRootReleaseVerifier check: finite native target source module differs from its reviewed pin.",
+    "root_setup_completed": false,
+    "account_or_runtime_setup_completed": false
+  },
+  "read_only_predecessor_pointer": {
+    "path": "/var/lib/hermes-installer/deployments/current.json",
+    "candidate": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "pointer_sha256": "4fb20b47f759986696cb23ee9752c04a08a91e43bbc0025990c1b14062f5ee9e",
+    "closure_sha256": "a8c2e34d62710087877f549828bc14c7d086493a274ff87b892cb406e946d40b",
+    "closure_member_count": 5315,
+    "closure_total_bytes": 1043975,
+    "verification_distinction": "The earlier installed-release verifier reported full closure/currentness pass for cc81. The newer verifier used by this update path rejected a finite native target source module against its newer reviewed pin. The pointer and installed predecessor were preserved; no workaround or mutation is reported."
+  },
+  "repository_verification_for_candidate": {
+    "full_contract_suite": {"passed": 2025, "skipped": 163, "warnings": 17, "duration_seconds": 77.68, "exit_code": 0},
+    "strict_openspec": "13 passed",
+    "plan_validation": "passed; 160 frozen-baseline hashes verified",
+    "interpretation_limit": "Repository checks do not override the actual Pi source-update failure or prove a Pi installation."
+  },
+  "follow_up": "Sol's predecessor-source pin compatibility fix is in progress; exact follow-up result not yet available.",
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "The candidate source-update attempt stopped before candidate TTY selection due to predecessor verification. The prior cc81 deployment pointer and closure remain intact. Repository test results are not Pi acceptance; all AC01-AC18 remain open and resource deletion is unsafe."
+}
