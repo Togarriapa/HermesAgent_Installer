@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "record_kind": "connector_provisioning_observation_partial",
+  "state": "partial_owned_configuration_report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_id": "remote-desktop-tunnel",
+  "task_ids": ["RT-F01", "RT-R0198", "RT-R0199", "RT-R0200", "RT-R0208", "RT-R0209", "RT-R0211"],
+  "observed_at": "2026-10-10T17:39:49.836256Z",
+  "hostname": "jarvis.togarriapahome.uk",
+  "resources": {
+    "access_application": {
+      "id": "0b710d17-561e-4953-af62-34e1bd94f273",
+      "created": true,
+      "audience": "f53b17e38e62d48a280b5de43eea9530395276a3463533748f601d87e43b972d",
+      "name_pattern": "HermesInstaller:<app-id>:desktop"
+    },
+    "access_policy": {
+      "id": "5fb25a3f-5151-449b-b842-14b33a77ee79",
+      "created": true,
+      "scope": "exact authenticated owner email only; email value omitted"
+    },
+    "identity_provider": {
+      "id": "bf6b381d-7fa2-4302-a74e-2bdb299d43c8",
+      "created": false,
+      "type": "existing OTP provider"
+    },
+    "tunnel": {
+      "id": "85988ce8-512b-4e0c-bced-db4063201936",
+      "created": true,
+      "name": "hermes-installer-dacdd576170aed053851",
+      "management": "remotely managed",
+      "observed_config": [
+        {"service": "http_status:404", "warp_routing": false}
+      ]
+    }
+  },
+  "observed_policy": {
+    "issuer": "https://togarriapa.cloudflareaccess.com",
+    "session_duration": "1h",
+    "only_existing_otp_idp_allowed": true,
+    "no_bypass_policy_reported": true
+  },
+  "not_configured_or_not_proven": [
+    "DNS record or public hostname route",
+    "loopback Desktop origin or ready origin health",
+    "tunnel credential retrieval or secure local delivery",
+    "connector process start or service activation",
+    "policy login or OTP delivery test",
+    "typed installer adoption, journal, or root origin readiness receipt",
+    "actual native Desktop session, pixels, input, expiry, or revocation test"
+  ],
+  "access_limits": {
+    "foreign_tunnels_preserved": 7,
+    "foreign_access_apps_preserved": 2,
+    "management_permission_group_endpoints": "account and user permission-group endpoints returned 9109 Unauthorized",
+    "token_mint_attempted": false,
+    "raw_oauth_or_management_token_exported": false,
+    "email_value_recorded": false,
+    "public_evidence_source": "/private/tmp/hermes-jarvis-cloudflare-20261010/provisioning-observation.json",
+    "source_file_classification": "private nonsecret connector observation; not a root readiness receipt or journal adoption"
+  },
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "Only the listed owned Cloudflare resources and policy configuration are reported. No DNS, connector, origin, installer adoption, or remote acceptance is established. All AC01-AC18 remain open."
+}
