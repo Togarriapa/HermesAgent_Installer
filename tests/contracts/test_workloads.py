@@ -33,8 +33,10 @@ class WorkloadSchedulerTests(unittest.TestCase):
                     "screenshot_bytes": 128,
                     "screenshot_sha256": "a" * 64,
                 }
-                return {"exit_code": 0,
-                        "stdout": "HERMES_BROWSER_USE_PROOF=" + json.dumps(proof) + "\n"}
+                return {
+                    "exit_code": 0,
+                    "stdout": "HERMES_BROWSER_USE_PROOF=" + json.dumps(proof, separators=(",", ":")) + "\n",
+                }
             if invocation.component_id == "hyperframes" and invocation.executable.endswith("/bin/hyperframes"):
                 Path(self.hyperframes_work, "rendered.mp4").write_bytes(b"fixture-mp4-proof")
                 return {"exit_code": 0, "stdout": "", "stderr": ""}
@@ -82,6 +84,7 @@ class WorkloadSchedulerTests(unittest.TestCase):
         self.assertEqual("browser-use", invocation.component_id)
         self.assertEqual("localhost", invocation.network)
         self.assertTrue(invocation.argv[1].endswith("browser_use_qualification_probe.py"))
+        self.assertEqual("http://127.0.0.1:8765/fixture", invocation.argv[2])
         self.assertIn("chromium_sandbox=True", Path(invocation.argv[1]).read_text(encoding="utf-8"))
         self.assertEqual(180, invocation.timeout_seconds)
         self.assertEqual(2048, invocation.memory_limit_mb)
