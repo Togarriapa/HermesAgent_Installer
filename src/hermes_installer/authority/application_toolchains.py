@@ -393,17 +393,25 @@ def _read_pinned_https(url: str, *, size: int, sha256: str, redirect_hosts: tupl
                        timeout: float = 120.0,
                        opener: Callable[..., Any] | None = None) -> bytes:
     """Fetch one pinned blob with a finite, source-specific redirect policy."""
-    parsed_initial = urllib.parse.urlsplit(url)
+    try:
+        parsed_initial = urllib.parse.urlsplit(url)
+        initial_port = parsed_initial.port
+    except ValueError:
+        raise ApplicationToolchainDenied("pinned toolchain source URL is malformed") from None
     if (parsed_initial.scheme != "https" or not parsed_initial.hostname or parsed_initial.username
-            or parsed_initial.password or parsed_initial.fragment or parsed_initial.port not in {None, 443}):
+            or parsed_initial.password or parsed_initial.fragment or initial_port not in {None, 443}):
         raise ApplicationToolchainDenied("pinned toolchain source URL is malformed")
     current = url
     allowed = {host.casefold() for host in redirect_hosts}
     body: bytes | None = None
     for hop in range(_MAX_REDIRECTS + 1):
-        request_url = urllib.parse.urlsplit(current)
+        try:
+            request_url = urllib.parse.urlsplit(current)
+            request_port = request_url.port
+        except ValueError:
+            raise ApplicationToolchainDenied("toolchain source redirect URL is malformed") from None
         if (request_url.scheme != "https" or not request_url.hostname or request_url.username
-                or request_url.password or request_url.fragment or request_url.port not in {None, 443}
+                or request_url.password or request_url.fragment or request_port not in {None, 443}
                 or (hop == 0 and current != url)
                 or (hop > 0 and request_url.hostname.casefold() not in allowed)):
             raise ApplicationToolchainDenied("toolchain source redirect violates its exact HTTPS host policy")
@@ -427,20 +435,28 @@ def _read_pinned_https(url: str, *, size: int, sha256: str, redirect_hosts: tupl
             if not isinstance(location, str) or not location:
                 raise ApplicationToolchainDenied("toolchain source redirect has no location") from None
             next_url = urllib.parse.urljoin(current, location)
-            next_parts = urllib.parse.urlsplit(next_url)
+            try:
+                next_parts = urllib.parse.urlsplit(next_url)
+                next_port = next_parts.port
+            except ValueError:
+                raise ApplicationToolchainDenied("toolchain source redirect URL is malformed") from None
             if (next_parts.scheme != "https" or next_parts.hostname is None
                     or next_parts.hostname.casefold() not in allowed or next_parts.username
-                    or next_parts.password or next_parts.fragment or next_parts.port not in {None, 443}):
+                    or next_parts.password or next_parts.fragment or next_port not in {None, 443}):
                 raise ApplicationToolchainDenied("toolchain source redirect target is not the reviewed asset host") from None
             current = next_url
             continue
         except (OSError, ValueError, urllib.error.URLError):
             raise ApplicationToolchainDenied("pinned toolchain source request failed") from None
         try:
-            final_url = urllib.parse.urlsplit(response.geturl())
+            try:
+                final_url = urllib.parse.urlsplit(response.geturl())
+                final_port = final_url.port
+            except ValueError:
+                raise ApplicationToolchainDenied("toolchain source transport returned a malformed URL") from None
             if (final_url.scheme != "https" or final_url.hostname is None
                     or final_url.username or final_url.password or final_url.fragment
-                    or final_url.port not in {None, 443}
+                    or final_port not in {None, 443}
                     or (hop == 0 and response.geturl() != url)
                     or (hop > 0 and final_url.hostname.casefold() not in allowed)):
                 raise ApplicationToolchainDenied("toolchain source transport changed the final origin")

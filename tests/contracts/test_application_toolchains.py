@@ -87,6 +87,10 @@ class ApplicationToolchainContractTests(unittest.TestCase):
             _read_pinned_https(url, size=len(payload), sha256="0" * 64,
                                redirect_hosts=(), opener=opener)
         with self.assertRaises(ApplicationToolchainDenied):
+            _read_pinned_https("https://nodejs.org:broken/pinned.tar.xz", size=len(payload),
+                               sha256=hashlib.sha256(payload).hexdigest(),
+                               redirect_hosts=(), opener=opener)
+        with self.assertRaises(ApplicationToolchainDenied):
             _read_pinned_https(url, size=len(payload),
                                sha256=hashlib.sha256(payload).hexdigest(),
                                redirect_hosts=(),
