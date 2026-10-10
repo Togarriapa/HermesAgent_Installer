@@ -951,3 +951,49 @@ The installer SHALL carry only its previously authorized sealedFD3 through exist
 #### Scenario: Sealed memfd is already descriptor three
 - **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
 - **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins
+
+
+## ADDED Requirements
+
+### Requirement: Qualification compiler and terminal custody
+The installer SHALL follow planning/qualification-compiler-terminal-custody-v217.json for internally compiled current fixture policy, actual task outcomes, parent-owned installed journal/unit custody and retained signed terminal evidence without restoring child authority.
+
+#### Scenario: Child has cleaned its live fixture
+- **WHEN** the parent consumes the predetermined result after the actual installed child terminates
+- **THEN** it verifies current parent source/journal/unit custody and signed historical task/publication/cleanup evidence without reconstructing child seals or treating exit as pass
+
+#### Scenario: Genuine native task route is missing
+- **WHEN** discovery/materialization succeeds but no approved real native task route exists
+- **THEN** the child returns a concrete incomplete outcome without provider grants, substituted execution or fabricated terminal/native receipts
+
+
+## ADDED Requirements
+
+### Requirement: Finite qualification protected rows
+The installer SHALL apply planning/qualification-protected-row-serializer-v224.json using exact current privately issued source/NSS/task recipe/member proofs and a fixture-only process policy, preserving generic production authority/catalog validation.
+
+#### Scenario: Resource indexing silently omits a malformed job
+- **WHEN** the internally serialized fixture documents parse but their selected job is absent from the strict index
+- **THEN** compilation fails instead of issuing a ready policy or claiming native task success
+
+#### Scenario: Fixture has no Authentik or native task proof
+- **WHEN** only genuine fixture NSS/materialization exists
+- **THEN** no Authentik identity or runnable package is fabricated and missing task source produces an explicit incomplete outcome
+
+
+## ADDED Requirements
+
+### Requirement: Bounded initial pending stage observation
+The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json` to annotate only exact base pending failures at its fixed initial compilation source boundaries, preserving every original authority check and pending exit behavior.
+
+#### Scenario: Actor check fails before compilation begins
+- **WHEN** the current actor check at begin_install raises an exact base pending failure
+- **THEN** the safe formatter emits the fixed actor_current stage and no original exception content
+
+#### Scenario: Nested account diagnostic or hostile pending subclass
+- **WHEN** account resolution is already tagged or a pending subclass supplies arbitrary diagnostic getters
+- **THEN** the outer wrapper leaves the subclass untouched and formatting reads only the exact authorized diagnostic type with a valid catalog stage
+
+#### Scenario: Diagnostic field changed after construction
+- **WHEN** the step is non-string or absent from the finite catalog
+- **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation

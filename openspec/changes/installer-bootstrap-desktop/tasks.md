@@ -316,3 +316,15 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
 
 - [ ] BD-T208.1 / VD-T208.2 (v220): Integrate exact reviewed FD3 source/evidence, full coherent checks and actual target handoff; no installed selfpin or acceptance inference.
+
+
+- [ ] HI-T217.1: Resource owner implements exact retained v173 compiler/source projection and strict fixture policy/catalog issuer.
+- [ ] HI-T217.2: Resource owner implements genuine child runtime/task outcome and source adapter proof; missing native route remains incomplete, never substitute success.
+- [ ] VD-T217.3: Integrator implements current installed journal owner, retained actual unit/PIDFD, signed historical evidence and parent result consumption/cleanup with two-process failure tests.
+
+
+- [ ] HI-T217.1 / HI-T217.2 / VD-T217.3 (v224): Implement exact source-owned row serializer/recipe selection, genuine fixture NSS policy/catalog and strict complete indexing; verify actual native outcome and missing-route incomplete without fake Authentik/rows/source proof.
+
+
+- [ ] BD-T232.1: Source owner implements exact BootstrapPendingStepFailure and nine fixed boundaries/formatter with actor, account, redaction, subclass and malformed-field failures.
+- [ ] VD-T232.2: Review actual coherent committed diagnostic bytes under v228 and next target evidence independently; no source/acceptance promotion.

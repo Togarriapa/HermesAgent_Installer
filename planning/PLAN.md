@@ -170,3 +170,5 @@ SealedFD3source review220: plans/amendments/2026-10-10-sealed-bootstrap-fd3-sour
 
 Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-bootstrap-fd3-exec-20261010.json`. Python3.14/Linux ARM64 reproduced the CLOEXEC memfd-at-FD3 self-dup failure and verified explicit clear/readback plus sealed descriptor survival across exec. Unit/isolated-container checks pass; actual Pi handoff remains open.
 Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
+
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.
