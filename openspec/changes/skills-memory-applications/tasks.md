@@ -122,3 +122,55 @@ Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecy
 - [ ] SK-T119.2: factory/active publisher preserve actual same-choice purpose-specific memory service enablement and selected receipt closure linkage.
 
 - [ ] SK-T119.3: test stale/revoked enablement, replaced artifact/process, setup expiry, liveness-versus-semantic distinction, unknown engine/route and private provider denial; actual engine semantics/ARM/account acceptance open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
+
+- [ ] SK-T124.1: factory/choice owner implement actual root TTY configuration producer/retained choice and service-enablement registry; no fictitious existing source.
+
+- [ ] SK-T124.2: enrollment/active compiler add exact lifecycle enablement handle and current post-activation projection from actual selected service/source/runtime receipt closure.
+
+- [ ] SK-T124.3: lifecycle owner consume resolver; test default disabled, false user journal, wrong owner/profile/backend, revoke/service replacement and independence from capture/private consent; actual engine/target acceptance open.
+
+Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
+
+- [ ] SK-T125.1: models owner implement actual endpoint/model observation registry from held artifacts/config/runtime/live PIDFD/listener/load evidence and existing provider protocols; no model download or alias-only proof.
+
+- [ ] SK-T125.2: provider/host/factory owner compose typed selected existing-service/model bindings and exact v108 receipt joins; retain unavailable remote/unselected embedding/absent weights facts.
+
+- [ ] SK-T125.3: test wrong alias-to-source mapping, changed config/weights/process/network/boot, false catalog/credential/consent, text-as-embed and probe-only claims; actual weights/ARM/private target/semantic memory acceptance remain open.
+
+Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+- [ ] SK-T127.1: models owner implement existing-root tree observation and explicit service signing injection, source presence separate load/deployment proof.
+
+- [ ] SK-T127.2: factory/owned-root/authority owner implement actual existing-model TTY/root selection retained receipt and finite signer attachment; no arbitrary path/default or copying/download.
+
+- [ ] SK-T127.3: test absent/unowned/writable/missing/hash-changed tree, forged source/selection/member handles, boot/lease/revocation, alias-only load and separately absent embedding; actual pre-existing model/ARM/server proof pending.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.
+
+- [ ] SK-T128.1: host enrollment/runtime owner strict endpoint/model tables/types/getters and exact nonrecursive v108/source/process/route/receipt joins.
+
+- [ ] SK-T128.2: factory/owned-root owner actual staged configuration/existing-tree selection registry resolve/verify/open seam; models observer consumes duplicated held directory only.
+
+- [ ] SK-T128.3: test forged typed objects/unknown IDs/wrong FK/stale enclosing generation and arbitrary relative member/FD; real private endpoint/model/embedding proof open.
+
+Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
+
+- [ ] SK-T130.1: application execution owner implement prepared request/admission path from actual completed preparation/probe/choice/source/lock/fixture, preserve operational active checks.
+
+- [ ] SK-T130.2: runtime preparation owner implement actual isolated source-backed environment producer and fixed installed Python/Node discriminated probe source/receipt; report unavailable toolchain or recipe exactly rather than RuntimeReview substitution.
+
+- [ ] SK-T130.3: factory/source/probe/custody owner wire genuine held runtime/toolchain/root/controller/namespace receipts before request mint; test missing runtime/probe, active-row fabrication, Python-for-Node, stale consent/controller/environment/fixture and arbitrary dispatch denial. All four real workflows/ARM/AC12 open.
+
+- [ ] SK-T132.1 factory: sealed finite runtime preparation/build subject selection and exact template release pin
+
+- [ ] SK-T132.2 build owner: lock-selected genuine offline package closure and finite managed Python/Bun environment build/archive/preparation receipt; preserve missing integrity/toolchain blockers
+
+- [ ] SK-T132.3 build/execution owners: installed independent Python/Node ABI/origin probes, genuine preparation/probe qualification joins, bound/failure/source mismatch tests and actual isolated platform CI; no active row prerequisite
+
+- [ ] HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests
+
+- [ ] SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease
+
+- [ ] SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies

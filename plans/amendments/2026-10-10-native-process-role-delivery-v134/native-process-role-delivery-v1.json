@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T08",
+    "HI-T09",
+    "HI-T11"
+  ],
+  "why": "v123 active role records exist but actual compiled entrypoint/resolver deliver no process-role selection to worker. RootSelectedPluginEffects cannot honestly observe role imports from adapter labels. Delivery of selected metadata is distinct live import evidence.",
+  "producer": "Root native assembler takes sealed v123 RootNativeAssemblyDefinitions.process_role_records from actual root selection, never active-before-assembly or caller role rows. Root validates actual role source/module/closure member/observer/action/registration/workflow FKs before serialization.",
+  "manifest_fields": [
+    "process_role_records",
+    "process_role_records_sha256"
+  ],
+  "row_shape": "Exact v123 NativeProcessRoleRecord 16-field shape unchanged. process_role_records canonical array sorted role_id; unique role IDs, finite exact selected records only. ID list fields sorted unique. No enclosing active generation digest serialized. Rows match package/profile/process generation/native package generation of selected assembly independently.",
+  "hash_domain": "process_role_records_sha256=SHA256(UTF8(json.dumps(sorted validated rows,sort_keys=True,separators=(comma,colon),ensure_ascii=False))); no newline in hash input. Entrypoint manifest is itself verified via existing selected mounted package manifest/output CAS artifact pin. No circular self-hash or caller-selected digest.",
+  "resolver": "Action resolver document adds process_role_records_sha256 only, not duplicate role rows. Root computes same exact row digest before resolver hashing; manifest pins actual resolver digest and process-role digest. Reader validates digest equality and exact manifest row hash, then resolves roles from verified manifest. Source action/effect/resolver records remain distinct. No role labels inferred from adapters.",
+  "consumer": "RootSelectedPluginEffects adds process_role_records and process_role_records_sha256 populated only by validated selected manifest/closure reader. Pinned native loader receives same authenticated mount/selection; reads these fields before emitting loaded role observations, not ordinary Hermes config/cache/RPC challenge or ambient discovery. LoadedPackageClosureProof joins root-selected manifest roles, but metadata alone never means imported/ready.",
+  "live_import_observation": {
+    "wire_key": "loaded_process_roles",
+    "row_fields": [
+      "role_id",
+      "module_name",
+      "closure_member_path",
+      "module_file_sha256",
+      "module_file_device",
+      "module_file_inode",
+      "module_file_size_bytes"
+    ],
+    "rule": "Only actual selected role modules found in the pinned loader current sys.modules/import-origin observations after required import. Exact module_name and resolved origin must equal selected read-only mounted closure member. Open no-follow regular file, observe actual bytes/stat/hash; never synthesize a live import row merely enumerating manifest. Duplicate/unknown role/module/path or changed loaded origin denies. The finite authenticated existing loader event binds package/profile/process generation/native generation/process PID/start/UID/cgroup/mount namespace/load-event nonce/lease; no worker supplied process role authority. Root reopens selected held mounted member independently, validates manifest/role source receipt/current PIDFD+kernel/mount+event identity and matches actual module stat/hash before accepting.",
+    "generation": "Process generation and native package generation remain separate explicit joins. Do not require equal generations or substitute one field for both.",
+    "effect_identity": "Registration observation identifies exact registration_id; selected effect invocation identifies action_binding_id/action_id per reviewed projection; live process-role identity is role_id. No interchange or role from adapter label.",
+    "retention": "Root LoadedPackageClosureProof/current registry retains manifest role selection digest plus actual validated import rows/origin evidence digest and original event/proc/mount/source receipts. No new wildcard source kind or generic role-mint RPC; incomplete imports remain unavailable. LoadedPackageClosureProof API details owned custody/loader implementation, preserving this fixed fact schema/currentness."
+  },
+  "bounds": "Inherit selected closure/package manifest and existing loader-message bound; role/import arrays additionally <=256 records with normalized paths/module/ID constraints already v123. Exceeding existing loader byte cap denies rather than truncates facts.",
+  "tasks": [
+    "HI-T134.1 native assembler: exact manifest role projection/hash and resolver digest join from sealed preactive definitions; CAS/role/FK/source mismatch tests",
+    "HI-T134.2 boundary/loader/custody: validated selected role delivery and actual import event proof, root held member/PIDFD/mount currentness, no catalog-only loaded claim",
+    "HI-T134.3 source/factory/runtime: root validated loaded-role proof to current selected observer registration/action joins; missing/changed role/import denies"
+  ],
+  "status": "No operational readiness or AC promotion; frozen baseline and original scope unchanged."
+}

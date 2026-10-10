@@ -513,3 +513,53 @@ The system SHALL use the v115 exact root setup build service template and actual
 #### Scenario: First setup lacks active worker profile
 - **WHEN** a valid root prepared transaction selects the finite build
 - **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Bounded source-derived native financial and web results
+
+The installer SHALL validate source-derived financial observations and web result artifacts using v120 exact selected schemas and actual root receipt currentness, preserving untrusted result semantics.
+
+#### Scenario: False web artifact receipt
+
+- **WHEN** a web result supplies a structurally valid receipt that does not resolve current root artifact/source membership
+- **THEN** result promotion is denied and no provenance or authority is inferred from the returned dictionary
+
+### Requirement: Source exact financial account alias domain
+
+The installer SHALL preserve v121 actual source account alias regex and128-character bound when validating selected financial observations.
+
+#### Scenario: Valid selected alias exceeds96 characters
+
+- **WHEN** the actual selected alias satisfies the source128-character domain
+- **THEN** it is not rejected solely by the superseded v120 max96 ceiling; all other proof and output checks remain required
+
+### Requirement: Independent selected native process role association
+
+The installer SHALL join observer process identity to explicit v123 protected process-role module/source/current loaded proofs, independently of action adapters.
+
+#### Scenario: Action adapter is supplied as a process role
+
+- **WHEN** an observer role has no exact protected process-role member/current loaded module proof
+- **THEN** source capture is denied even if a selected action adapter exists with the same name or artifact digest
+
+### Requirement: Actual root retained web content provenance
+
+The installer SHALL issue native web result metadata only from v126 genuine root authorized response observation, bounded captured CAS and current profile/effect/native/transport/source ancestry.
+
+#### Scenario: Transport dictionary without root captured receipt
+
+- **WHEN** a transport response provides a hash and receipt dictionary without root registry membership and actual captured content
+- **THEN** native result provenance promotion is denied, while the transport observation remains distinguishable from an artifact receipt
+
+### Requirement: Setup intent selectors and current private profile proof
+The system SHALL distinguish stable root setup principal/namespace/private-purpose intent from current <=30s authenticated authority snapshots, using the v133 exact source/subject/session/generation joins. It SHALL mint a distinct private-purpose selection only from the actual adopted native principal/profile and verified v91 owner-private namespace source within actual root TTY configuration.
+
+#### Scenario: Identity changes during preparation
+- **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
+- **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Authenticated selected process-role delivery
+The system SHALL deliver exact v123 role records through the v134 verified manifest and resolver digest join, and accept loaded-role proof only from actual selected import observations independently checked against held closure/source/current process custody.
+
+#### Scenario: Manifest role has not been imported
+- **WHEN** a catalog role exists but the current loader has no matching actual module origin observation
+- **THEN** the role is unavailable for source issuance and no loaded proof is inferred from an adapter.

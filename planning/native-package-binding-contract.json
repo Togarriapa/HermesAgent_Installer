@@ -1070,5 +1070,208 @@
   "native_schema_catalog_identity_v114": {
     "map_path": "plans/amendments/2026-10-10-native-schema-catalog-identities-v114/native-local-schema-artifact-map-v2.json",
     "semantics": "Exact static ArtifactCatalog grammar [A-Za-z0-9_.-] does not admit colon. These eight literal schema/artifact IDs supersede impossible v112 colon IDs; actual source schema bytes/path/SHA/size unchanged. Do not widen staticcatalog/rootreceipt grammar or mintaliases. Logical registration/action IDs remain protected schema domain, not ArtifactCatalog IDs."
+  },
+  "financial_web_results_v120": {
+    "schema": 1,
+    "id": "native-financial-web-results-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T11"
+    ],
+    "schema_artifacts": [
+      {
+        "tool_name": "financial_data_read",
+        "schema_id": "installer-native-result-financial_data_read-v1",
+        "artifact_id": "installer-native-result-financial_data_read-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/financial_data_read.result.schema.json",
+        "sha256": "6902fd82075320bad86cd622d6304ffd248ec236b70ea4a27c44071c843fbf03",
+        "size_bytes": 935
+      },
+      {
+        "tool_name": "web_retrieve",
+        "schema_id": "installer-native-result-web_retrieve-v1",
+        "artifact_id": "installer-native-result-web_retrieve-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/web_retrieve.result.schema.json",
+        "sha256": "dea89695c5206d563b2f0cd199490042af85612981fd504086e16a92ab767e13",
+        "size_bytes": 1315
+      }
+    ],
+    "source_pins": {
+      "plugin_finance.py": "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73",
+      "plugin_local_voice_web.py": "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
+    },
+    "financial": "Exact source-normalized observations, <=1000 rows/64 scalar keys each. Enforce total canonical UTF8 result <=2097152, finite numbers, <=2048 UTF8 bytes per data string/control denial, source provider-operation pair and current selected alias. Strip source credential/account identifiers as existing normalizer; no new effect/account authority. Numeric/time/schema fields do not prove current bank/trade state.",
+    "web": "Closed source-established outer return key set preserved. Existing source only checks receipt object; implementation must now populate/resolve the exact selected root artifact receipt fields, rather than promote backend-provided dictionary. Require current root registry membership, actual captured content artifact SHA/size/media/profile/owner/operation/source ancestry and expiry; response bytes and redirects remain untrusted/authority none. maxItems32 is reviewed bounded result ceiling, never authorization to follow32 redirects: actual stricter fetch policy remains controlling.",
+    "bounds": "Canonical bytes <=2MiB, duplicate keys/nonfinite values denied; string UTF8 byte limits enforced independently of JSON Schema maxLength. New finite receipt field ceilings are validator obligations, not inferred source guarantees. Schemas become operational only after actual source artifact observation, component wrapper implementation and protected selected schema/registration joins.",
+    "registration_schema_foreign_keys": "For external registration argument/result native_schema_artifacts row: adapter_id exactly registration.adapter_id, action_id exactly registration.registration_id, id exactly explicit argument_schema_id/result_schema_id and schema_kind corresponding role. Both exact records/proofs mandatory for executable registration. Backend effect action schemas remain separate; identical bytes may share storage but not erase explicit role joins.",
+    "tasks": [
+      "HI-T120.1: registration/component owner apply exact finite financial/web result validators and genuine root artifact receipt resolver; no generic object schema.",
+      "HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.",
+      "HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open."
+    ]
+  },
+  "financial_alias_source_bound_v121": {
+    "schema": 1,
+    "id": "financial-alias-source-bound-v1",
+    "supersedes": "v120 financial account_alias maxLength96 only; immutable v120 retained",
+    "why": "Actual plugin_finance._ID accepts up to128 characters; preserve the entire source-reviewed alias domain, not an unintentional narrower guessed ceiling.",
+    "schema_id": "installer-native-result-financial_data_read-v1",
+    "artifact_id": "installer-native-result-financial_data_read-v1",
+    "path": "plans/amendments/2026-10-10-financial-alias-source-bound-v121/financial_data_read.result.schema.json",
+    "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
+    "size_bytes": 984,
+    "rule": "Exact actual root selected account alias, source regex/max128; all other v120 fields/bounds/proof/task obligations unchanged. Current selected schema artifact pin must resolve this v121 source member, not stale v120 bytes."
+  },
+  "process_role_association_v123": {
+    "schema": 1,
+    "id": "native-process-role-association-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "Actual v113 package parser has multiple action/registration/workflow rows while observer resolver still equates process role with one legacy adapter artifact. Process roles and effects have independent provenance.",
+    "active_key": "native_packages[*].process_role_records",
+    "type": "NativeProcessRoleRecord",
+    "fields": [
+      "role_id",
+      "package_id",
+      "native_package_generation",
+      "profile_id",
+      "profile_generation",
+      "role_artifact_id",
+      "role_sha256",
+      "role_source_receipt_handle",
+      "module_name",
+      "closure_member_path",
+      "role_source_revision",
+      "role_source_tree_sha256",
+      "observer_enrollment_ids",
+      "registration_ids",
+      "action_binding_ids",
+      "workflow_ids"
+    ],
+    "field_rules": "IDs explicit root selected and finite; tuple IDs unique and all foreign keys exact. module_name actual qualified module identity, closure_member_path normalized relative regular-file member of verified compiled closure, no ambient search/import fallback. role_artifact_id/SHA identify actual role module artifact bytes; never action adapter automatically. profile_generation is process generation; native_package_generation independent. No embedding enclosing generation digest in row.",
+    "producer": "Root selected preactive native assembly definitions include process_role_records alongside v113 action/registration/workflow/source-issuer/schema records. Factory/projection owner derives actual role module receipt from RootReleaseModuleReceipt and reviewed pinned native loader/boundary/source role definition; joins exact staged loaded-module member/source/observer/effect selections before assembly. Prepared worker catalogs can remain empty; sealed RootNativeBootstrapAssemblySelection owns these staged definitions. Do not require existing active rows to compile their initial records.",
+    "factory_api": "RootSelectedInstallationBinding.resolve_native_bootstrap_assembly(selection_handle) returns the sealed selected process-role/action/registration/workflow/source-issuer/schema definition closure; actual source/effect/schema receipt registries validate each member. No caller JSON/path or action label derives role identity. Active compiler publishes same validated records with actual output receipt closure.",
+    "observer_join": "SourceObserverEnrollment.role_id resolves package.process_role_records[role_id]. Exact package/profile/process generation/native generation/source role artifact/hash; observer ID belongs to role.observer_enrollment_ids and selected source issuer same observer/package/profile/process generation. observer source_action_id joins exact external registration or reviewed standalone source action, not every action in a family. Target/recipient/action/schema comes from exact observer/source-issuer and selected registration/action effect binding, never process role itself. Legacy adapter_records never used as role resolver.",
+    "current_proof": "Root loaded package proof requires actual current producer PIDFD/start identity/executable/profile generation, held managed mount/source closure, actual loaded module_name/member origin SHA corresponding to this selected role record and fresh authenticated loader event. Root proof receiver retains immutable proof identity. Module receipt/source digest alone does not prove live loading; package process proof alone does not prove imported role.",
+    "runtime_api": "RootRuntimeBindings.resolve_selected_native_process_role(package_id,native_package_generation,role_id)->NativeProcessRoleRecord. SourceObserverRegistry._resolve_package_role returns exact package plus process role; independent effect/action lookup uses role FK sets and observer-specific exact action, not role adapter lookup.",
+    "migration": "Required process_role_records array on new v123 package records. Reject missing/conflicting role artifact/module/profile/observer joins. Old legacy-only packages unavailable for source capture until actual role definition/proof migrated; no invented role IDs or inferred action artifact association.",
+    "tasks": [
+      "HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.",
+      "HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.",
+      "HI-T123.3: source/custody owner independently join actual loaded role/source proof to producer and exact selected action; test wrong role module/adapter/observer and two generations; actual native runtime acceptance open."
+    ]
+  },
+  "web_content_root_receipt_v126": {
+    "schema": 1,
+    "id": "web-content-root-receipt-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T11"
+    ],
+    "why": "v120 bounded native web receipt shape has no actual root captured-content CAS producer. Existing PublicSourceReceipt transport hash/URL/TLS facts are observations, not root artifact or SourceReceipt registry membership.",
+    "owner_module": "hermes_installer.authority.web_content_artifacts",
+    "owner": "artifact broker producer; authority.artifacts may tiny public re-export; root web handler creates observation, native web adapter consumes metadata only.",
+    "API": "RootWebContentArtifactRegistry.from_authority_service(service,root_journal,web_transport_receipt_registry).publish_authorized_response(verified_root_web_response_observation)->RootWebContentArtifactReceipt; resolve_web_content_receipt(source_receipt_handle,*,profile_id,owner_generation,operation_id)->RootWebContentArtifactReceipt; read_selected_content(receipt_handle,verified_current_native_result_binding)->held read-only bounded bytes root-only.",
+    "observation": "VerifiedRootWebResponseObservation is a sealed root-only actual authorized plugin.web.read handler response. Exact native invocation/action/canonical request digest/context/current effect authorization/operation receipt/parent source closure selected profile+owner generation plus actual transport receipt and captured body bytes retained by root handler. Root registry validates service-issued execution membership/currentness and one-use response observation. No worker dictionary or callback boolean mints it; consumed authorization is referenced through retained effect execution receipt, never reused as a fresh effect.",
+    "observation_fields": [
+      "observation_handle",
+      "root_effect_receipt_handle",
+      "native_invocation_handle",
+      "profile_id",
+      "owner_generation",
+      "operation_id",
+      "canonical_request_sha256",
+      "parent_source_receipt_handles",
+      "transport_receipt_handle",
+      "body_sha256",
+      "body_size_bytes",
+      "media_type",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "artifact_id": "web-content:<lowercase64 raw_body_sha256>",
+    "artifact_identity": "Dynamic bounded captured content only, not a static seed ArtifactCatalog row. Existing generic artifact ID regex is not broadened; this dedicated root registry resolves exact namespace and actual held CAS identity. SHA addresses bytes, while receipt handle separately binds per-profile/current invocation/provenance. Equal public bytes never merge private authority/source contexts.",
+    "CAS": "ProtectedRootJournal private root child web-content/<SHA256(profile_id UTF8)>/objects/<raw_body_sha256>; secure owner0 mode0700 parents nofollow, exclusive tmp write/fsync/atomic create or exact existing-byte reopen, immutable0400/0444 file no execute, held FD/dev/inode/size/hash. <=2097152 raw bytes and existing lower fetch cap; quota/lease cleanup under same owner profile, no path crossing worker API. Empty body may be retained transport observation but cannot mint v120 positive-size artifact receipt.",
+    "receipt_fields": [
+      "artifact_id",
+      "sha256",
+      "size_bytes",
+      "media_type",
+      "profile_id",
+      "owner_generation",
+      "operation_id",
+      "source_receipt_handle",
+      "expires_monotonic"
+    ],
+    "retained_private_fields": [
+      "receipt_handle",
+      "boot_id",
+      "CAS_device",
+      "CAS_inode",
+      "root_effect_receipt_handle",
+      "native_invocation_handle",
+      "canonical_request_sha256",
+      "parent_source_receipt_handles",
+      "transport_receipt_handle",
+      "transport_observation_sha256",
+      "captured_body_sha256",
+      "current_service_profile_generation",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch",
+      "signature"
+    ],
+    "source_receipt_domain": "source_receipt_handle is this dedicated registry opaque root observed web-content provenance receipt, not fabricated SourceObserverRegistry ingress token or provider-authority SourceReceipt. Native result validator calls this exact resolver. Root transcript/memory source collector retains and resolves its transport/content/effect/parent ancestry; text remains untrusted-public-source with authority none and original parent sensitivity restrictions. Never promote web dictionary to signed source authority or strip parent private lineage.",
+    "serializer": "Root web handler publishes actual captured raw bytes and joins PublicSourceReceipt actual TLS/peer/status/redirect/request facts to the same authorized fetch. Existing native outer key set url/content_type/content/untrusted_source/authority/redirects/source_receipt unchanged; source_receipt replaced only by genuine resolved v120 metadata. content decoding comes from captured bytes through selected charset/content serializer; raw bytes SHA remains raw bytes, not string re-encoding hash. Root content validator checks this join. No response URL/header/receipt hash from caller accepted as authority.",
+    "currentness": "Cap <=30s by selected effect/native invocation/profile/source leases; validate service/owner generation/current registry/signature/source ancestry/transport/CAS each resolve and before transcript use. Expire/revoke closes FDs and invalidates handles; new boot cannot adopt old monotonic receipt without fresh actual observation. v120 receipt numeric finite expiry and canonical result <=2MiB unchanged. No redirect policy broadened by result schema maxItems32.",
+    "tasks": [
+      "HI-T126.1: broker implement actual bounded dynamic root CAS/response observation/receipt resolver and root handler callpoint, distinct transport versus source/artifact proof.",
+      "HI-T126.2: web/native/turn owners consume exact typed root receipt projection and retained ancestry; no synthesized opaque handles.",
+      "HI-T126.3: test forged effect/native/transport, false CAS hash/inode, profile/owner/expiry mismatch, duplicate bytes across profiles, output limits and untrusted content/source semantics; real account/runtime acceptance open."
+    ]
+  },
+  "native_process_role_delivery_v134": {
+    "schema": 1,
+    "requirements": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "v123 active role records exist but actual compiled entrypoint/resolver deliver no process-role selection to worker. RootSelectedPluginEffects cannot honestly observe role imports from adapter labels. Delivery of selected metadata is distinct live import evidence.",
+    "producer": "Root native assembler takes sealed v123 RootNativeAssemblyDefinitions.process_role_records from actual root selection, never active-before-assembly or caller role rows. Root validates actual role source/module/closure member/observer/action/registration/workflow FKs before serialization.",
+    "manifest_fields": [
+      "process_role_records",
+      "process_role_records_sha256"
+    ],
+    "row_shape": "Exact v123 NativeProcessRoleRecord 16-field shape unchanged. process_role_records canonical array sorted role_id; unique role IDs, finite exact selected records only. ID list fields sorted unique. No enclosing active generation digest serialized. Rows match package/profile/process generation/native package generation of selected assembly independently.",
+    "hash_domain": "process_role_records_sha256=SHA256(UTF8(json.dumps(sorted validated rows,sort_keys=True,separators=(comma,colon),ensure_ascii=False))); no newline in hash input. Entrypoint manifest is itself verified via existing selected mounted package manifest/output CAS artifact pin. No circular self-hash or caller-selected digest.",
+    "resolver": "Action resolver document adds process_role_records_sha256 only, not duplicate role rows. Root computes same exact row digest before resolver hashing; manifest pins actual resolver digest and process-role digest. Reader validates digest equality and exact manifest row hash, then resolves roles from verified manifest. Source action/effect/resolver records remain distinct. No role labels inferred from adapters.",
+    "consumer": "RootSelectedPluginEffects adds process_role_records and process_role_records_sha256 populated only by validated selected manifest/closure reader. Pinned native loader receives same authenticated mount/selection; reads these fields before emitting loaded role observations, not ordinary Hermes config/cache/RPC challenge or ambient discovery. LoadedPackageClosureProof joins root-selected manifest roles, but metadata alone never means imported/ready.",
+    "live_import_observation": {
+      "wire_key": "loaded_process_roles",
+      "row_fields": [
+        "role_id",
+        "module_name",
+        "closure_member_path",
+        "module_file_sha256",
+        "module_file_device",
+        "module_file_inode",
+        "module_file_size_bytes"
+      ],
+      "rule": "Only actual selected role modules found in the pinned loader current sys.modules/import-origin observations after required import. Exact module_name and resolved origin must equal selected read-only mounted closure member. Open no-follow regular file, observe actual bytes/stat/hash; never synthesize a live import row merely enumerating manifest. Duplicate/unknown role/module/path or changed loaded origin denies. The finite authenticated existing loader event binds package/profile/process generation/native generation/process PID/start/UID/cgroup/mount namespace/load-event nonce/lease; no worker supplied process role authority. Root reopens selected held mounted member independently, validates manifest/role source receipt/current PIDFD+kernel/mount+event identity and matches actual module stat/hash before accepting.",
+      "generation": "Process generation and native package generation remain separate explicit joins. Do not require equal generations or substitute one field for both.",
+      "effect_identity": "Registration observation identifies exact registration_id; selected effect invocation identifies action_binding_id/action_id per reviewed projection; live process-role identity is role_id. No interchange or role from adapter label.",
+      "retention": "Root LoadedPackageClosureProof/current registry retains manifest role selection digest plus actual validated import rows/origin evidence digest and original event/proc/mount/source receipts. No new wildcard source kind or generic role-mint RPC; incomplete imports remain unavailable. LoadedPackageClosureProof API details owned custody/loader implementation, preserving this fixed fact schema/currentness."
+    },
+    "bounds": "Inherit selected closure/package manifest and existing loader-message bound; role/import arrays additionally <=256 records with normalized paths/module/ID constraints already v123. Exceeding existing loader byte cap denies rather than truncates facts.",
+    "tasks": [
+      "HI-T134.1 native assembler: exact manifest role projection/hash and resolver digest join from sealed preactive definitions; CAS/role/FK/source mismatch tests",
+      "HI-T134.2 boundary/loader/custody: validated selected role delivery and actual import event proof, root held member/PIDFD/mount currentness, no catalog-only loaded claim",
+      "HI-T134.3 source/factory/runtime: root validated loaded-role proof to current selected observer registration/action joins; missing/changed role/import denies"
+    ],
+    "status": "No operational readiness or AC promotion; frozen baseline and original scope unchanged."
   }
 }
