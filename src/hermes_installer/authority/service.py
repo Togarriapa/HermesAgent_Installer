@@ -775,7 +775,9 @@ class AuthorityService:
         for grant_id, entry in tuple(self._root_selected_service_effects.items()):
             if entry["grant"].expires_monotonic <= now:
                 self._root_selected_service_effects.pop(grant_id, None)
-                self._root_selected_nonce_states.pop(entry["grant"].nonce, None)
+        for nonce, (_state, expires) in tuple(self._root_selected_nonce_states.items()):
+            if expires <= now:
+                self._root_selected_nonce_states.pop(nonce, None)
 
     def _is_current_root_selected_service_effect(self, effect: VerifiedRootSelectedServiceEffect,
                                                 seal: object) -> bool:
@@ -823,7 +825,6 @@ class AuthorityService:
             for grant_id, entry in tuple(self._root_selected_service_effects.items()):
                 if entry.get("verified") is effect:
                     self._root_selected_service_effects.pop(grant_id, None)
-                    self._root_selected_nonce_states.pop(effect._nonce, None)
                     return
 
     def attach_memory_step_effect_authority(self, authority: Any) -> None:
