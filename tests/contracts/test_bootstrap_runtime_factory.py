@@ -95,6 +95,24 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "active policy compiler"):
             binding.resolve_current_active_policy_compilation_registry()
 
+    def test_prepared_native_policy_records_are_reopened_by_exact_selection_and_identity(self):
+        session = object.__new__(RootBootstrapSession)
+        selection = SimpleNamespace(selection_handle="selection", selection_sha256="a" * 64)
+        records = SimpleNamespace(records_handle="records", native_policy_selection_handle="selection",
+                                  selection_sha256="a" * 64)
+        registry = SimpleNamespace(
+            resolve_selection_current=lambda handle: selection,
+            resolve_prepared_policy=lambda handle, binding: records,
+        )
+        session._resolve_current_native_policy_registry = lambda: registry
+        session._native_policy_records_by_selection = {"selection": records}
+        session._selected_installation = object()
+        self.assertIs(session.resolve_current_prepared_native_policy_records("selection"), records)
+
+        registry.resolve_prepared_policy = lambda *_args: SimpleNamespace()
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "records are unavailable"):
+            session.resolve_current_prepared_native_policy_records("selection")
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 

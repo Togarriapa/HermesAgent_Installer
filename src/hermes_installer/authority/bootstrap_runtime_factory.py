@@ -770,6 +770,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("native policy targets are not owned by this setup session")
         return self._session.resolve_current_native_policy_targets(selection_handle)
 
+    def resolve_current_prepared_native_policy_records(self, selection_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("prepared native policy records are not owned by this setup session")
+        return self._session.resolve_current_prepared_native_policy_records(selection_handle)
+
     def resolve_native_registration_schema_receipt(
             self, receipt_handle: str) -> RootNativeRegistrationSchemaReceipt:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -4270,6 +4275,29 @@ class RootBootstrapSession:
                          for handle in current_records.target_selection_handles)
         except Exception:
             raise BootstrapEnrollmentPending("current native policy targets are unavailable") from None
+
+    def resolve_current_prepared_native_policy_records(self, selection_handle: str) -> Any:
+        """Re-resolve the exact native policy/source/target record bundle.
+
+        The bundle is intentionally not an executable permission projection;
+        its typed rows and pending coverage are inputs to the later native
+        assembly join, which still requires effect, schema and observer proofs.
+        """
+        registry = self._resolve_current_native_policy_registry()
+        try:
+            selection = registry.resolve_selection_current(selection_handle)
+            records = self._native_policy_records_by_selection.get(selection_handle)
+            if records is None:
+                records = registry.prepare_selected_policy(selection_handle)
+                self._native_policy_records_by_selection[selection_handle] = records
+            current = registry.resolve_prepared_policy(records.records_handle, self._selected_installation)
+            if (current is not records
+                    or records.native_policy_selection_handle != selection.selection_handle
+                    or records.selection_sha256 != selection.selection_sha256):
+                raise ValueError("prepared policy record join changed")
+            return records
+        except Exception:
+            raise BootstrapEnrollmentPending("current prepared native policy records are unavailable") from None
 
     def resolve_current_release_receipt_handle(self) -> str:
         self._check_live()
