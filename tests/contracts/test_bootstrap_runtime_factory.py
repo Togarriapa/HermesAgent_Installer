@@ -107,6 +107,23 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             aggregate.begin_install("hermes")
         self.assertEqual(actor_current.exception.step, "initial_compilation.actor_current")
 
+        actor = SimpleNamespace(verify_current=lambda _release: (_ for _ in ()).throw(
+            BootstrapEnrollmentPending(sentinel)))
+        release = SimpleNamespace()
+        with patch("hermes_installer.authority.installer_release.VerifiedInstallerReleaseReceipt",
+                   SimpleNamespace), \
+             patch("hermes_installer.authority.installer_release.RootActorObservation", SimpleNamespace), \
+             patch("hermes_installer.authority.bootstrap_runtime_factory.os.geteuid", return_value=0), \
+             patch.object(factory.InstalledBootstrapPolicyResolver, "_linux", return_value=True), \
+             patch("hermes_installer.authority.bootstrap_runtime_factory._ensure_root_directory"), \
+             patch("hermes_installer.authority.bootstrap_runtime_factory._secure_directory_identity",
+                   return_value={"device": 1, "inode": 2}):
+            with self.assertRaises(BootstrapPendingStepFailure) as constructor_actor_current:
+                RootInitialCompilationRegistry(release, actor,
+                    Path("/var/lib/hermes-installer/authority-journal"))
+        self.assertEqual(constructor_actor_current.exception.step,
+                         "initial_compilation.actor_current")
+
     def test_native_home_target_requires_real_service_identity_traversal(self):
         import tempfile
         with tempfile.TemporaryDirectory() as temporary:

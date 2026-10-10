@@ -214,6 +214,24 @@ class RootSetupBoundaryTests(unittest.TestCase):
             root_setup._safe_reason(original),
             "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it.",
         )
+
+        class HostilePendingSubclass(BootstrapEnrollmentPending):
+            def __getattribute__(self, name: str) -> object:
+                if name in {"step", "args"}:
+                    raise AssertionError("pending subclass details must not be inspected")
+                return super().__getattribute__(name)
+
+            def __str__(self) -> str:
+                raise AssertionError("pending subclass must not be stringified")
+
+            def __repr__(self) -> str:
+                raise AssertionError("pending subclass must not be represented")
+
+        hostile = HostilePendingSubclass(private_detail)
+        self.assertEqual(
+            root_setup._safe_reason(hostile),
+            "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it.",
+        )
         with self.assertRaises(ValueError):
             with bootstrap_enrollment_pending_step(private_detail):
                 pass
