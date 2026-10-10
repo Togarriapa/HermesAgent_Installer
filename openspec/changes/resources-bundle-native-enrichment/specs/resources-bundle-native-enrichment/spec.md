@@ -524,3 +524,16 @@ The installer SHALL implement planning/root-service-process-authority-lane-v236.
 #### Scenario: Process source or issuer is incomplete
 - **WHEN** any of the six reviewed operation targets, exact rule/handler/schema joins, current root admission or consumed proof is missing, foreign, altered or stale
 - **THEN** active enrollment/start fails with the exact prerequisite and no fabricated usercaps, relaxed validation, uid0 allow or copied launchproof substitute
+
+## ADDED Requirements
+
+### Requirement: Actual root process source and health home proof joins
+The installer SHALL use planning/root-service-process-proof-joins-v236b.json for exact retained primary health-home custody, current runtime policy/epoch and distinct fresh published declaration proof. Service generation schema4 SHALL preserve exact v225 schema3 remote semantics and add only the strict root process array.
+
+#### Scenario: Health and runtime declarations are current
+- **WHEN** actual retained health admission joins the published primaryhermes/default row, held owned home and current PM runtime, and current adopted source declarations are verified through held installed members
+- **THEN** the root binds those exact proofs to its process admission and manager use, with current policy adapter revision and service startup epoch independently verified
+
+#### Scenario: Restart or schema conflicts cannot reuse setup proof
+- **WHEN** a reader restarts, a setup seal/lease expired, a homehash has no actual producer or schema3 is used for root process rows
+- **THEN** the reader requires a fresh current published declaration/home source proof and exact schema4 validation or remains unavailable; no reconstructed seal, inferred hash or altered legacy digest is accepted

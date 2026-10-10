@@ -206,3 +206,5 @@ Current published PM home runtime v221: plans/amendments/2026-10-10-current-publ
 Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.
 
 Root service process lane v236: plans/amendments/2026-10-10-root-service-process-authority-lane-v236.md; HI-T236.1 → HI-T236.2 → VD-T236.3 OPEN. Actual source-selected six-operation declaration, separate root binding/current admission/consume, localuser ceiling unchanged, strict6process checks/kernel evidence preserved/allACOPEN.
+
+Root process proof joins236b: plans/amendments/2026-10-10-root-service-process-proof-joins-v236b.md; existing236tasks OPEN; actual primaryhealthhome/PM/FD, currentpolicy/serviceepoch, distinctpublisheddeclaration, schema4preserves225schema3; allACOPEN.

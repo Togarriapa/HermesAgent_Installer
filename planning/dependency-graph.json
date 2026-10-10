@@ -3506,5 +3506,14 @@
       "HI-T231.1",
       "BD-T231.2"
     ]
+  },
+  "root_service_process_proof_joins_v236b": {
+    "contract": "planning/root-service-process-proof-joins-v236b.json",
+    "tasks": [
+      "HI-T236.1",
+      "HI-T236.2",
+      "VD-T236.3"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }
