@@ -95,7 +95,6 @@ class RootInstalledTaskRuntime:
         self,
         resource_id: str,
         *,
-        timeout: float = 600.0,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> Any:
         """Run the selected root cron producer and its durable DAG exactly once."""
@@ -105,9 +104,7 @@ class RootInstalledTaskRuntime:
             RootSelectedResourceScheduler,
         )
 
-        if (not isinstance(resource_id, str) or not resource_id
-                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-                or not 0.1 <= timeout <= 600 or not callable(cancelled)):
+        if (not isinstance(resource_id, str) or not resource_id or not callable(cancelled)):
             raise TaskNativeFixtureUnavailable("bounded selected cron request is malformed")
         scheduler = self.runtime.resource_scheduler
         if type(scheduler) is not RootSelectedResourceScheduler:
@@ -122,8 +119,4 @@ class RootInstalledTaskRuntime:
                 or producer.dispatcher.jobs is not self.runtime.job_authority
                 or producer.dispatcher.registry is not self.runtime.resource_controller_registry):
             raise TaskNativeFixtureUnavailable("selected cron dispatcher is not bound to the composed root graph")
-        if timeout != 600.0:
-            raise TaskNativeFixtureUnavailable(
-                "the selected cron producer owns the reviewed DAG deadline; timeout overrides are unavailable",
-            )
         return producer.tick(cancelled=cancelled)
