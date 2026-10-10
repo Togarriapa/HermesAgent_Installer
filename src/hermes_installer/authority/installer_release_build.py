@@ -2010,8 +2010,10 @@ class RootBootstrapRuntimeHandoffRegistry:
                 raise InstallerReleaseBuildError("bootstrap descriptor message exceeds fixed bound")
             _write_all(memfd, message)
             os.fsync(memfd)
-            seals = (fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
-            fcntl.fcntl(memfd, fcntl.F_ADD_SEALS, seals)
+            constants = _memfd_seal_constants()
+            seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                     | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+            fcntl.fcntl(memfd, constants["F_ADD_SEALS"], seals)
             descriptor = os.fstat(memfd)
             record = {
             "schema": 1, "state": "pending", "handoff_handle": handle,
@@ -3584,9 +3586,31 @@ def _pidfd_is_live(pidfd: int) -> bool:
     return not bool(poll.poll(0))
 
 
+def _memfd_seal_constants() -> dict[str, int]:
+    """Return Linux memfd seal commands if CPython omitted their names.
+
+    These values are architecture-independent Linux fcntl UAPI constants.
+    The pinned standalone CPython build omits the Python bindings, although
+    the kernel memfd sealing operations are available.
+    """
+    if not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("sealed bootstrap handoff requires Linux memfd support")
+    uapi = {
+        "F_ADD_SEALS": 1033,
+        "F_GET_SEALS": 1034,
+        "F_SEAL_SEAL": 0x0001,
+        "F_SEAL_SHRINK": 0x0002,
+        "F_SEAL_GROW": 0x0004,
+        "F_SEAL_WRITE": 0x0008,
+    }
+    return {name: int(getattr(fcntl, name, value)) for name, value in uapi.items()}
+
+
 def _decode_sealed_handoff_descriptor(fd: int) -> tuple[dict[str, Any], os.stat_result, bytes]:
-    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
-    required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+    constants = _memfd_seal_constants()
+    seals = fcntl.fcntl(fd, constants["F_GET_SEALS"])
+    required = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
     info = os.fstat(fd)
     if (seals & required != required or not stat.S_ISREG(info.st_mode)
             or info.st_size <= 0 or info.st_size > 4096):
@@ -3759,6 +3783,11 @@ def _fixed_reexec_entry_code() -> str:
     return '''
 import fcntl, hashlib, json, os, re, stat, sys
 
+seal_uapi = {"F_GET_SEALS": 1034, "F_SEAL_WRITE": 0x0008, "F_SEAL_GROW": 0x0004,
+             "F_SEAL_SHRINK": 0x0002, "F_SEAL_SEAL": 0x0001}
+def seal_constant(name):
+    return int(getattr(fcntl, name, seal_uapi[name]))
+
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -3771,8 +3800,9 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 descriptor = os.fstat(3)
-seals = fcntl.fcntl(3, fcntl.F_GET_SEALS)
-required = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+seals = fcntl.fcntl(3, seal_constant("F_GET_SEALS"))
+required = (seal_constant("F_SEAL_WRITE") | seal_constant("F_SEAL_GROW")
+            | seal_constant("F_SEAL_SHRINK") | seal_constant("F_SEAL_SEAL"))
 message = os.read(3, 4097)
 if seals & required != required or len(message) > 4096:
     raise RuntimeError("invalid bootstrap transition descriptor")
