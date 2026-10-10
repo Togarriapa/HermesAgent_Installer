@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "requirements": [
+    "HI-T160",
+    "HI-T162"
+  ],
+  "why": "The dedicated fixture loader needs exact authenticated file layout/envelope rather than arbitrary production path parameters.",
+  "capabilities": "Constructors may receive the genuine fixture registry explicitly; selection is its retained sealed capability, not public DTO alone. Registry resolves held root FD/current source/controller lease. No path/key callback.",
+  "layout": {
+    "fixture-authority.json": "Canonical envelope below, regular root-owned0600 single-link nofollow file.",
+    "fixture-key.bin": "Observed ephemeral key bytes, root0600 held FD, never evidence.",
+    "fixture-session.json": "Exact v162 session.fields plus signature, canonical same scoped signer; no credentials.",
+    "fixture-policy/generation.json": "Canonical JSON closed object {schema:1,authority:<strict current protected enrollment document>,catalog:<strict current ArtifactCatalog document>}. Strict core schemas unchanged. authority key_id equals observed fixture key; all service/profile/namespace/targets/source rows from fixed fixture recipe/current observed owned identities. No user-supplied catalog or false Authentik/source evidence.",
+    "fixture-policy/selection.json": "Canonical closed object {schema:1,publication_receipt_handle,fixture_generation_id,policy_sha256,catalog_sha256}; pointer matches signed envelope exactly.",
+    "fixture-policy/": "Only root-generated immutable cataloged fixture members; full source/member hash/mode/owner validation through held FD. No production etc pointer or credential directory access."
+  },
+  "envelope_fields": [
+    "schema",
+    "publication",
+    "authority_sha256",
+    "catalog_sha256",
+    "generation_sha256",
+    "signature"
+  ],
+  "publication_fields": [
+    "schema",
+    "publication_receipt_handle",
+    "fixture_selection_handle",
+    "fixture_run_id",
+    "authority_root_id",
+    "fixture_generation_id",
+    "policy_sha256",
+    "catalog_sha256",
+    "source_recipe_sha256",
+    "key_id",
+    "controller_lease_handle",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "semantics": "schema=1; publication is exact closed v162 publisher.fields. policy_sha256 equals SHA256(canonical authority object); catalog_sha256 equals SHA256(canonical catalog object), and top-level authority_sha256/catalog_sha256 repeat exactly these values. generation_sha256 equals exact canonical generation.json bytes. All lower64 hashes checked. Duplicate keys, NaN, noncanonical bytes, unknown keys, symlinks/special/unowned files deny. Signature is actual observed fixture key service signature, not caller HMAC.",
+  "signature": {
+    "domain": "hermes-installer.qualification-enrollment.v1",
+    "preimage_fields": [
+      "schema",
+      "publication",
+      "authority_sha256",
+      "catalog_sha256",
+      "generation_sha256"
+    ],
+    "canonical": "UTF8 json.dumps(object,sort_keys=True,separators=(comma,colon),ensure_ascii=False,allow_nan=False), no trailing newline; signature excluded. Existing actual service/key facade implements domain separation over exactly this canonical envelope; no unrestricted signing API.",
+    "correction": "Supersedes v162 publication-fields-only preimage with envelope binding. Publication payload fieldset itself unchanged."
+  },
+  "loader": "load_qualification_enrollment(lease,publication_receipt,key_observation,publisher)->RootQualificationEnrollment. All arguments genuine retained typed capabilities. Reopen relative fixed files through held lease FD; verify current source/environment/controller/pointer/key/namespace, exact file and object digests/signature and strict authority/catalog core validators. Source-owned fixture vault/catalog adapters resolve only recipe-cataloged refs under held run root. No /etc override, optional expected_uid or arbitrary path. Missing real credential/principal/source proof stays incomplete; fixture key does not authorize invented account facts.",
+  "tasks": [
+    {
+      "id": "HI-T164.1",
+      "owner": "fixture publisher/controller custody/host enrollment/authority",
+      "work": "Implement exact canonical envelope/generation/pointer/session and scoped signature verification with held registry capabilities and strict core parsing; swapped catalog/key/namespace/expired lease and production handle negatives."
+    }
+  ],
+  "acceptance": "No fixture run or Pi acceptance implied; all AC open and baseline unchanged."
+}
