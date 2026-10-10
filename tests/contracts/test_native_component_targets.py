@@ -1,10 +1,14 @@
 from pathlib import Path
+from types import SimpleNamespace
+import time
 
 import pytest
 
 from hermes_installer.authority.native_component_targets import (
+    NativeComponentTargetDenied,
     NativeComponentTargetPending,
     RootNativeComponentTargetRegistry,
+    _TARGET_SEAL,
     _SOURCE_CONTRACTS,
 )
 
@@ -63,3 +67,22 @@ def test_target_source_inventory_is_descriptive_and_unconfigured_families_stay_p
 
     assert raised.value.component_id == "unreviewed-component"
     assert raised.value.missing_prerequisite_ids == ("component-specific-target-adapter",)
+
+
+def test_current_target_handle_uses_only_its_retained_policy_selection():
+    registry = object.__new__(RootNativeComponentTargetRegistry)
+    policy = SimpleNamespace(selection_handle="root-policy", expires_monotonic=time.monotonic() + 30)
+    target = SimpleNamespace(
+        selection_handle="root-target", native_policy_selection_handle="root-policy",
+        expires_monotonic=time.monotonic() + 30, _seal=_TARGET_SEAL,
+    )
+    validated = []
+    registry._targets = {"root-target": target}
+    registry._policy_selections = {"root-policy": policy}
+    registry._assert_binding_matches_selection = validated.append
+
+    assert registry.resolve_current_target_handle("root-target") is target
+    assert validated == [policy, policy]
+
+    with pytest.raises(NativeComponentTargetDenied):
+        registry.resolve_current_target_handle("caller-invented-target")
