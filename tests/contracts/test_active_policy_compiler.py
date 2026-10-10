@@ -45,6 +45,28 @@ def _claim() -> RootActivePolicyCompilationClaim:
     policy = b'{"schema":1}'
     catalog = b'{"schema":1,"artifacts":[],"packages":[]}'
     authority_core = b'{"schema":1}'
+    rows = []
+    home_ids = [f"resource-profile-{index:03d}" for index in range(207)] + ["hermes"]
+    for index, source_id in enumerate(sorted(home_ids)):
+        row = {
+            "source_profile_id": source_id, "source_revision": "a" * 40,
+            "source_manifest_sha256": "b" * 64,
+            "role": "jarvis-primary-home" if source_id == "hermes" else "resource-delegate-home",
+            "native_profile_key": "default",
+            "display_name": "Jarvis" if source_id == "hermes" else source_id,
+            "home_selection_handle": f"S{index:042d}",
+            "materialization_receipt_handle": f"M{index:042d}",
+            "home_generation": "prepared-v1", "principal_id": "principal-1",
+            "namespace_id": "namespace-1", "runtime_receipt_handle": "R" * 43,
+            "runtime_identity_sha256": "c" * 64,
+            "behavioral_manifest_sha256": "d" * 64,
+        }
+        row["mapping_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
+        row["home_binding_id"] = hashlib.sha256(
+            b"jarvis-published-native-home-v214\0" + bytes.fromhex(row["mapping_sha256"])
+        ).hexdigest()
+        rows.append(row)
+    crosswalk = _canonical({"schema": 1, "rows": rows})
     return RootActivePolicyCompilationClaim(
         schema=2, plan_artifact_id="installer-root-setup-plan-v1", release_commit="a" * 40,
         publication_handle="H" * 43, setup_session_id="S" * 64, transaction_handle="T" * 64,
@@ -64,6 +86,10 @@ def _claim() -> RootActivePolicyCompilationClaim:
         authority_core_bytes=authority_core,
         authority_core_sha256=hashlib.sha256(authority_core).hexdigest(),
         authority_core_size_bytes=len(authority_core), authority_core_schema=1,
+        native_profile_home_crosswalk_bytes=crosswalk,
+        native_profile_home_crosswalk_sha256=hashlib.sha256(crosswalk).hexdigest(),
+        native_profile_home_crosswalk_size_bytes=len(crosswalk),
+        native_profile_home_crosswalk_schema=1,
         observed_root_receipt_handle="C" * 64,
         _root_journal_root=__import__("pathlib").Path("/var/lib/hermes-installer/authority-journal"),
         _root_setup_session=object(), _reservation_handle="D" * 43, _seal=object(),
@@ -448,7 +474,13 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         original.materialization_receipt_handles, (),
         authority_core_sha256=original.authority_core_sha256,
         authority_core_size_bytes=original.authority_core_size_bytes,
-        authority_core_schema=original.authority_core_schema)
+        authority_core_schema=original.authority_core_schema,
+        native_profile_home_crosswalk={
+            "schema": original.native_profile_home_crosswalk_schema,
+            "relative_path": "authority/native-profile-home-crosswalk-v213.json",
+            "sha256": original.native_profile_home_crosswalk_sha256,
+            "size_bytes": original.native_profile_home_crosswalk_size_bytes,
+        })
     persisted_claim = {
         "schema": 1, "publication_handle": original.publication_handle,
         "claim_digest": original.claim_digest, "manifest": manifest,
@@ -458,6 +490,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "authority_core_sha256": original.authority_core_sha256,
         "authority_core_size_bytes": original.authority_core_size_bytes,
         "authority_core_schema": original.authority_core_schema,
+        "native_profile_home_crosswalk": manifest["native_profile_home_crosswalk"],
     }
     state = {
         "schema": 1, "publication_handle": original.publication_handle,
@@ -481,6 +514,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
             "authority_core_sha256": original.authority_core_sha256,
             "authority_core_size_bytes": original.authority_core_size_bytes,
             "authority_core_schema": original.authority_core_schema,
+            "native_profile_home_crosswalk": manifest["native_profile_home_crosswalk"],
         "publication_receipt_handle": None,
         "issued_monotonic": original.issued_monotonic,
         "expires_monotonic": original.expires_monotonic,
@@ -491,7 +525,8 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "sha256": original.authority_core_sha256,
         "size_bytes": original.authority_core_size_bytes,
         "authority_schema": original.authority_core_schema,
-    }, "owner_overlay_adoption_records": [], "inputs": {
+    }, "native_profile_home_crosswalk": manifest["native_profile_home_crosswalk"],
+        "owner_overlay_adoption_records": [], "inputs": {
         "source_receipt_handles": list(source_handles),
         "observed_root_receipt_handle": original.observed_root_receipt_handle,
         "selection_catalog_sha256": original.selection_catalog_sha256,
@@ -510,12 +545,15 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
             "plans/bootstrap-policy-v1.json": original.policy_bytes,
             "catalog/artifacts.json": original.artifact_catalog_bytes,
             "authority/enrollment.json": original.authority_core_bytes,
+            "authority/native-profile-home-crosswalk-v213.json":
+                original.native_profile_home_crosswalk_bytes,
         }))
     monkeypatch.setattr(compiler, "_read_immutable_bytes", lambda path: {
         ".policy": original.policy_bytes,
         ".catalog": original.artifact_catalog_bytes,
         ".selection": _canonical(original.selection_document),
         ".authority": original.authority_core_bytes,
+        ".native-profile-home-crosswalk": original.native_profile_home_crosswalk_bytes,
     }[path.suffix])
     monkeypatch.setattr(compiler, "_read_json", lambda path: (
         persisted_claim if path.name.endswith(".claim.json") else dict(state)))

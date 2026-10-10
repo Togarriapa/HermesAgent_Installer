@@ -34,6 +34,7 @@ _CLAIM_DIR = "active-policy-compilation"
 _HANDLE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_DOCUMENT = 2 * 1024 * 1024
+_NATIVE_PROFILE_HOME_CROSSWALK_PATH = "authority/native-profile-home-crosswalk-v213.json"
 _SETUP_CHOICE_PURPOSES = frozenset({
     "memory-service-enablement", "memory-capture-configuration", "private-input-routes",
     "public-free-web-read", "existing-model-selection", "native-policy-preparation",
@@ -406,6 +407,12 @@ def _manifest(claim: "RootActivePolicyCompilationClaim") -> dict[str, Any]:
         "authority_core_sha256": claim.authority_core_sha256,
         "authority_core_size_bytes": claim.authority_core_size_bytes,
         "authority_core_schema": claim.authority_core_schema,
+        "native_profile_home_crosswalk": {
+            "schema": claim.native_profile_home_crosswalk_schema,
+            "relative_path": _NATIVE_PROFILE_HOME_CROSSWALK_PATH,
+            "sha256": claim.native_profile_home_crosswalk_sha256,
+            "size_bytes": claim.native_profile_home_crosswalk_size_bytes,
+        },
         "observed_root_receipt_handle": claim.observed_root_receipt_handle,
         "plan_artifact_id": claim.plan_artifact_id,
         "release_commit": claim.release_commit,
@@ -524,6 +531,17 @@ def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> 
             or claim.authority_core_schema != 1
             or _canonical(_parse_canonical_object(claim.authority_core_bytes, "authority core"))
                != claim.authority_core_bytes
+            or not isinstance(claim.native_profile_home_crosswalk_bytes, bytes)
+            or not claim.native_profile_home_crosswalk_bytes
+            or _sha(claim.native_profile_home_crosswalk_bytes)
+               != claim.native_profile_home_crosswalk_sha256
+            or len(claim.native_profile_home_crosswalk_bytes)
+               != claim.native_profile_home_crosswalk_size_bytes
+            or type(claim.native_profile_home_crosswalk_schema) is not int
+            or claim.native_profile_home_crosswalk_schema != 1
+            or _canonical(_parse_canonical_object(
+                claim.native_profile_home_crosswalk_bytes, "native profile-home crosswalk"))
+               != claim.native_profile_home_crosswalk_bytes
             or not isinstance(claim.selection_document, Mapping)
             or not isinstance(claim.source_receipt_handles, tuple)
             or _ordered_unique_receipt_handles(claim.source_receipt_handles, "active claim")
@@ -545,6 +563,8 @@ def _validate_claim_output_hashes(claim: "RootActivePolicyCompilationClaim") -> 
             or claim.principal_selection_receipt_handle not in claim.source_receipt_handles
             or claim.namespace_selection_handle not in claim.source_receipt_handles):
         raise BootstrapEnrollmentPending("active policy claim output bytes changed")
+    from .setup_policy_publication import _parse_native_profile_home_crosswalk
+    _parse_native_profile_home_crosswalk(claim.native_profile_home_crosswalk_bytes)
     document = dict(claim.selection_document)
     catalog_digest = document.get("catalog_sha256")
     unsigned = {key: value for key, value in document.items() if key != "catalog_sha256"}
@@ -602,6 +622,10 @@ class RootActivePolicyCompilationClaim:
     authority_core_sha256: str = ""
     authority_core_size_bytes: int = 0
     authority_core_schema: int = 1
+    native_profile_home_crosswalk_bytes: bytes = b""
+    native_profile_home_crosswalk_sha256: str = ""
+    native_profile_home_crosswalk_size_bytes: int = 0
+    native_profile_home_crosswalk_schema: int = 1
 
 
 class RootActivePolicyTemplateResolver:
@@ -932,11 +956,24 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentPending("adopted principal registry returned an invalid root receipt")
         policy_bytes, catalog_bytes, selection_document, selection_digest = self._compile_documents(
             session, closure)
+        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            capability.reservation_handle)
+        from .bootstrap_runtime_factory import RootPreparedNativeProfileHomeSourceSet
+        home_sources = session.resolve_prepared_native_profile_home_sources(reservation)
+        if type(home_sources) is not RootPreparedNativeProfileHomeSourceSet:
+            raise BootstrapEnrollmentPending("root setup did not issue typed Jarvis profile-home inputs")
+        home_sources.verify_current()
+        crosswalk_bytes = home_sources.public_member_bytes()
+        if (not isinstance(crosswalk_bytes, bytes)
+                or _sha(crosswalk_bytes) != home_sources.member_sha256
+                or home_sources.precompile_output_closure_sha256 != reservation.output_closure_sha256):
+            raise BootstrapEnrollmentPending("Jarvis home inputs differ from their current precompile reservation")
+        from .setup_policy_publication import _parse_native_profile_home_crosswalk
+        _parse_native_profile_home_crosswalk(crosswalk_bytes)
+        crosswalk_sha256 = _sha(crosswalk_bytes)
         choice_adoptions = self._compile_choice_adoptions(
             session, prepared, selection_document["catalog_sha256"])
         from .owner_overlay_publication import collect_owner_overlay_adoptions
-        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
-            capability.reservation_handle)
         owner_overlay_adoptions = collect_owner_overlay_adoptions(
             session, prepared_bundle, principal, choice_adoptions,
             self.materialization_receipts, reservation, closure)
@@ -999,6 +1036,10 @@ class RootActivePolicyCompilationRegistry:
             choice_adoptions=choice_adoptions,
             role_closure_sha256=closure.role_closure_sha256,
             owner_overlay_adoptions=owner_overlay_adoptions,
+            native_profile_home_crosswalk_bytes=crosswalk_bytes,
+            native_profile_home_crosswalk_sha256=crosswalk_sha256,
+            native_profile_home_crosswalk_size_bytes=len(crosswalk_bytes),
+            native_profile_home_crosswalk_schema=1,
         )
         claim_digest = _sha(_canonical(_manifest(provisional)))
         claim = RootActivePolicyCompilationClaim(
@@ -1037,11 +1078,16 @@ class RootActivePolicyCompilationRegistry:
             choice_adoptions=provisional.choice_adoptions,
             role_closure_sha256=provisional.role_closure_sha256,
             owner_overlay_adoptions=provisional.owner_overlay_adoptions,
+            native_profile_home_crosswalk_bytes=provisional.native_profile_home_crosswalk_bytes,
+            native_profile_home_crosswalk_sha256=provisional.native_profile_home_crosswalk_sha256,
+            native_profile_home_crosswalk_size_bytes=provisional.native_profile_home_crosswalk_size_bytes,
+            native_profile_home_crosswalk_schema=provisional.native_profile_home_crosswalk_schema,
         )
         # Fail before claim journaling or native-output binding if the actual
         # selected-role authority producer is unavailable. Do not reserve a
         # consumable active claim around schema-only or guessed core bytes.
         _validate_claim_output_hashes(claim)
+        home_sources.verify_current()
         # Durable claim record reserves the transaction before the publisher can
         # create any generation. Same-transaction replay remains denied until
         # explicit release or committed active state.
@@ -1088,7 +1134,8 @@ class RootActivePolicyCompilationRegistry:
             # retain the precompile reservation; it is never released or
             # reconstructed from caller metadata on a failed compile.
             try:
-                for suffix in (".policy", ".catalog", ".selection", ".authority", ".claim.json"):
+                for suffix in (".policy", ".catalog", ".selection", ".authority",
+                               ".native-profile-home-crosswalk", ".claim.json"):
                     path = self._claim_root / (publication_handle + suffix)
                     try:
                         path.unlink()
@@ -1188,6 +1235,17 @@ class RootActivePolicyCompilationRegistry:
         capability = self._precompile_caps.get(claim._reservation_handle)
         if capability is None:
             raise BootstrapEnrollmentPending("active claim lost its typed precompile capability")
+        reservation = self.materialization_receipts.resolve_current_precompile_reservation(
+            capability.reservation_handle)
+        from .bootstrap_runtime_factory import RootPreparedNativeProfileHomeSourceSet
+        home_sources = session.resolve_prepared_native_profile_home_sources(reservation)
+        if (type(home_sources) is not RootPreparedNativeProfileHomeSourceSet
+                or home_sources.verify_current() is not home_sources
+                or home_sources.precompile_output_closure_sha256 != reservation.output_closure_sha256
+                or home_sources.public_member_bytes() != claim.native_profile_home_crosswalk_bytes
+                or home_sources.member_sha256 != claim.native_profile_home_crosswalk_sha256):
+            raise BootstrapEnrollmentPending(
+                "prepared native profile-home source set changed after active claim issuance")
         policy_bytes, catalog_bytes, selection, predecessor = self._compile_documents(
             session, capability._root_role_closure)
         if (predecessor != claim.expected_selection_catalog_sha256
@@ -1326,6 +1384,7 @@ class RootActivePolicyCompilationRegistry:
             "schema", "publication_handle", "claim_digest", "manifest",
             "policy_sha256", "artifact_catalog_sha256", "selection_sha256",
             "authority_core_sha256", "authority_core_size_bytes", "authority_core_schema",
+            "native_profile_home_crosswalk",
         }
         manifest = claim_record.get("manifest")
         if (set(claim_record) != required_record_fields or claim_record.get("schema") != 1
@@ -1347,6 +1406,7 @@ class RootActivePolicyCompilationRegistry:
             "compiled_policy_sha256", "compiled_artifact_catalog_sha256",
             "compiled_selection_sha256", "selection_catalog_sha256",
             "authority_core_sha256", "authority_core_size_bytes", "authority_core_schema",
+            "native_profile_home_crosswalk",
             "observed_root_receipt_handle", "plan_artifact_id", "release_commit",
             "source_receipt_handles", "choice_adoptions", "issued_monotonic",
             "expires_monotonic",
@@ -1390,6 +1450,7 @@ class RootActivePolicyCompilationRegistry:
             "authority_core_sha256": receipt.authority_core_sha256,
             "authority_core_size_bytes": receipt.authority_core_size_bytes,
             "authority_core_schema": receipt.authority_core_schema,
+            "native_profile_home_crosswalk": dict(receipt.native_profile_home_crosswalk or {}),
             "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
             "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
         }
@@ -1406,6 +1467,7 @@ class RootActivePolicyCompilationRegistry:
             "authority_core_sha256": manifest["authority_core_sha256"],
             "authority_core_size_bytes": manifest["authority_core_size_bytes"],
             "authority_core_schema": manifest["authority_core_schema"],
+            "native_profile_home_crosswalk": manifest["native_profile_home_crosswalk"],
         }
         if claim_record != expected_claim_record:
             raise BootstrapEnrollmentPending("durable compiler output record differs from its manifest")
@@ -1417,11 +1479,14 @@ class RootActivePolicyCompilationRegistry:
         catalog = _read_immutable_bytes(prefix.with_suffix(".catalog"))
         selection_bytes = _read_immutable_bytes(prefix.with_suffix(".selection"))
         authority_core = _read_immutable_bytes(prefix.with_suffix(".authority"))
+        crosswalk = _read_immutable_bytes(prefix.with_suffix(".native-profile-home-crosswalk"))
         if (_sha(policy) != manifest["compiled_policy_sha256"]
                 or _sha(catalog) != manifest["compiled_artifact_catalog_sha256"]
                 or _sha(selection_bytes) != manifest["compiled_selection_sha256"]
                 or _sha(authority_core) != manifest["authority_core_sha256"]
-                or len(authority_core) != manifest["authority_core_size_bytes"]):
+                or len(authority_core) != manifest["authority_core_size_bytes"]
+                or _sha(crosswalk) != manifest["native_profile_home_crosswalk"]["sha256"]
+                or len(crosswalk) != manifest["native_profile_home_crosswalk"]["size_bytes"]):
             raise BootstrapEnrollmentPending("durable compiler output bytes differ from the claim manifest")
         try:
             core_document = json.loads(authority_core.decode("utf-8"), object_pairs_hook=_unique_pairs,
@@ -1459,6 +1524,8 @@ class RootActivePolicyCompilationRegistry:
                     "size_bytes": receipt.authority_core_size_bytes,
                     "authority_schema": receipt.authority_core_schema,
                 }
+                or descriptor.get("native_profile_home_crosswalk")
+                   != receipt.native_profile_home_crosswalk
                 or any(inputs.get(key) != value for key, value in {
                     "publication_handle": publication_handle,
                     "claim_digest": receipt.claim_digest,
@@ -1471,6 +1538,10 @@ class RootActivePolicyCompilationRegistry:
                 or file_bytes.get("plans/bootstrap-policy-v1.json") != policy
                 or file_bytes.get("catalog/artifacts.json") != catalog
                 or file_bytes.get("authority/enrollment.json") != authority_core):
+            raise BootstrapEnrollmentPending("active descriptor differs from durable compiler inputs")
+        if (file_bytes.get("authority/native-profile-home-crosswalk-v213.json") != crosswalk
+                or descriptor.get("native_profile_home_crosswalk")
+                   != manifest["native_profile_home_crosswalk"]):
             raise BootstrapEnrollmentPending("active descriptor differs from durable compiler inputs")
 
         state_path = self._claim_root / ("transaction-" + receipt.transaction_handle + ".json")
@@ -1496,6 +1567,7 @@ class RootActivePolicyCompilationRegistry:
             "authority_core_sha256": manifest["authority_core_sha256"],
             "authority_core_size_bytes": manifest["authority_core_size_bytes"],
             "authority_core_schema": manifest["authority_core_schema"],
+            "native_profile_home_crosswalk": manifest["native_profile_home_crosswalk"],
             "owner_overlay_adoptions": manifest["owner_overlay_adoptions"],
             "runtime_receipt_handles": runtime_handles,
             "materialization_receipt_handles": output_handles,
@@ -2162,6 +2234,7 @@ class RootActivePolicyCompilationRegistry:
                 "authority_core_sha256": claim.authority_core_sha256,
                 "authority_core_size_bytes": claim.authority_core_size_bytes,
                 "authority_core_schema": claim.authority_core_schema,
+                "native_profile_home_crosswalk": _manifest(claim)["native_profile_home_crosswalk"],
                 "selection_catalog_sha256": claim.selection_catalog_sha256,
                 "observed_root_receipt_handle": claim.observed_root_receipt_handle,
                 "principal_selection_receipt_handle": claim.principal_selection_receipt_handle,
@@ -2185,6 +2258,8 @@ class RootActivePolicyCompilationRegistry:
         self._write_immutable_bytes(prefix.with_suffix(".catalog"), claim.artifact_catalog_bytes)
         self._write_immutable_bytes(prefix.with_suffix(".selection"), selection_bytes)
         self._write_immutable_bytes(prefix.with_suffix(".authority"), claim.authority_core_bytes)
+        self._write_immutable_bytes(prefix.with_suffix(".native-profile-home-crosswalk"),
+                                    claim.native_profile_home_crosswalk_bytes)
         _write_json(prefix.with_suffix(".claim.json"), {
             "schema": 1,
             "publication_handle": claim.publication_handle,
@@ -2196,6 +2271,7 @@ class RootActivePolicyCompilationRegistry:
             "authority_core_sha256": claim.authority_core_sha256,
             "authority_core_size_bytes": claim.authority_core_size_bytes,
             "authority_core_schema": claim.authority_core_schema,
+            "native_profile_home_crosswalk": _manifest(claim)["native_profile_home_crosswalk"],
         }, exclusive=True)
 
     def _verify_claim_bundle(self, claim: RootActivePolicyCompilationClaim) -> None:
@@ -2204,6 +2280,7 @@ class RootActivePolicyCompilationRegistry:
         catalog = _read_immutable_bytes(prefix.with_suffix(".catalog"))
         selection = _read_immutable_bytes(prefix.with_suffix(".selection"))
         authority_core = _read_immutable_bytes(prefix.with_suffix(".authority"))
+        crosswalk = _read_immutable_bytes(prefix.with_suffix(".native-profile-home-crosswalk"))
         record = _read_json(prefix.with_suffix(".claim.json"))
         expected = {
             "schema": 1, "publication_handle": claim.publication_handle,
@@ -2213,9 +2290,11 @@ class RootActivePolicyCompilationRegistry:
             "authority_core_sha256": _sha(authority_core),
             "authority_core_size_bytes": len(authority_core),
             "authority_core_schema": claim.authority_core_schema,
+            "native_profile_home_crosswalk": _manifest(claim)["native_profile_home_crosswalk"],
         }
         if (policy != claim.policy_bytes or catalog != claim.artifact_catalog_bytes
-                or selection != _canonical(dict(claim.selection_document)) or record != expected):
+                or selection != _canonical(dict(claim.selection_document))
+                or crosswalk != claim.native_profile_home_crosswalk_bytes or record != expected):
             raise BootstrapEnrollmentPending("durable active compilation claim or output bytes changed")
 
     def _write_state(self, claim: RootActivePolicyCompilationClaim, state: str,
