@@ -377,6 +377,7 @@ class _Handle:
     task_owned: bool = False
     native_loader_observation_handle: str | None = None
     native_loader_ready_event_id: str | None = None
+    native_worker_launch_proof: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1127,6 +1128,549 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
         return owner.verify_current_native_worker_launch(proof)
 
+    def _private_native_worker_gate_barrier(
+            self, proof: Any, channel: Any, *, unit: str, contract_sha256: str,
+            nonce: str, helper_path: Path, interpreter_path: Path,
+            cancelled: Callable[[], bool], deadline: float,
+            allowed_bind: bool, allowed_connect: bool
+            ) -> tuple[int, int, int, str, int, int, int, str, str, str]:
+        """Observe, probe, and release only the exact systemd MainPID helper.
+
+        The helper is already waiting on the named activated AF_UNIX channel.
+        This method owns both observation boundaries around the actual
+        kernel-authenticated probes; receipt callbacks and peer-supplied PID
+        or namespace facts are not accepted.
+        """
+        from hermes_installer.authority.private_loopback_worker_gate import (
+            namespace_observation_frame, validate_awaiting_namespace,
+        )
+        if (not isinstance(unit, str) or not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", unit)
+                or not callable(cancelled) or isinstance(deadline, bool)
+                or not isinstance(deadline, (int, float)) or not math.isfinite(deadline)
+                or not re.fullmatch(r"[0-9a-f]{64}", contract_sha256)
+                or not isinstance(nonce, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", nonce)):
+            raise AuthorityDenied("native_worker.gate", "fixed helper gate transaction is malformed")
+        pidfd = namespace_fd = -1
+        try:
+            _peer, initial, _initial_digest = channel.accept_helper(
+                expected_uid=self.profiles[proof.profile_id].owner_uid,
+                deadline=deadline, cancelled=cancelled)
+            if (channel.nonce != nonce
+                    or initial.get("nonce") != nonce
+                    or initial.get("launch_contract_sha256") != contract_sha256):
+                raise AuthorityDenied("native_worker.gate", "helper initial frame differs from manager contract")
+            selected = validate_awaiting_namespace(
+                initial, nonce=nonce, contract_sha256=contract_sha256,
+                expected_uid=self.profiles[proof.profile_id].owner_uid,
+                expected_gid=self.profiles[proof.profile_id].owner_gid)
+            self.verify_current_native_worker_launch(proof)
+            observed = self._observe_native_gate_mainpid(
+                unit, expected_pid=selected["pid"], helper_path=helper_path,
+                interpreter_path=interpreter_path,
+                expected_uid=selected["uid"], expected_gid=selected["gid"])
+            pidfd, namespace_fd = observed["pidfd"], observed["namespace_fd"]
+            namespace = os.fstat(namespace_fd)
+            if (observed["start_ticks"] != selected["start_ticks"]
+                    or observed["pid"] != selected["pid"]
+                    or (namespace.st_dev, namespace.st_ino)
+                       != (observed["namespace_device"], observed["namespace_inode"])):
+                raise AuthorityDenied("native_worker.gate", "systemd MainPID changed before namespace observation")
+            from hermes_installer.authority.private_loopback_worker_gate import (
+                _process_capability_identity,
+            )
+            expected_identity = {
+                "pid": observed["pid"], "uid": observed["uid"], "gid": observed["gid"],
+                "start_ticks": observed["start_ticks"], "cgroup": observed["cgroup"],
+                "namespace_device": observed["namespace_device"],
+                "namespace_inode": observed["namespace_inode"],
+                "capabilities": _process_capability_identity(observed["pid"]),
+            }
+            if any(expected_identity["capabilities"].values()):
+                raise AuthorityDenied("native_worker.gate", "helper retains process capabilities")
+            gate_frame = namespace_observation_frame(
+                nonce=nonce, contract_sha256=contract_sha256,
+                service_generation_digest=proof.service_generation_digest,
+                projection_handle=proof._network_projection.projection_handle,
+                unit_invocation_id=observed["invocation_id"],
+                pid=observed["pid"], start_ticks=observed["start_ticks"],
+                cgroup=observed["cgroup"], namespace_device=namespace.st_dev,
+                namespace_inode=namespace.st_ino)
+            channel.send_namespace_observation(gate_frame)
+            channel.receive_and_validate_gate_result(
+                expected_identity=expected_identity,
+                allowed_bind=allowed_bind, allowed_connect=allowed_connect)
+            if cancelled() or self.monotonic() >= deadline:
+                raise AuthorityDenied("native_worker.gate", "native worker gate expired before application release")
+            self.verify_current_native_worker_launch(proof)
+            current = self._observe_native_gate_mainpid(
+                unit, expected_pid=observed["pid"], helper_path=helper_path,
+                interpreter_path=interpreter_path,
+                expected_uid=observed["uid"], expected_gid=observed["gid"])
+            try:
+                namespace_now = os.fstat(namespace_fd)
+                if (current["start_ticks"] != observed["start_ticks"]
+                        or current["cgroup"] != observed["cgroup"]
+                        or current["invocation_id"] != observed["invocation_id"]
+                        or current["fragment_path"] != observed["fragment_path"]
+                        or current["exec_start"] != observed["exec_start"]
+                        or (namespace_now.st_dev, namespace_now.st_ino)
+                           != (observed["namespace_device"], observed["namespace_inode"])
+                        or _pidfd_exited(pidfd)):
+                    raise AuthorityDenied("native_worker.gate", "MainPID or namespace changed before release")
+                channel.send_application_release(
+                    service_generation_digest=proof.service_generation_digest,
+                    projection_handle=proof._network_projection.projection_handle)
+            finally:
+                os.close(current["pidfd"])
+                os.close(current["namespace_fd"])
+            result = (observed["pid"], observed["start_ticks"], pidfd,
+                      observed["cgroup"], namespace.st_dev, namespace.st_ino,
+                      namespace_fd, observed["invocation_id"],
+                      observed["fragment_path"], observed["exec_start"])
+            pidfd = namespace_fd = -1
+            return result
+        except BaseException:
+            raise
+        finally:
+            for fd in (pidfd, namespace_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+    def _observe_native_gate_mainpid(self, unit: str, *, expected_pid: int,
+                                    helper_path: Path, interpreter_path: Path,
+                                    expected_uid: int, expected_gid: int) -> dict[str, Any]:
+        """Read exact fixed-unit/process facts and retain fresh kernel handles."""
+        properties = {name: self._show(unit, name) for name in (
+            "LoadState", "ActiveState", "MainPID", "InvocationID", "ControlGroup",
+            "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "User",
+            "Group", "KillMode", "RuntimeMaxUSec", "SocketBindDeny",
+            "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies",
+        )}
+        try:
+            pid = int(properties["MainPID"])
+            invocation = properties["InvocationID"]
+            cgroup = properties["ControlGroup"]
+            fragment = Path(properties["FragmentPath"])
+            fragment_info = fragment.lstat()
+            exec_start = properties["ExecStart"]
+            if (properties["LoadState"] != "loaded"
+                    or properties["ActiveState"] not in {"activating", "active"}
+                    or pid != expected_pid or not re.fullmatch(r"[0-9a-f]{32}", invocation)
+                    or not cgroup.startswith("/system.slice/")
+                    or Path(cgroup).name != unit
+                    or fragment.parent != Path("/run/systemd/transient")
+                    or fragment.name != unit
+                    or not stat.S_ISREG(fragment_info.st_mode) or fragment_info.st_uid != 0
+                    or fragment_info.st_mode & 0o022
+                    or exec_start.count(str(interpreter_path)) != 1
+                    or exec_start.count(str(helper_path)) != 1
+                    or "-I" not in exec_start
+                    or properties["EnvironmentFiles"] not in {"", "-"}
+                    or properties["User"] != self.profiles[self._native_worker_profile_id].service_user
+                    or properties["KillMode"] != "control-group"
+                    or not 0 < int(properties["RuntimeMaxUSec"]) <= 30_000_000
+                    or properties["SocketBindDeny"] != "any"
+                    or properties["IPAddressDeny"] not in {"0.0.0.0/0 ::/0", "any"}
+                    or properties["PrivateNetwork"] != "yes"
+                    or set(properties["RestrictAddressFamilies"].split()) != {"AF_UNIX"}):
+                raise ValueError("unit properties differ from fixed private worker gate")
+            if fragment.read_bytes().count(str(helper_path).encode()) != 1:
+                raise ValueError("transient unit fragment does not pin the helper ExecStart")
+            ticks, proc_cgroup, device, inode = _pid_identity(pid)
+            status_lines = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uid_fields = next(line for line in status_lines if line.startswith("Uid:")).split()[1:]
+            gid_fields = next(line for line in status_lines if line.startswith("Gid:")).split()[1:]
+            exe_info = os.stat(interpreter_path, follow_symlinks=False)
+            if (len(uid_fields) != 4 or any(int(value) != expected_uid for value in uid_fields)
+                    or len(gid_fields) != 4 or any(int(value) != expected_gid for value in gid_fields)
+                    or proc_cgroup != cgroup
+                    or os.readlink(f"/proc/{pid}/exe") != str(interpreter_path)
+                    or (device, inode) != (exe_info.st_dev, exe_info.st_ino)):
+                raise ValueError("MainPID executable, UID/GID, or cgroup differs from unit")
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            command = [item.decode("utf-8", "strict") for item in command if item]
+            if command != [str(interpreter_path), "-I", str(helper_path)]:
+                raise ValueError("MainPID argv is not the fixed isolated gate helper")
+            environment = self._read_environment(pid)
+            if (environment.get("LISTEN_PID") != str(pid)
+                    or environment.get("LISTEN_FDS") != "2"
+                    or environment.get("LISTEN_FDNAMES")
+                       != "hermes-private-loopback-gate:hermes-loader-progress"
+                    or any(key not in {"HOME", "HERMES_HOME", "PATH", "LANG", "LISTEN_PID",
+                                       "LISTEN_FDS", "LISTEN_FDNAMES"} for key in environment)
+                    or environment.get("HOME") != "/hermes"
+                    or environment.get("HERMES_HOME") != "/hermes"
+                    or environment.get("PATH") != "/usr/bin:/bin"
+                    or environment.get("LANG") != "C"):
+                raise ValueError("MainPID environment differs from the fixed gate contract")
+            pidfd = os.pidfd_open(pid, 0)
+            namespace_fd = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            namespace = os.fstat(namespace_fd)
+            if (_pid_identity(pid) != (ticks, cgroup, device, inode)
+                    or _pidfd_exited(pidfd)
+                    or (namespace.st_dev, namespace.st_ino)
+                       != (os.stat(f"/proc/{pid}/ns/net").st_dev,
+                           os.stat(f"/proc/{pid}/ns/net").st_ino)):
+                raise ValueError("MainPID or namespace changed while retaining kernel handles")
+            return {"pid": pid, "start_ticks": ticks, "cgroup": cgroup,
+                    "uid": expected_uid, "gid": expected_gid,
+                    "namespace_device": namespace.st_dev,
+                    "namespace_inode": namespace.st_ino,
+                    "invocation_id": invocation, "fragment_path": str(fragment),
+                    "exec_start": exec_start, "pidfd": pidfd,
+                    "namespace_fd": namespace_fd}
+        except Exception:
+            for key in ("pidfd", "namespace_fd"):
+                fd = locals().get(key)
+                if isinstance(fd, int) and fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            raise AuthorityDenied("native_worker.gate", "systemd MainPID identity is not fixed and current") from None
+
+    def _start_native_worker_gate(self, profile: ManagedProfileCustody, proof: Any, *,
+                                  selection: Any, operation_recipe: Mapping[str, Any],
+                                  cwd: Path, payload: bytes, timeout: float,
+                                  cancelled: Callable[[], bool],
+                                  start_guard: Callable[[], bool] | None,
+                                  parent_liveness_fd: int,
+                                  lifecycle_deadline: float,
+                                  process_deadline: float,
+                                  selected_principal: str,
+                                  selected_namespace: str) -> Mapping[str, Any]:
+        """Start the fixed helper, prove its own worker namespace, then same-PID exec.
+
+        This is the only process-start route for the selected native Hermes
+        profile.  The generic artifact/child recipe path never gains an
+        exception for a Python module command.
+        """
+        from hermes_installer.authority.native_custody_proof import create_native_loader_channel
+        from hermes_installer.authority.private_loopback_worker_gate import (
+            create_root_private_loopback_gate_channel,
+        )
+
+        owner = self._native_worker_launch_owner
+        if (owner is None or proof.profile_id != profile.profile_id
+                or proof._selection is not selection
+                or self.profiles.get(profile.profile_id) is not profile
+                or not isinstance(operation_recipe, Mapping)
+                or not callable(cancelled) or not isinstance(selected_principal, str)
+                or not selected_principal or not isinstance(selected_namespace, str)
+                or not selected_namespace):
+            raise AuthorityDenied("native_worker.launch", "fixed current native manager proof is unavailable")
+        now = self.monotonic()
+        launch_deadline = min(now + min(float(timeout), 30.0), float(lifecycle_deadline),
+                              proof.expires_monotonic)
+        process_expiry = min(float(process_deadline), now + min(float(profile.max_lifetime_seconds), 30.0))
+        if (launch_deadline <= now or process_expiry <= now
+                or process_expiry - now > 30.0
+                or not isinstance(proof.argv, tuple) or not proof.argv
+                or proof.argv[0] != str(proof.executable_path)
+                or tuple(proof.argv[1:]) != (
+                    "-m", "hermes_cli.main", "chat", "--query-file", "-", "--oneshot", "--quiet")
+                or dict(proof.environment) != {"HOME": "/hermes", "HERMES_HOME": "/hermes"}
+                or operation_recipe.get("stdin_mode") != "bounded-typed-bytes"
+                or isinstance(operation_recipe.get("max_lifetime_seconds"), bool)
+                or not isinstance(operation_recipe.get("max_lifetime_seconds"), int)
+                or not 0 < operation_recipe["max_lifetime_seconds"] <= profile.max_lifetime_seconds):
+            raise AuthorityDenied("native_worker.recipe", "native worker start recipe is not the fixed bounded CLI mode")
+        process_id = uuid.uuid4().hex
+        unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
+        parent_fd = child_fd = namespace_fd = -1
+        artifact_mount_dir: Path | None = None
+        channel = None
+        loader_channel = None
+        contract_path: Path | None = None
+        launcher: subprocess.Popen[bytes] | None = None
+        unit_may_exist = False
+
+        def require_live_start() -> None:
+            if (cancelled() or self.monotonic() >= launch_deadline
+                    or self.profiles.get(profile.profile_id) is not profile
+                    or start_guard is not None and not start_guard()
+                    or _pidfd_exited(parent_fd)):
+                raise AuthorityDenied("native_worker.start_expired", "selected launch authority expired before effect release")
+            self.verify_current_native_worker_launch(proof)
+
+        try:
+            self._require_systemd_openfile()
+            helper_path, interpreter_path, _helper_digest, _interpreter_digest = owner.resolve_gate_runtime()
+            parent_fd = os.dup(parent_liveness_fd)
+            if _pidfd_exited(parent_fd):
+                raise AuthorityDenied("native_worker.parent", "root daemon lifetime anchor is not live")
+            artifact_mount_dir = _artifact_mount_slot(profile.owner_uid, process_id)
+            self._ensure_root_runtime_directory(Path("/run/hermes-installer/private-loopback"), 0o700)
+            channels_root = Path("/run/hermes-installer/private-loopback/channels")
+            self._ensure_root_runtime_directory(channels_root, 0o700)
+            channel = create_root_private_loopback_gate_channel(channels_root)
+            contract_path = channel.socket_directory / "contract.json"
+            network = proof._network_projection.network_record
+            if (network.get("role") != "af-unix"
+                    or network.get("worker_profile_id") != profile.profile_id
+                    or network.get("worker_enrollment_id") != profile.enrollment_id
+                    or network.get("endpoint_receipt_handle") != proof._selection._network_projection.network_record.get("endpoint_receipt_handle")):
+                raise AuthorityDenied("native_worker.network", "active AF_UNIX worker network row changed")
+            contract = {
+                "schema": 2, "purpose": "private-loopback-worker-start",
+                "nonce": channel.nonce, "network_id": proof.network_id,
+                "service_generation_digest": proof.service_generation_digest,
+                "enrollment_id": profile.enrollment_id, "profile_id": profile.profile_id,
+                "generation": profile.generation, "uid": profile.owner_uid,
+                "gid": profile.owner_gid, "role": "af-unix",
+                "allowed_bind_port": None, "allowed_connect_port": None,
+                "denied_port": 14500,
+                "application_executable": str(proof.executable_path),
+                "application_argv": list(proof.argv),
+                "application_environment": dict(proof.environment),
+            }
+            contract_bytes = json.dumps(contract, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=True, allow_nan=False).encode("ascii")
+            if len(contract_bytes) > 16 * 1024:
+                raise AuthorityDenied("native_worker.contract", "fixed worker contract exceeds its bound")
+            self._write_native_file(contract_path, contract_bytes, 0o444)
+            contract_info = contract_path.lstat()
+            if (not stat.S_ISREG(contract_info.st_mode) or contract_info.st_uid != 0
+                    or stat.S_IMODE(contract_info.st_mode) != 0o444
+                    or contract_info.st_nlink != 1
+                    or hashlib.sha256(contract_path.read_bytes()).hexdigest()
+                       != hashlib.sha256(contract_bytes).hexdigest()):
+                raise AuthorityDenied("native_worker.contract", "root-owned fixed contract changed")
+            self._ensure_root_runtime_directory(Path("/run/hermes-installer/native-loader"), 0o700)
+            loader_channel = create_native_loader_channel(Path("/run/hermes-installer/native-loader"))
+            socket_root = profile.authority_socket or Path(
+                f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
+            if socket_root != Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock"):
+                raise AuthorityDenied("native_worker.authority_socket", "worker control endpoint is not the fixed UID socket")
+            socket_parent = socket_root.parent.lstat()
+            authority_socket = socket_root.lstat()
+            if (not stat.S_ISDIR(socket_parent.st_mode) or socket_parent.st_uid != 0
+                    or socket_parent.st_mode & 0o022 or not stat.S_ISSOCK(authority_socket.st_mode)
+                    or authority_socket.st_uid != 0 or authority_socket.st_gid != profile.owner_gid
+                    or stat.S_IMODE(authority_socket.st_mode) != 0o660):
+                raise AuthorityDenied("native_worker.authority_socket", "fixed AF_UNIX authority endpoint is unavailable")
+            self._ensure_root_runtime_directory(Path("/run/hermes-installer/authority"), 0o711)
+            properties = [
+                "--property=Type=exec", "--property=RuntimeMaxSec=30s",
+                "--property=KillMode=control-group",
+                f"--property=Description=HermesInstaller native-worker {profile.profile_id} {profile.generation}",
+                "--property=ProtectSystem=strict", "--property=ProtectHome=tmpfs",
+                "--property=ProtectProc=invisible", "--property=ProcSubset=pid",
+                "--property=PrivateTmp=yes", "--property=PrivateDevices=yes",
+                "--property=NoNewPrivileges=yes", "--property=CapabilityBoundingSet=",
+                "--property=AmbientCapabilities=", f"--property=User={profile.service_user}",
+                "--property=SupplementaryGroups=", "--property=ProtectKernelTunables=yes",
+                "--property=ProtectKernelModules=yes", "--property=ProtectControlGroups=yes",
+                "--property=RestrictSUIDSGID=yes", "--property=RestrictNamespaces=user",
+                "--property=RestrictAddressFamilies=AF_UNIX", "--property=PrivateNetwork=yes",
+                "--property=IPAddressDeny=any", "--property=SocketBindDeny=any",
+                "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
+                "--property=" + channel.systemd_open_file_property,
+                "--property=" + loader_channel.systemd_open_file_property,
+                "--property=BindReadOnlyPaths=" + str(contract_path)
+                    + ":/run/hermes-installer/private-loopback/contract.json",
+                "--property=BindPaths=" + str(profile.data_root)
+                    + f":/hermes/profiles/{profile.profile_id}",
+                "--property=BindPaths=" + str(profile.home_root) + ":/hermes",
+                "--property=BindPaths=" + str(profile.work_root) + ":/workspace",
+                "--property=BindPaths=" + str(socket_root) + ":" + str(socket_root),
+            ]
+            if profile.memory_max_bytes is not None:
+                properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
+            if profile.cpu_quota_percent is not None:
+                properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
+            if profile.io_weight is not None:
+                properties.append(f"--property=IOWeight={profile.io_weight}")
+            environment = {"HOME": "/hermes", "HERMES_HOME": "/hermes",
+                           "PATH": "/usr/bin:/bin", "LANG": "C"}
+            command = [str(self.systemd_run), "--system", "--unit=" + unit,
+                       "--service-type=exec", "--wait", "--collect", "--pipe", "--quiet",
+                       "--working-directory=/hermes", *properties,
+                       *("--setenv=" + key + "=" + value for key, value in sorted(environment.items())),
+                       str(interpreter_path), "-I", str(helper_path)]
+            require_live_start()
+            if (not contract_path.is_file()
+                    or hashlib.sha256(contract_path.read_bytes()).hexdigest()
+                       != hashlib.sha256(contract_bytes).hexdigest()):
+                raise AuthorityDenied("native_worker.contract", "fixed contract changed before systemd launch")
+            unit_may_exist = True
+            launcher = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                close_fds=True, shell=False)
+            for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
+                if stream is not None:
+                    os.set_blocking(stream.fileno(), False)
+            allowed_bind = allowed_connect = False
+            observed = self._private_native_worker_gate_barrier(
+                proof, channel, unit=unit,
+                contract_sha256=hashlib.sha256(contract_bytes).hexdigest(),
+                nonce=channel.nonce, helper_path=helper_path,
+                interpreter_path=interpreter_path, cancelled=cancelled,
+                deadline=launch_deadline, allowed_bind=allowed_bind,
+                allowed_connect=allowed_connect)
+            (pid, ticks, child_fd, cgroup, net_dev, net_ino, namespace_fd,
+             invocation_id, fragment_path, exec_start) = observed
+            ready_deadline = min(process_expiry, self.monotonic() + 5.0)
+            while self.monotonic() < ready_deadline:
+                require_live_start()
+                try:
+                    props = {name: self._show(unit, name) for name in (
+                        "MainPID", "InvocationID", "ControlGroup", "FragmentPath", "ExecStart",
+                        "EnvironmentFiles", "KillMode", "RuntimeMaxUSec", "SocketBindDeny",
+                        "PrivateNetwork", "RestrictAddressFamilies", "User", "IPAddressDeny")}
+                    ticks_now, cgroup_now, device_now, inode_now = _pid_identity(pid)
+                    commandline = [item.decode("utf-8", "strict") for item in
+                                   Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if item]
+                    exe_path = os.readlink(f"/proc/{pid}/exe")
+                    environment_now = self._read_environment(pid)
+                    if (props["MainPID"] == str(pid) and props["InvocationID"] == invocation_id
+                            and props["ControlGroup"] == cgroup
+                            and props["FragmentPath"] == fragment_path
+                            and props["ExecStart"] == exec_start
+                            and props["EnvironmentFiles"] in {"", "-"}
+                            and props["KillMode"] == "control-group"
+                            and 0 < int(props["RuntimeMaxUSec"]) <= 30_000_000
+                            and props["SocketBindDeny"] == "any"
+                            and props["PrivateNetwork"] == "yes"
+                            and props["RestrictAddressFamilies"].split() == ["AF_UNIX"]
+                            and props["IPAddressDeny"] in {"0.0.0.0/0 ::/0", "any"}
+                            and props["User"] == profile.service_user
+                            and (ticks_now, cgroup_now, device_now, inode_now)
+                                == (ticks, cgroup, proof.executable_device, proof.executable_inode)
+                            and exe_path == str(proof.executable_path)
+                            and commandline == list(proof.argv)
+                            and environment_now == {
+                                "HOME": "/hermes", "HERMES_HOME": "/hermes",
+                                "LISTEN_PID": str(pid), "LISTEN_FDS": "1",
+                                "LISTEN_FDNAMES": "hermes-loader-progress",
+                            }
+                            and not _pidfd_exited(child_fd)):
+                        break
+                except (OSError, UnicodeError, ValueError, AuthorityDenied):
+                    pass
+                if launcher.poll() is not None:
+                    raise AuthorityDenied("native_worker.gate", "fixed helper exited before native application admission")
+                time.sleep(.025)
+            else:
+                raise AuthorityDenied("native_worker.gate", "same-PID native application exec was not observed")
+            require_live_start()
+            if (_pid_identity(pid) != (ticks, cgroup, proof.executable_device, proof.executable_inode)
+                    or _pidfd_exited(child_fd)
+                    or (os.fstat(namespace_fd).st_dev, os.fstat(namespace_fd).st_ino)
+                       != (net_dev, net_ino)
+                    or self._pids(cgroup) != (pid,)):
+                raise AuthorityDenied("native_worker.identity", "native worker changed after gate release")
+            mnt = os.stat(f"/proc/{pid}/ns/mnt").st_ino
+            net = os.stat(f"/proc/{pid}/ns/net").st_ino
+            if (mnt == os.stat("/proc/self/ns/mnt").st_ino
+                    or net == os.stat("/proc/self/ns/net").st_ino
+                    or net != net_ino):
+                raise AuthorityDenied("native_worker.namespace", "private worker namespaces are unavailable")
+            status = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if (len(uids) != 4 or any(int(value) != profile.owner_uid for value in uids)
+                    or len(gids) != 4 or any(int(value) != profile.owner_gid for value in gids)):
+                raise AuthorityDenied("native_worker.identity", "same-PID application UID/GID changed")
+            limits = self._limits(cgroup)
+            if (profile.memory_max_bytes is not None
+                    and limits["memory.max"] != str(profile.memory_max_bytes)):
+                raise AuthorityDenied("process.limits", "native worker memory.max differs from enrolled bound")
+            if profile.cpu_quota_percent is not None:
+                quota, period = limits["cpu.max"].split()
+                if quota == "max" or int(quota) * 100 != profile.cpu_quota_percent * int(period):
+                    raise AuthorityDenied("process.limits", "native worker cpu.max differs from enrolled bound")
+            if profile.io_weight is not None:
+                fields = limits["io.weight"].split()
+                if not fields or int(fields[-1]) != profile.io_weight:
+                    raise AuthorityDenied("process.limits", "native worker io.weight differs from enrolled bound")
+            handle = _Handle(
+                process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid, ticks,
+                f"mnt:{mnt};net:{net}", selected_principal, selected_namespace,
+                self.monotonic(), process_expiry, int(operation_recipe["max_output_bytes"]),
+                artifact_mount_dir, network_namespace_fd=namespace_fd,
+                lock=threading.RLock(), registered_profile=profile,
+                native_worker_launch_proof=proof)
+            child_fd = namespace_fd = parent_fd = -1
+            with self._lock:
+                self._handles[process_id] = handle
+            if not loader_channel._transferred:
+                binding = getattr(profile.native_package, "binding", profile.native_package)
+                entrypoint_artifact_id = getattr(binding, "entrypoint_artifact_id", None)
+                entrypoint_sha256 = getattr(binding, "entrypoint_sha256", None)
+                if (not isinstance(entrypoint_artifact_id, str) or not entrypoint_artifact_id
+                        or not isinstance(entrypoint_sha256, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", entrypoint_sha256)):
+                    raise AuthorityDenied("native.loader", "selected native loader role is unavailable")
+                observation = self.register_native_loader_channel(
+                    process_id, loader_channel,
+                    expected_loader_role_artifact_id=entrypoint_artifact_id,
+                    expected_loader_role_sha256=entrypoint_sha256,
+                    deadline_monotonic=min(handle.expires, self.monotonic() + 10.0))
+                if not loader_channel._transferred:
+                    raise AuthorityDenied("native.loader", "system manager did not retain the loader activation FD")
+                handle.native_loader_observation_handle = observation
+            handle.native_loader_ready_event_id = self.receive_native_loader_progress(
+                process_id, cancelled=lambda: cancelled() or _pidfd_exited(handle.parent_pidfd))
+            if not handle.native_loader_ready_event_id:
+                raise AuthorityDenied("native.loader", "fixed app process did not report actual loader READY")
+            threading.Thread(target=self._watch_parent, args=(handle,), daemon=True,
+                             name="hermes-native-worker-watch").start()
+            return _response(200, {"schema": 1, "process_id": process_id, "pid": pid,
+                "uid": profile.owner_uid, "namespace_id": handle.kernel_namespace_id,
+                "gid": profile.owner_gid, "unit": unit, "generation": profile.generation,
+                "started_at_monotonic": handle.started, "stdout_cursor": 0,
+                "stderr_cursor": 0, "expires_at_monotonic": handle.expires,
+                "cgroup": cgroup, "start_ticks": ticks,
+                "executable_device": proof.executable_device,
+                "executable_inode": proof.executable_inode,
+                "mount_namespace_inode": mnt, "network_namespace_inode": net,
+                "kernel_limits": limits})
+        except BaseException:
+            with self._lock:
+                retained_handle = self._handles.get(process_id)
+            if retained_handle is not None and not retained_handle.stopped:
+                try:
+                    self._stop(retained_handle, timeout=5.0)
+                except Exception as exc:
+                    raise AuthorityDenied("native_worker.cleanup_ambiguous",
+                        "failed native worker admission could not prove its exact unit stopped") from exc
+            elif unit_may_exist and launcher is not None:
+                try:
+                    self._stop_partial(unit, launcher)
+                except Exception as exc:
+                    raise AuthorityDenied("native_worker.cleanup_ambiguous",
+                        "failed native worker admission could not prove its exact unit stopped") from exc
+            if artifact_mount_dir is not None:
+                try:
+                    _remove_artifact_mount(artifact_mount_dir)
+                except Exception:
+                    pass
+            raise
+        finally:
+            if contract_path is not None:
+                try:
+                    contract_info = contract_path.lstat()
+                    if contract_info.st_uid == 0 and stat.S_ISREG(contract_info.st_mode):
+                        contract_path.unlink()
+                except OSError:
+                    pass
+            for resource in (channel, loader_channel):
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        pass
+            for fd in (parent_fd, child_fd, namespace_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
     def bind_native_health_start_authority(self, authority: Any) -> None:
         """Bind the one concrete root health admission issuer to this manager."""
         from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
@@ -1320,6 +1864,27 @@ class ManagedProcessEffectHandler:
             with self._lock:
                 self._starting.discard(profile.profile_id)
 
+    def start_selected_native_health(self, admission_handle: str) -> RootSelectedHealthControl:
+        """Consume the root health admission and start its one fixed native run.
+
+        This is the daemon-side entrypoint for an authenticated selected-health
+        intent.  The caller supplies only the opaque admission handle; the
+        bound health authority creates and consumes the exact start effect.
+        """
+        from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+        authority = self.native_health_start_authority
+        if (type(authority) is not RootNativeHealthStartAuthority
+                or authority.managed_process_custody is not self
+                or not isinstance(admission_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", admission_handle)):
+            raise AuthorityDenied("native.health.authority", "fixed root health authority is unavailable")
+        control = authority.start_selected_health(admission_handle)
+        if (type(control) is not RootSelectedHealthControl
+                or control._manager is not self
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.control", "root health start returned no current process control")
+        return control
+
     def _health_control_current(self, control: RootSelectedHealthControl,
                                 seal: object) -> bool:
         with self._lock:
@@ -1381,6 +1946,20 @@ class ManagedProcessEffectHandler:
                 or not control.is_current()):
             raise AuthorityDenied("native.health.observer", "selected health observer run is stale")
         return observation
+
+    def resolve_selected_health_loader_ready_event(self, control_handle: str) -> str:
+        """Return the exact manager-observed loader READY event for a live run."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if (retained is None or retained[0] is not control
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.loader", "selected health control is stale")
+        event_id = retained[1].native_loader_ready_event_id
+        if (not isinstance(event_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", event_id)):
+            raise AuthorityDenied("native.health.loader", "actual manager loader READY event is unavailable")
+        return event_id
 
     def set_task_input_coordinator(self, coordinator: Any) -> None:
         """Install the concrete root-native pre-stdin coordinator once."""
@@ -2454,6 +3033,87 @@ class ManagedProcessEffectHandler:
                 or not isinstance(grant_expiry, (int, float))
                 or self.monotonic() >= grant_expiry):
             raise AuthorityDenied("process.start_expired", "operation grant expired before recipe resolution")
+        native_worker_profile_id = getattr(self, "_native_worker_profile_id", None)
+        if (native_worker_profile_id is not None
+                and profile.profile_id == native_worker_profile_id):
+            health_admission = _root_selected_health_admission
+            resource_start = _root_resource_start
+            if health_admission is None and (_task_admission is None or resource_start is None):
+                raise AuthorityDenied(
+                    "native_worker.admission",
+                    "selected native worker starts require root health or resource-task admission")
+            if (parameters or recipe.get("child_artifact_refs") != {}
+                    or recipe.get("stdin_mode") != "bounded-typed-bytes"
+                    or type(recipe.get("max_output_bytes")) is not int
+                    or not 1 <= recipe["max_output_bytes"] <= 4 * 1024 * 1024
+                    or type(recipe.get("max_lifetime_seconds")) is not int
+                    or not 0 < recipe["max_lifetime_seconds"] <= profile.max_lifetime_seconds
+                    or schema.get("fields") not in ([], ())):
+                raise AuthorityDenied(
+                    "native_worker.recipe",
+                    "native worker admits only the exact empty-parameter bounded stdin recipe")
+            if health_admission is not None:
+                authority = self.native_health_start_authority
+                if (authority is None or not authority.is_current(health_admission)
+                        or _root_selected_effect is None
+                        or not authority.verify_consumed_start_effect(
+                            _root_selected_effect, health_admission)):
+                    raise AuthorityDenied("native_worker.admission", "health admission is no longer current")
+                selected_principal = health_admission.principal_id
+                selected_namespace = _root_selected_effect.selected_namespace_identity
+                deadline = min(float(grant_expiry), float(health_admission.expires_monotonic))
+                process_deadline = float(_root_selected_lifecycle_deadline or (
+                    self.monotonic() + float(recipe["max_lifetime_seconds"])))
+            else:
+                if (type(resource_start).__name__ != "VerifiedRootResourceTaskStart"
+                        or not self._root_resource_start_current(
+                            resource_start, _task_admission, payload, profile)
+                        or not self._task_admission_is_current(_task_admission, payload)):
+                    raise AuthorityDenied("native_worker.admission", "resource task start proof is no longer current")
+                selected_principal = resource_start.context.selected_principal_id
+                selected_namespace = resource_start.context.selected_namespace_identity
+                deadline = min(float(grant_expiry), float(_task_admission.deadline_monotonic))
+                process_deadline = min(float(_task_admission.deadline_monotonic),
+                    self.monotonic() + float(recipe["max_lifetime_seconds"]))
+            parent_liveness_fd = (_daemon_liveness_pidfd if _daemon_liveness_pidfd is not None
+                                  else peer_pidfd)
+            if parent_liveness_fd is None:
+                raise AuthorityDenied("native_worker.parent", "root daemon PIDFD is required for native start")
+            owner = self._native_worker_launch_owner
+            if owner is None:
+                raise AuthorityDenied("native_worker.launch", "current active worker source owner is unavailable")
+            selection = owner.select_unique_worker_for_profile(profile.profile_id)
+            proof = None
+            try:
+                proof = owner.resolve_selected_native_worker_launch(selection)
+                if (proof.profile_generation != profile.generation
+                        or proof.service_generation_digest != profile.service_generation_digest
+                        or proof.executable_path != Path(profile.executable)
+                        or proof.executable_sha256 != profile.artifact_sha256
+                        or proof.argv[0] != str(proof.executable_path)
+                        or tuple(proof.argv[1:]) != (
+                            "-m", "hermes_cli.main", "chat", "--query-file", "-", "--oneshot", "--quiet")):
+                    raise AuthorityDenied("native_worker.recipe", "active source recipe differs from the selected profile")
+                return self._start_native_worker_gate(
+                    profile, proof, selection=selection, operation_recipe=recipe,
+                    cwd=profile.home_root, payload=payload, timeout=timeout,
+                    cancelled=cancelled, start_guard=_start_guard,
+                    parent_liveness_fd=parent_liveness_fd, lifecycle_deadline=deadline,
+                    process_deadline=process_deadline,
+                    selected_principal=selected_principal,
+                    selected_namespace=selected_namespace)
+            except BaseException:
+                if proof is not None:
+                    with self._lock:
+                        retained = any(handle.native_worker_launch_proof is proof
+                                       and not handle.stopped for handle in self._handles.values())
+                    if not retained:
+                        proof.close()
+                        try:
+                            owner.release_selection(selection)
+                        except Exception:
+                            pass
+                raise
         executable_id = recipe["executable_artifact_id"]
         executable_digest = recipe["executable_sha256"]
         executable_ref = (executable_id if executable_id.startswith("artifact:")
@@ -4949,6 +5609,9 @@ class ManagedProcessEffectHandler:
                     or handle.expires <= self.monotonic()):
                 return False
         try:
+            launch_proof = handle.native_worker_launch_proof
+            if launch_proof is not None:
+                self.verify_current_native_worker_launch(launch_proof)
             pid = self._pidfd_target(handle.child_pidfd)
             return (pid == handle.pid and not _pidfd_exited(handle.child_pidfd)
                     and pid in self._pids(handle.cgroup))
@@ -5515,7 +6178,8 @@ class ManagedProcessEffectHandler:
         allowed = {"ControlGroup", "Description", "KillMode", "ProtectSystem", "PrivateTmp", "PrivateDevices",
             "NoNewPrivileges", "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies", "ProtectHome",
             "ProtectProc", "ProcSubset", "User", "SupplementaryGroups", "RuntimeMaxUSec", "MemoryMax",
-            "CPUQuotaPerSecUSec", "IOWeight"}
+            "CPUQuotaPerSecUSec", "IOWeight", "LoadState", "ActiveState", "MainPID", "InvocationID",
+            "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "SocketBindDeny"}
         if prop not in allowed or not unit.startswith("hermes-installer-") or not unit.endswith(".service"):
             raise AuthorityDenied("process.manager", "manager property or unit is outside the fixed set")
         result = subprocess.run([str(self.systemctl), "--system", "show", "--property=" + prop, "--value", unit],
@@ -5640,6 +6304,19 @@ class ManagedProcessEffectHandler:
                 if store is None:
                     raise AuthorityDenied("native.loader", "loader observer disappeared during cleanup")
                 store.revoke_process(handle.process_id, handle.profile.generation)
+            native_proof = handle.native_worker_launch_proof
+            handle.native_worker_launch_proof = None
+            if native_proof is not None:
+                try:
+                    native_proof.close()
+                    owner = self._native_worker_launch_owner
+                    if owner is not None:
+                        owner.release_selection(native_proof._selection)
+                except Exception:
+                    # The process has already been observed stopped and its
+                    # descriptors are still owner-cleaned below.  A stale
+                    # proof issuer cannot authorize a replacement start.
+                    pass
             try:
                 _remove_artifact_mount(handle.artifact_mount_dir)
             finally:

@@ -119,3 +119,31 @@ def test_gate_denies_nonready_or_wrong_nonce_before_release():
         validate_awaiting_namespace(_awaiting(None, "x" * 32, "a" * 64), nonce="n" * 32,
                                     contract_sha256="a" * 64, expected_uid=1000,
                                     expected_gid=1000)
+
+
+def test_successful_forbidden_bind_probe_never_produces_application_release():
+    namespace = namespace_observation_frame(
+        nonce="n" * 32, contract_sha256="a" * 64,
+        service_generation_digest="b" * 64, projection_handle="projection1",
+        unit_invocation_id="invoke1", pid=7, start_ticks=88,
+        cgroup="/system.slice/hermes-installer-test.service",
+        namespace_device=4, namespace_inode=99)
+    identity = {"pid": 7, "start_ticks": 88, "uid": 1000, "gid": 1000,
+                "cgroup": "/system.slice/hermes-installer-test.service",
+                "namespace_device": 4, "namespace_inode": 99,
+                "capabilities": {"CapEff": 0, "CapPrm": 0, "CapBnd": 0,
+                                  "CapAmb": 0, "CapInh": 0}}
+    result = {"schema": 2, "state": "ready", "nonce": "n" * 32,
+              "launch_contract_sha256": "a" * 64,
+              "namespace_gate_sha256": __import__("hashlib").sha256(
+                  json.dumps(namespace, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True).encode("ascii")).hexdigest(),
+              "identity": identity,
+              "checks": {"wrong_port_bind": {"outcome": "bound", "errno": None},
+                         "ipv6_bind": {"outcome": "error", "errno": 13},
+                         "wildcard_bind": {"outcome": "error", "errno": 13},
+                         "af_unix_control": {"outcome": "connected", "errno": None}}}
+    with pytest.raises(AuthorityDenied, match="forbidden bind"):
+        validate_gate_result(result, nonce="n" * 32, contract_sha256="a" * 64,
+                             expected_identity=identity, gate_frame=namespace,
+                             allowed_bind=False, allowed_connect=False)

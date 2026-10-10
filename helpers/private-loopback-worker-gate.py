@@ -2,10 +2,11 @@
 """Fixed pre-application gate for one selected private-loopback worker.
 
 The root custodian bind-mounts a read-only canonical contract at one fixed
-path. The helper emits one bounded JSON observation and stops itself; the root
-manager resumes its retained PIDFD only after consuming a one-use start grant.
-This program intentionally accepts no caller arguments, paths, code strings,
-addresses, or ports from argv/environment.
+path. The helper first authenticates its manager and awaits the root's actual
+PIDFD/network-namespace observation, then performs real kernel probes and
+awaits a separate one-use application release. It runs the selected fixed
+application by same-PID exec only after that second boundary. This program
+accepts no caller arguments, paths, code strings, addresses, or ports.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ MAX_RESULT = 4 * 1024
 MAX_GRANT = 1024
 MAX_GATE_FRAME = 8192
 GATE_FD = 3
+LOADER_FD = 4
 _FRAME = struct.Struct("!I")
 CONTRACT_PATH = "/run/hermes-installer/private-loopback/contract.json"
 FIELDS = frozenset({
@@ -231,13 +233,22 @@ def _unix_control_probe(contract):
 
 def _gate_channel_from_activation(env):
     """Resolve the single named manager-owned stream passed by systemd."""
-    if (env.get("LISTEN_PID") != str(os.getpid()) or env.get("LISTEN_FDS") != "1"
-            or env.get("LISTEN_FDNAMES") != "hermes-private-loopback-gate"):
+    if (env.get("LISTEN_PID") != str(os.getpid()) or env.get("LISTEN_FDS") != "2"
+            or env.get("LISTEN_FDNAMES")
+               != "hermes-private-loopback-gate:hermes-loader-progress"):
         raise GateError("root-owned private gate channel is unavailable")
     channel = socket.socket(fileno=os.dup(GATE_FD))
     if channel.family != socket.AF_UNIX or channel.type & socket.SOCK_STREAM != socket.SOCK_STREAM:
         channel.close()
         raise GateError("root-owned private gate channel has the wrong socket type")
+    try:
+        loader = socket.socket(fileno=os.dup(LOADER_FD))
+        if loader.family != socket.AF_UNIX or loader.type & socket.SOCK_STREAM != socket.SOCK_STREAM:
+            raise GateError("root-owned loader progress channel has the wrong socket type")
+        loader.close()
+    except OSError as exc:
+        channel.close()
+        raise GateError("root-owned loader progress channel is unavailable") from exc
     if not hasattr(socket, "SO_PEERCRED"):
         channel.close()
         raise GateError("kernel-authenticated manager peer credentials are unavailable")
@@ -247,6 +258,32 @@ def _gate_channel_from_activation(env):
         channel.close()
         raise GateError("gate channel peer is not the distinct root manager")
     return channel
+
+
+def _exec_application(contract):
+    """Preserve only the fixed loader FD and exact activation environment."""
+    if contract["application_environment"] != {
+            "HOME": "/hermes", "HERMES_HOME": "/hermes"}:
+        raise GateError("application base environment differs from the native recipe")
+    channel = socket.socket(fileno=os.dup(GATE_FD))
+    try:
+        channel.close()
+    finally:
+        try:
+            os.close(GATE_FD)
+        except OSError:
+            pass
+    os.dup2(LOADER_FD, GATE_FD, inheritable=True)
+    try:
+        os.close(LOADER_FD)
+    except OSError:
+        pass
+    environment = {
+        "HOME": "/hermes", "HERMES_HOME": "/hermes",
+        "LISTEN_PID": str(os.getpid()), "LISTEN_FDS": "1",
+        "LISTEN_FDNAMES": "hermes-loader-progress",
+    }
+    os.execve(contract["application_executable"], contract["application_argv"], environment)
 
 
 def _send_frame(channel, value, ceiling):
@@ -387,8 +424,7 @@ def main():
         _await_root_release(channel, contract=contract, contract_sha256=digest,
                             namespace_gate_sha256=gate_digest, identity=identity,
                             gate_frame=gate_frame)
-        os.execve(contract["application_executable"], contract["application_argv"],
-                  contract["application_environment"])
+        _exec_application(contract)
     except (GateError, OSError, ValueError, TypeError, KeyError):
         try:
             _emit({"schema": 2, "state": "unavailable", "launch_contract_sha256": digest,
