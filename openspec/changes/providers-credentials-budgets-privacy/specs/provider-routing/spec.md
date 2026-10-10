@@ -277,3 +277,5 @@ The installer SHALL resolve source observers from explicit selected adapter join
 - **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
 
 Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
