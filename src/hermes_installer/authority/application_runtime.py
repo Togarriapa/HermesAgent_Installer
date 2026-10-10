@@ -694,6 +694,63 @@ class RootSelectedApplicationRuntimeRouter:
             peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
         )
 
+    def dispatch_qualification(self, setup_session_handle: str, workflow_id: str, *,
+                               peer_uid: int, peer_pid: int, peer_pidfd: int | None,
+                               cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
+        """Run a root-observed installer qualification request only.
+
+        This route is separate from provider/native invocations. The finite
+        workflow ID is a selector only; root retains and supplies all workload
+        arguments, including the loopback URL for the browser fixture.
+        """
+        workflows = {
+            "qualify-browser-use-v1", "qualify-graphify-v1",
+            "qualify-hyperframes-v1", "qualify-scrapegraph-v1",
+        }
+        if (not isinstance(setup_session_handle, str) or not _OPAQUE.fullmatch(setup_session_handle)
+                or not isinstance(workflow_id, str) or workflow_id not in workflows
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or peer_pidfd is None or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not callable(cancelled) or cancelled()):
+            raise SelectedApplicationUnavailable("application qualification request is unavailable")
+        try:
+            from hermes_installer.authority.application_workload_execution import (
+                RootApplicationQualificationRequest, RootApplicationWorkloadAdmission,
+                RootApplicationWorkloadAuthority, ManagedApplicationWorkloadRunner,
+            )
+            if (type(self.workload_authority) is not RootApplicationWorkloadAuthority
+                    or type(self.workload_runner) is not ManagedApplicationWorkloadRunner):
+                raise TypeError
+            request = self.workload_authority.observe_selected_qualification_request(
+                setup_session_handle, workflow_id,
+            )
+            if (type(request) is not RootApplicationQualificationRequest
+                    or request.workflow_id != workflow_id
+                    or request.purpose != "installer-application-qualification"
+                    or request.expires_monotonic <= self.monotonic()
+                    or not self.workload_authority.is_selected_qualification_request_current(
+                        request.request_handle)):
+                raise TypeError
+            current = self.workload_authority.resolve_selected_qualification_request(request.request_handle)
+            if type(current) is not RootApplicationQualificationRequest or current != request:
+                raise TypeError
+            admission = self.workload_authority.admit_selected_qualification_workload(
+                request.request_handle,
+            )
+            if (type(admission) is not RootApplicationWorkloadAdmission
+                    or admission.request_sha256 != request.canonical_workload_sha256
+                    or admission.application_id != request.application_id
+                    or admission.profile_id != request.profile_id
+                    or admission.profile_generation != request.profile_generation
+                    or admission.service_generation_digest != request.enclosing_service_generation_digest
+                    or admission.expires_monotonic <= self.monotonic()
+                    or not 1 <= admission.max_steps <= 4):
+                raise TypeError
+        except Exception:
+            raise SelectedApplicationUnavailable("root qualification request or admission is unavailable") from None
+        return self._run_admission(admission, cancelled=cancelled)
+
     def _dispatch(self, invocation_context_handle: str, canonical_arguments: bytes, *,
                   expected_application_id: str | None, peer_uid: int, peer_pid: int,
                   peer_pidfd: int | None, cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
@@ -751,6 +808,12 @@ class RootSelectedApplicationRuntimeRouter:
                 or admission.expires_monotonic <= self.monotonic()
                 or admission.max_steps < 1 or admission.max_steps > 4):
             raise SelectedApplicationUnavailable("root admission does not bind this request and selected workload")
+        return self._run_admission(admission, cancelled=cancelled)
+
+    def _run_admission(self, admission: Any, *,
+                       cancelled: Callable[[], bool]) -> RootApplicationRunReceipt:
+        if not callable(cancelled) or cancelled():
+            raise SelectedApplicationUnavailable("selected application admission was cancelled")
         selection = self.resolve(admission.application_id, admission.profile_id)
         if (selection.profile_generation != admission.profile_generation
                 or selection.principal_id != admission.principal_id

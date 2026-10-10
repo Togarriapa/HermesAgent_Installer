@@ -3859,6 +3859,45 @@ class AuthorityService:
                 if type(delivery) is not NativeChannelContextDelivery:
                     raise AuthorityDenied("channel.context", "native channel context result is not root retained")
             return result
+        if operation == "application.dispatch":
+            expected = {"schema", "invocation_handle", "canonical_arguments_b64"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("invocation_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])
+                    or not isinstance(payload.get("canonical_arguments_b64"), str)
+                    or not 4 <= len(payload["canonical_arguments_b64"]) <= 2_800_000
+                    or peer_pidfd is None):
+                raise AuthorityDenied("application.dispatch", "selected application request is malformed")
+            try:
+                arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+            except (ValueError, TypeError):
+                raise AuthorityDenied("application.dispatch", "selected application arguments are malformed") from None
+            if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                    or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+                raise AuthorityDenied("application.dispatch", "selected application arguments exceed their bound")
+            receipt = self.dispatch_selected_application(
+                payload["invocation_handle"], arguments, peer_uid=uid,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+            )
+            return receipt.to_wire()
+        if operation == "application.qualify":
+            expected = {"schema", "setup_session_handle", "workflow_id"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("setup_session_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["setup_session_handle"])
+                    or payload.get("workflow_id") not in {
+                         "qualify-browser-use-v1", "qualify-graphify-v1",
+                         "qualify-hyperframes-v1", "qualify-scrapegraph-v1",
+                    }
+                    or peer_pidfd is None):
+                raise AuthorityDenied("application.qualification", "application qualification request is malformed")
+            receipt = self.dispatch_application_qualification(
+                payload["setup_session_handle"], payload["workflow_id"], peer_uid=uid,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
+            )
+            return receipt.to_wire()
         if operation in {"native.invocation.begin", "native.invocation.contexts"}:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
