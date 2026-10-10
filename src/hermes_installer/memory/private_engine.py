@@ -90,6 +90,7 @@ class RootPrivateMemoryEngine:
         if (routes.memory_provider not in {"openviking", "claude-mem", "agentmemory"}
                 or not isinstance(routes.profile_id, str) or not routes.profile_id
                 or not isinstance(routes.namespace_id, str) or not routes.namespace_id
+                or not isinstance(routes.memory_enrollment_id, str) or not routes.memory_enrollment_id
                 or type(routes.memory_owner_generation) is not int
                 or routes.memory_owner_generation < 1
                 or not isinstance(routes.service_generation_digest, str)
