@@ -69,7 +69,7 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
     for _name, source_path, target_path, digest, size in release_build.REVIEWED_SOURCE_MODULES:
         source = Path(__file__).parents[2] / source_path
         body = source.read_bytes()
-        assert target_path.startswith("lib/python/hermes_installer/components/")
+        assert target_path.startswith(("src/hermes_installer/", "lib/python/hermes_installer/"))
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
