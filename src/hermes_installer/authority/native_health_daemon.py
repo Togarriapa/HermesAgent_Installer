@@ -841,6 +841,36 @@ class RootHealthInputDeliveryRegistry:
             raise AuthorityDenied("native.health.input", "selected health input event changed")
         return event
 
+    def verify_completed_event_for_native_request(self, event: Any,
+                                                  completed_terminal_proof: Any) -> Any:
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .native_input_observer import RootNativeInputEvent
+        if (type(event) is not RootNativeInputEvent
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True):
+            raise AuthorityDenied("native.health.input", "completed selected input proof is malformed")
+        with self._lock:
+            retained = self._input_events.get(event.input_event_id)
+            binding = self._input_event_bindings.get(event.input_event_id)
+        if (retained is not event or binding is None
+                or event.producer_profile_id != completed_terminal_proof.profile_id
+                or event.producer_generation != completed_terminal_proof.process_generation):
+            raise AuthorityDenied("native.health.input", "completed input event is no longer retained")
+        current = self.native_input_observer.resolve_completed_health_event(
+            event.input_event_id, binding[0], completed_terminal_proof,
+        )
+        material = completed_terminal_proof.source_material
+        admission = completed_terminal_proof.admission
+        if (current is not event
+                or self.manager.native_health_start_authority.is_current(admission) is not True
+                or self.material_registry.is_current(material) is not True
+                or event.payload_sha256 != hashlib.sha256(material._request_bytes).hexdigest()
+                or event.payload_size_bytes != len(material._request_bytes)
+                or event.native_loader_ready_event_id != completed_terminal_proof.loader_ready_event_id
+                or completed_terminal_proof.is_current() is not True):
+            raise AuthorityDenied("native.health.input", "completed input no longer matches current source material")
+        return event
+
     def consume_for_manager(self, control_handle: str,
                             delivery: RootSelectedHealthInputDelivery) -> bytes:
         from .managed_process_custodian import RootSelectedHealthControl
@@ -957,6 +987,7 @@ class RootDaemonNativeHealthRunRegistry:
         self.observer = RootNativeHealthObserver(
             selected_health_resolver=self._resolve_selected_run,
             event_resolver=self._resolve_event,
+            completed_event_resolver=self._resolve_completed_event,
             process_resolver=self._resolve_process,
             loaded_package_proof_resolver=self._resolve_loaded_package,
             result_validator=self._validate_result,
@@ -976,6 +1007,7 @@ class RootDaemonNativeHealthRunRegistry:
         self._events: dict[tuple[str, str], Any] = {}
         self._event_sources: dict[tuple[str, str], _HealthEventSource] = {}
         self._controls: dict[str, str] = {}
+        self._control_by_observation: dict[str, str] = {}
         self._started_runs: set[str] = set()
         self._finished_runs: set[str] = set()
         self._expected_results: dict[tuple[str, str], bytes] = {}
@@ -1052,6 +1084,152 @@ class RootDaemonNativeHealthRunRegistry:
         if type(event) is not RootNativeHealthEvent or type(source) is not _HealthEventSource:
             raise AuthorityDenied("native.health.event", "actual selected-run event is not retained")
         self._verify_event_source(observation_handle, event, source)
+        return event
+
+    def _resolve_completed_event(self, observation_handle: str, event_id: str,
+                                 completed_terminal_proof: Any) -> Any:
+        """Reopen an exact event after worker cleanup without resolving a dead PID.
+
+        The successful manager postmortem proof binds the original live process,
+        loaded package, source material, and verified terminal cleanup. Source
+        owners below revalidate their retained records and receipts against
+        that proof; this path never calls the process or package live resolvers.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .native_health_observer import RootNativeHealthEvent
+        if (type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True
+                or not _OPAQUE.fullmatch(observation_handle)
+                or not _OPAQUE.fullmatch(event_id)):
+            raise AuthorityDenied("native.health.completed_event", "exact completed-run proof is required")
+        proof = completed_terminal_proof
+        with self._lock:
+            event = self._events.get((observation_handle, event_id))
+            source = self._event_sources.get((observation_handle, event_id))
+            control_handle = self._control_by_observation.get(observation_handle)
+        material = proof.source_material
+        admission = proof.admission
+        if (type(event) is not RootNativeHealthEvent or type(source) is not _HealthEventSource
+                or control_handle != proof.control_handle
+                or source.control_handle != proof.control_handle
+                or event.event_id != event_id or event.event_kind != source.kind
+                or event.expires_monotonic <= self.runtime.service.monotonic()
+                or (event.process_id, event.process_pid, event.process_uid,
+                    event.profile_id, event.process_generation,
+                    event.service_generation_digest, event.package_id,
+                    event.compiled_closure_sha256)
+                   != (proof.process_id, proof.process_pid, proof.process_uid,
+                       proof.profile_id, proof.process_generation,
+                       proof.service_generation_digest, material.native_package_id,
+                       material.native_closure_sha256)
+                or material is not admission._source_material
+                or self.start_authority is None
+                or self.start_authority.is_current(admission) is not True
+                or self.material_registry.is_current(material) is not True):
+            raise AuthorityDenied("native.health.completed_event", "retained event or committed source join changed")
+        try:
+            if source.kind == "loader-ready":
+                launch = proof.launch_proof
+                loaded = proof.loaded_package_proof
+                if (source.control_handle != proof.control_handle
+                        or event.native_event_handle != launch.launch_handle
+                        or event.native_event_sha256 != self._launch_event_digest(launch)
+                        or event.loader_ready_event_id != proof.loader_ready_event_id
+                        or event.loaded_proof_id != proof.loaded_package_proof_id
+                        or getattr(loaded, "proof_id", None) != event.loaded_proof_id):
+                    raise ValueError
+            elif source.kind == "native-request":
+                if source.input_event is None or source.request is None:
+                    raise ValueError
+                self.input_delivery.verify_completed_event_for_native_request(
+                    source.input_event, proof,
+                )
+                registry = source.request._registry
+                current = registry.resolve_completed_health_request_for_input(
+                    source.request, source.input_event, proof,
+                )
+                handles, ids = self._canonical_source_pairs(
+                    tuple(current.observation.parent_source_receipt_handles),
+                    tuple(row.receipt_id for row in current.parent_source_receipts),
+                )
+                if (current is not source.request
+                        or current.observation.native_request_handle != event.native_event_handle
+                        or current.observation.parent_closure_digest != event.parent_closure_digest
+                        or handles != event.source_receipt_handles or ids != event.source_receipt_ids
+                        or self._request_event_digest(current) != event.native_event_sha256
+                        or event.native_request_event_id != event.event_id):
+                    raise ValueError
+            elif source.kind in {"provider-result", "tool-invocation"}:
+                if source.input_event is None or source.request is None or source.selected_call is None:
+                    raise ValueError
+                self.input_delivery.verify_completed_event_for_native_request(
+                    source.input_event, proof,
+                )
+                request_registry = source.request._registry
+                current_request = request_registry.resolve_completed_health_request_for_input(
+                    source.request, source.input_event, proof,
+                )
+                from .native_runtime_observer import NativeInvocationRegistry
+                invocation_registry = self.runtime.native_invocation_registry
+                if type(invocation_registry) is not NativeInvocationRegistry:
+                    raise ValueError
+                current_call = invocation_registry.resolve_completed_health_owner_invocation(
+                    source.selected_call, current_request, source.input_event, proof,
+                )
+                if source.kind == "provider-result":
+                    handles, ids = self._canonical_source_pairs(
+                        current_call.provider_source_receipt_handles,
+                        current_call.provider_source_receipt_ids,
+                    )
+                    if (current_call is not source.selected_call
+                            or current_call.provider_response.handle != event.native_event_handle
+                            or handles != event.source_receipt_handles
+                            or ids != event.source_receipt_ids
+                            or event.parent_closure_digest != _digest(list(ids))
+                            or self._provider_event_digest(current_call) != event.native_event_sha256
+                            or event.provider_result_event_id != event.event_id):
+                        raise ValueError
+                else:
+                    handles, ids = self._canonical_source_pairs(
+                        current_call.source_receipt_handles, current_call.source_receipt_ids,
+                    )
+                    if (current_call is not source.selected_call
+                            or current_call.owner_invocation.invocation_handle != event.native_event_handle
+                            or handles != event.source_receipt_handles
+                            or ids != event.source_receipt_ids
+                            or event.parent_closure_digest != _digest(list(ids))
+                            or self._invocation_event_digest(current_call) != event.native_event_sha256
+                            or event.tool_invocation_event_id != event.event_id):
+                        raise ValueError
+            elif source.kind == "tool-result":
+                current = self.runtime.service.source_observer_registry.resolve_completed_owner_overlay_health_result(
+                    source.completion, proof,
+                )
+                if (current is not source.result
+                        or current.receipt_handle != event.native_event_handle
+                        or current.source_receipt_handles != event.source_receipt_handles
+                        or current.source_receipt_ids != event.source_receipt_ids
+                        or current.capsule.parent_closure_digest != event.parent_closure_digest
+                        or hashlib.sha256(current.capture_payload).hexdigest() != event.native_event_sha256
+                        or event.tool_result_event_id != event.event_id):
+                    raise ValueError
+            elif source.kind == "terminal":
+                current = self._resolve_completed_terminal(
+                    source.control_handle, source.terminal.terminal_receipt.terminal_receipt_handle,
+                )
+                terminal = current.terminal_receipt
+                if (current is not proof or source.terminal is not proof
+                        or event.native_event_handle != terminal.terminal_receipt_handle
+                        or event.terminal_receipt_handle != terminal.terminal_receipt_handle
+                        or event.terminal_status != "succeeded" or event.cleanup_verified is not True
+                        or self._terminal_event_digest(terminal) != event.native_event_sha256):
+                    raise ValueError
+            else:
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("native.health.completed_event", "retained source event no longer verifies") from None
+        if proof.is_current() is not True:
+            raise AuthorityDenied("native.health.completed_event", "completed manager proof changed during event verification")
         return event
 
     def _verify_event_source(self, observation_handle: str, event: Any,
@@ -1363,91 +1541,6 @@ class RootDaemonNativeHealthRunRegistry:
                        key=lambda pair: pair[0])
         return tuple(handle for _receipt_id, handle in pairs), tuple(receipt_id for receipt_id, _handle in pairs)
 
-    def _resolve_request_for_input(self, control_handle: str, input_event: Any,
-                                   process: Any, identity: Any) -> Any:
-        """Resolve the unique real native request descended from this input."""
-        admission = self.manager.resolve_selected_health_admission(control_handle)
-        if not self.start_authority.is_current(admission):
-            raise AuthorityDenied("native.health.request", "selected health admission is stale")
-        return self.request_observer.resolve_current_health_request_for_input(
-            input_event, live_producer_identity=identity, producer_pid=process.pid,
-            producer_profile_id=process.profile_id, producer_generation=process.generation,
-            native_package_generation=admission.native_package_generation,
-        )
-
-    def _resolve_owner_invocation(self, control_handle: str, input_event: Any,
-                                  request: Any, process: Any, identity: Any) -> Any:
-        """Resolve the unique consumed signed owner-overlay call for the request."""
-        from .native_runtime_observer import NativeInvocationRegistry
-        registry = self.runtime.native_invocation_registry
-        if type(registry) is not NativeInvocationRegistry:
-            raise AuthorityDenied("native.health.invocation", "native invocation registry is unavailable")
-        admission = self.manager.resolve_selected_health_admission(control_handle)
-        if not self.start_authority.is_current(admission):
-            raise AuthorityDenied("native.health.invocation", "selected health admission is stale")
-        return registry.resolve_current_health_owner_invocation(
-            request, input_event, peer_uid=process.uid, peer_pid=process.pid,
-            peer_pidfd=process.pidfd, live_producer_identity=identity,
-            expected_profile_id=process.profile_id, expected_generation=process.generation,
-            expected_package_id=admission.native_package_id,
-            expected_package_generation=admission.native_package_generation,
-            expected_service_generation_digest=admission.service_generation_digest,
-            expected_action_id=admission._source_material._health_definition["health_action_id"],
-        )
-
-    def _record_health_event(self, observation_handle: str, control_handle: str,
-                             run: Any, *, kind: str, native_handle: str,
-                             native_digest: str, ancestry_kind: str,
-                             parent_closure_digest: str | None,
-                             source_handles: tuple[str, ...] = (),
-                             source_ids: tuple[str, ...] = (),
-                             causal_parents: tuple[str, ...] = (),
-                             **fields: Any) -> Any:
-        """Retain an event only after its exact source object is retained."""
-        from .native_health_observer import RootNativeHealthEvent
-        event_id = secrets.token_urlsafe(32)
-        now = self.runtime.service.monotonic()
-        expires = min(float(run.expires_monotonic), now + _MAX_LEASE,
-                      float(fields.pop("source_expires_monotonic", run.expires_monotonic)))
-        private_source = _HealthEventSource(
-            kind=kind, control_handle=control_handle,
-            input_event=fields.pop("_input_event", None),
-            request=fields.pop("_request", None),
-            selected_call=fields.pop("_selected_call", None),
-            completion=fields.pop("_completion", None), result=fields.pop("_result", None),
-            terminal=fields.pop("_terminal", None),
-        )
-        event = RootNativeHealthEvent(
-            event_id=event_id, event_kind=kind, operation_id=run.operation_id,
-            enrollment_id=run.enrollment_id, profile_id=run.profile_id,
-            process_generation=run.process_generation,
-            service_generation_digest=run.service_generation_digest,
-            process_id=run.process_id, process_pid=run.process_pid,
-            process_uid=run.process_uid, package_id=run.package_id,
-            compiled_closure_sha256=run.compiled_closure_sha256,
-            parent_closure_digest=parent_closure_digest,
-            observed_monotonic=now, expires_monotonic=expires,
-            ancestry_kind=ancestry_kind, native_event_handle=native_handle,
-            native_event_sha256=native_digest,
-            causal_parent_event_ids=causal_parents,
-            source_receipt_handles=source_handles,
-            source_receipt_ids=source_ids, **fields,
-        )
-        key = (observation_handle, event_id)
-        with self._lock:
-            if key in self._events or any(existing_id == event_id for _, existing_id in self._events):
-                raise AuthorityDenied("native.health.event", "health event identifier was replayed")
-            self._events[key] = event
-            self._event_sources[key] = private_source
-        try:
-            self.observer.observe_health_event(observation_handle, event_id)
-        except Exception:
-            with self._lock:
-                self._events.pop(key, None)
-                self._event_sources.pop(key, None)
-            raise
-        return event
-
     def _validate_result(self, schema_id: str, payload: bytes) -> Any:
         from .native_health_observer import RootValidatedNativeHealthResult
         if not isinstance(payload, bytes) or not 1 <= len(payload) <= 65_536:
@@ -1501,6 +1594,7 @@ class RootDaemonNativeHealthRunRegistry:
                 raise ValueError
             with self._lock:
                 self._controls[control.process_id] = control.control_handle
+                self._control_by_observation[observation] = control.control_handle
             return control
         except Exception:
             if control is not None:
