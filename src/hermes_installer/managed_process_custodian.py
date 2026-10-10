@@ -6376,7 +6376,7 @@ class ManagedProcessEffectHandler:
                     or not root_resource_home_binding.verify_current(root_resource_selection)
                     or request["cwd"] != "/hermes"):
                 raise AuthorityDenied("resource.home_binding", "fixed task home mount is stale or malformed")
-            held_fd = getattr(getattr(root_resource_home_binding, "_home", None), "_directory_fd", None)
+            held_fd = getattr(root_resource_home_binding, "_home_fd", None)
             if type(held_fd) is not int:
                 raise AuthorityDenied("resource.home_binding", "retained task home descriptor is unavailable")
             held_stat = os.fstat(held_fd)
@@ -6444,7 +6444,7 @@ class ManagedProcessEffectHandler:
         ]
         bind_paths = [f"{profile.data_root}:{mount}"]
         if root_resource_home_binding is not None:
-            held_fd = root_resource_home_binding._home._directory_fd
+            held_fd = root_resource_home_binding._home_fd
             bind_paths.append(f"/proc/{os.getpid()}/fd/{held_fd}:/hermes")
         elif profile.home_root is not None:
             bind_paths.append(f"{profile.home_root}:/hermes")
