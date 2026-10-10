@@ -27,6 +27,28 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_fixed_authority_daemon_action_is_finite_and_not_tty_dispatched(self) -> None:
+        activation_id = "a" * 32
+        with patch.object(root_setup, "_require_root_linux") as require_root, \
+             patch.object(root_setup, "_import_v187_listener_activation_closure") as load_closure, \
+             patch("hermes_installer.authority.daemon.main_adopt", return_value=23) as adopt, \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=False), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=False):
+            result = main(["authority-daemon-adopt", "--activation-id", activation_id])
+        self.assertEqual(result, 23)
+        require_root.assert_called_once_with()
+        load_closure.assert_called_once_with()
+        adopt.assert_called_once_with(activation_id)
+
+    def test_authority_daemon_action_rejects_extra_arguments(self) -> None:
+        stderr = io.StringIO()
+        with patch.object(root_setup, "_require_root_linux") as require_root, \
+             patch("sys.stderr", stderr):
+            result = main(["authority-daemon-adopt", "--activation-id", "a" * 32, "--unsafe"])
+        self.assertEqual(result, 1)
+        require_root.assert_not_called()
+        self.assertIn("Use exactly:", stderr.getvalue())
+
     def test_reviewed_runtime_factory_is_imported_before_actor_observation(self) -> None:
         from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
 
