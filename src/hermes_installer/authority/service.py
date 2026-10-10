@@ -3044,7 +3044,7 @@ class AuthorityService:
         try:
             material = source_registry.resolve_consumed_public_input_source_material(proof)
             verify_disclosure = getattr(
-                source_registry, "verify_current_public_input_observation", None)
+                source_registry, "verify_consumed_public_input_disclosure", None)
             if (material.observation is not proof
                     or material.selected_execution is not selected_execution
                     or material.consumed is not True
@@ -3058,7 +3058,7 @@ class AuthorityService:
                     or material.disclosure.selected_execution_handle
                        != selected_execution.selection_handle
                     or not callable(verify_disclosure)
-                    or verify_disclosure(proof, selected_execution) is not True
+                    or verify_disclosure(proof, material) is not True
                     or material.source_proof.proof_nonce != proof.source_observation_handle
                     or material.source_proof.selected_execution is not selected_execution
                     or not isinstance(material.payload_bytes, bytes)
