@@ -15,6 +15,11 @@ from hermes_installer.authority.native_health_observer import (
     RootValidatedNativeHealthResult,
 )
 from hermes_installer.authority.types import AuthorityDenied, canonical_digest
+from hermes_installer.authority.native_health_observer import _same_loaded_package_proof
+from hermes_installer.managed_process_custodian import (
+    LoadedNativePackageProof, NativePackageMountReceipt,
+    RootSelectedHealthLoadedPackageProof,
+)
 
 
 class NativeHealthObserverContracts(unittest.TestCase):
@@ -22,10 +27,23 @@ class NativeHealthObserverContracts(unittest.TestCase):
         now = [100.0]
         fd = os.open(os.devnull, os.O_RDONLY)
         identity = SimpleNamespace(kernel_uid=2001)
-        proof = SimpleNamespace(
-            proof_id="proof:loaded", package_id="package:selected",
-            compiled_closure_sha256="a" * 64, profile_id="profile:native",
-            generation="generation:1", service_generation_digest="b" * 64,
+        mount = NativePackageMountReceipt(
+            package_id="package:selected", profile_id="profile:native",
+            generation="generation:1", service_mount_id="mount:health",
+            compiled_closure_sha256="a" * 64, entrypoint_sha256="1" * 64,
+            resolver_sha256="2" * 64, mount_path="/hermes/native",
+            mount_source_device=1, mount_source_inode=2, manifest_sha256="3" * 64,
+        )
+        loaded = LoadedNativePackageProof(
+            "process:health", "profile:native", "generation:1", 2001, 7,
+            "/system.slice/hermes-agent-native.service", "mnt:3;net:4", "4" * 64,
+            mount, 99.0,
+        )
+        proof = RootSelectedHealthLoadedPackageProof(
+            process_id=loaded.process_id, profile_id=loaded.profile_id,
+            generation=loaded.generation, kernel_uid=loaded.kernel_uid,
+            package_id=mount.package_id, compiled_closure_sha256=mount.compiled_closure_sha256,
+            service_generation_digest="b" * 64, mount_proof=loaded, observed_monotonic=99.0,
         )
         run = RootSelectedNativeHealthRun(
             operation_id="hermes-agent-health-v1", enrollment_id="enrollment:1",
@@ -120,52 +138,33 @@ class NativeHealthObserverContracts(unittest.TestCase):
         )
         return observer, run, events, refs, now, fd
 
-    def test_root_joined_events_issue_health_receipt_once(self):
-        observer, _run, events, refs, _now, fd = self._observer()
+    def test_fresh_package_observation_time_does_not_change_mount_identity(self):
+        _observer, run, _events, _refs, _now, fd = self._observer()
         try:
-            handle = observer.begin_selected_health(secrets.token_urlsafe(32))
-            for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result", "terminal"):
-                observer.observe_health_event(handle, refs[kind])
-            receipt = observer.finish_selected_health(handle)
-            self.assertEqual(receipt.status, "passed")
-            self.assertEqual(receipt.provider_result_event_id, refs["provider-result"])
-            self.assertEqual(receipt.tool_result_event_id, refs["tool-result"])
-            self.assertEqual(receipt.schema, 2)
-            self.assertEqual(receipt.parent_closure_digest,
-                             events[refs["tool-result"]].parent_closure_digest)
-            self.assertNotEqual(receipt.parent_closure_digest, "e" * 64)
-            self.assertEqual(len(receipt.health_run_proof_sha256), 64)
-            with self.assertRaises(AuthorityDenied):
-                observer.consume_selected_health_receipt(
-                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
-                    "e" * 64)
-            with self.assertRaises(AuthorityDenied):
-                observer.consume_selected_health_receipt(
-                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
-                    receipt.service_generation_digest, completion_journal=object(),
-                    active_receipt=object())
-            self.assertIs(observer.consume_selected_health_receipt(
-                receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
-                receipt.service_generation_digest), receipt)
-            with self.assertRaises(AuthorityDenied):
-                observer.consume_selected_health_receipt(
-                    receipt.health_receipt_handle, receipt.committed_enrollment_receipt_id,
-                    receipt.service_generation_digest)
+            initial = run.loaded_package_proof
+            refreshed_mount = replace(initial.mount_proof, observed_monotonic=101.0)
+            refreshed = replace(initial, mount_proof=refreshed_mount, observed_monotonic=101.0)
+            self.assertEqual(initial.proof_id, refreshed.proof_id)
+            self.assertTrue(_same_loaded_package_proof(initial, refreshed))
+            changed_mount = replace(initial.mount_proof.mount, mount_source_inode=99)
+            changed_process = replace(initial.mount_proof, mount=changed_mount, observed_monotonic=101.0)
+            changed = replace(initial, mount_proof=changed_process, observed_monotonic=101.0)
+            self.assertFalse(_same_loaded_package_proof(initial, changed))
         finally:
             os.close(fd)
 
+    def test_event_cleanup_fields_without_manager_proof_cannot_issue_receipt(self):
         observer, _run, _events, refs, _now, fd = self._observer()
         try:
             handle = observer.begin_selected_health(secrets.token_urlsafe(32))
             for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result", "terminal"):
+                         "tool-invocation", "tool-result"):
                 observer.observe_health_event(handle, refs[kind])
-            receipt = observer.finish_selected_health(handle)
-            ticket = observer._issue_consumption_ticket(receipt, object(), receipt.service_generation_digest)
             with self.assertRaises(AuthorityDenied):
-                observer._resolve_pending_consumption_ticket(replace(ticket))
-            self.assertIs(observer._resolve_pending_consumption_ticket(ticket)[0], receipt)
+                observer.observe_health_event(handle, refs["terminal"])
+            with self.assertRaises(AuthorityDenied):
+                observer.finish_selected_health(handle)
+            self.assertFalse(observer._receipts)
         finally:
             os.close(fd)
 
@@ -182,20 +181,20 @@ class NativeHealthObserverContracts(unittest.TestCase):
         finally:
             os.close(fd)
 
-    def test_plain_boolean_result_and_unrelated_event_are_rejected(self):
+    def test_plain_boolean_result_cannot_bypass_manager_terminal_proof(self):
         observer, _run, events, refs, _now, fd = self._observer(
             result_validator=lambda _schema, _body: True)
         try:
             handle = observer.begin_selected_health(secrets.token_urlsafe(32))
             for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result", "terminal"):
+                         "tool-invocation", "tool-result"):
                 observer.observe_health_event(handle, refs[kind])
             with self.assertRaises(AuthorityDenied):
-                observer.finish_selected_health(handle)
+                observer.observe_health_event(handle, refs["terminal"])
         finally:
             os.close(fd)
 
-    def test_causal_parent_swap_is_rejected_even_with_well_formed_native_digests(self):
+    def test_mutated_native_event_cannot_substitute_for_manager_terminal_proof(self):
         observer, _run, events, refs, _now, fd = self._observer()
         try:
             invocation = events[refs["tool-invocation"]]
@@ -205,11 +204,10 @@ class NativeHealthObserverContracts(unittest.TestCase):
             )
             handle = observer.begin_selected_health(secrets.token_urlsafe(32))
             for kind in ("loader-ready", "native-request", "provider-result",
-                         "tool-invocation", "tool-result", "terminal"):
+                         "tool-invocation", "tool-result"):
                 observer.observe_health_event(handle, refs[kind])
             with self.assertRaises(AuthorityDenied):
-                observer.finish_selected_health(handle)
-            observer.cancel_selected_health(handle)
+                observer.observe_health_event(handle, refs["terminal"])
         finally:
             os.close(fd)
 

@@ -1737,11 +1737,13 @@ class RootValidatedNativeHealthResult:
 @dataclass(slots=True)
 class _HealthObservation:
     handle: str
+    control_handle: str
     run: RootSelectedNativeHealthRun
     process_pidfd: int
     loaded_package_proof: Any
     events: dict[str, RootNativeHealthEvent]
     expires_monotonic: float
+    completed_terminal_proof: Any | None = None
 
 
 def _validate_event_ancestry(event: RootNativeHealthEvent) -> bool:
@@ -1775,6 +1777,28 @@ def _validate_event_ancestry(event: RootNativeHealthEvent) -> bool:
     if event.ancestry_kind == "source-receipt-ids-v1":
         return event.parent_closure_digest == canonical_digest(list(event.source_receipt_ids))
     return event.ancestry_kind == "host-context-lineage-v1"
+
+
+def _same_loaded_package_proof(expected: Any, current: Any) -> bool:
+    """Join two fresh manager proofs by stable mount identity, not timestamp."""
+    try:
+        from hermes_installer.managed_process_custodian import RootSelectedHealthLoadedPackageProof
+        if type(expected) is not RootSelectedHealthLoadedPackageProof:
+            return False
+        if type(current) is not RootSelectedHealthLoadedPackageProof:
+            return False
+        return (
+            expected.proof_id == current.proof_id
+            and expected.process_id == current.process_id
+            and expected.profile_id == current.profile_id
+            and expected.generation == current.generation
+            and expected.kernel_uid == current.kernel_uid
+            and expected.package_id == current.package_id
+            and expected.compiled_closure_sha256 == current.compiled_closure_sha256
+            and expected.service_generation_digest == current.service_generation_digest
+        )
+    except Exception:
+        return False
 
 
 def _health_run_proof_digest(run: RootSelectedNativeHealthRun,
@@ -1816,6 +1840,7 @@ class RootNativeHealthObserver:
                  loaded_package_proof_resolver: Callable[[RootSelectedNativeHealthRun], Any],
                  result_validator: Callable[[str, bytes], Any],
                  selected_run_canceller: Callable[[RootSelectedNativeHealthRun], None],
+                 terminal_proof_resolver: Callable[[str, str], Any] | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (not all(callable(value) for value in (
                 selected_health_resolver, event_resolver, process_resolver,
@@ -1828,6 +1853,7 @@ class RootNativeHealthObserver:
         self.loaded_package_proof_resolver = loaded_package_proof_resolver
         self.result_validator = result_validator
         self.selected_run_canceller = selected_run_canceller
+        self.terminal_proof_resolver = terminal_proof_resolver
         self.monotonic = monotonic
         self._observations: dict[str, _HealthObservation] = {}
         self._receipts: dict[str, RootNativeHealthReceipt] = {}
@@ -1858,6 +1884,7 @@ class RootNativeHealthObserver:
         proof = self.loaded_package_proof_resolver(run)
         if (identity is None or identity != run.process_identity
                 or identity.kernel_uid != run.process_uid
+                or not _same_loaded_package_proof(run.loaded_package_proof, proof)
                 or getattr(proof, "package_id", None) != run.package_id
                 or getattr(proof, "compiled_closure_sha256", None) != run.compiled_closure_sha256
                 or getattr(proof, "profile_id", None) != run.profile_id
@@ -1871,7 +1898,9 @@ class RootNativeHealthObserver:
             self.selected_run_canceller(run)
             raise AuthorityDenied("native.health.peer", "health process PIDFD could not be retained") from None
         handle = secrets.token_urlsafe(32)
-        observation = _HealthObservation(handle, run, pidfd, proof, {}, run.expires_monotonic)
+        observation = _HealthObservation(
+            handle, control_handle, run, pidfd, proof, {}, run.expires_monotonic,
+        )
         with self._lock:
             if handle in self._observations or handle in self._receipts:
                 os.close(pidfd)
@@ -1952,13 +1981,132 @@ class RootNativeHealthObserver:
                 profile_id=run.profile_id, generation=run.process_generation,
             )
             proof = self.loaded_package_proof_resolver(run)
-            if current != run.process_identity or proof != observation.loaded_package_proof:
+            if (current != run.process_identity
+                    or not _same_loaded_package_proof(observation.loaded_package_proof, proof)):
                 self._retire_observation(observation, cancel=True)
                 raise AuthorityDenied("native.health.peer", "health process or loaded closure changed")
+        else:
+            observation.completed_terminal_proof = self._resolve_completed_terminal(observation, event)
         with self._lock:
             if event.event_id in observation.events:
                 raise AuthorityDenied("native.health.replay", "health event was already recorded")
             observation.events[event.event_id] = event
+
+    def _resolve_completed_terminal(self, observation: _HealthObservation,
+                                    terminal: RootNativeHealthEvent) -> Any:
+        """Rejoin dead-worker completion only through the manager's retained proof."""
+        if self.terminal_proof_resolver is None:
+            raise AuthorityDenied("native.health.terminal", "manager terminal proof resolver is unavailable")
+        try:
+            from hermes_installer.managed_process_custodian import (
+                RootCompletedSelectedHealthTerminalProof,
+                RootSelectedHealthControl,
+                RootSelectedHealthTerminalReceipt,
+            )
+            from hermes_installer.authority.native_health_daemon import RootDaemonNativeHealthStartMaterial
+            proof = self.terminal_proof_resolver(
+                observation.control_handle, terminal.terminal_receipt_handle,
+            )
+        except Exception:
+            raise AuthorityDenied("native.health.terminal", "manager terminal proof is unavailable") from None
+        run = observation.run
+        receipt = getattr(proof, "terminal_receipt", None)
+        identity = getattr(proof, "process_identity", None)
+        worker_view = getattr(proof, "observed_worker_view", None)
+        expected_identity = run.process_identity
+        if (type(proof) is not RootCompletedSelectedHealthTerminalProof
+                or type(receipt) is not RootSelectedHealthTerminalReceipt
+                or type(getattr(proof, "control", None)) is not RootSelectedHealthControl
+                or type(getattr(proof, "admission", None)) is not RootNativeHealthStartAdmission
+                or type(getattr(proof, "source_material", None)) is not RootDaemonNativeHealthStartMaterial
+                or getattr(proof, "control_handle", None) != observation.control_handle
+                or getattr(proof.control, "control_handle", None) != observation.control_handle
+                or getattr(proof.admission, "_source_material", None) is not proof.source_material
+                or getattr(proof.admission, "authority_branch", None) != "daemon-committed"
+                or proof.control.process_id != run.process_id
+                or proof.control.operation_id != run.operation_id
+                or proof.control.enrollment_id != run.enrollment_id
+                or proof.control.profile_id != run.profile_id
+                or proof.control.process_generation != run.process_generation
+                or proof.control.service_generation_digest != run.service_generation_digest
+                or proof.control.bootstrap_transaction_handle != run.bootstrap_transaction_handle
+                or proof.control.committed_enrollment_receipt_id != run.committed_enrollment_receipt_id
+                or proof.control.health_fixture_artifact_id != run.fixture_artifact_id
+                or proof.control.health_fixture_sha256 != run.fixture_sha256
+                or proof.admission.operation_id != run.operation_id
+                or proof.admission.enrollment_id != run.enrollment_id
+                or proof.admission.profile_id != run.profile_id
+                or proof.admission.process_generation != run.process_generation
+                or proof.admission.service_generation_digest != run.service_generation_digest
+                or proof.admission.health_fixture_artifact_id != run.fixture_artifact_id
+                or proof.admission.health_fixture_sha256 != run.fixture_sha256
+                or proof.admission.health_result_schema_id != run.result_schema_id
+                or proof.admission.committed_enrollment_receipt_id != run.committed_enrollment_receipt_id
+                or proof.admission.bootstrap_transaction_handle != run.bootstrap_transaction_handle
+                or proof.source_material.health_fixture_artifact_id != run.fixture_artifact_id
+                or proof.source_material.health_fixture_sha256 != run.fixture_sha256
+                or proof.source_material.health_result_schema_id != run.result_schema_id
+                or proof.source_material.health_provider_required is not run.provider_required
+                or proof.source_material._health_definition.get("health_action_id") != run.health_action_id
+                or proof.source_material.native_package_id != run.package_id
+                or proof.source_material.native_closure_sha256 != run.compiled_closure_sha256
+                or getattr(proof, "expires_monotonic", 0) <= self.monotonic()
+                or not callable(getattr(proof, "is_current", None))
+                or proof.is_current() is not True
+                or receipt.terminal_receipt_handle != terminal.terminal_receipt_handle
+                or receipt.control_handle != observation.control_handle
+                or receipt.process_id != run.process_id
+                or receipt.profile_id != run.profile_id
+                or receipt.generation != run.process_generation
+                or receipt.service_generation_digest != run.service_generation_digest
+                or receipt.process_uid != run.process_uid
+                or receipt.exit_code != 0 or receipt.timed_out or receipt.cancelled
+                or receipt.output_overflow
+                or not receipt.cleanup_verified or not receipt.cgroup_empty
+                or not receipt.main_pidfd_gone or not receipt.launcher_reaped
+                or terminal.terminal_status != "succeeded"
+                or terminal.cleanup_verified is not True
+                or terminal.terminal_receipt_handle != receipt.terminal_receipt_handle
+                or terminal.loader_ready_event_id != receipt.loader_ready_event_id
+                or getattr(proof, "loader_ready_event_id", None) != receipt.loader_ready_event_id
+                or getattr(proof, "process_id", None) != run.process_id
+                or getattr(proof, "process_pid", None) != run.process_pid
+                or getattr(proof, "process_uid", None) != run.process_uid
+                or getattr(proof, "profile_id", None) != run.profile_id
+                or getattr(proof, "process_generation", None) != run.process_generation
+                or getattr(proof, "service_generation_digest", None) != run.service_generation_digest
+                or getattr(proof, "loaded_package_proof_id", None)
+                    != getattr(observation.loaded_package_proof, "proof_id", None)
+                or not _same_loaded_package_proof(
+                    observation.loaded_package_proof, getattr(proof, "loaded_package_proof", None))
+                or identity != expected_identity
+                or worker_view is None
+                or getattr(worker_view, "process_id", None) != run.process_id
+                or getattr(worker_view, "process_pid", None) != run.process_pid
+                or getattr(worker_view, "process_start_ticks", None)
+                    != getattr(run.process_identity, "start_ticks", None)
+                or getattr(proof, "process_start_ticks", None)
+                    != getattr(run.process_identity, "start_ticks", None)
+                or getattr(worker_view, "process_uid", None) != run.process_uid
+                or getattr(proof, "process_uid", None) != run.process_uid
+                or getattr(worker_view, "cgroup_identity", None)
+                    != getattr(run.process_identity, "cgroup_identity", None)
+                or getattr(proof, "cgroup_identity", None)
+                    != getattr(run.process_identity, "cgroup_identity", None)
+                or getattr(worker_view, "process_gid", None) != receipt.process_gid
+                or getattr(proof, "process_gid", None) != receipt.process_gid
+                or getattr(worker_view, "mount_namespace_inode", None)
+                    != getattr(proof, "mount_namespace_inode", None)
+                or getattr(worker_view, "network_namespace_inode", None)
+                    != getattr(proof, "network_namespace_inode", None)
+                or getattr(proof, "unit", None) != receipt.unit
+                or getattr(proof, "executable_sha256", None)
+                    != getattr(run.process_identity, "executable_sha256", None)):
+            raise AuthorityDenied("native.health.terminal", "manager terminal proof differs from retained run")
+        if (observation.completed_terminal_proof is not None
+                and observation.completed_terminal_proof is not proof):
+            raise AuthorityDenied("native.health.terminal", "manager terminal proof issuer identity changed")
+        return proof
 
     def finish_selected_health(self, health_observation_handle: str) -> RootNativeHealthReceipt:
         with self._lock:
@@ -1966,15 +2114,24 @@ class RootNativeHealthObserver:
         if observation is None:
             raise AuthorityDenied("native.health.handle", "health observation is unknown or finished")
         run = observation.run
-        current_identity = self.process_resolver(
-            run.process_pid, observation.process_pidfd,
-            profile_id=run.profile_id, generation=run.process_generation,
-        )
-        current_package = self.loaded_package_proof_resolver(run)
-        if (current_identity != run.process_identity
-                or current_package != observation.loaded_package_proof
+        if (self.monotonic() >= observation.expires_monotonic
                 or self._observations.get(health_observation_handle) is not observation):
             raise AuthorityDenied("native.health.current", "selected run changed before causal proof closure")
+        terminal_events = [event for event in observation.events.values()
+                           if event.event_kind == "terminal"]
+        if terminal_events:
+            if len(terminal_events) != 1:
+                raise AuthorityDenied("native.health.ambiguous", "health run has duplicate terminal events")
+            self._resolve_completed_terminal(observation, terminal_events[0])
+        else:
+            current_identity = self.process_resolver(
+                run.process_pid, observation.process_pidfd,
+                profile_id=run.profile_id, generation=run.process_generation,
+            )
+            current_package = self.loaded_package_proof_resolver(run)
+            if (current_identity != run.process_identity
+                    or not _same_loaded_package_proof(observation.loaded_package_proof, current_package)):
+                raise AuthorityDenied("native.health.current", "selected run changed before causal proof closure")
         for event in observation.events.values():
             try:
                 current_event = self.event_resolver(health_observation_handle, event.event_id)
@@ -2054,6 +2211,8 @@ class RootNativeHealthObserver:
                 or any(event.expires_monotonic <= now for event in observation.events.values())):
             self._retire_observation(observation, cancel=True)
             raise AuthorityDenied("native.health.expired", "health run or one of its events expired before receipt")
+        if terminal_events:
+            self._resolve_completed_terminal(observation, terminal)
         receipt_handle = secrets.token_urlsafe(32)
         proof_digest = _health_run_proof_digest(run, ordered_events)
         if tool_result.parent_closure_digest is None:
