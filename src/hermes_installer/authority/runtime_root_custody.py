@@ -11,6 +11,7 @@ import os
 import secrets
 import stat
 import threading
+import ctypes
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,104 @@ def _remove_same_empty_directory(parent_fd: int, leaf: str, device: int, inode: 
         return False
     finally:
         os.close(fd)
+
+
+def _rename_noreplace(parent_fd: int, source: str, target: str) -> None:
+    """Use the kernel's atomic no-replace directory rename; fail closed if absent."""
+    renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+    if renameat2 is None:
+        raise RuntimeRootCustodyUnavailable("kernel atomic no-replace rename is unavailable")
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    if renameat2(parent_fd, os.fsencode(source), parent_fd, os.fsencode(target), 1) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), target)
+
+
+def _open_journal_owned_directory(parent_fd: int, leaf: str, record: dict[str, int] | dict[str, Any] | None,
+                                  mode: int, created: list[tuple[int, str, int, int]],
+                                  journal_dir: Path, document: dict[str, Any], key: str
+                                  ) -> tuple[int, os.stat_result, bool]:
+    """Create through a journaled staging inode so interrupted publication can resume."""
+    if record is not None and record.get("state") == "owned":
+        return _open_fixed_directory(parent_fd, leaf, record, mode, created)
+    if record is not None and record.get("state") == "pending":
+        required = {"state", "device", "inode", "staging"}
+        if (set(record) != required or type(record["device"]) is not int or type(record["inode"]) is not int
+                or not isinstance(record["staging"], str)
+                or not record["staging"].startswith(".hermes-authority-root-")
+                or "/" in record["staging"]):
+            raise RuntimeRootCustodyUnavailable("interrupted runtime-root creation record is malformed")
+        try:
+            final = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            final = None
+        expected_identity = (record["device"], record["inode"])
+        if final is not None:
+            if (not stat.S_ISDIR(final.st_mode) or (final.st_dev, final.st_ino) != expected_identity):
+                raise RuntimeRootCustodyUnavailable("runtime-root target conflicts with interrupted owned create")
+        else:
+            try:
+                staged = os.stat(record["staging"], dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                # Neither name remains; the pending operation left no usable object.
+                document[key] = None
+                _write_journal(journal_dir, document)
+                return _open_journal_owned_directory(parent_fd, leaf, None, mode, created,
+                                                     journal_dir, document, key)
+            if (not stat.S_ISDIR(staged.st_mode) or (staged.st_dev, staged.st_ino) != expected_identity
+                    or staged.st_uid != 0 or staged.st_gid != 0 or stat.S_IMODE(staged.st_mode) != mode):
+                raise RuntimeRootCustodyUnavailable("interrupted runtime-root staging inode changed")
+            _rename_noreplace(parent_fd, record["staging"], leaf)
+        document[key] = {"state": "owned", "device": expected_identity[0], "inode": expected_identity[1]}
+        _write_journal(journal_dir, document)
+        entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if (entry.st_dev, entry.st_ino) != expected_identity:
+            raise RuntimeRootCustodyUnavailable("recovered runtime-root inode changed during journal update")
+        return _open_fixed_directory(parent_fd, leaf, document[key], mode, created)
+    if record is not None:
+        raise RuntimeRootCustodyUnavailable("runtime-root journal contains an unknown create state")
+
+    staging = ".hermes-authority-root-" + secrets.token_hex(12)
+    try:
+        os.mkdir(staging, mode, dir_fd=parent_fd)
+    except FileExistsError:
+        raise RuntimeRootCustodyUnavailable("runtime-root staging name unexpectedly exists") from None
+    fd = -1
+    try:
+        entry = os.stat(staging, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(entry.st_mode) or entry.st_uid != 0 or entry.st_gid != 0:
+            raise RuntimeRootCustodyUnavailable("new runtime-root staging directory was replaced")
+        identity = (entry.st_dev, entry.st_ino)
+        fd = os.open(staging, _OPEN_DIR, dir_fd=parent_fd)
+        info = os.fstat(fd)
+        if ((info.st_dev, info.st_ino) != identity or info.st_uid != 0 or info.st_gid != 0):
+            raise RuntimeRootCustodyUnavailable("new runtime-root staging inode changed")
+        os.fchmod(fd, mode)
+        info = _directory(fd, mode=mode)
+        document[key] = {"state": "pending", "device": info.st_dev, "inode": info.st_ino,
+                         "staging": staging}
+        _write_journal(journal_dir, document)
+        _rename_noreplace(parent_fd, staging, leaf)
+        document[key] = {"state": "owned", "device": info.st_dev, "inode": info.st_ino}
+        _write_journal(journal_dir, document)
+        created.append((parent_fd, leaf, info.st_dev, info.st_ino))
+        return _open_fixed_directory(parent_fd, leaf, document[key], mode, created)
+    except BaseException:
+        # Keep a journaled pending staging inode for safe recovery.  Before the
+        # intent is durable, remove only the exact private staging inode.
+        durable_pending = document.get(key, {}).get("staging") == staging
+        if not durable_pending:
+            try:
+                staged = os.stat(staging, dir_fd=parent_fd, follow_symlinks=False)
+                if fd >= 0 and (staged.st_dev, staged.st_ino) == (os.fstat(fd).st_dev, os.fstat(fd).st_ino):
+                    os.rmdir(staging, dir_fd=parent_fd)
+            except OSError:
+                pass
+        raise
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 @dataclass(slots=True, repr=False)
@@ -361,16 +460,12 @@ class RootAuthorityRuntimeRootCustodian:
                 run_info = _directory(run_fd)
                 if run_info.st_mode & 0o022:
                     raise RuntimeRootCustodyUnavailable("/run is writable by group or other")
-                prefix_fd, prefix_info, prefix_created = _open_fixed_directory(
-                    run_fd, _RUNTIME_PREFIX, document["prefix"], 0o711, created)
-                if prefix_created:
-                    document["prefix"] = {"device": prefix_info.st_dev, "inode": prefix_info.st_ino}
-                    _write_journal(journal_dir, document)
-                root_fd, root_info, root_created = _open_fixed_directory(
-                    prefix_fd, _AUTHORITY_LEAF, document["authority"], 0o711, created)
-                if root_created:
-                    document["authority"] = {"device": root_info.st_dev, "inode": root_info.st_ino}
-                    _write_journal(journal_dir, document)
+                prefix_fd, prefix_info, prefix_created = _open_journal_owned_directory(
+                    run_fd, _RUNTIME_PREFIX, document["prefix"], 0o711, created,
+                    journal_dir, document, "prefix")
+                root_fd, root_info, root_created = _open_journal_owned_directory(
+                    prefix_fd, _AUTHORITY_LEAF, document["authority"], 0o711, created,
+                    journal_dir, document, "authority")
                 entry = os.stat(_AUTHORITY_LEAF, dir_fd=prefix_fd, follow_symlinks=False)
                 if ((entry.st_dev, entry.st_ino) != (root_info.st_dev, root_info.st_ino)
                         or stat.S_IMODE(entry.st_mode) != 0o711):
