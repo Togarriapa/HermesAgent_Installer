@@ -3117,5 +3117,13 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "bootstrap_handoff_reconfirmation_source_review_v211": {
+    "contract": "planning/bootstrap-handoff-reconfirmation-source-review-v211.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }

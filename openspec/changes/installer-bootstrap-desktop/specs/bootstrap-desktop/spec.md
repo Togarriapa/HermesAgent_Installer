@@ -920,3 +920,12 @@ The installer SHALL require the independent explicit same-candidate foreground T
 #### Scenario: Reconfirmation drifts or repeats
 - **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
 - **THEN** handoff fails closed and preserves owned staged data without acquiring service authority
+
+## ADDED Requirements
+
+### Requirement: Exact reconfirmation source leaf v211
+The installer SHALL apply only the root_setup source tuple in planning/bootstrap-handoff-reconfirmation-source-review-v211.json, preserving all other reviewed members and v208 authority boundaries.
+
+#### Scenario: Previous root setup source pin differs
+- **WHEN** the previous expected tuple rejects committed reconfirmation bytes
+- **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference

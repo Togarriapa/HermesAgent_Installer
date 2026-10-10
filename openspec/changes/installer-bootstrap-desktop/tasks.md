@@ -308,3 +308,5 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 
 - [ ] BD-T208.1: Implement final-boundary explicit root TTY reconfirmation and one-use fresh proof with unchanged identity/source/runtime joins.
 - [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v211): Apply exact reviewed root_setup tuple only, run full unexcluded regressions and retain genuine target handoff evidence.
