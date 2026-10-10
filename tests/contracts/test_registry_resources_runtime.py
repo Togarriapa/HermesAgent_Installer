@@ -23,6 +23,7 @@ from hermes_installer.registry.resources_runtime import (
     SelectedResourceExecution,
     SelectedResourceRegistry,
     selected_resource_specs_by_generation,
+    selected_resource_registry_from_verified_materialization,
     ResourceRuntimeError,
     SelectedResourceUnavailable,
     WebhookVerifier,
@@ -40,6 +41,7 @@ from hermes_installer.registry.resources_runtime import (
     _verified_installed_resource_bundle,
 )
 from hermes_installer.registry.source import load_bundled_source
+from hermes_installer.registry.native import NativeRegistry
 from hermes_installer.state import Journal, OwnedRoot
 
 
@@ -403,6 +405,48 @@ class ResourcesRuntimeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ResourceRuntimeError, "ID and generation are ambiguous"):
             selected_resource_specs_by_generation(SelectedResourceRegistry((first, second)))
+
+    def test_selected_specs_are_reloaded_from_pinned_verified_materialization(self):
+        source = load_bundled_source()
+        registry = NativeRegistry.from_verified_source(source)
+        discovery = registry.discover(("crons/resource-sync",))
+        resolved = next(item for item in discovery.resources
+                        if item.resource.id == "resource-sync")
+        identity = ResourceIdentity(
+            resolved.resource.id, resolved.resource.kind.value, resolved.resource.version,
+            registry.paths[f"crons/{resolved.resource.id}@{resolved.resource.version}"],
+            source.revision, resolved.resource.digest,
+        )
+        selected = SelectedResourceExecution(
+            identity=identity, generation_digest="c" * 64,
+            effective_spec={"action": {"type": "caller-forged"}},
+            capability="resource.cron.run",
+            target=f"resource:crons/{identity.resource_id}@{identity.version}",
+            operation="resource.cron.run", recipient=None,
+            delegation_id="selected-cron", profile_id="hermes", enabled=True,
+        )
+        joined = selected_resource_registry_from_verified_materialization(
+            registry, discovery, (selected,), expected_generation_digest="c" * 64,
+        )
+        effective = joined.rows[0].effective_spec
+        self.assertEqual(effective["action"]["type"], "installer-resource-candidate-assessment")
+        self.assertEqual(effective["action"]["source"]["revision"], source.revision)
+        self.assertNotEqual(effective["action"]["type"], "caller-forged")
+
+        tampered_identity = ResourceIdentity(
+            identity.resource_id, identity.kind, identity.version, identity.source_path,
+            "f" * 40, identity.content_digest,
+        )
+        tampered = SelectedResourceExecution(
+            identity=tampered_identity, generation_digest="c" * 64,
+            effective_spec={}, capability=selected.capability, target=selected.target,
+            operation=selected.operation, recipient=None, delegation_id=selected.delegation_id,
+            profile_id=selected.profile_id, enabled=True,
+        )
+        with self.assertRaisesRegex(ResourceRuntimeError, "does not match"):
+            selected_resource_registry_from_verified_materialization(
+                registry, discovery, (tampered,), expected_generation_digest="c" * 64,
+            )
 
     def test_candidate_assessment_rejects_partial_or_unpinned_bundle_artifact(self):
         with tempfile.TemporaryDirectory() as temp:

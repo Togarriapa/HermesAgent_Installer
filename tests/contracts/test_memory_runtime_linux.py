@@ -33,7 +33,9 @@ from hermes_installer.authority.memory_execution import MemoryExecutionDenied
 from hermes_installer.authority.service import AuthorityService, EffectRule, PrincipalBinding
 from hermes_installer.authority.types import EffectAuthorization, HostContext, Sensitivity, canonical_digest
 from hermes_installer.managed_process_custodian import ManagedNamespaceLease
-from hermes_installer.memory.broker import build_memory_handlers, build_memory_runtime, canonical
+from hermes_installer.memory.broker import (
+    ProfiledMemoryJobResolver, build_memory_handlers, build_memory_runtime, canonical,
+)
 from hermes_installer.memory.compound import MemoryRouteRecipe
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from hermes_installer.memory.owner_ledger import _secure_sqlite_files
@@ -333,6 +335,8 @@ class RootMemoryRuntimeLinuxTests(unittest.TestCase):
                 else None,
             )
             self.assertTrue(runtime["state_root_ready"])
+            self.assertIs(type(runtime["job_resolver"]), ProfiledMemoryJobResolver)
+            self.assertIs(runtime["job_resolver"], runtime["queue"])
             self.assertIsNotNone(runtime["step_authority"])
             self.assertIn(enrollment.target_id, runtime["step_authority"]._registered)
             runtime["owner_ledger"].set_owner(enrollment.profile_id, enrollment.provider)

@@ -71,14 +71,14 @@ class SelectedWebhookIngressTests(unittest.TestCase):
                 "github-push", "webhooks", "1.0.1", "webhooks/github-push.yaml",
                 "b" * 40, "d" * 64,
             ),
-            generation_digest=service_generation,
+            generation_digest=resource_generation,
             effective_spec=effective_spec,
             capability="resource.webhook.run",
             target="resource:webhooks/github-push@1.0.1",
             operation="resource.webhook.deliver", recipient=None,
             delegation_id="selected-webhook-route", profile_id="hermes", enabled=True,
         )
-        registry = SelectedResourceRegistry((selected,), expected_generation_digest=service_generation)
+        registry = SelectedResourceRegistry((selected,), expected_generation_digest=resource_generation)
         backend = SimpleNamespace(
             backend_id="backend-github-push", resource_id="github-push", profile_id="hermes",
             generation=resource_generation, observer_enrollment_id="observer-github-push",
@@ -91,23 +91,15 @@ class SelectedWebhookIngressTests(unittest.TestCase):
             backends={backend.backend_id: backend},
             nodes=(SimpleNamespace(backend_enrollment_id=backend.backend_id),),
         )
-        # The runtime selection's resource generation is the active key for
-        # job rows; use the protected enrollment generation in both domains.
-        selected = SelectedResourceExecution(
-            identity=selected.identity, generation_digest=resource_generation,
-            effective_spec=effective_spec, capability=selected.capability,
-            target=selected.target, operation=selected.operation, recipient=selected.recipient,
-            delegation_id=selected.delegation_id, profile_id=selected.profile_id, enabled=True,
-        )
-        registry = SelectedResourceRegistry((selected,), expected_generation_digest=resource_generation)
         binding = SimpleNamespace(credential_reference_id="credential-github-push")
         bindings, vault = _Bindings(binding), _Vault(secret)
+        bindings.enrollment_catalog = SimpleNamespace(digest=service_generation)
         ingress = SelectedWebhookIngress(
             selected_resources=registry,
             job_enrollments={("github-push", resource_generation): enrollment},
             bindings=bindings, credential_vault=vault,
             replay_store=replay_store or _ReplayStore(),
-            service_generation_digest=resource_generation,
+            service_generation_digest=service_generation,
         )
         return ingress, bindings, vault, secret
 
@@ -128,6 +120,7 @@ class SelectedWebhookIngressTests(unittest.TestCase):
         self.assertEqual(bindings.calls[0][0], (
             "backend-github-push", "${GITHUB_WEBHOOK_SECRET}", "webhook-hmac-verify",
         ))
+        self.assertEqual(bindings.calls[0][1]["service_generation_digest"], "c" * 64)
         self.assertEqual(vault.calls[0], (
             "credential-github-push",
             {"peer_uid": 0, "required_scope": "webhook-hmac-verify", "principal_id": "principal-hermes"},

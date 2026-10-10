@@ -742,6 +742,112 @@ def selected_resource_specs_by_generation(
     return MappingProxyType(specs)
 
 
+def selected_resource_registry_from_verified_materialization(
+    native_registry: Any,
+    discovery: Any,
+    selected_rows: Sequence[SelectedResourceExecution],
+    *,
+    expected_generation_digest: str,
+) -> SelectedResourceRegistry:
+    """Join protected selections to the effective specs from a verified source.
+
+    Selection rows carry root-issued effect authority, but their effective
+    specification is not trusted as source. This boundary reloads every row
+    from the verified ``NativeRegistry``/``NativeDiscovery`` pair, validates
+    its source identity and content digest, then copies only the canonical
+    effective spec into a fresh immutable selection registry.
+    """
+    from .native import NativeDiscovery, NativeRegistry
+
+    if (not isinstance(native_registry, NativeRegistry)
+            or not isinstance(discovery, NativeDiscovery)
+            or discovery.source_revision != native_registry.source.revision
+            or discovery.catalog_version != native_registry.source.catalog_version):
+        raise ResourceRuntimeError("verified native registry and discovery are required")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_generation_digest):
+        raise ResourceRuntimeError("protected active resource generation digest is invalid")
+
+    canonical: dict[tuple[str, str, str], tuple[ResourceIdentity, Mapping[str, Any]]] = {}
+    for resolved in discovery.resources:
+        if not resolved.provenance_verified:
+            raise ResourceRuntimeError("native discovery contains unverified source provenance")
+        # Re-run source resolution instead of accepting the Discovery object's
+        # effective_spec, which is a convenient DTO and can be reconstructed.
+        advertised = resolved.resource
+        try:
+            source_resolved = native_registry.resolver.resolve(
+                (f"{advertised.kind.value}/{advertised.id}@={advertised.version}",)
+            )
+        except Exception:
+            raise ResourceRuntimeError("verified native source no longer resolves") from None
+        resource_match = next((entry for entry in source_resolved
+                               if (entry.resource.kind, entry.resource.id, entry.resource.version)
+                               == (advertised.kind, advertised.id, advertised.version)), None)
+        if resource_match is None or resource_match.resource.digest != advertised.digest:
+            raise ResourceRuntimeError("native discovery identity differs from verified source resolution")
+        resolved = resource_match
+        resource = resolved.resource
+        kind = resource.kind.value
+        key = (kind, resource.id, resource.version)
+        source_key = f"{kind}/{resource.id}@{resource.version}"
+        source_path = native_registry.paths.get(source_key)
+        raw = native_registry.resolver.raw.get(source_key)
+        if (not source_path or raw is None or raw.repository != native_registry.source.repository
+                or raw.selected_revision != native_registry.source.revision
+                or raw.observed_revision != native_registry.source.revision
+                or raw.content_digest != resource.digest
+                or native_registry.resolver.document_digest(raw.document) != resource.digest):
+            raise ResourceRuntimeError("native discovery identity does not match the verified source pin")
+
+        # NativeRegistry applies this one installer-owned rewrite both when it
+        # materializes the declaration and when it builds the runtime adapter.
+        spec = dict(resolved.effective_spec or resource.body)
+        if kind == "crons" and resource.id in {"resource-sync", "daily-resource-reconcile"}:
+            action = spec.get("action")
+            if not isinstance(action, Mapping):
+                raise ResourceRuntimeError("verified update cron has no selected action")
+            action = dict(action)
+            action.pop("repository", None)
+            action.pop("ref", None)
+            action.update({
+                "type": "installer-resource-candidate-assessment",
+                "source": {
+                    "kind": "installer-bundle",
+                    "path": f"resources/vendor/hermes-agent-resources-{native_registry.source.catalog_version}",
+                    "catalogVersion": native_registry.source.catalog_version,
+                    "revision": native_registry.source.revision,
+                },
+                "mode": "candidate-assessment",
+            })
+            spec["action"] = action
+        if key in canonical:
+            raise ResourceRuntimeError("verified native discovery contains a duplicate resource identity")
+        canonical[key] = (
+            ResourceIdentity(resource.id, kind, resource.version, source_path,
+                             native_registry.source.revision, resource.digest),
+            MappingProxyType(spec),
+        )
+
+    joined: list[SelectedResourceExecution] = []
+    seen: set[tuple[str, str, str]] = set()
+    for selected in selected_rows:
+        if not isinstance(selected, SelectedResourceExecution):
+            raise TypeError("root selected resource rows must use the typed execution contract")
+        key = (selected.identity.kind, selected.identity.resource_id, selected.identity.version)
+        verified = canonical.get(key)
+        if verified is None or key in seen or selected.identity != verified[0]:
+            raise ResourceRuntimeError("protected selection does not match a unique verified resource declaration")
+        seen.add(key)
+        joined.append(SelectedResourceExecution(
+            identity=verified[0], generation_digest=expected_generation_digest,
+            effective_spec=dict(verified[1]), capability=selected.capability,
+            target=selected.target, operation=selected.operation,
+            recipient=selected.recipient, delegation_id=selected.delegation_id,
+            profile_id=selected.profile_id, enabled=selected.enabled,
+        ))
+    return SelectedResourceRegistry(joined, expected_generation_digest=expected_generation_digest)
+
+
 class SelectedResourceUnavailable(ResourceRuntimeError):
     """The selected source item lacks a protected execution target or dependency."""
 
