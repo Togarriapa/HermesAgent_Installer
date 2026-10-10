@@ -155,3 +155,5 @@ Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected
 - [ ] VD-T213.3: Verify unprivileged delegate effects, isolation, stale/grant/source denial and cleanup.
 
 RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v214): Implement exact published source-home vs live selected-task split, current core claim/readback and actual delegate grant/mount evidence.
