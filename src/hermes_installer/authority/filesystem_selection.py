@@ -24,7 +24,7 @@ ROOT_ID = "installer-existing-model-store-v1"
 ROOT_PATH = Path("/var/lib/hermes-installer/model-store")
 TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
 TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
-TEMPLATE_PATH = "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json"
+TEMPLATE_PATH = "templates/existing-model-store-root-template-v1.json"
 TEMPLATE_SIZE = 712
 TEMPLATE_ROLE = "existing-model-store-root-template"
 _MAX_LEASE_SECONDS = 30.0
@@ -366,6 +366,15 @@ class RootOwnedFilesystemSelectionRegistry:
             raise RootFilesystemSelectionDenied("model-store registry is closed")
         try:
             self._session._check_live()
+            row = self._session._authorization.root_journal_root
+            if (self.root_journal.root_id != row.get("root_id")
+                    or str(self.root_journal.path) != row.get("absolute_path")
+                    or self.root_journal.device != row.get("device")
+                    or self.root_journal.inode != row.get("inode")
+                    or self.root_journal.generation != row.get("generation")):
+                raise ValueError("root journal binding changed")
+            _verify_secure_directory(self.root_journal.path, self.root_journal.device,
+                                     self.root_journal.inode, 0, 0o700)
             if self.authority.authority_epoch != self._authority_epoch:
                 raise ValueError("authority epoch changed")
         except Exception:
@@ -408,17 +417,18 @@ def _canonical(value: Any) -> bytes:
 def _open_fixed_model_store_root() -> int:
     if os.geteuid() != 0 or not _linux():
         raise RootFilesystemSelectionDenied("fixed model-store root is observable only in the installed Linux root process")
+    fixed_path = Path("/var/lib/hermes-installer/model-store")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     fd = os.open("/", flags)
     try:
-        for index, part in enumerate(ROOT_PATH.parts[1:]):
+        for index, part in enumerate(fixed_path.parts[1:]):
             child = os.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = child
             info = os.fstat(fd)
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
                 raise RootFilesystemSelectionDenied("fixed model-store path component is not a root-owned directory")
-            final = index == len(ROOT_PATH.parts[1:]) - 1
+            final = index == len(fixed_path.parts[1:]) - 1
             if final:
                 if info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
                     raise RootFilesystemSelectionDenied("fixed model-store root must be root:root mode 0700")
