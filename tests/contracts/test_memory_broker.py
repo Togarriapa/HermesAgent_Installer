@@ -144,8 +144,10 @@ class MemoryBrokerTests(unittest.TestCase):
             eligibility=lambda *_: True)
         handler = handlers[("memory.extract", "memory:agentmemory:extract")]
         response = call(handler, Context(), "extract", {
-            "schema": 1, "record": {"id": "synthetic", "source": "fixture",
-                                    "text": "a harmless synthetic fact"}})
+            "schema": 1, "job_handle": "J" * 32,
+            "record": {"id": "synthetic", "profile": "p1", "namespace": "n1",
+                       "source": "fixture", "text": "a harmless synthetic fact",
+                       "provenance": ["a" * 64]}})
         self.assertEqual(response["status"], 503)
         self.assertEqual(ipc.calls, [])
 
@@ -212,9 +214,10 @@ class MemoryBrokerTests(unittest.TestCase):
         response = call(
             handlers[("memory.extract", "memory:agentmemory:extract")],
             Context("profile-one", "namespace-one"), "extract",
-            {"schema": 1, "record": {"id": "fixture", "profile": "profile-one",
+            {"schema": 1, "job_handle": "K" * 32,
+             "record": {"id": "fixture", "profile": "profile-one",
              "namespace": "namespace-one", "source": "hermes-session:fixture",
-             "text": "synthetic private fact"}},
+             "text": "synthetic private fact", "provenance": ["a" * 64]}},
         )
         self.assertEqual(response["status"], 200)
         self.assertEqual(json.loads(response["body"])["facts"], ["synthetic fact"])
@@ -223,9 +226,10 @@ class MemoryBrokerTests(unittest.TestCase):
         sibling = call(
             handlers[("memory.extract", "memory:agentmemory:extract")],
             Context("profile-two", "namespace-two"), "extract",
-            {"schema": 1, "record": {"id": "fixture-two", "profile": "profile-two",
+            {"schema": 1, "job_handle": "L" * 32,
+             "record": {"id": "fixture-two", "profile": "profile-two",
              "namespace": "namespace-two", "source": "hermes-session:fixture-two",
-             "text": "sibling private fact"}},
+             "text": "sibling private fact", "provenance": ["b" * 64]}},
         )
         self.assertEqual(sibling["status"], 503)
         self.assertEqual(engine.calls, [("extract", "profile-one")])

@@ -13,7 +13,7 @@ from hermes_installer.authority.types import AuthorityDenied, HostContext, Sensi
 from hermes_installer.memory.private_engine import (
     PrivateMemoryEngineUnavailable, RootPrivateMemoryEngine,
 )
-from hermes_installer.memory.broker import MemoryTarget, _build_private_engine_registry
+from hermes_installer.memory.broker import BrokerDenied, MemoryTarget, _build_private_engine_registry
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from test_memory_enrollment import record as enrollment_record
 
@@ -87,10 +87,12 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         context = _context()
         self.assertEqual(engine.extract(
             text="captured synthetic transcript", context=context,
+            job_handle="A" * 32,
             timeout=20, cancelled=lambda: False,
         ), ["synthetic fact"])
         sent_context, call = dispatcher.calls[0]
         self.assertIs(sent_context, context)
+        self.assertEqual(call["job_handle"], "A" * 32)
         self.assertEqual(call["route_id"], "private:extract:fixture")
         self.assertEqual(call["model_id"], "glm-5.2-fixture")
         request = json.loads(call["payload"])
@@ -108,15 +110,17 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         }).encode()])
         engine = self._engine(dispatcher)
         self.assertEqual(engine.embed(
-            facts=["first", "second"], context=_context("embed"),
+            facts=["first", "second"], context=_context("embed"), job_handle="B" * 32,
             timeout=20, cancelled=lambda: False,
         ), [[1.0, 0.0], [0.25, 0.75]])
         call = dispatcher.calls[0][1]
         self.assertEqual(call["route_id"], "private:embed:fixture")
+        self.assertEqual(call["job_handle"], "B" * 32)
         self.assertEqual(call["model_id"], "embed-fixture-v1")
         self.assertEqual(json.loads(call["payload"])["encoding_format"], "float")
         self.assertEqual(engine.embed(
-            facts=[], context=_context("embed"), timeout=20, cancelled=lambda: False,
+            facts=[], context=_context("embed"), job_handle="B" * 32,
+            timeout=20, cancelled=lambda: False,
         ), [])
         self.assertEqual(len(dispatcher.calls), 1)
 
@@ -126,7 +130,8 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         }).encode()])
         engine = self._engine(mismatched)
         with self.assertRaises(PrivateMemoryEngineUnavailable):
-            engine.extract(text="private text", context=_context(), timeout=5, cancelled=lambda: False)
+            engine.extract(text="private text", context=_context(), job_handle="C" * 32,
+                           timeout=5, cancelled=lambda: False)
 
         bad_vector = _Dispatcher([json.dumps({
             "object": "list", "model": "embed-fixture-v1", "data": [
@@ -135,11 +140,28 @@ class RootPrivateMemoryEngineCodecTests(unittest.TestCase):
         }, allow_nan=True).encode()])
         engine = self._engine(bad_vector)
         with self.assertRaises(PrivateMemoryEngineUnavailable):
-            engine.embed(facts=["fact"], context=_context("embed"), timeout=5, cancelled=lambda: False)
+            engine.embed(facts=["fact"], context=_context("embed"), job_handle="D" * 32,
+                         timeout=5, cancelled=lambda: False)
 
         expired = _SelectedRoutes(expires_monotonic=9.0)
         with self.assertRaises(PrivateMemoryEngineUnavailable):
             self._engine(_Dispatcher([]), selected=expired)
+
+        malformed = _Dispatcher([b'{"model":"glm-5.2-fixture","model":"attacker"}'])
+        with self.assertRaises(PrivateMemoryEngineUnavailable):
+            self._engine(malformed).extract(
+                text="private text", context=_context(), job_handle="E" * 32,
+                timeout=5, cancelled=lambda: False,
+            )
+
+    def test_missing_or_malformed_job_handle_denies_before_dispatch(self):
+        dispatcher = _Dispatcher([])
+        engine = self._engine(dispatcher)
+        for handle in ("", "not-a-root-job", "X" * 200):
+            with self.subTest(handle=handle[:16]), self.assertRaises(BrokerDenied):
+                engine.extract(text="private text", context=_context(), job_handle=handle,
+                               timeout=5, cancelled=lambda: False)
+        self.assertEqual(dispatcher.calls, [])
 
     def test_runtime_registry_joins_engine_selection_to_exact_enrollment_or_stays_off(self):
         enrollment = MemoryServiceEnrollment.from_protected_record(enrollment_record())
