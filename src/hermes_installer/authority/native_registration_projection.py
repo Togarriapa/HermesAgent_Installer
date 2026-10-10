@@ -85,6 +85,88 @@ class ReviewedNativeRegistrationResultSchema:
     schema: Mapping[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class RootNativeRegistrationSourceObservation:
+    """One actual tool registration joined to a live held-release module proof."""
+
+    registration_id: str
+    adapter_id: str
+    native_tool_name: str
+    toolset: str
+    family: str
+    handler_kind: str
+    handler_id: str
+    argument_schema: Mapping[str, Any]
+    native_schema_sha256: str
+    registration_source_artifact_id: str
+    registration_source_sha256: str
+    registration_source_receipt_handle: str
+
+
+class NativeRegistrationSourceObservationDenied(ValueError):
+    """Actual registrations could not join the held release source receipts."""
+
+
+def observe_root_native_registrations(
+        release_module_receipts: tuple[Any, ...],
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[RootNativeRegistrationSourceObservation, ...]:
+    """Bind all 42 real register_tool calls to current root-held module bytes.
+
+    `release_module_receipts` must contain actual RootReleaseModuleReceipt
+    instances returned by the live root setup session. Their own `read_current`
+    rechecks release/actor/session currentness on every call. This function
+    emits source observations only; a separate root resolver must join result
+    schemas, selected actions/workflows, and observer enrollment receipts before
+    producing any executable candidate.
+    """
+    from hermes_installer.authority.bootstrap_runtime_factory import RootReleaseModuleReceipt
+
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    if not isinstance(captured, tuple) or len(captured) != 42:
+        raise NativeRegistrationSourceObservationDenied("exactly 42 actual Hermes registration calls are required")
+    if not isinstance(release_module_receipts, tuple) or not release_module_receipts:
+        raise NativeRegistrationSourceObservationDenied("held release module receipts are unavailable")
+    by_path: dict[str, RootReleaseModuleReceipt] = {}
+    for receipt in release_module_receipts:
+        if not isinstance(receipt, RootReleaseModuleReceipt):
+            raise NativeRegistrationSourceObservationDenied("source observation requires root-issued release module receipt types")
+        path = receipt.relative_path
+        if (not isinstance(path, str) or not path.startswith("src/hermes_installer/components/")
+                or path in by_path):
+            raise NativeRegistrationSourceObservationDenied("release source receipt path is unreviewed or duplicated")
+        by_path[path] = receipt
+    expected_paths = {"src/" + row.registration_source_path for row in captured}
+    if set(by_path) != expected_paths:
+        raise NativeRegistrationSourceObservationDenied("held release receipts do not cover the exact actual handler source modules")
+    definitions = {row.native_tool_name: row for row in reviewed_native_registration_definitions(captured)}
+    output: list[RootNativeRegistrationSourceObservation] = []
+    for source in captured:
+        definition = definitions[source.native_tool_name]
+        receipt = by_path["src/" + source.registration_source_path]
+        current_bytes = receipt.read_current()
+        if (not isinstance(current_bytes, bytes)
+                or receipt.sha256 != source.registration_source_sha256
+                or len(current_bytes) != receipt.size_bytes
+                or hashlib.sha256(current_bytes).hexdigest() != source.registration_source_sha256):
+            raise NativeRegistrationSourceObservationDenied("held release source bytes differ from the actual handler module")
+        output.append(RootNativeRegistrationSourceObservation(
+            registration_id=f"{source.adapter_id}:tool:{source.native_tool_name}",
+            adapter_id=source.adapter_id,
+            native_tool_name=source.native_tool_name,
+            toolset=source.toolset,
+            family=definition.family,
+            handler_kind=definition.handler_kind,
+            handler_id=source.handler_id,
+            argument_schema=source.argument_schema,
+            native_schema_sha256=source.native_schema_sha256,
+            registration_source_artifact_id=receipt.artifact_id,
+            registration_source_sha256=receipt.sha256,
+            registration_source_receipt_handle=receipt.source_receipt_handle,
+        ))
+    return tuple(sorted(output, key=lambda row: row.native_tool_name))
+
+
 class NativeRegistrationResultSchemaDenied(ValueError):
     """The reviewed bounded local result-schema artifacts drifted."""
 

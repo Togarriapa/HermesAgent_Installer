@@ -132,3 +132,18 @@ def test_local_result_schema_rejects_changed_artifact_bytes(monkeypatch, tmp_pat
         assert "differ from the reviewed pin" in str(exc)
     else:
         raise AssertionError("changed local result schema bytes were accepted")
+
+
+def test_root_registration_source_observation_fails_closed_without_held_release_receipts():
+    from hermes_installer.authority.native_registration_projection import (
+        NativeRegistrationSourceObservationDenied,
+        observe_root_native_registrations,
+    )
+
+    captured = capture_actual_hermes_registrations()
+    try:
+        observe_root_native_registrations((), captured)
+    except NativeRegistrationSourceObservationDenied as exc:
+        assert "held release module receipts" in str(exc)
+    else:
+        raise AssertionError("source registration capture was promoted without root-held receipts")
