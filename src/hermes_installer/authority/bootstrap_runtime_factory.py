@@ -514,6 +514,16 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("application runtime preparation is not owned by this setup session")
         return self._session._resolve_application_runtime_preparation_selection(selection_handle)
 
+    def resolve_application_effect_members(self, context: Any, recipe: Any) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("application effect source is not owned by this setup session")
+        return self._session._resolve_application_effect_members(context, recipe)
+
+    def is_application_effect_members_current(self, receipt: Any) -> bool:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            return False
+        return self._session._is_application_effect_members_current(receipt)
+
     def attach_application_source_preparation_registry(self, registry: Any) -> None:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("application source registry is not owned by this setup session")
@@ -4373,6 +4383,7 @@ class RootBootstrapSession:
         self._application_source_preparations: dict[str, Any] = {}
         self._application_source_preparation_handles: dict[tuple[str, str], str] = {}
         self._application_source_preparation_registry: Any | None = None
+        self._application_effect_source_observer: Any | None = None
         self._application_runtime_preparation_selection_registry: Any | None = None
         self._application_package_closure_registry: Any | None = None
         self._application_node_bun_toolchain_registry: Any | None = None
@@ -6333,6 +6344,29 @@ class RootBootstrapSession:
                 and self._application_source_preparation_registry is not registry):
             raise BootstrapEnrollmentPending("another application source registry is already attached")
         self._application_source_preparation_registry = registry
+
+    def _application_effect_source_registry(self) -> Any:
+        self._check_live()
+        if self._application_source_preparation_registry is None:
+            raise BootstrapEnrollmentPending("application effect source requires the current source selector")
+        if self._application_runtime_preparation_selection_registry is None:
+            raise BootstrapEnrollmentPending("application effect source requires the current runtime selector")
+        if self._application_effect_source_observer is None:
+            from .application_effect_source_observer import RootApplicationEffectSourceObserver
+            self._application_effect_source_observer = RootApplicationEffectSourceObserver(self)
+        return self._application_effect_source_observer
+
+    def _resolve_application_effect_members(self, context: Any, recipe: Any) -> Any:
+        return self._application_effect_source_registry().resolve_application_effect_members(context, recipe)
+
+    def _is_application_effect_members_current(self, receipt: Any) -> bool:
+        try:
+            return self._application_effect_source_registry().is_application_effect_members_current(receipt)
+        except (BootstrapEnrollmentError, BootstrapEnrollmentPending, OSError, ValueError):
+            return False
+
+    def _read_application_effect_source_receipt(self, receipt: Any) -> bytes:
+        return self._application_effect_source_registry().read_current(receipt)
 
     def _attach_application_runtime_preparation_selection_registry(self, registry: Any) -> None:
         self._check_live()

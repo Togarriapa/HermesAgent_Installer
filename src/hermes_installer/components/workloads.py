@@ -9,8 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 import json
-import math
-import re
 import os
 import stat
 from pathlib import Path, PurePosixPath
@@ -30,6 +28,11 @@ from hermes_installer.components.runtime_source import VerifiedComponentGenerati
 from hermes_installer.components.scrapegraph_ai import (
     build_scrapegraph_ai_fixture_invocation,
     verify_scrapegraph_ai_fixture_result,
+)
+from hermes_installer.components.probes.hyperframes_probe import (
+    build_hyperframes_framehash_invocation,
+    stage_hyperframes_fixture,
+    verify_hyperframes_probe_results,
 )
 
 
@@ -141,6 +144,10 @@ def _verify_graphify_fixture(result: object, work_roots: Mapping[str, str]) -> o
 def _hyperframes_fixture(args, runtime_roots, work_roots, source_generations):
     if args:
         raise ValueError("hyperframes-render-fixture takes no caller-controlled paths")
+    stage_hyperframes_fixture(work_roots["hyperframes-fixture"])
+    ffmpeg = runtime_roots.get("ffmpeg")
+    if not isinstance(ffmpeg, str):
+        ffmpeg = str(PurePosixPath(runtime_roots["ffprobe"]).with_name("ffmpeg"))
     return (
         build_hyperframes_render_fixture(
             runtime_roots["hyperframes"], work_roots["hyperframes-fixture"],
@@ -149,45 +156,12 @@ def _hyperframes_fixture(args, runtime_roots, work_roots, source_generations):
         build_hyperframes_probe_invocation(
             runtime_roots["ffprobe"], work_roots["hyperframes"],
         ),
+        build_hyperframes_framehash_invocation(ffmpeg, work_roots["hyperframes"]),
     )
 
 
 def _verify_hyperframes_fixture(result: object, work_roots: Mapping[str, str]) -> object:
-    if not isinstance(result, Mapping) or result.get("exit_code") != 0:
-        raise RuntimeError("Hyperframes output probe did not exit successfully")
-    output = result.get("stdout")
-    if not isinstance(output, str):
-        raise RuntimeError("Hyperframes output probe returned no structured media metadata")
-    try:
-        metadata = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Hyperframes output probe returned invalid JSON") from exc
-    if not isinstance(metadata, dict):
-        raise RuntimeError("Hyperframes output probe returned invalid media metadata")
-    streams = metadata.get("streams")
-    fmt = metadata.get("format")
-    if not isinstance(streams, list) or not streams or not isinstance(fmt, dict):
-        raise RuntimeError("Hyperframes output is missing a video stream or duration")
-    video = next((stream for stream in streams if isinstance(stream, dict)
-                  and stream.get("codec_type") == "video"), None)
-    if video is None:
-        raise RuntimeError("Hyperframes output has no video stream")
-    duration_value = fmt.get("duration")
-    frames_value = video.get("nb_read_frames")
-    try:
-        duration = float(duration_value) if isinstance(duration_value, (str, int, float)) else math.nan
-    except ValueError:
-        duration = math.nan
-    frames = int(frames_value) if isinstance(frames_value, str) and re.fullmatch(r"[0-9]{1,4}", frames_value) else frames_value
-    width, height = video.get("width"), video.get("height")
-    if (isinstance(duration_value, bool) or not math.isfinite(duration) or not 0 < duration <= 30
-            or isinstance(frames, bool) or not isinstance(frames, int) or not 1 <= frames <= 900
-            or isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 1920
-            or isinstance(height, bool) or not isinstance(height, int) or not 1 <= height <= 1080
-            or not isinstance(video.get("codec_name"), str) or not video["codec_name"]):
-        raise RuntimeError("Hyperframes output dimensions, frame count, codec, or duration are outside fixture bounds")
-    return {"duration_seconds": float(duration), "frames": frames,
-            "width": width, "height": height, "codec": video["codec_name"]}
+    return verify_hyperframes_probe_results(result, work_roots)
 
 
 def _scrapegraph_fixture(args, runtime_roots, work_roots, source_generations):
@@ -322,11 +296,14 @@ class WorkloadScheduler:
             self._metered_spend += definition.metered_cost_usd
         try:
             result = None
+            stage_results = []
             for invocation in invocations:
                 result = self.run(invocation)
                 if not isinstance(result, Mapping) or result.get("exit_code") != 0:
                     raise RuntimeError("registered workload stage failed; dependent stages were not launched")
-            return definition.verify(result, self.work_roots) if definition.verify is not None else result
+                stage_results.append(result)
+            verification_input = tuple(stage_results) if request.id == "hyperframes-render-fixture" else result
+            return definition.verify(verification_input, self.work_roots) if definition.verify is not None else result
         finally:
             with self._lock:
                 self._active -= 1

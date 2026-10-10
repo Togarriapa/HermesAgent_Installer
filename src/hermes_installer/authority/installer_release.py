@@ -21,6 +21,11 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending, _process_start_time, _verify_import_search_path
+from .application_effect_source_catalog import (
+    APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID, APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
+    APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
+    APPLICATION_EFFECT_SOURCE_MEMBERS,
+)
 
 DEPLOYMENT_RECEIPT_PATH = Path("/var/lib/hermes-installer/deployments/current.json")
 RELEASE_STORE_ROOT = Path("/usr/lib/hermes-installer/releases")
@@ -153,7 +158,7 @@ MAX_FILES = 50_000
 MAX_FILE_BYTES = 512 * 1024 * 1024
 ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
                    "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
-                   "runtime-member", "native-health-fixture"})
+                   "runtime-member", "application-effect-fixture", "native-health-fixture"})
 _SEAL = object()
 _SHA = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -600,6 +605,13 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
     if (actual_health_fixtures != expected_health_fixtures
             or len(by_role["native-health-fixture"]) != len(expected_health_fixtures)):
         raise InstallerReleaseError("installed native health fixtures differ from their exact reviewed closure")
+    effect_catalog_rows = [row for row in by_role["amendment"]
+                           if row.artifact_id == APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID]
+    if (len(effect_catalog_rows) != 1
+            or (effect_catalog_rows[0].relative_path, effect_catalog_rows[0].sha256,
+                effect_catalog_rows[0].size_bytes) != (APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
+                    APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE)):
+        raise InstallerReleaseError("application effect source descriptor differs from its fixed amendment pin")
     if any("bootstrap-policy" in row.roles for row in rows):
         raise InstallerReleaseError("generated bootstrap policy cannot be a base release role")
     modules = [row for row in by_role["module"]]
@@ -613,6 +625,12 @@ def _fixed_roles(rows: list[VerifiedReleaseFile], manifest_rel: str) -> tuple[st
         if (row is None or row.roles != (role,)
                 or (row.relative_path, row.sha256, row.size_bytes) != (relative_path, digest, size)):
             raise InstallerReleaseError("finite native target source module differs from its reviewed pin")
+    for artifact_id, relative_path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+        rows_for_member = [row for row in rows if row.artifact_id == artifact_id]
+        if (len(rows_for_member) != 1 or rows_for_member[0].roles != (role,)
+                or (rows_for_member[0].relative_path, rows_for_member[0].sha256,
+                    rows_for_member[0].size_bytes) != (relative_path, digest, size)):
+            raise InstallerReleaseError("application effect source member differs from its finite pinned role catalog")
     for artifact_id, relative_path in REQUIRED_LAUNCHER_MODULES:
         row = module_by_id.get(artifact_id)
         if row is None or row.relative_path != relative_path:
@@ -743,6 +761,13 @@ def _artifact_id_for(path: str, roles: list[str]) -> str:
         for artifact_id, relative_path, _digest, _size, role in REVIEWED_SOURCE_MODULES:
             if role == "source-module" and path == relative_path:
                 return artifact_id
+        for artifact_id, relative_path, role, _digest, _size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+            if role == "source-module" and path == relative_path:
+                return artifact_id
+    if "application-effect-fixture" in roles:
+        for artifact_id, relative_path, role, _digest, _size in APPLICATION_EFFECT_SOURCE_MEMBERS:
+            if role == "application-effect-fixture" and path == relative_path:
+                return artifact_id
     return "release-file:" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:32]
 
 
@@ -775,8 +800,16 @@ def _validate_fixed_layout_role(path: str, digest: str, size: int, roles: list[s
                                   or path in {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "module"}):
         raise InstallerReleaseError("module role is outside the finite source/import closure")
     if "source-module" in roles and (roles != ["source-module"]
-            or path not in {item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"}):
+            or path not in ({item[1] for item in REVIEWED_SOURCE_MODULES if item[4] == "source-module"}
+                            | {item[1] for item in APPLICATION_EFFECT_SOURCE_MEMBERS if item[2] == "source-module"})):
         raise InstallerReleaseError("source-module role is outside the finite prepared source closure")
+    if "application-effect-fixture" in roles:
+        if (roles != ["application-effect-fixture"]
+                or not any((path, digest, size) == (member_path, member_sha, member_size)
+                           and role == "application-effect-fixture"
+                           for _artifact_id, member_path, role, member_sha, member_size
+                           in APPLICATION_EFFECT_SOURCE_MEMBERS)):
+            raise InstallerReleaseError("application effect fixture role is outside its finite pinned source closure")
     if path.startswith("runtime/") and path != INTERPRETER_PATH and roles != ["runtime-member"]:
         raise InstallerReleaseError("installed runtime closure member lacks its exact runtime-member role")
     if "runtime-member" in roles and (

@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import stat
+from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Mapping
 
@@ -34,6 +35,8 @@ FIXTURE_HTML = (
 )
 FIXTURE_SHA256 = hashlib.sha256(FIXTURE_HTML.encode("utf-8")).hexdigest()
 PROOF_MARKER = "HERMES_SCRAPEGRAPH_AI_PROOF="
+PROBE_NAME = "scrapegraph_ai_probe.py"
+PROBE_SHA256 = "30974c44d2bd9e60847bcad6ba3849cf8b2a262f8c08f79b832a9bba723ed6ab"
 
 
 class ScrapeGraphFixtureError(ValueError):
@@ -132,117 +135,27 @@ def _stage_private_file(path: Path, content: bytes) -> None:
             os.fsync(stream.fileno())
 
 
-def _probe_source() -> str:
-    # This code deliberately lives in the installer source and takes only the
-    # two trusted roots bound by the builder. It cannot select a provider,
-    # source URL, model name, output path, or command from the request.
-    return r'''import hashlib, json, pathlib, socket, sys
-from typing import Any
-from pydantic import BaseModel, ConfigDict, Field
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+def _probe_asset() -> bytes:
+    """Read the reviewed fixed probe source shipped with this package."""
+    asset = resources.files("hermes_installer.components").joinpath("probes", PROBE_NAME)
+    body = asset.read_bytes()
+    if hashlib.sha256(body).hexdigest() != PROBE_SHA256:
+        raise ScrapeGraphFixtureError("ScrapeGraphAI fixed probe asset digest mismatch")
+    return body
 
-import os
-os.environ["SCRAPEGRAPHAI_TELEMETRY_ENABLED"] = "false"
-source_root = pathlib.Path(sys.argv[1]).resolve(strict=True)
-fixture_path = pathlib.Path(sys.argv[2]).resolve(strict=True)
-expected_source = {
-    "pyproject.toml": "c88e138a741bcac006d58dd41303c4a68b48f925b929067af4b43c04bfd5b886",
-    "uv.lock": "2fd36ae40e1eda563043b7204bd32755b67078abc471c8cf29f3f48c9c309771",
-    "scrapegraphai/graphs/smart_scraper_graph.py": "1e9cd02492172c3ea629b8745d685203776351afe3f783458a5f33e1acd706dc",
-}
-for relative, digest in expected_source.items():
-    if hashlib.sha256((source_root / relative).read_bytes()).hexdigest() != digest:
-        raise RuntimeError("pinned source changed: " + relative)
-html = fixture_path.read_text(encoding="utf-8")
-if hashlib.sha256(html.encode()).hexdigest() != "''' + FIXTURE_SHA256 + r'''":
-    raise RuntimeError("local fixture digest mismatch")
 
-# Block any actual socket use, including accidental telemetry or a redirect.
-def deny_network(*args, **kwargs):
-    raise AssertionError("network access attempted during local ScrapeGraphAI fixture")
-socket.socket.connect = deny_network
-socket.create_connection = deny_network
-
-sys.path.insert(0, str(source_root))
-import scrapegraphai
-from scrapegraphai.graphs import SmartScraperGraph
-from scrapegraphai.telemetry import telemetry as telemetry_module
-
-telemetry_module.disable_telemetry()
-if pathlib.Path(scrapegraphai.__file__).resolve().is_relative_to(source_root) is False:
-    raise RuntimeError("SmartScraperGraph did not import from the pinned source tree")
-
-class Product(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str
-    price: str
-
-class FixtureModel(BaseChatModel):
-    observed_prompts: list[str] = Field(default_factory=list)
-    @property
-    def _llm_type(self) -> str:
-        return "allowlisted-local-fixture-mock"
-    def _generate(self, messages: list[BaseMessage], stop: list[str] | None = None,
-                  run_manager: Any = None, **kwargs: Any) -> ChatResult:
-        prompt = "\n".join(str(message.content) for message in messages)
-        self.observed_prompts.append(prompt)
-        if "Cedar Mug" not in prompt or "$18.50" not in prompt:
-            raise AssertionError("real upstream model boundary did not receive fixture HTML")
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(
-            content='{"name":"Cedar Mug","price":"$18.50"}'))])
-
-model = FixtureModel()
-graph = SmartScraperGraph(
-    "Extract the product name and price from this local page.",
-    html,
-    {"llm": {"model": "allowlisted/fixture-mock", "model_instance": model,
-             "model_tokens": 512}, "html_mode": True, "verbose": False,
-     "timeout": 5, "reattempt": False},
-    schema=Product,
-)
-if not isinstance(graph, SmartScraperGraph):
-    raise RuntimeError("upstream SmartScraperGraph instance missing")
-if graph.input_key != "local_dir":
-    raise RuntimeError("upstream SmartScraperGraph selected a non-local input path")
-nodes = [node.node_name for node in graph.graph.nodes]
-if nodes != ["Fetch", "GenerateAnswer"]:
-    raise RuntimeError("upstream graph/node chain differs from reviewed local extraction")
-fetch = graph.graph.nodes[0]
-original_fetch_execute = fetch.execute
-fetch_observations = []
-def observe_local_fetch(state):
-    if state.get("local_dir") != html or "url" in state:
-        raise AssertionError("upstream FetchNode did not receive the owned local HTML")
-    fetch_observations.append(True)
-    return original_fetch_execute(state)
-fetch.execute = observe_local_fetch
-result = graph.run()
-answer = graph.final_state.get("answer")
-if answer != {"name": "Cedar Mug", "price": "$18.50"}:
-    raise RuntimeError("upstream graph returned wrong or incomplete structured fields")
-if not model.observed_prompts or len(model.observed_prompts) != 1:
-    raise RuntimeError("allowlisted mock model boundary was not called exactly once")
-if fetch_observations != [True]:
-    raise RuntimeError("actual upstream FetchNode did not execute once on the local fixture")
-if not isinstance(result, dict) or result != answer:
-    raise RuntimeError("SmartScraperGraph.run did not return the structured result")
-if any(float(item.get("total_cost_USD", 0)) != 0 for item in graph.execution_info):
-    raise RuntimeError("fixture unexpectedly reported metered model cost")
-if telemetry_module.g_telemetry_enabled:
-    raise RuntimeError("ScrapeGraphAI telemetry must remain disabled for the private fixture")
-print("HERMES_SCRAPEGRAPH_AI_PROOF=" + json.dumps({
-    "source_revision": "194055e203afce41ed4e70365dbc416bad756115",
-    "upstream_class": "scrapegraphai.graphs.SmartScraperGraph",
-    "upstream_source": str(pathlib.Path(scrapegraphai.__file__).resolve()),
-    "nodes": nodes, "source_kind": "local_dir", "local_fetch_calls": len(fetch_observations),
-    "model": "allowlisted-fixture-mock",
-    "model_calls": len(model.observed_prompts), "observed_fixture_values": True,
-    "structured_result": answer, "network_attempts": 0, "telemetry_enabled": False,
-    "metered_cost_usd": 0,
-}, sort_keys=True))
-'''
+def _stage_probe_asset(work_root: Path) -> Path:
+    """Stage the exact reviewed source as a private, immutable-by-default script."""
+    path = work_root / f".{PROBE_NAME}"
+    _stage_private_file(path, _probe_asset())
+    try:
+        path.chmod(0o400)
+    except OSError as exc:
+        raise ScrapeGraphFixtureError(f"ScrapeGraphAI fixed probe asset cannot be protected: {exc}") from None
+    info = path.lstat()
+    if info.st_mode & (0o077 | 0o222 | 0o7000):
+        raise ScrapeGraphFixtureError("ScrapeGraphAI fixed probe asset must remain private and read-only")
+    return path
 
 
 def build_scrapegraph_ai_fixture_invocation(
@@ -261,7 +174,7 @@ def build_scrapegraph_ai_fixture_invocation(
     return ComponentInvocation(
         component_id="scrapegraph-ai",
         executable=str(python),
-        argv=(str(python), "-c", _probe_source(), str(source), str(fixture)),
+        argv=(str(python), str(_stage_probe_asset(work)), str(source), str(fixture)),
         cwd=str(work),
         environment=(("HOME", str(_absolute(work_root, "ScrapeGraphAI work root"))),
                      ("PYTHONNOUSERSITE", "1"),
@@ -278,20 +191,32 @@ def build_scrapegraph_ai_fixture_invocation(
 
 def verify_scrapegraph_ai_fixture_result(result: object) -> dict[str, object]:
     """Accept only an explicit successful proof from the pinned upstream graph."""
-    if not isinstance(result, Mapping) or result.get("exit_code") != 0:
+    if (not isinstance(result, Mapping) or type(result.get("exit_code")) is not int
+            or result.get("exit_code") != 0):
         raise ScrapeGraphFixtureError("ScrapeGraphAI local fixture process failed")
     output = result.get("stdout")
-    if not isinstance(output, str):
+    if not isinstance(output, str) or len(output) > 1024 * 1024:
         raise ScrapeGraphFixtureError("ScrapeGraphAI fixture returned no structured proof")
     records = [line[len(PROOF_MARKER):] for line in output.splitlines()
                if line.startswith(PROOF_MARKER)]
     if len(records) != 1:
         raise ScrapeGraphFixtureError("ScrapeGraphAI fixture proof is missing or ambiguous")
+    if len(records[0]) > 64 * 1024:
+        raise ScrapeGraphFixtureError("ScrapeGraphAI fixture proof exceeds its size limit")
+    def unique_object(pairs):
+        parsed = {}
+        for key, value in pairs:
+            if key in parsed:
+                raise ValueError("duplicate JSON key")
+            parsed[key] = value
+        return parsed
     try:
-        proof = json.loads(records[0])
-    except json.JSONDecodeError as exc:
+        proof = json.loads(records[0], object_pairs_hook=unique_object,
+                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    except (json.JSONDecodeError, ValueError) as exc:
         raise ScrapeGraphFixtureError("ScrapeGraphAI fixture proof is invalid JSON") from exc
     expected = {
+        "schema_version": 1,
         "source_revision": SOURCE_REVISION,
         "upstream_class": "scrapegraphai.graphs.SmartScraperGraph",
         "nodes": ["Fetch", "GenerateAnswer"],
@@ -305,10 +230,14 @@ def verify_scrapegraph_ai_fixture_result(result: object) -> dict[str, object]:
         "telemetry_enabled": False,
         "metered_cost_usd": 0,
     }
-    if not isinstance(proof, dict) or any(proof.get(k) != v for k, v in expected.items()):
+    if (not isinstance(proof, dict) or set(proof) != (set(expected) | {"upstream_source"})
+            or any(type(proof[k]) is not type(value) or proof[k] != value
+                   for k, value in expected.items())):
         raise ScrapeGraphFixtureError("ScrapeGraphAI proof does not establish the required local graph effects")
     source = proof.get("upstream_source")
-    if not isinstance(source, str) or not Path(source).is_absolute():
+    if (not isinstance(source, str) or not Path(source).is_absolute()
+            or Path(source).name != "__init__.py"
+            or Path(source).parent.name != "scrapegraphai"):
         raise ScrapeGraphFixtureError("ScrapeGraphAI proof does not identify its imported upstream source")
     return proof
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from collections.abc import Mapping
 from urllib.parse import urlsplit
 
@@ -20,30 +21,13 @@ from hermes_installer.components.application_handlers import (
 from hermes_installer.components.locked_runtime import load_browser_use_lock_bundle
 
 
-_FIXTURE = re.compile(r"^http://127\.0\.0\.1:[1-9][0-9]{0,4}/[A-Za-z0-9._~/-]*$")
-_PROBE = r'''import asyncio, json, sys
-from browser_use import Browser, BrowserProfile
-
-async def main():
-    browser = Browser(browser_profile=BrowserProfile(
-        headless=True, enable_default_extensions=False, chromium_sandbox=True
-    ))
-    try:
-        await browser.start()
-        page = await browser.new_page(sys.argv[1])
-        heading = await page.get_elements_by_css_selector("#proof")
-        button = await page.get_elements_by_css_selector("#action")
-        assert len(heading) == 1 and len(button) == 1
-        await button[0].click()
-        text = await heading[0].evaluate("() => this.textContent")
-        image = await page.screenshot(format="png")
-        assert text == "interaction-ok" and image and len(image) > 64
-        print("HERMES_BROWSER_USE_PROOF=" + json.dumps({"navigation": True, "interaction": text, "screenshot_bytes": len(image)}, sort_keys=True))
-    finally:
-        await browser.kill()
-
-asyncio.run(asyncio.wait_for(main(), timeout=150))
-'''
+_FIXTURE = re.compile(r"^http://127\.0\.0\.1:[1-9][0-9]{0,4}/fixture$")
+_PROBE_ASSET = Path(__file__).with_name("browser_use_qualification_probe.py")
+_PROOF_KEYS = frozenset({
+    "schema_version", "navigation_url", "navigation_succeeded", "page_title",
+    "initial_text", "click_succeeded", "interaction_text", "screenshot_format",
+    "screenshot_bytes", "screenshot_sha256",
+})
 
 
 def build_browser_use_sync_invocation(
@@ -94,10 +78,13 @@ def build_browser_use_fixture_invocation(
         raise RuntimeProfileError("Browser Use fixture port is outside TCP range")
     if any(segment == ".." for segment in parsed.path.split("/")):
         raise RuntimeProfileError("Browser Use fixture path cannot traverse directories")
+    if (parsed.path != "/fixture" or parsed.query or parsed.fragment
+            or not _PROBE_ASSET.is_file()):
+        raise RuntimeProfileError("Browser Use qualification probe asset or fixed fixture path is unavailable")
     return ComponentInvocation(
         component_id="browser-use",
         executable=executable,
-        argv=(executable, "-c", _PROBE, fixture_url),
+        argv=(executable, str(_PROBE_ASSET), fixture_url),
         cwd=work,
         environment=(("BROWSER_USE_DISABLE_EXTENSIONS", "1"), ("BROWSER_USE_HEADLESS", "1")),
         credential_references=(),
@@ -124,13 +111,20 @@ def verify_browser_use_fixture_result(result: object) -> dict[str, object]:
         proof = json.loads(payloads[0])
     except json.JSONDecodeError as exc:
         raise RuntimeProfileError("Browser Use fixture proof is invalid JSON") from exc
-    if (
-        not isinstance(proof, dict)
-        or proof.get("navigation") is not True
-        or proof.get("interaction") != "interaction-ok"
-        or not isinstance(proof.get("screenshot_bytes"), int)
-        or proof["screenshot_bytes"] <= 64
-    ):
+    if (not isinstance(proof, dict) or set(proof) != _PROOF_KEYS
+            or type(proof.get("schema_version")) is not int or proof["schema_version"] != 1
+            or not isinstance(proof.get("navigation_url"), str)
+            or not _FIXTURE.fullmatch(proof["navigation_url"])
+            or proof.get("navigation_succeeded") is not True
+            or proof.get("page_title") != "Hermes qualification fixture"
+            or proof.get("initial_text") != "ready"
+            or proof.get("click_succeeded") is not True
+            or proof.get("interaction_text") != "interaction-ok"
+            or proof.get("screenshot_format") != "png"
+            or type(proof.get("screenshot_bytes")) is not int
+            or not 64 < proof["screenshot_bytes"] <= 8 * 1024 * 1024
+            or not isinstance(proof.get("screenshot_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", proof["screenshot_sha256"])):
         raise RuntimeProfileError("Browser Use fixture proof does not establish required effects")
     return proof
 
@@ -144,4 +138,7 @@ async def run_browser_use_fixture(
     """Run and verify the local fixture through the injected managed supervisor."""
     invocation = build_browser_use_fixture_invocation(python_executable, fixture_url, work_root)
     result = await supervisor.invoke(invocation)
-    return verify_browser_use_fixture_result(result)
+    proof = verify_browser_use_fixture_result(result)
+    if proof["navigation_url"] != fixture_url:
+        raise RuntimeProfileError("Browser Use fixture proof URL does not match the owned fixture receipt")
+    return proof

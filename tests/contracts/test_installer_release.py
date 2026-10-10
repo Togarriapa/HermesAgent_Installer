@@ -18,6 +18,11 @@ from hermes_installer.authority.installer_release import (
     _artifact_id_for, _module_name, _validate_fixed_layout_role,
 )
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
+from hermes_installer.authority.application_effect_source_catalog import (
+    APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID, APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
+    APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
+    APPLICATION_EFFECT_SOURCE_MEMBERS,
+)
 
 
 class InstalledReleaseVerifierTests(unittest.TestCase):
@@ -175,6 +180,13 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             VerifiedReleaseFile("amendment-file", ("amendment",), "plans/amendments/ref/file.json",
                                 "6" * 64, 1, 1, 201, 0o444),
         ))
+        rows.append(VerifiedReleaseFile(APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID, ("amendment",),
+                                        APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
+                                        APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
+                                        APPLICATION_EFFECT_SOURCE_CATALOG_SIZE, 1, 210, 0o444))
+        rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 220 + i, 0o444)
+                    for i, (artifact_id, path, role, digest, size)
+                    in enumerate(APPLICATION_EFFECT_SOURCE_MEMBERS))
         self.assertEqual(_fixed_roles(rows, "closure.json"), ("installer-root-setup-plan-v1", "3" * 64))
         bad = list(rows)
         index = next(i for i, row in enumerate(bad) if row.artifact_id == REVIEWED_SOURCE_MODULES[0][0])
