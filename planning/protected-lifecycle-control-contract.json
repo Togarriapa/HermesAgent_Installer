@@ -1134,7 +1134,9 @@
       "native_mcp_tool_bindings": "tuple exact native MCP binding rows; actual authenticated tools/list or packaged schema receipts required",
       "closure_members": "tuple {relative_path:str,sha256:hex64,size_bytes:int,mode:420|493,artifact_receipt_handle:str}; root resolves actual retained bytes, no request path",
       "boundary_overlay_receipt_handle": "actual source-pinned reviewed overlay member receipt",
-      "effect_selection_receipt_handles": "tuple actual selected root effect enrollment/credential/consent proofs; compilation does not grant effects"
+      "effect_selection_receipt_handles": "tuple actual selected root effect enrollment/credential/consent proofs; compilation does not grant effects",
+      "registration_records": "tuple RootNativeRegistrationProjection from native-package-binding-contract.native_registration_projection; actual source registration/schema/handler/finite selector rows, distinct effect-action catalog",
+      "candidate_records": "tuple one per actual registration, same index schema and source projection digest; all18 coverage retained with precise prerequisite state"
     },
     "generation_preimage": "Canonical UTF8 JSON sorted keys compact separators ensure_ascii=false no newline of {schema:1,package_id,service_profile_id,resource_profile_id,resources_revision,resources_content_digest,selected_closure_digest,definitions_sha256,compiler_module_closure_sha256,pm_runtime_receipt_handle}. All values root resolved current receipt fields. SHA256 is native_package_generation. Process/service/prepared/resource generation domains remain separately named.",
     "compiler_origin": "Installed release module role resolves lib/python/hermes_installer/authority/native_materialization.py plus complete imported registry/native_install and selected component/schema/overlay module closure. Actual current root actor module origins and bytes checked against installed deployment receipt, never source archive SHA as executable proof.",

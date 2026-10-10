@@ -2353,5 +2353,5 @@
       "RP-T04"
     ]
   },
-  "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."
+  "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim. v99: HI-T08 native candidate compilation consumes the source registration projection before HI-T11 dispatch; RB-T08 and MC-F01 retain their existing native/source/schema prerequisite edges. No active-before-assembly dependency introduced."
 }

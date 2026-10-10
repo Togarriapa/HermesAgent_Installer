@@ -163,3 +163,5 @@ Raw resource event/result closure v66: `plans/amendments/2026-10-10-resource-raw
 Resource capture schemas v67: `plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67.md`; existing task/acceptance gates open.
 
 Channel retained receipts/source choice v68: `plans/amendments/2026-10-10-channel-receipts-source-selection-v68.md`; existing task gates unchanged.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
