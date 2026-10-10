@@ -231,7 +231,8 @@ class NativeWorkerRuntimeMaterializationLinuxTests(unittest.TestCase):
         self.registry.runtime_receipts = SimpleNamespace(
             runtime_root=runtime_root, _record=lambda _handle: dict(record))
         receipt = SimpleNamespace(pm_runtime_receipt_handle=record["handle"],
-                                 committed_venv_identity=descriptor)
+                                 committed_venv_identity=descriptor,
+                                 pm_runtime_member_records=())
         row = {"pm_runtime_receipt_handle": record["handle"],
                "committed_venv_identity": descriptor}
         self.registry._verify_committed_pm_venv(receipt, row)
@@ -240,6 +241,65 @@ class NativeWorkerRuntimeMaterializationLinuxTests(unittest.TestCase):
         executable.chmod(0o555)
         with self.assertRaises(NativeWorkerRuntimeMaterializationUnavailable):
             self.registry._verify_committed_pm_venv(receipt, row)
+
+    def test_active_verifier_reopens_complete_pinned_pm_base_tree(self) -> None:
+        from hermes_installer.authority import pm_runtime
+
+        artifact_root = self.parent / "base-artifacts"
+        base = artifact_root / "trees" / pm_runtime.PYTHON_ID / pm_runtime.PYTHON_SHA256 / "content"
+        (base / "bin").mkdir(parents=True)
+        (base / "lib").mkdir()
+        executable = base / "bin/python3.14"
+        executable.write_bytes(b"pinned executable fixture")
+        executable.chmod(0o555)
+        (base / "bin/python3").symlink_to("python3.14")
+        module = base / "lib/module.py"
+        module.write_bytes(b"module bytes")
+        module.chmod(0o444)
+        for directory in (base / "bin", base / "lib", base):
+            directory.chmod(0o555)
+        spec_rows = (
+            SimpleNamespace(path="bin/python3.14", sha256=pm_runtime._hash(executable),
+                            size_bytes=executable.stat().st_size, executable=True,
+                            kind="file", link_target=None),
+            SimpleNamespace(path="bin/python3", sha256=hashlib.sha256(b"python3.14").hexdigest(),
+                            size_bytes=10, executable=False, kind="symlink", link_target="python3.14"),
+            SimpleNamespace(path="lib/module.py", sha256=pm_runtime._hash(module),
+                            size_bytes=module.stat().st_size, executable=False,
+                            kind="file", link_target=None),
+        )
+        closure = pm_runtime._tree_sha256(base)
+        root_fd, members, observed = pm_runtime._open_catalog_runtime_tree(
+            base, spec_rows, expected_closure_sha256=closure)
+        projected = tuple({
+            "artifact_id": pm_runtime.PYTHON_ID,
+            "receipt_handle": "p" * 40,
+            "relative_path": member.relative_path,
+            "kind": "regular-file" if member.kind == "file" else "symlink",
+            "sha256": member.sha256, "size_bytes": member.size_bytes,
+            "mode": member.mode, "owner_uid": member.uid, "owner_gid": member.gid,
+            "device": member.device, "inode": member.inode,
+            "link_target": member.link_target, "output_role": None,
+        } for member in members)
+        for descriptor in {root_fd, *(member.fd for member in members if member.fd is not None)}:
+            os.close(descriptor)
+        self.assertEqual(observed, closure)
+        catalog = SimpleNamespace(
+            artifacts={pm_runtime.PYTHON_ID: SimpleNamespace(tree_files=spec_rows)},
+            materialize_tree=lambda *_args, **_kwargs: SimpleNamespace(path=base))
+        self.registry.runtime_receipts = SimpleNamespace(catalog=catalog, artifact_root=artifact_root)
+        receipt = SimpleNamespace(pm_runtime_member_records=projected,
+                                  pm_runtime_receipt_handle="p" * 40,
+                                  pm_base_closure_sha256=closure)
+        pm_record = {"base_python_closure_sha256": closure}
+        runtime_row = {"pm_base_closure_sha256": closure}
+        self.registry._verify_committed_pm_base_tree(receipt, pm_record, runtime_row)
+
+        module.chmod(0o644)
+        module.write_bytes(b"changed module bytes")
+        module.chmod(0o444)
+        with self.assertRaises(NativeWorkerRuntimeMaterializationUnavailable):
+            self.registry._verify_committed_pm_base_tree(receipt, pm_record, runtime_row)
 
 
 if __name__ == "__main__":

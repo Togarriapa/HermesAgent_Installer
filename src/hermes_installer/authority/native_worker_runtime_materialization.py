@@ -482,6 +482,9 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
         if (len(pm_fds) != len(receipt.pm_runtime_member_records)
                 or len(output_fds) != len(receipt.native_output_member_records)):
             raise NativeWorkerRuntimeMaterializationUnavailable("held active worker member set is incomplete")
+        if not pm_fds or not output_fds:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "active worker lacks its complete PM base and generated output member sets")
         for fd, row in zip(pm_fds, receipt.pm_runtime_member_records, strict=True):
             self._verify_held_member_fd(fd, row, allow_symlink=True)
         for fd, row in zip(output_fds, receipt.native_output_member_records, strict=True):
@@ -613,6 +616,8 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
                     or (member.sha256, member.device, member.inode, member.uid,
                         member.gid, member.mode) != expected):
                 raise ValueError
+            if receipt.pm_runtime_member_records:
+                self._verify_committed_pm_base_tree(receipt, record, runtime_row)
         except Exception:
             raise NativeWorkerRuntimeMaterializationUnavailable(
                 "protected PM receipt, executable, or full committed venv closure changed") from None
@@ -620,6 +625,59 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
             if tree is not None:
                 tree.close()
             for descriptor_fd in (receipt_fd, receipts_fd, root_fd):
+                if descriptor_fd >= 0:
+                    try:
+                        os.close(descriptor_fd)
+                    except OSError:
+                        pass
+
+    def _verify_committed_pm_base_tree(
+            self, receipt: RootPreparedNativeWorkerRuntimeMaterialization,
+            pm_record: Mapping[str, Any], runtime_row: Mapping[str, Any]) -> None:
+        """Reopen the pinned base-Python tree and join every held member row."""
+        rows = receipt.pm_runtime_member_records
+        if not rows:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "active worker has no held official PM base-runtime members")
+        catalog = getattr(self.runtime_receipts, "catalog", None)
+        artifact_root = getattr(self.runtime_receipts, "artifact_root", None)
+        if catalog is None or not isinstance(artifact_root, Path):
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "active worker cannot reopen the exact protected PM base-runtime catalog")
+        from .pm_runtime import PYTHON_ID, PYTHON_SHA256, _open_catalog_runtime_tree
+        root_fd = -1
+        members = ()
+        try:
+            tree = catalog.materialize_tree(PYTHON_ID, PYTHON_SHA256, artifact_root,
+                                            expected_uid=0)
+            spec = catalog.artifacts[PYTHON_ID]
+            root_fd, members, closure = _open_catalog_runtime_tree(
+                tree.path, spec.tree_files,
+                expected_closure_sha256=receipt.pm_base_closure_sha256)
+            if (closure != runtime_row.get("pm_base_closure_sha256")
+                    or closure != pm_record.get("base_python_closure_sha256")):
+                raise ValueError
+            current = {member.relative_path: member for member in members}
+            if len(current) != len(rows) or len(current) != len(members):
+                raise ValueError
+            for row in rows:
+                member = current.get(row["relative_path"])
+                kind = "regular-file" if member is not None and member.kind == "file" else "symlink"
+                if (member is None or row.get("artifact_id") != PYTHON_ID
+                        or row.get("receipt_handle") != receipt.pm_runtime_receipt_handle
+                        or row.get("kind") != kind or row.get("output_role") is not None
+                        or (row.get("sha256"), row.get("size_bytes"), row.get("mode"),
+                            row.get("owner_uid"), row.get("owner_gid"), row.get("device"),
+                            row.get("inode"), row.get("link_target"))
+                           != (member.sha256, member.size_bytes, member.mode, member.uid,
+                               member.gid, member.device, member.inode, member.link_target)):
+                    raise ValueError
+        except Exception:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "current official PM base tree no longer matches all held runtime members") from None
+        finally:
+            for descriptor_fd in (root_fd, *(member.fd for member in members
+                                              if member.fd is not None)):
                 if descriptor_fd >= 0:
                     try:
                         os.close(descriptor_fd)
