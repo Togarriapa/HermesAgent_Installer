@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 import pytest
 
 from hermes_installer.authority.root_setup_choices import (
     RootSetupChoiceSnapshot,
+    _commit_revocation_index_entry,
     _DOMAIN_PURPOSES,
 )
+from hermes_installer.authority.root_private_input_consent import _ProtectedStore
+from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import RootJournalSelection
 
 
 def test_setup_choice_snapshot_cannot_be_constructed_without_registry_seal() -> None:
@@ -45,3 +53,27 @@ def test_setup_choice_purposes_are_finite_and_separate() -> None:
     assert "application-qualification" in _DOMAIN_PURPOSES
     assert "memory-capture" not in _DOMAIN_PURPOSES
     assert "public-web" not in _DOMAIN_PURPOSES
+
+
+@pytest.mark.skipif(not (os.name == "posix" and os.uname().sysname == "Linux"
+                          and os.geteuid() == 0),
+                    reason="revocation store fixture requires isolated Linux root")
+def test_runtime_revocation_journal_is_atomic_and_rejects_replay() -> None:
+    # Use an actual private root-owned journal fixture; the test exercises
+    # protected persistence/CAS only, not an invented signed receipt.
+    with TemporaryDirectory(prefix="hermes-choice-revocation-", dir="/root") as temp:
+        root = Path(temp) / "journal"
+        root.mkdir(mode=0o700)
+        root.chmod(0o700)
+        info = root.stat()
+        journal = RootJournalSelection("authority-journal", root, info.st_dev,
+                                       info.st_ino, "fixture-generation", "a" * 64)
+        store = _ProtectedStore(journal, "setup-choice-revocations", None)
+        handle = "b" * 64
+        entry = {"schema": 1, "selection_handle": handle, "purpose": "public-free-web-read"}
+
+        _commit_revocation_index_entry(store, handle, entry)
+        assert store.load() == {handle: entry}
+        with pytest.raises(AuthorityDenied, match="already has a committed revocation"):
+            _commit_revocation_index_entry(store, handle, {**entry, "purpose": "memory-service-enablement"})
+        assert store.load() == {handle: entry}

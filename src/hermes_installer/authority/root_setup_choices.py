@@ -7,11 +7,13 @@ active registries after the publisher adopts the choice.
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import math
 import os
 import re
 import secrets
+import stat
 import threading
 import time
 from dataclasses import dataclass, field
@@ -499,6 +501,40 @@ class RootSetupChoiceRegistry:
             selection_handle, expected_purpose, self.current_active_publication,
         )
 
+    def verify_published_adoption_current(self, adoption: Any) -> None:
+        """Verify a publisher adoption through its exact signed source row.
+
+        This method intentionally does not call ``adoption.verify_current``;
+        that public method delegates back here after the publisher owner wires
+        post-setup revocation/currentness.
+        """
+        from .setup_policy_publication import PublishedSetupChoiceAdoption
+        if type(adoption) is not PublishedSetupChoiceAdoption:
+            raise AuthorityDenied("setup-choice.adoption", "exact published choice adoption is required")
+        current = self.resolve_current_adopted_choice_snapshot(
+            adoption.selection_handle, adoption.purpose)
+        if (current.signed_record_sha256 != adoption.signed_record_sha256
+                or current.choice_payload_sha256 != adoption.choice_payload_sha256
+                or current.choice_epoch != adoption.choice_epoch
+                or current.revocation_epoch != adoption.revocation_epoch
+                or current.key_id != adoption.key_id
+                or current.release_deployment_receipt_sha256 != adoption.release_deployment_receipt_sha256
+                or current.active_publication_receipt_handle != adoption.publication_receipt_handle
+                or current.service_generation_digest != adoption.service_generation_digest
+                or current.setup_session_handle != adoption.setup_session_handle
+                or current.transaction_handle != adoption.transaction_handle
+                or current.plan_id != adoption.plan_id
+                or current.prepared_generation != adoption.prepared_generation
+                or current.principal_selection_handle != adoption.principal_selection_handle
+                or current.namespace_selection_handle != adoption.namespace_selection_handle
+                or current.private_profile_selection_handle != adoption.private_profile_selection_handle
+                or current.setup_deadline_unix != adoption.setup_deadline_unix
+                or current.choice_payload.get("principal_id") not in (None, adoption.principal_id)
+                or _choice_profile_id_from_payload(current.choice_payload, current.purpose) != adoption.profile_id
+                or current.choice_payload.get("namespace_id") not in (None, adoption.namespace_id)
+                or current.source_choice_row_sha256 != adoption.signed_record_sha256):
+            raise AuthorityDenied("setup-choice.adoption", "publisher adoption differs from its exact current signed source row")
+
     def resolve_current_adopted_choice(
             self, selection_handle: str, expected_purpose: str,
             active_publication_receipt: Any
@@ -705,7 +741,10 @@ class RootSetupChoiceRegistry:
                 **receipt.claims(), "signature": receipt.signature,
             }
             try:
-                self._revocation_store.save(self._revocations)
+                _commit_revocation_index_entry(
+                    self._revocation_store, selection.selection_handle,
+                    self._revocations[selection.selection_handle],
+                )
             except Exception:
                 self._revocations.pop(selection.selection_handle, None)
                 raise AuthorityDenied("setup-choice.revocation", "durable revocation journal could not be committed") from None
@@ -1254,6 +1293,56 @@ def _replace_revocation_signature(
     if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
         raise AuthorityDenied("setup-choice.revocation", "root key signer returned an invalid signature")
     return replace(receipt, signature=signature)
+
+
+def _commit_revocation_index_entry(store: Any, selection_handle: str,
+                                  entry: Mapping[str, Any]) -> None:
+    """CAS one revocation under the root journal's cross-process file lock."""
+    if (not isinstance(selection_handle, str) or not selection_handle
+            or not isinstance(entry, Mapping)):
+        raise AuthorityDenied("setup-choice.revocation", "revocation journal update is malformed")
+    directory_fd = store._open_store_directory()
+    try:
+        lock_fd = os.open(".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
+                          0o600, dir_fd=directory_fd)
+        try:
+            info = os.fstat(lock_fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                raise AuthorityDenied("setup-choice.revocation", "root revocation lock is not protected")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = store.load()
+            if selection_handle in current:
+                raise AuthorityDenied("setup-choice.revocation", "choice already has a committed revocation")
+            updated = dict(current)
+            updated[selection_handle] = dict(entry)
+            data = _canonical({"schema": 1, "profiles": updated})
+            if len(data) > 1_048_576:
+                raise AuthorityDenied("setup-choice.revocation", "revocation journal reached its protected bound")
+            temp_name = ".revocations-" + secrets.token_hex(16)
+            try:
+                out_fd = os.open(temp_name, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                                 | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory_fd)
+                try:
+                    os.fchmod(out_fd, 0o600)
+                    offset = 0
+                    while offset < len(data):
+                        offset += os.write(out_fd, data[offset:])
+                    os.fsync(out_fd)
+                finally:
+                    os.close(out_fd)
+                os.rename(temp_name, store.file.name,
+                          src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                os.fsync(directory_fd)
+            finally:
+                try:
+                    os.unlink(temp_name, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _choice_profile_id(choice: Any, purpose: str) -> str | None:
