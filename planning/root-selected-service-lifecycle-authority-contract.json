@@ -94,5 +94,27 @@
   "custody_API": "ManagedProcessEffectHandler.perform_root_selected_service_effect(selected_profile,verified_effect,canonical_payload_bytes,*,timeout,cancelled)->existing typed managed start/status/stop receipt. Requires actual sealed verification object and immediately rechecks selected enrollment, controller currentness and original deadline before kernel operation. Uses existing finite operation recipe/root mounts/private namespace manager; cannot select arbitrary profile/target from worker. Selected credential/Xauthority mounts only actual root resolved fixed mount bindings in admission; root proof never becomes a generic mount allowance.",
   "startup_projection": "RootSelectedStartupGrant wraps this distinct context/authorization and actual startup admission. Earlier v65 requirement of ordinary service-UID HostContext/EffectAuthorization is superseded; no inherited setup PID relabelled selected worker identity. RootSelectedDisplayStarter calls issue->consume->custody for each exact role separately; signed current network/Xauthority/start receipts remain required.",
   "memory_projection": "RootMemoryServiceLifecycle uses same issuer/consumer/custody mechanism with nested lifecycle_binding exact start operation/empty schema/readiness/prestart receipts. Root actual consent/profile/owner/service generation bound, status/stop root-resolve only process it launched. Memory configured runtime/engine/source/health facts still mandatory; unknown/liveness cannot become usable memory.",
-  "evidence": "Actual controller vs selected subject separation and kernel launch; forged/foreign controller, changed source/consent/profile/UID/generation/target/bytes/domain/expiry/replay negatives; worker ordinary context route cannot invoke root-selected type; each role/restart fresh grant and actual readiness distinct."
+  "evidence": "Actual controller vs selected subject separation and kernel launch; forged/foreign controller, changed source/consent/profile/UID/generation/target/bytes/domain/expiry/replay negatives; worker ordinary context route cannot invoke root-selected type; each role/restart fresh grant and actual readiness distinct.",
+  "canonical_control_payload_clarification": {
+    "schema": 1,
+    "status": {
+      "schema": 1,
+      "process_id": "root-resolved retained process handle",
+      "generation": "selected process generation"
+    },
+    "stop_fields": [
+      "schema",
+      "process_id",
+      "generation",
+      "reason",
+      "grace_seconds"
+    ],
+    "reason_mapping": {
+      "normal_selected_stop": "shutdown",
+      "admitted_cancellation": "cancel",
+      "partial_startup_failure_cleanup": "rollback"
+    },
+    "grace_seconds": 5,
+    "semantics": "Reason is derived from the actual retained root lifecycle event, never a worker field. Exact canonical stop payload includes schema=1, selected process_id and generation, derived reason, and grace_seconds=5. The issuer signs the SHA256 of all exact canonical effect bytes; consumer/custody validate the same bytes. Original deadline still bounds waiting; after it, custody may perform only already-owned process cleanup, never issue new application authority. process.control outer operation/fields facade is not this signed effect preimage. Status has no reason/grace fields. No new worker stop or cross-profile RPC."
+  }
 }

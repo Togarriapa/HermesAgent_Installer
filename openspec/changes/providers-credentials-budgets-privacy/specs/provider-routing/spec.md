@@ -275,3 +275,5 @@ The installer SHALL resolve source observers from explicit selected adapter join
 #### Scenario: Composite tool requests an unselected child
 - **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
 - **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
