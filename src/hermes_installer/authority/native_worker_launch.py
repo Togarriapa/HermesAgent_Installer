@@ -9,7 +9,10 @@ from __future__ import annotations
 import hashlib
 import importlib
 import functools
+import json
 import os
+import re
+import secrets
 import stat
 import threading
 import time
@@ -52,6 +55,60 @@ class RootNativeHermesWorkerSelection:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedNativeWorkerViewMount:
+    """One exact, root-issued immutable source root in the closed worker view."""
+
+    schema: int
+    view_kind: str
+    source_root_receipt_handle: str
+    source_host_root_path: Path
+    source_root_device: int
+    source_root_inode: int
+    source_closure_sha256: str
+    worker_mount_path: str
+    read_only: bool
+    noexec: bool
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedNativeWorkerView:
+    """Private immutable set of selected roots visible to one fixed helper."""
+
+    process_id: str
+    worker_executable_path: str
+    worker_argv: tuple[str, ...]
+    worker_environment: tuple[tuple[str, str], ...]
+    selected_view_sha256: str
+    mounts: tuple[RootSelectedNativeWorkerViewMount, ...]
+    _launch_handle: str = field(repr=False, compare=False)
+    _issuer: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootObservedNativeWorkerView:
+    """Kernel-observed selected mount view for one retained worker PID."""
+
+    schema: int
+    observation_handle: str
+    launch_handle: str
+    process_id: str
+    process_pid: int
+    process_start_ticks: int
+    cgroup_identity: str
+    process_uid: int
+    process_gid: int
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    selected_view_sha256: str
+    observed_monotonic: float
+    expires_monotonic: float
+    _issuer: object = field(repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "RootObservedNativeWorkerView(<kernel-held native view>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootVerifiedNativeHermesWorkerLaunch:
     """Short-lived manager proof binding active source, PM, listener and argv."""
 
@@ -84,6 +141,10 @@ class RootVerifiedNativeHermesWorkerLaunch:
     listener_socket_device: int
     listener_socket_inode: int
     argv: tuple[str, ...]
+    worker_executable_path: str
+    worker_argv: tuple[str, ...]
+    worker_environment: tuple[tuple[str, str], ...]
+    selected_view_sha256: str
     environment: tuple[tuple[str, str], ...]
     expires_monotonic: float
     _selection: RootNativeHermesWorkerSelection = field(repr=False, compare=False)
@@ -92,6 +153,7 @@ class RootVerifiedNativeHermesWorkerLaunch:
     _pm_identity: Any = field(repr=False, compare=False)
     _owner: Any = field(repr=False, compare=False)
     _issuer: object = field(repr=False, compare=False)
+    _selected_view: Any = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return "RootVerifiedNativeHermesWorkerLaunch(<active held launch>)"
@@ -142,6 +204,7 @@ class RootActiveNativeHermesWorkerLaunchOwner:
         self._issuer = object()
         self._selections: dict[str, RootNativeHermesWorkerSelection] = {}
         self._proofs: dict[str, RootVerifiedNativeHermesWorkerLaunch] = {}
+        self._observed_views: dict[str, RootObservedNativeWorkerView] = {}
         self._gate_member_fds: tuple[int, int] | None = None
         self._lock = threading.RLock()
         self._closed = False
@@ -359,6 +422,13 @@ class RootActiveNativeHermesWorkerLaunchOwner:
                          pm_identity.expires_monotonic, listener.expires_monotonic)
             if expiry <= time.monotonic():
                 raise ValueError("current source or listener lease has expired")
+            worker_relative = Path(pm_identity.runtime_relative).relative_to(
+                Path(pm_identity.runtime_venv_relative)).as_posix()
+            if worker_relative in {"", "."} or worker_relative.startswith("../"):
+                raise ValueError("committed Python executable has no safe venv-relative path")
+            worker_executable = "/hermes/.native/pm/" + worker_relative
+            worker_argv = (worker_executable, *ARGV_SUFFIX)
+            worker_environment = (("HOME", "/hermes"), ("HERMES_HOME", "/hermes"))
             proof = RootVerifiedNativeHermesWorkerLaunch(
                 launch_handle=hashlib.sha256(os.urandom(32)).hexdigest(),
                 network_id=network.network_id, profile_id=profile.profile_id,
@@ -387,6 +457,10 @@ class RootActiveNativeHermesWorkerLaunchOwner:
                 listener_socket_device=listener.socket_device,
                 listener_socket_inode=listener.socket_inode,
                 argv=(str(executable), *ARGV_SUFFIX),
+                worker_executable_path=worker_executable,
+                worker_argv=worker_argv,
+                worker_environment=worker_environment,
+                selected_view_sha256="",
                 environment=(("HOME", "/hermes"), ("HERMES_HOME", "/hermes")),
                 expires_monotonic=expiry, _selection=selection,
                 _network_projection=network, _runtime_projection=runtime_projection,
@@ -424,9 +498,17 @@ class RootActiveNativeHermesWorkerLaunchOwner:
                 "native_output_root_inode", "listener_activation_id", "listener_invocation_id",
                 "listener_pid", "listener_start_ticks", "listener_socket_device",
                 "listener_socket_inode", "argv", "environment",
+                "worker_executable_path", "worker_argv", "worker_environment",
             )
             if any(getattr(proof, name) != getattr(current, name) for name in comparable):
                 raise NativeHermesWorkerLaunchUnavailable("active launch joins changed after proof issuance")
+            if proof._selected_view is not None:
+                view = proof._selected_view
+                if (type(view) is not RootSelectedNativeWorkerView
+                        or view._issuer is not self._issuer
+                        or view._launch_handle != proof.launch_handle
+                        or view.selected_view_sha256 != proof.selected_view_sha256):
+                    raise NativeHermesWorkerLaunchUnavailable("selected worker view is foreign or changed")
             self.network_owner.verify_current(proof._network_projection)
             self.runtime_registry.verify_current(proof._runtime_projection)
             self.pm_executable_resolver.verify_current(proof._pm_identity)
@@ -444,12 +526,117 @@ class RootActiveNativeHermesWorkerLaunchOwner:
             self._proofs.pop(current.launch_handle, None)
 
     @_owner_locked
+    def attach_selected_worker_view(self, proof: RootVerifiedNativeHermesWorkerLaunch,
+                                    view: RootSelectedNativeWorkerView
+                                    ) -> RootVerifiedNativeHermesWorkerLaunch:
+        """Bind one exact manager-materialized mount view to its held proof."""
+        self._require_live()
+        if (type(proof) is not RootVerifiedNativeHermesWorkerLaunch
+                or proof._issuer is not self._issuer
+                or self._proofs.get(proof.launch_handle) is not proof
+                or proof._selected_view is not None or proof.selected_view_sha256
+                or type(view) is not RootSelectedNativeWorkerView
+                or view._issuer is not self._issuer
+                or view._launch_handle != proof.launch_handle
+                or view.worker_executable_path != proof.worker_executable_path
+                or view.worker_argv != proof.worker_argv
+                or view.worker_environment != proof.worker_environment
+                or not re.fullmatch(r"[0-9a-f]{64}", view.selected_view_sha256)):
+            raise NativeHermesWorkerLaunchUnavailable(
+                "selected worker mount view is foreign, stale, or already attached")
+        self.verify_current_native_worker_launch(proof)
+        object.__setattr__(proof, "selected_view_sha256", view.selected_view_sha256)
+        object.__setattr__(proof, "_selected_view", view)
+        return proof
+
+    @_owner_locked
+    def resolve_selected_native_worker_view(
+            self, proof: RootVerifiedNativeHermesWorkerLaunch) -> RootSelectedNativeWorkerView:
+        self.verify_current_native_worker_launch(proof)
+        view = getattr(proof, "_selected_view", None)
+        if (type(view) is not RootSelectedNativeWorkerView
+                or view._issuer is not self._issuer
+                or view._launch_handle != proof.launch_handle
+                or view.selected_view_sha256 != proof.selected_view_sha256):
+            raise NativeHermesWorkerLaunchUnavailable("selected native worker view is not owner-issued")
+        return view
+
+    @_owner_locked
+    def issue_observed_native_worker_view(
+            self, proof: RootVerifiedNativeHermesWorkerLaunch, *, process_id: str,
+            process_pid: int, process_start_ticks: int, cgroup_identity: str,
+            process_uid: int, process_gid: int, mount_namespace_inode: int,
+            network_namespace_inode: int, observed_monotonic: float
+            ) -> RootObservedNativeWorkerView:
+        self.verify_current_native_worker_launch(proof)
+        self._prune_observed_views()
+        view = proof._selected_view
+        if (type(view) is not RootSelectedNativeWorkerView
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or type(process_pid) is not int or process_pid <= 0
+                or type(process_start_ticks) is not int or process_start_ticks <= 0
+                or not isinstance(cgroup_identity, str)
+                or not cgroup_identity.startswith("/system.slice/")
+                or type(process_uid) is not int or process_uid <= 0
+                or type(process_gid) is not int or process_gid < 0
+                or type(mount_namespace_inode) is not int or mount_namespace_inode <= 0
+                or type(network_namespace_inode) is not int or network_namespace_inode <= 0
+                or not isinstance(observed_monotonic, (int, float))
+                or isinstance(observed_monotonic, bool)
+                or observed_monotonic < 0
+                or len(self._observed_views) >= 16):
+            raise NativeHermesWorkerLaunchUnavailable("observed worker view is malformed or capacity is exhausted")
+        observation = RootObservedNativeWorkerView(
+            schema=1, observation_handle=secrets.token_hex(16),
+            launch_handle=proof.launch_handle, process_id=process_id,
+            process_pid=process_pid, process_start_ticks=process_start_ticks,
+            cgroup_identity=cgroup_identity, process_uid=process_uid,
+            process_gid=process_gid, mount_namespace_inode=mount_namespace_inode,
+            network_namespace_inode=network_namespace_inode,
+            selected_view_sha256=view.selected_view_sha256,
+            observed_monotonic=float(observed_monotonic),
+            expires_monotonic=min(proof.expires_monotonic, float(observed_monotonic) + _MAX_TTL),
+            _issuer=self._issuer,
+        )
+        self._observed_views[observation.observation_handle] = observation
+        return observation
+
+    @_owner_locked
+    def verify_current_observed_native_worker_view(
+            self, proof: RootVerifiedNativeHermesWorkerLaunch,
+            observed: RootObservedNativeWorkerView) -> RootObservedNativeWorkerView:
+        self.verify_current_native_worker_launch(proof)
+        if (type(observed) is not RootObservedNativeWorkerView
+                or observed._issuer is not self._issuer
+                or self._observed_views.get(observed.observation_handle) is not observed
+                or observed.launch_handle != proof.launch_handle
+                or observed.selected_view_sha256 != proof.selected_view_sha256
+                or observed.expires_monotonic <= time.monotonic()):
+            raise NativeHermesWorkerLaunchUnavailable("observed worker view is foreign or stale")
+        return observed
+
+    @_owner_locked
+    def retire_observed_native_worker_view(self, observed: RootObservedNativeWorkerView) -> None:
+        if (type(observed) is RootObservedNativeWorkerView
+                and observed._issuer is self._issuer
+                and self._observed_views.get(observed.observation_handle) is observed):
+            self._observed_views.pop(observed.observation_handle, None)
+
+    @_owner_locked
+    def _prune_observed_views(self) -> None:
+        now = time.monotonic()
+        for handle, observed in tuple(self._observed_views.items()):
+            if observed.expires_monotonic <= now:
+                self._observed_views.pop(handle, None)
+
+    @_owner_locked
     def close(self) -> None:
         self._closed = True
         self._close_gate_member_fds()
         for proof in tuple(self._proofs.values()):
             proof.close()
         self._proofs.clear()
+        self._observed_views.clear()
         self._selections.clear()
         self.runtime_registry.close()
 
@@ -533,6 +720,10 @@ def preload_native_worker_launch_closure() -> None:
         "hermes_installer.authority.native_worker_recipes",
         "hermes_installer.authority.native_worker_runtime_materialization",
         "hermes_installer.authority.native_worker_start_recipe",
+        "hermes_installer.authority.native_health_observer",
+        "hermes_installer.authority.native_health_daemon",
+        "hermes_installer.authority.native_input_observer",
+        "hermes_installer.authority.host_tool_observation",
         "hermes_installer.authority.runtime_composition",
     ):
         importlib.import_module(module)
@@ -540,5 +731,7 @@ def preload_native_worker_launch_closure() -> None:
 __all__ = [
     "NativeHermesWorkerLaunchUnavailable", "RootActiveNativeHermesWorkerLaunchOwner",
     "RootNativeHermesWorkerSelection", "RootVerifiedNativeHermesWorkerLaunch",
+    "RootSelectedNativeWorkerView", "RootSelectedNativeWorkerViewMount",
+    "RootObservedNativeWorkerView",
     "preload_native_worker_launch_closure",
 ]

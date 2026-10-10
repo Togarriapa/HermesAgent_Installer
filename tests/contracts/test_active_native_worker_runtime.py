@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -28,7 +29,14 @@ def test_projection_fd_custody_is_idempotent_after_numeric_fd_reuse():
         service_generation_digest="a" * 64, runtime_record_id="runtime",
         runtime_record_sha256="b" * 64, pm_runtime_receipt_handle="pm",
         pm_runtime_root_device=1, pm_runtime_root_inode=2,
-        native_output_root_device=3, native_output_root_inode=4,
+        pm_venv_root_path=Path("/private/selected/venv"),
+        pm_venv_root_device=3, pm_venv_root_inode=4,
+        pm_base_root_path=Path("/private/selected/base"),
+        pm_base_root_device=5, pm_base_root_inode=6,
+        native_output_root_device=7, native_output_root_inode=8,
+        native_output_root_path=Path("/private/selected/output"),
+        native_output_root_receipt_handle="receipt-output",
+        native_output_root_receipt_sha256="c" * 64,
         expires_monotonic=float("inf"), member_fds=(read_fd,),
         _custody=_ProjectionFDCustody((read_fd,)), _owner=owner, _issuer=object(),
     )
