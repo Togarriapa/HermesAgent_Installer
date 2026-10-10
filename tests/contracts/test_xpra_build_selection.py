@@ -58,7 +58,7 @@ class XpraBuildSelectionContracts(unittest.TestCase):
                              runtime_sha256="c" * 64)
         prepared = SimpleNamespace(generation_digest="b" * 64)
         profile = RootXpraBuildSelectionProducer._fixed_build_profile(
-            subject, pm, prepared, "d" * 64, Path("/root/private/output"))
+            subject, pm, prepared, "d" * 64)
         self.assertEqual(profile.target_id, BUILD_TARGET)
         self.assertEqual(profile.output_owner_uid, subject.service_uid)
         self.assertEqual(profile.build_service_enrollment_id, subject.id)
@@ -69,6 +69,7 @@ class XpraBuildSelectionContracts(unittest.TestCase):
         self.assertEqual(profile.argv_recipe[1], {"literal": "-I"})
         self.assertEqual(profile.output_specs["xpra-overlay.tar"].maximum_bytes, 134_217_728)
         self.assertEqual(profile.service_generation_digest, prepared.generation_digest)
+        self.assertIsNone(profile.output_root)  # The setup output root remains an FD-only capability.
 
     def test_static_catalog_tree_manifest_still_uses_separate_regular_projection(self) -> None:
         repo = Path(__file__).parents[2]

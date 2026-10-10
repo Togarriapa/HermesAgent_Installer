@@ -184,11 +184,12 @@ class ResolvedBuildInputs:
     argv_recipe: tuple[Mapping[str, Any], ...]
     environment: Mapping[str, str]
     output_specs: Mapping[str, BuildOutputSpec]
-    output_root: Path
+    output_root: Path | None
     output_root_id: str
     output_owner_uid: int
     output_owner_gid: int
     max_lifetime_seconds: int
+    output_root_fd: int | None = None
     original_source_manifest_sha256: str | None = None
     source_projection_root: Path | None = None
     toolchain_projection_root: Path | None = None

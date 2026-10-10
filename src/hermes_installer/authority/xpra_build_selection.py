@@ -16,6 +16,7 @@ import re
 import secrets
 import stat
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
 from dataclasses import dataclass, field
@@ -128,7 +129,7 @@ class RootSelectedXpraBuildSelection:
     module_receipt: "RootXpraTransformModuleReceipt" = field(repr=False, compare=False)
     build_profile: Any = field(repr=False, compare=False)
     setup_build_subject: Any = field(repr=False, compare=False)
-    output_root: Path = field(repr=False, compare=False)
+    output_root: Any = field(repr=False, compare=False)
     _session: Any = field(repr=False, compare=False)
     _producer_id: str = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
@@ -285,6 +286,285 @@ class RootXpraSetupBuildGrantIssuer:
         self._spent.add(grant.grant_id)
         return grant
 
+class RootXpraSetupBuildExecutor:
+    """Stage selected inputs, run the fixed manager job, and publish its receipt."""
+
+    def __init__(self, *, producer: "RootXpraBuildSelectionProducer",
+                 grant_issuer: RootXpraSetupBuildGrantIssuer, launcher: Any,
+                 store: Any, fact_inspector: Any, artifact_staging_root: Path,
+                 monotonic: Callable[[], float] = time.monotonic):
+        from .build_execution import ContentAddressedBuildStore
+        if (os.geteuid() != 0 or type(producer) is not RootXpraBuildSelectionProducer
+                or type(grant_issuer) is not RootXpraSetupBuildGrantIssuer
+                or grant_issuer.producer is not producer
+                or not callable(getattr(launcher, "run_selected_setup_build", None))
+                or not callable(getattr(launcher, "bind_setup_build_grant_issuer", None))
+                or type(store) is not ContentAddressedBuildStore or store.owner_uid != 0
+                or not callable(getattr(fact_inspector, "inspect_build_output", None))
+                or not isinstance(artifact_staging_root, Path)
+                or not artifact_staging_root.is_absolute()):
+            raise XpraBuildSelectionDenied("root Xpra setup build executor dependencies are incomplete")
+        self.producer = producer
+        self.grants = grant_issuer
+        self.launcher = launcher
+        self.launcher.bind_setup_build_grant_issuer(grant_issuer)
+        self.store = store
+        self.fact_inspector = fact_inspector
+        self.staging_root = artifact_staging_root
+        self.monotonic = monotonic
+
+    def execute(self, selection: RootSelectedXpraBuildSelection,
+                grant: RootXpraSetupBuildGrant, *, timeout: float = 300.0,
+                cancelled: Callable[[], bool] = lambda: False) -> Any:
+        from .build_execution import (
+            BuildOutputSpec, ManagedBuildResult, ResolvedBuildInputs,
+        )
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0 < timeout <= 300 or not callable(cancelled)):
+            raise XpraBuildSelectionDenied("Xpra build deadline or cancellation binding is invalid")
+        self.producer.revalidate(selection)
+        subject = selection.setup_build_subject.verify_current()
+        if subject != selection.setup_build_subject:
+            raise XpraBuildSelectionDenied("prepared Xpra service changed before managed launch")
+        live = self.producer.session._factory.session_store._live(
+            self.producer.session._handle)
+        controller = self.producer._current_controller(self.producer.session)
+        if (controller.controller_binding_handle != grant.controller_binding_handle
+                or live.pidfd < 0 or cancelled()):
+            raise XpraBuildSelectionDenied("current setup controller or cancellation state is invalid")
+        source_projection = toolchain_projection = output_path = None
+        output_root_fd: int | None = None
+        deadline = self.monotonic() + min(float(timeout), 300.0)
+        try:
+            source_projection, source_rows, source_tree_digest = self._stage_regular_source(
+                selection.source.tree)
+            toolchain_projection, toolchain_rows, toolchain_digest = self._stage_module(
+                selection.module_receipt)
+            output_capability = selection.output_root
+            output_root_fd = output_capability.open_current()
+            output_info = os.fstat(output_root_fd)
+            if (not stat.S_ISDIR(output_info.st_mode)
+                    or output_info.st_uid != subject.service_uid
+                    or output_info.st_gid != subject.service_gid
+                    or stat.S_IMODE(output_info.st_mode) != 0o700):
+                raise XpraBuildSelectionDenied("prepared output-root descriptor identity changed")
+            output_root_id = output_capability.output_root_id
+            output_path = Path(f"/proc/self/fd/{output_root_fd}")
+            profile = selection.build_profile
+            output_specs = {name: BuildOutputSpec(
+                row.relative_path, row.kind, row.maximum_bytes,
+                row.executable_role, row.target_facts)
+                for name, row in profile.output_specs.items()}
+            request_digest = hashlib.sha256(_canonical({
+                "selection_handle": selection.selection_handle,
+                "recipe_sha256": selection.recipe_sha256,
+                "grant_id": grant.grant_id,
+                "operation_id": BUILD_OPERATION_ID,
+                "parameters": {},
+            })).hexdigest()
+            inputs = ResolvedBuildInputs(
+                target_id=BUILD_TARGET, generation=profile.generation,
+                service_generation_digest=profile.service_generation_digest,
+                build_service_enrollment_id=subject.id,
+                build_service_generation=subject.generation,
+                enrollment_id=subject.id, operation_id=BUILD_OPERATION_ID,
+                selection_digest=request_digest,
+                source_artifact_id=SOURCE_ARTIFACT_ID, source_sha256=SOURCE_SHA256,
+                source_root=source_projection, source_tree_files=source_rows,
+                source_tree_manifest_sha256=source_tree_digest,
+                toolchain_artifact_id=TRANSFORM_MODULE_ID,
+                toolchain_sha256=TRANSFORM_MODULE_SHA256,
+                toolchain_root=toolchain_projection, toolchain_tree_files=toolchain_rows,
+                toolchain_tree_manifest_sha256=toolchain_digest,
+                builder_artifact_id=profile.builder_artifact_id,
+                builder_sha256=profile.builder_sha256,
+                builder_executable=selection.pm_runtime.python_path,
+                argv_recipe=profile.argv_recipe, environment=profile.environment,
+                output_specs=output_specs, output_root=None,
+                output_root_id=output_root_id, output_owner_uid=subject.service_uid,
+                output_owner_gid=subject.service_gid,
+                output_root_fd=output_root_fd,
+                max_lifetime_seconds=min(300, profile.max_lifetime_seconds),
+                original_source_manifest_sha256=selection.source_manifest_sha256,
+                source_projection_root=source_projection,
+                toolchain_projection_root=toolchain_projection,
+            )
+            if cancelled() or self.monotonic() >= deadline:
+                raise XpraBuildSelectionDenied("Xpra setup build was cancelled before launch")
+            process = self.launcher.run_selected_setup_build(
+                inputs, selection=selection, grant=grant, controller_pidfd=live.pidfd,
+                timeout=max(0.0, min(deadline - self.monotonic(), inputs.max_lifetime_seconds)),
+                cancelled=lambda: cancelled() or self.monotonic() >= deadline,
+            )
+            if not isinstance(process, ManagedBuildResult):
+                raise XpraBuildSelectionDenied("managed Xpra build terminal receipt is unavailable")
+            if cancelled() or self.monotonic() >= deadline:
+                raise XpraBuildSelectionDenied("Xpra setup build lease expired before output attestation")
+            receipt = self.store.publish(
+                profile, enrollment_id=subject.id, operation_id=BUILD_OPERATION_ID,
+                process=process, fact_inspector=self.fact_inspector,
+                cancelled=lambda: cancelled() or self.monotonic() >= deadline,
+                output_root=output_path, build_inputs=inputs,
+                before_activate=output_capability.remove_contents_current,
+            )
+            return receipt
+        finally:
+            if output_root_fd is not None:
+                try:
+                    selection.output_root.remove_contents_current()
+                finally:
+                    os.close(output_root_fd)
+            if source_projection is not None:
+                self._remove_projection(source_projection)
+            if toolchain_projection is not None:
+                self._remove_projection(toolchain_projection)
+
+    def _stage_regular_source(self, source: Any) -> tuple[Path, tuple[Any, ...], str]:
+        from ..artifacts import TreeFile
+        from .build_execution import _canonical
+        if (source.artifact_id != SOURCE_ARTIFACT_ID or source.sha256 != SOURCE_SHA256
+                or _full_manifest_sha256(tuple(source.tree_files)) != SOURCE_MANIFEST_SHA256):
+            raise XpraBuildSelectionDenied("verified Xpra source observation no longer matches its pin")
+        rows = tuple(sorted((row for row in source.tree_files if row.kind == "file"),
+                            key=lambda row: row.path))
+        root = Path(tempfile.mkdtemp(prefix=".xpra-setup-source-", dir=self.staging_root))
+        os.chown(root, 0, 0, follow_symlinks=False)
+        try:
+            for row in rows:
+                source_path = source.path / row.path
+                info = source_path.lstat()
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                        or info.st_size != row.size_bytes):
+                    raise XpraBuildSelectionDenied("Xpra source member custody changed")
+                srcfd = os.open(source_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                | getattr(os, "O_CLOEXEC", 0))
+                try:
+                    if os.fstat(srcfd).st_ino != info.st_ino or os.fstat(srcfd).st_dev != info.st_dev:
+                        raise XpraBuildSelectionDenied("Xpra source member inode changed")
+                    destination = root / row.path
+                    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    dstfd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                                    | getattr(os, "O_NOFOLLOW", 0)
+                                    | getattr(os, "O_CLOEXEC", 0), 0o600)
+                    digest = hashlib.sha256()
+                    size = 0
+                    try:
+                        while block := os.read(srcfd, 131072):
+                            digest.update(block)
+                            size += len(block)
+                            view = memoryview(block)
+                            while view:
+                                view = view[os.write(dstfd, view):]
+                        os.fsync(dstfd)
+                    finally:
+                        os.close(dstfd)
+                    if size != row.size_bytes or digest.hexdigest() != row.sha256:
+                        raise XpraBuildSelectionDenied("Xpra source member changed while copied")
+                    os.chmod(destination, 0o555 if row.executable else 0o444,
+                             follow_symlinks=False)
+                finally:
+                    os.close(srcfd)
+            for current, directories, _files in os.walk(root, topdown=False):
+                for name in directories:
+                    os.chown(Path(current) / name, 0, 0, follow_symlinks=False)
+                    os.chmod(Path(current) / name, 0o555, follow_symlinks=False)
+                if Path(current) != root:
+                    os.chown(current, 0, 0, follow_symlinks=False)
+                    os.chmod(current, 0o555, follow_symlinks=False)
+            os.chmod(root, 0o555, follow_symlinks=False)
+        except BaseException:
+            self._remove_projection(root)
+            raise
+        projected = tuple(TreeFile(row.path, row.sha256, row.size_bytes, row.executable)
+                          for row in rows)
+        manifest = hashlib.sha256(_canonical([{
+            "path": row.path, "sha256": row.sha256, "size_bytes": row.size_bytes,
+            "executable": row.executable,
+        } for row in projected])).hexdigest()
+        return root, projected, manifest
+
+    def _stage_module(self, receipt: RootXpraTransformModuleReceipt) -> tuple[Path, tuple[Any, ...], str]:
+        from ..artifacts import TreeFile
+        from .build_execution import _canonical
+        body = receipt.read_current()
+        if (receipt.artifact_id != TRANSFORM_MODULE_ID or receipt.sha256 != TRANSFORM_MODULE_SHA256
+                or len(body) != TRANSFORM_MODULE_BYTES):
+            raise XpraBuildSelectionDenied("installed Xpra transform module receipt changed")
+        root = Path(tempfile.mkdtemp(prefix=".xpra-setup-module-", dir=self.staging_root))
+        os.chown(root, 0, 0, follow_symlinks=False)
+        try:
+            path = root / "xpra_root_xauthority.py"
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o444)
+            try:
+                view = memoryview(body)
+                while view:
+                    view = view[os.write(fd, view):]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            row = TreeFile("xpra_root_xauthority.py", TRANSFORM_MODULE_SHA256,
+                           TRANSFORM_MODULE_BYTES, False)
+            os.chmod(root, 0o555, follow_symlinks=False)
+        except BaseException:
+            self._remove_projection(root)
+            raise
+        manifest = hashlib.sha256(_canonical([{
+            "path": row.path, "sha256": row.sha256, "size_bytes": row.size_bytes,
+            "executable": row.executable,
+        }])).hexdigest()
+        return root, (row,), manifest
+
+    def _remove_projection(self, path: Path) -> None:
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != 0:
+            raise XpraBuildSelectionDenied("root Xpra input projection custody changed")
+        for current, directories, files in os.walk(path, topdown=False, followlinks=False):
+            for filename in files:
+                item = Path(current) / filename
+                member = item.lstat()
+                if not stat.S_ISREG(member.st_mode) or member.st_uid != 0:
+                    raise XpraBuildSelectionDenied("Xpra input projection contains an unexpected member")
+                os.chmod(item, 0o600, follow_symlinks=False)
+                item.unlink()
+            for name in directories:
+                item = Path(current) / name
+                directory = item.lstat()
+                if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0:
+                    raise XpraBuildSelectionDenied("Xpra input projection directory changed")
+                os.chmod(item, 0o700, follow_symlinks=False)
+                item.rmdir()
+        os.chmod(path, 0o700, follow_symlinks=False)
+        path.rmdir()
+
+    @staticmethod
+    def _remove_output_root(path: Path, uid: int, gid: int) -> None:
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != uid or info.st_gid != gid
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise XpraBuildSelectionDenied("Xpra output root custody changed during cleanup")
+        for current, directories, files in os.walk(path, topdown=False, followlinks=False):
+            for filename in files:
+                item = Path(current) / filename
+                member = item.lstat()
+                if not stat.S_ISREG(member.st_mode) or member.st_uid != uid or member.st_nlink != 1:
+                    raise XpraBuildSelectionDenied("Xpra output contains an unexpected file")
+                os.chmod(item, 0o600, follow_symlinks=False)
+                item.unlink()
+            for name in directories:
+                item = Path(current) / name
+                member = item.lstat()
+                if not stat.S_ISDIR(member.st_mode) or member.st_uid != uid:
+                    raise XpraBuildSelectionDenied("Xpra output contains an unexpected directory")
+                os.chmod(item, 0o700, follow_symlinks=False)
+                item.rmdir()
+        os.chmod(path, 0o700, follow_symlinks=False)
+        path.rmdir()
+
 
 class RootXpraBuildSelectionProducer:
     """Build the exact current selection from real setup-owned receipts.
@@ -419,11 +699,19 @@ class RootXpraBuildSelectionProducer:
                 raise ValueError("current setup controller custody is absent")
             now = self.monotonic()
             handle = secrets.token_urlsafe(36)
-            output_root_id = hashlib.sha256(handle.encode("ascii")).hexdigest()
-            output_root = self._create_output_root(session, output_root_id, subject)
-            if not isinstance(output_root, Path) or not output_root.is_absolute():
-                raise ValueError("root output root is invalid")
-            profile = self._fixed_build_profile(subject, pm, prepared, output_root_id, output_root)
+            output_root = subject.create_output_root()
+            output_root_id = output_root.output_root_id
+            output_fd = output_root.open_current()
+            try:
+                output_info = os.fstat(output_fd)
+                if (not stat.S_ISDIR(output_info.st_mode)
+                        or output_info.st_uid != subject.service_uid
+                        or output_info.st_gid != subject.service_gid
+                        or stat.S_IMODE(output_info.st_mode) != 0o700):
+                    raise ValueError("root output-root descriptor identity is invalid")
+            finally:
+                os.close(output_fd)
+            profile = self._fixed_build_profile(subject, pm, prepared, output_root_id)
             recipe_digest = self._recipe_digest(profile, source, pm, module_receipt)
             selection = RootSelectedXpraBuildSelection(
                 1, handle, session._handle.session_id, auth.transaction_handle,
@@ -448,7 +736,7 @@ class RootXpraBuildSelectionProducer:
 
     @staticmethod
     def _fixed_build_profile(subject: Any, pm: VerifiedPMRuntimeSelection,
-                             prepared: Any, output_root_id: str, output_root: Path) -> Any:
+                             prepared: Any, output_root_id: str) -> Any:
         """Compile the finite Sol Xpra recipe against this setup-only subject."""
         from ..protected_enrollment import FixedBuildOutputSpec, FixedBuildProfile
         subject_fields = {
@@ -504,7 +792,7 @@ class RootXpraBuildSelectionProducer:
                 {"literal": "-I"},
                 {"build_path": {"mount_id": "toolchain", "relative_path": "xpra_root_xauthority.py"}},
             ), environment={}, max_lifetime_seconds=300,
-            output_root_id=output_root_id, output_root=output_root,
+            output_root_id=output_root_id, output_root=None,
             output_owner_uid=subject.service_uid,
             output_specs={"xpra-overlay.tar": FixedBuildOutputSpec(
                 "xpra-overlay.tar", "file", 134_217_728, "data", facts)},
@@ -537,48 +825,6 @@ class RootXpraBuildSelectionProducer:
             pid=pid, pidfd=live.pidfd, start_ticks=start_ticks,
             controller_binding_handle=binding,
         )
-
-    @staticmethod
-    def _create_output_root(session: Any, output_root_id: str, subject: Any) -> Path:
-        if (not re.fullmatch(r"[0-9a-f]{64}", output_root_id)
-                or type(subject.service_uid) is not int or subject.service_uid <= 0
-                or type(subject.service_gid) is not int or subject.service_gid <= 0):
-            raise XpraBuildSelectionDenied("selected Xpra output root identity is invalid")
-        session_root = Path(session._factory.session_store.session_root)
-        if not session_root.is_absolute():
-            raise XpraBuildSelectionDenied("root setup journal path is unavailable")
-        root_info = session_root.lstat()
-        if (not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode)
-                or root_info.st_uid != 0 or root_info.st_mode & 0o022):
-            raise XpraBuildSelectionDenied("root setup journal directory custody is invalid")
-        parent = session_root / "prepared-build-services"
-        transaction_root = parent / hashlib.sha256(
-            session._authorization.transaction_handle.encode("utf-8")).hexdigest()
-        for directory in (parent, transaction_root):
-            try:
-                directory.mkdir(mode=0o700)
-            except FileExistsError:
-                pass
-            info = directory.lstat()
-            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
-                    or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
-                raise XpraBuildSelectionDenied("prepared Xpra build parent is not root-private")
-        output_root = transaction_root / ("output-" + output_root_id)
-        try:
-            output_root.mkdir(mode=0o700)
-            os.chown(output_root, subject.service_uid, subject.service_gid, follow_symlinks=False)
-            os.chmod(output_root, 0o700, follow_symlinks=False)
-        except OSError:
-            try:
-                output_root.rmdir()
-            except OSError:
-                pass
-            raise XpraBuildSelectionDenied("fresh private Xpra output root could not be created") from None
-        info = output_root.lstat()
-        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != subject.service_uid
-                or info.st_gid != subject.service_gid or stat.S_IMODE(info.st_mode) != 0o700):
-            raise XpraBuildSelectionDenied("fresh Xpra output root ownership is invalid")
-        return output_root
 
     def _current_module_receipt(self) -> RootXpraTransformModuleReceipt:
         session = self.session
@@ -719,15 +965,22 @@ class RootXpraBuildSelectionProducer:
         if subject != selection.setup_build_subject:
             raise XpraBuildSelectionDenied("prepared build subject has changed")
         current_profile = self._fixed_build_profile(
-            subject, pm, prepared, selection.output_root_id, selection.output_root)
+            subject, pm, prepared, selection.output_root_id)
         if self._recipe_digest(current_profile, selection.source, pm,
                                selection.module_receipt) != selection.recipe_sha256:
             raise XpraBuildSelectionDenied("fixed Xpra recipe changed before build admission")
+        output_fd = None
         try:
-            output_info = selection.output_root.lstat()
+            output_fd = selection.output_root.open_current()
+            output_info = os.fstat(output_fd)
         except OSError:
             raise XpraBuildSelectionDenied("selected private Xpra output root is unavailable") from None
-        if (not stat.S_ISDIR(output_info.st_mode) or stat.S_ISLNK(output_info.st_mode)
+        finally:
+            if output_fd is not None:
+                os.close(output_fd)
+        if (selection.output_root.output_root_id != selection.output_root_id
+                or selection.output_root.service_selection_handle != subject.service_selection_handle
+                or not stat.S_ISDIR(output_info.st_mode)
                 or output_info.st_uid != subject.service_uid
                 or output_info.st_gid != subject.service_gid
                 or stat.S_IMODE(output_info.st_mode) != 0o700):
