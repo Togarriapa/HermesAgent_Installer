@@ -262,6 +262,46 @@ def _context_digest(context: HostContext) -> str:
     return canonical_digest({**context.claims(), "signature": context.signature})
 
 
+class _ApplicationPackageObservationSigner:
+    """Narrow public facade for the two source-owned v136 observations."""
+
+    __slots__ = ("__service",)
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+
+    def issue_locked_package_artifact(self, observation: Any) -> Any:
+        return self.__service._issue_application_package_observation(
+            "locked-package-artifact", observation)
+
+    def verify_locked_package_artifact(self, receipt: Any) -> Any:
+        return self.__service._verify_application_package_observation(
+            "locked-package-artifact", receipt)
+
+    def issue_package_license_observation(self, observation: Any) -> Any:
+        return self.__service._issue_application_package_observation(
+            "package-license", observation)
+
+    def verify_package_license_observation(self, receipt: Any) -> Any:
+        return self.__service._verify_application_package_observation(
+            "package-license", receipt)
+
+
+class _PublicInputPermissionSigner:
+    """Narrow signer facade for the v138 public-web-read permission DTO."""
+
+    __slots__ = ("__service",)
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+
+    def issue_permission(self, permission: Any) -> Any:
+        return self.__service._issue_public_input_permission(permission)
+
+    def verify_permission(self, receipt: Any) -> Any:
+        return self.__service._verify_public_input_permission(receipt)
+
+
 class AuthorityService:
     """One authenticated client request per connection on the fixed socket."""
 
@@ -339,6 +379,10 @@ class AuthorityService:
         self.private_memory_route_resolver = None
         self.private_memory_job_queue = None
         self.private_memory_observation_producer = None
+        self.application_package_observation_producer = None
+        self._application_package_observation_signer = None
+        self.public_input_permission_registry = None
+        self._public_input_permission_signer = None
         self.web_content_artifact_registry = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -496,6 +540,203 @@ class AuthorityService:
             raise
         except Exception:
             raise AuthorityDenied("memory.observation", "private-memory observation verification failed") from None
+
+    def attach_application_package_closure_registry(self, registry: Any) -> None:
+        """Attach the exact root-owned locked-package observation registry."""
+        from .application_runtime_preparation import RootApplicationOfflinePackageClosureRegistry
+
+        if (self.application_package_observation_producer is not None
+                or type(registry) is not RootApplicationOfflinePackageClosureRegistry
+                or getattr(registry, "authority_service", None) is not self
+                or not callable(getattr(registry, "verify_observation_for_authority", None))
+                or not callable(getattr(registry, "retain_authority_signed_observation", None))
+                or not callable(getattr(registry, "verify_observation_receipt", None))):
+            raise AuthorityDenied("application.package_observation", "root package observation registry is invalid")
+        self.application_package_observation_producer = registry
+
+    def application_package_observation_signer(self) -> Any:
+        """Return the service-owned signer scoped to two exact v136 DTOs."""
+        if self._application_package_observation_signer is None:
+            self._application_package_observation_signer = _ApplicationPackageObservationSigner(self)
+        return self._application_package_observation_signer
+
+    def _issue_application_package_observation(self, kind: str, observation: Any) -> Any:
+        from dataclasses import replace
+        from .application_runtime_preparation import (
+            RootApplicationLockedPackageArtifactReceipt,
+            RootApplicationPackageLicenseObservation,
+        )
+
+        specs = {
+            "locked-package-artifact": (
+                RootApplicationLockedPackageArtifactReceipt,
+                "root-application-locked-package-artifact-v136",
+                frozenset({
+                    "receipt_handle", "artifact_id", "application_id",
+                    "source_preparation_selection_handle", "qualification_choice_handle",
+                    "qualification_consent_receipt_handle", "setup_session_id", "transaction_handle",
+                    "plan_sha256", "prepared_generation_digest", "lock_receipt_handle", "lock_sha256",
+                    "lock_member_id", "package_name", "package_version", "artifact_kind",
+                    "platform_tags", "origin_policy_id", "source_url", "lock_integrity_algorithm",
+                    "lock_integrity_digest", "artifact_sha256", "size_bytes", "cas_device",
+                    "cas_inode", "cas_mode", "controller_binding_handle", "issued_monotonic",
+                    "expires_monotonic",
+                }),
+            ),
+            "package-license": (
+                RootApplicationPackageLicenseObservation,
+                "root-application-package-license-observation-v136",
+                frozenset({
+                    "receipt_handle", "artifact_receipt_handle", "artifact_sha256", "package_name",
+                    "package_version", "metadata_kind", "metadata_member_path",
+                    "metadata_member_sha256", "declared_license_expression", "license_member_records",
+                    "evidence_sha256", "eligibility", "review_policy_receipt_handle",
+                    "issued_monotonic", "expires_monotonic",
+                }),
+            ),
+        }
+        spec = specs.get(kind)
+        registry = self.application_package_observation_producer
+        if (spec is None or registry is None or type(observation) is not spec[0]
+                or not callable(getattr(observation, "claims", None))):
+            raise AuthorityDenied("application.package_observation", "package observation kind or source type is unavailable")
+        try:
+            if registry.verify_observation_for_authority(kind, observation) is not True:
+                raise AuthorityDenied("application.package_observation", "package source evidence is not current")
+            claims = observation.claims()
+            if not isinstance(claims, Mapping) or set(claims) != spec[2]:
+                raise AuthorityDenied("application.package_observation", "package observation claims differ from v136 schema")
+            receipt = replace(observation, signature=self._sign_root_selected(spec[1], claims))
+            if registry.retain_authority_signed_observation(kind, receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package receipt was not retained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.package_observation", "package observation could not be signed and retained") from None
+
+    def _verify_application_package_observation(self, kind: str, receipt: Any) -> Any:
+        from .application_runtime_preparation import (
+            RootApplicationLockedPackageArtifactReceipt,
+            RootApplicationPackageLicenseObservation,
+        )
+
+        specs = {
+            "locked-package-artifact": (RootApplicationLockedPackageArtifactReceipt,
+                                         "root-application-locked-package-artifact-v136"),
+            "package-license": (RootApplicationPackageLicenseObservation,
+                                "root-application-package-license-observation-v136"),
+        }
+        registry = self.application_package_observation_producer
+        spec = specs.get(kind)
+        if (registry is None or spec is None or type(receipt) is not spec[0]
+                or not isinstance(getattr(receipt, "signature", None), str)
+                or len(receipt.signature) != hashlib.sha256().digest_size * 2):
+            raise AuthorityDenied("application.package_observation", "package observation receipt type is invalid")
+        try:
+            claims = receipt.claims()
+            expected_claims = set(receipt.__dataclass_fields__) - {"signature"}
+            if not isinstance(claims, Mapping) or set(claims) != expected_claims:
+                raise AuthorityDenied("application.package_observation", "package receipt claims differ from its typed schema")
+            self._verify_root_selected_signature(spec[1], claims, receipt.signature)
+            if registry.verify_observation_receipt(receipt) is not True:
+                raise AuthorityDenied("application.package_observation", "package observation is stale or unretained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.package_observation", "package observation could not be verified") from None
+
+    def attach_root_public_input_permission_registry(self, registry: Any) -> None:
+        """Attach the exact durable public-input permission registry once."""
+        from .root_public_input_permission import RootPublicInputPermissionRegistry
+
+        if (self.public_input_permission_registry is not None
+                or type(registry) is not RootPublicInputPermissionRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "verify_observation_for_authority", None))
+                or not callable(getattr(registry, "retain_authority_signed_observation", None))
+                or not callable(getattr(registry, "verify_permission_membership", None))):
+            raise AuthorityDenied("source.public_permission", "root public-input permission registry is invalid")
+        self.public_input_permission_registry = registry
+
+    def root_public_input_permission_signer(self) -> Any:
+        """Return the only signer for the exact v138 public-input permission DTO."""
+        if self._public_input_permission_signer is None:
+            self._public_input_permission_signer = _PublicInputPermissionSigner(self)
+        return self._public_input_permission_signer
+
+    def _issue_public_input_permission(self, permission: Any) -> Any:
+        from dataclasses import replace
+        from .root_public_input_permission import RootPublicInputPermission
+
+        registry = self.public_input_permission_registry
+        expected_claims = frozenset({
+            "receipt_handle", "consent_id", "purpose", "selection_handle",
+            "principal_id", "profile_id", "namespace_id", "profile_generation",
+            "service_generation_digest", "retained_input_selection_handle",
+            "input_observation_handle", "input_sha256", "web_scope_ids",
+            "web_scope_sha256", "public_recipient_ids", "allowed_operations",
+            "additional_metered_budget_usd", "revocation_epoch", "issued_monotonic",
+            "expires_monotonic",
+        })
+        if (registry is None or type(permission) is not RootPublicInputPermission
+                or not callable(getattr(permission, "claims", None))):
+            raise AuthorityDenied("source.public_permission", "public-input permission candidate is unavailable")
+        try:
+            if registry.verify_observation_for_authority(permission) is not True:
+                raise AuthorityDenied("source.public_permission", "public-input observation or selection is not current")
+            claims = permission.claims()
+            if not isinstance(claims, Mapping) or set(claims) != expected_claims:
+                raise AuthorityDenied("source.public_permission", "public-input permission claims differ from v138 schema")
+            now = self.monotonic()
+            if (permission.purpose != "public-free-web-read"
+                    or permission.allowed_operations != ("plugin.web.read",)
+                    or isinstance(permission.additional_metered_budget_usd, bool)
+                    or not isinstance(permission.additional_metered_budget_usd, (int, float))
+                    or permission.additional_metered_budget_usd != 0.0
+                    or isinstance(permission.issued_monotonic, bool)
+                    or not isinstance(permission.issued_monotonic, (int, float))
+                    or isinstance(permission.expires_monotonic, bool)
+                    or not isinstance(permission.expires_monotonic, (int, float))
+                    or not math.isfinite(permission.issued_monotonic)
+                    or not math.isfinite(permission.expires_monotonic)
+                    or not permission.issued_monotonic <= now < permission.expires_monotonic
+                    or permission.expires_monotonic - permission.issued_monotonic > 30.0):
+                raise AuthorityDenied("source.public_permission", "public-input permission exceeds its fixed purpose")
+            signed = replace(permission, signature=self._sign_root_selected(
+                "root-public-input-permission-v138", claims))
+            if registry.retain_authority_signed_observation(signed) is not True:
+                raise AuthorityDenied("source.public_permission", "signed public-input permission was not retained")
+            return signed
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.public_permission", "public-input permission could not be signed and retained") from None
+
+    def _verify_public_input_permission(self, receipt: Any) -> Any:
+        from .root_public_input_permission import RootPublicInputPermission
+
+        registry = self.public_input_permission_registry
+        if (registry is None or type(receipt) is not RootPublicInputPermission
+                or not isinstance(getattr(receipt, "signature", None), str)
+                or len(receipt.signature) != hashlib.sha256().digest_size * 2
+                or not callable(getattr(receipt, "claims", None))):
+            raise AuthorityDenied("source.public_permission", "public-input permission receipt type is invalid")
+        try:
+            claims = receipt.claims()
+            if (not isinstance(claims, Mapping)
+                    or set(claims) != set(receipt.__dataclass_fields__) - {"signature"}):
+                raise AuthorityDenied("source.public_permission", "public-input permission claims differ from typed schema")
+            self._verify_root_selected_signature(
+                "root-public-input-permission-v138", claims, receipt.signature)
+            if registry.verify_permission_membership(receipt) is not True:
+                raise AuthorityDenied("source.public_permission", "public-input permission is stale or unretained")
+            return receipt
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.public_permission", "public-input permission could not be verified") from None
 
     def attach_web_content_artifact_registry(self, registry: Any) -> None:
         """Attach the exact staged web-content CAS/receipt owner once."""

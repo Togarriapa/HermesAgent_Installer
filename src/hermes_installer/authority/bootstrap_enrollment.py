@@ -911,6 +911,14 @@ class RootSetupSessionStore:
             raise BootstrapEnrollmentError("root authority journal directory identity changed")
         return live
 
+    def current_deadline(self, session_handle: RootSetupSessionHandle) -> float:
+        """Return the monotonic expiry of a fully revalidated live setup session."""
+        live = self._live(session_handle)
+        deadline = live.record.get("expires_monotonic")
+        if type(deadline) not in (int, float) or deadline <= time.monotonic():
+            raise BootstrapEnrollmentPending("root setup session deadline is unavailable or expired")
+        return float(deadline)
+
     def _handle_for_session(self, session_id: str) -> RootSetupSessionHandle:
         live = self._sessions.get(session_id)
         if live is None:
