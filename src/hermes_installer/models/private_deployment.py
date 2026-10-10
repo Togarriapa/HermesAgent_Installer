@@ -926,6 +926,11 @@ class RootExistingModelArtifactObserver:
         current = self.selection_registry.verify_current(retained[1])
         if current is not retained[1]:
             raise PrivateDeploymentDenied("existing model source selection changed")
+        source_receipt_digest = self.selection_registry.supporting_source_receipt_digest(
+            observation.selection_handle)
+        if (not _SHA256.fullmatch(observation.supporting_source_receipt_sha256)
+                or observation.supporting_source_receipt_sha256 != source_receipt_digest):
+            raise PrivateDeploymentDenied("supporting source receipt digest changed")
         self._verify_source_pins_current(retained[1])
         held = self.selection_registry.open_selected_directory(observation.selection_handle)
         try:
