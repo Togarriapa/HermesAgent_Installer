@@ -1829,5 +1829,137 @@
       }
     ],
     "acceptance": "Actual producing graph and tests required; no operational permission or original acceptance inferred. Baseline and all AC open."
+  },
+  "source_choice_identity_scope_v146": {
+    "schema": 1,
+    "requirements": [
+      "SK-T127",
+      "SK-T139",
+      "HI-T143",
+      "HI-T142"
+    ],
+    "why": "Actual pre-service held release receipt has deployment SHA, not opaque handle; fixed model root observation must precede explicit child choice and model-tree verification without signing incomplete intent. Public scope requires actual retained canonical payload, not only matching config IDs.",
+    "release_identity": {
+      "replacement": "v143 choice record field release_receipt_handle is replaced by release_deployment_receipt_sha256",
+      "source": "Exact VerifiedInstallerReleaseReceipt.deployment_receipt_sha256 after verify_current; held release root/device/inode/manifest and current actor verified separately. This digest is named as digest, never relabeled opaque handle.",
+      "setup_session_handle": "Genuine RootSetupSessionStore normal session identity already adopted from stage-zero. No fabricated release handle/facade required; key bridge still resolves genuine live stage-zero receipt where that type actually has a handle."
+    },
+    "model_sequence": [
+      {
+        "step": 1,
+        "action": "Factory resolves current v133 private-profile selector and actual RootExistingModelStoreTemplateReceipt.read_current; opens only fixed reviewed /var/lib/hermes-installer/model-store securely through root-owned ancestor FDs.",
+        "output": "RootHeldExistingModelStoreObservation: schema, observation_handle, template_artifact_id, template_sha256, template_member_receipt_handle, root_id, root_device, root_inode, root_uid, root_gid, root_mode, private_profile_selection_handle, issued_monotonic, expires_monotonic; registry membership and held directory FD. No signature/consent/model source/deployment assertion."
+      },
+      {
+        "step": 2,
+        "action": "Foreground root TTY lists only bounded actual eligible direct-child basenames from held root and records explicit blank/no-default selection, controller observation and actual selected child device/inode/mode.",
+        "output": "Actual root TTY choice binds held root observation handle, direct child basename/inode, private profile/principal/namespace stable selectors and selected source metadata/license/README member receipt identities. No arbitrary path/default/download/copy/chown."
+      },
+      {
+        "step": 3,
+        "action": "Revalidate root/template/child/controller/current short principal/namespace snapshot, resolve genuine held small v135 metadata/license/README source receipts, then RootSetupChoiceRegistry.record_observed_choice records the completed closed existing-model-selection choice with v143/v146 named deployment digest and actual source receipt membership.",
+        "output": "Signed durable choice intent + opaque selection handle; signing only after actual root TTY selection and source-definition receipts. It is not a verified model tree or deployment and does not require model weights already hashed before the choice."
+      },
+      {
+        "step": 4,
+        "action": "RootExistingModelSelectionRegistry resolves signed choice and current held root/child/source metadata proof into existing RootExistingModelArtifactSelection; RootExistingModelArtifactObserver hashes all exact selected manifest members via retained child FD before issuing actual signed source observation.",
+        "output": "ExistingModelArtifactObservation only after complete actual all149-file verification; current source/private selector linkage, supporting source digest, existing signer. No model-load/private endpoint/embedding proof inferred."
+      }
+    ],
+    "held_root_api": {
+      "registry": "RootOwnedFilesystemSelectionRegistry",
+      "observe": "observe_existing_model_store(private_profile_selection_handle)->RootHeldExistingModelStoreObservation",
+      "current": "resolve_current_root(observation_handle,private_profile_selection_handle)->current held root observation",
+      "open": "open_selected_root(observation_handle)->genuine duplicate held directory FD after currentness",
+      "closure": "Root observation is pre-choice kernel/filesystem fact, not signed completed purpose choice. Source-definition member receipts are distinct from later model-tree observation. Existing fixed root missing or unsafe denies with exact prerequisite; observer never repairs it."
+    },
+    "public_scope_payload": {
+      "capability": "NativeActionRecord remains operation plugin.web.read, capability plugin:web; v142 does not rename existing action capability.",
+      "resolver": "RootNativeComponentTargetRegistry.resolve_current_public_web_scope(target_selection_handle)->root-retained canonical scope payload plus scope_payload_sha256, configuration_observation_handle/configuration_sha256 and exact target-contract source receipt joins.",
+      "payload": "Exactly v142 ten EnrolledPublicWebScope fields with nested targets; SHA canonical rule v142. Resolver reads retained actual typed source configuration observation, revalidates current registry membership and choice/controller/source contract, never accepts row payload as source.",
+      "active_validation": "Publisher/getter compare full canonical payload hash and exact field projection against retained target configuration, in addition to existing target/config IDs/profile/process generation/effect/recipient FKs. Matching configuration SHA/IDs without authenticated named scope member does not prove arbitrary targets."
+    },
+    "tasks": [
+      {
+        "id": "SK-T146.1",
+        "owner": "factory/model selection/consent",
+        "work": "Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately."
+      },
+      {
+        "id": "HI-T146.2",
+        "owner": "native target/factory/enrollment",
+        "work": "Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation."
+      }
+    ],
+    "acceptance": "Ordering/source records only; actual tree/load/route/runtime acceptance separate, all original AC and baseline unchanged."
+  },
+  "prepared_role_public_disclosure_v149": {
+    "schema": 1,
+    "requirements": [
+      "HI-T33",
+      "HI-T62",
+      "HI-T76",
+      "HI-T123",
+      "HI-T137",
+      "HI-T138"
+    ],
+    "why": "Actual runtime closure files were mislabeled interpreter despite unique interpreter path; prepared worker module proof wrongly required root-actor imports; first public input needs genuine per-input disclosure, not public profile or empty parent bypass.",
+    "runtime_layout": {
+      "role": "runtime-member",
+      "addition": "Append finite release manifest role runtime-member, existing interpreter role unchanged and unique.",
+      "interpreter": "Only runtime/bin/python with roles exactly [interpreter]; actual selected interpreter bytes/held FD. No stdlib/library/package file assigned interpreter.",
+      "members": "Every other selected verified isolated installer runtime closure regular member maps runtime/<exact normalized runtime-relative path>, roles exactly [runtime-member]. No filename/suffix inference or arbitrary runtime directory sweep. Must be exact retained VerifiedInstallerInterpreterReceipt.files/actual runtime closure manifest selected by v76, executable/root/stdlib/PyYAML receipts; source digest never executable proof.",
+      "bounds": "Existing <=50000 release rows/portable unique normalized nofollow relative paths, no dot/dotdot/symlink/hardlink/special files. Mode0555 only actual selected executable member mode, otherwise0444. Root0/no untrusted writable ancestors; full actual hash/size/member closure validated before publication and every held release resolve. Manifest includes all runtime members, excludes unselected caches/bytecode/local files.",
+      "producer_verifier": "RootInstalledReleaseBuilder emits runtime-member rows, InstalledRootReleaseVerifier fixed role validator accepts only exact runtime/ prefix and declared selected interpreter closure membership; fails if unique interpreter absent/duplicated, mixed roles or undeclared runtime files. Preserve actual isolated stdlib/shared-library/dependency import origins; role alone proves no executed origin."
+    },
+    "prepared_role_source": {
+      "type": "hermes_installer.authority.bootstrap_runtime_factory.RootPreparedReleaseMemberReceipt",
+      "semantics": "Actual source-defined held-release membership/bytes only, distinct existing RootReleaseModuleReceipt (current root actor imported origin) and later LoadedNativePackageProof/loaded_process_roles (actual worker import/PIDFD). Do not require root actor to import native_invocations/native_boundary worker source to prepare role definitions.",
+      "fields": [
+        "artifact_id",
+        "relative_path",
+        "sha256",
+        "size_bytes",
+        "release_commit",
+        "deployment_receipt_sha256",
+        "source_receipt_handle",
+        "setup_session_id",
+        "prepared_generation_id"
+      ],
+      "issuer": "RootSelectedInstallationBinding.resolve_prepared_native_process_role_member(native_policy_preparation_handle,role_id)->RootPreparedReleaseMemberReceipt; current source-defined exact v137 role module/member descriptor chooses artifact, not caller path.",
+      "checks": "Current genuine setup/controller/principal/source-definition adapter and selected release/plan/prepared generation. Exact reviewed role descriptor artifact/path/SHA/size held release row roles[module] or actual reviewed source role; securely reopen release member through held release FD, compute bytes SHA and retain genuine registry handle. No imported-origin assertion in this type. read_current revalidates same release/member/source/session.",
+      "later": "Assembler v134 serializes exact source-defined process_role_records/digest. After active publication, custody independently joins genuine selected role/source receipts to actual mounted closure and authenticated loaded_process_roles import paths/dev/inode/hash with current worker PIDFD/mount/cgroup/profile/package generations. Prepared held member proof never substitutes live import/source receipt. Root definition adapter itself remains current actual imported RootReleaseModuleReceipt where root code executes it."
+    },
+    "public_first_input": {
+      "owner": "root public input permission registry + genuine root TTY/native input source observer",
+      "persistent": "v138 normal configuration signed durable public-free-web-read choice selects exact v142 scopes; configuration alone never classifies input or grants egress.",
+      "method": "RootPublicInputPermissionRegistry.observe_public_input_disclosure(public_permission_selection_handle,retained_observed_input_handle,selected_execution_handle,actual_root_tty_disclosure)->RootPublicNativeInputObservation",
+      "order": [
+        "Root observer retains exact actual new input bytes/hash/size and selected native execution/current peer/profile/process/package generation/source origin in a pending non-authority record; no SourceReceipt PUBLIC ceiling issued yet.",
+        "Trusted foreground root TTY presents exact bounded disclosure of that new input and selected public web destination scope/zero budget; user explicitly identifies this own new input as PUBLIC for public-free web-read. No default/bool/worker label; receipt binds input SHA/size/selection/peer and genuine TTY/controller observation.",
+        "Root observer/permission registry verifies same retained bytes, current selected source/peer, actual TTY subject/private namespace/current source origin and ancestry. Any PRIVATE/UNKNOWN parent, history/memory/credential/imported attachment remains denied; user disclosure does not relabel existing private source. Empty parents only permitted for this genuinely observed fresh disclosed public input, not caller omission.",
+        "Registry issues sealed RootPublicNativeInputObservation with source choice/disclosure/input binding, then existing resolve_for_selected_input yields current <=30s public permission and source issuer mints actual source receipt through same selected input ancestry. Every dispatch/retry current resolver rechecks epoch/scope/selection/source."
+      ],
+      "fields": "Existing v138 public input observation plus disclosure_observation_handle,disclosure_sha256,retained_observed_input_handle,input_sha256,input_size_bytes,selected_execution_handle,tty_controller_observation_handle. All root registry membership/currentness, exact existing selected input handles not caller claims.",
+      "failure": "No actual foreground per-input disclosure or source proof => no PUBLIC receipt/egress. Persistent public choice/private consent/profile/captured worker flag cannot bypass. No public model/memory export or paid route."
+    },
+    "tasks": [
+      {
+        "id": "HI-T149.1",
+        "owner": "release builder/verifier",
+        "work": "Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance."
+      },
+      {
+        "id": "HI-T149.2",
+        "owner": "factory/source observer/native custody",
+        "work": "Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies."
+      },
+      {
+        "id": "HI-T149.3",
+        "owner": "public permission/factory/source input",
+        "work": "Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny."
+      }
+    ],
+    "acceptance": "All original AC/baseline unchanged. Source role/layout/disclosure producers required; no actual runtime/public target acceptance inferred."
   }
 }
