@@ -873,8 +873,11 @@ class SetupPrincipalLinuxRootContract(unittest.TestCase):
                     1, "f" * 64, "a" * 64, "b" * 64, "1" * 64, "2" * 64,
                     "c" * 64, "3" * 64, principal_handle, (), now, now + 120,
                     _initial_session=initial.session, principal_identity_kind="linux-local-owner-v1")
+                with self.assertRaises(BootstrapEnrollmentPending):
+                    _ = issuer.setup_session_store
                 adopted, new_handle = issuer.adopt_initial_publication(
                     normal_session_store=normal, normal_session_handle=normal.handle)
+                self.assertIs(adopted.setup_session_store, normal)
                 selector = adopted.resolve_adopted_principal_selector(normal, normal.handle)
                 current = adopted.resolve_current_setup_identity(
                     selector.selection_handle,
