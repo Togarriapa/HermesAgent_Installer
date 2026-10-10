@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping
 from .service import (AuthorityPolicy, AuthorityService, ChildDelegationRule,
                       EffectHandler, EffectRule, PrincipalBinding)
 from .types import AuthorityDenied
+from .native_worker_endpoint_custody import RootPreparedAuthorityEndpointCustodian
 
 DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
 

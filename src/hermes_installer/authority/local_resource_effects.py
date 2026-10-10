@@ -1098,6 +1098,7 @@ class RootActiveLocalOwnerPrincipalRegistry:
 
 
 _ACTIVE_OWNER_OVERLAY_SELECTION_SEAL = object()
+_ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1128,6 +1129,29 @@ class RootActiveOwnerOverlayInvocationSelection:
 
     def __repr__(self) -> str:
         return "RootActiveOwnerOverlayInvocationSelection(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootActiveOwnerOverlaySourceObserver:
+    """Current, typed local source observer projected from a signed adoption."""
+
+    observer_row: Mapping[str, Any]
+    selection: RootActiveOwnerOverlayInvocationSelection
+    capture_schemas: Mapping[str, tuple[bytes, str]]
+    release_commit: str
+    _seal: object = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL
+                or type(self.selection) is not RootActiveOwnerOverlayInvocationSelection
+                or not isinstance(self.release_commit, str) or not self.release_commit):
+            raise TypeError("owner-overlay source observers are root-issued active records")
+        object.__setattr__(self, "observer_row", MappingProxyType(dict(self.observer_row)))
+        object.__setattr__(self, "capture_schemas", MappingProxyType(dict(self.capture_schemas)))
+
+    def __repr__(self) -> str:
+        return "RootActiveOwnerOverlaySourceObserver(<root-private>)"
 
 
 class RootActiveOwnerOverlayRegistry:
@@ -1336,6 +1360,109 @@ class RootActiveOwnerOverlayRegistry:
             raise LocalProfileOverlayEffectsDenied("active owner-overlay selection changed")
         self._retire(current.selection_handle)
         return selection
+
+    def resolve_current_source_observer(self, registration_id: str, peer_pid: int,
+                                        peer_pidfd: int) -> RootActiveOwnerOverlaySourceObserver:
+        """Rejoin one signed observer row, loaded owner role and installed source bytes."""
+        from .setup_policy_publication import PolicyPublicationReceiptResolver, validate_owner_overlay_adoption_row
+        from .owner_overlay_capture_schemas import (
+            CAPTURE_SCHEMAS, INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID,
+        )
+        from .installer_release import InstalledRootReleaseVerifier
+
+        selection = self.resolve_selected_operation(registration_id, peer_pid, peer_pidfd)
+        try:
+            receipt = PolicyPublicationReceiptResolver.resolve_current()
+            rows = [validate_owner_overlay_adoption_row(item)
+                    for item in receipt.owner_overlay_adoption_records]
+            adoptions = [row for row in rows
+                         if row["adoption_sha256"] == selection.adoption_sha256]
+            if len(adoptions) != 1:
+                raise ValueError
+            adoption = adoptions[0]
+            observers = [row for row in adoption["owner_overlay_observer_records"]
+                         if row["registration_id"] == registration_id]
+            if len(observers) != 1:
+                raise ValueError
+            observer = dict(observers[0])
+            operation = dict(selection.operation_record)
+            enrolled = self._runtime.service.source_observer_registry
+            source_row = (getattr(enrolled, "observers", {}).get(observer["observer_enrollment_id"])
+                          if enrolled is not None else None)
+            if (observer["operation_row_sha256"] != hashlib.sha256(_canonical(operation)).hexdigest()
+                    or observer["observer_enrollment_id"] not in operation["source_observer_enrollment_ids"]
+                    or source_row is None
+                    or source_row.observer_enrollment_id != observer["observer_enrollment_id"]
+                    or source_row.source_kind != "provider-result"
+                    or source_row.channel_id != observer["channel_id"]
+                    or source_row.enrollment_id != observer["service_enrollment_id"]
+                    or source_row.profile_id != observer["profile_id"]
+                    or source_row.principal_id != observer["principal_id"]
+                    or source_row.namespace_id != observer["namespace_id"]
+                    or source_row.generation != observer["profile_generation"]
+                    or source_row.package_id != observer["package_id"]
+                    or source_row.native_package_generation != observer["package_generation"]
+                    or source_row.role_id != observer["role_id"]
+                    or source_row.role_artifact_id != observer["role_artifact_id"]
+                    or source_row.role_sha256 != observer["role_sha256"]
+                    or source_row.role_source_receipt_handle != observer["role_source_receipt_handle"]
+                    or source_row.role_module_name != observer["role_module_name"]
+                    or source_row.role_closure_member_path != observer["role_closure_member_path"]
+                    or source_row.role_source_revision != observer["role_source_revision"]
+                    or source_row.role_source_tree_sha256 != observer["role_source_tree_sha256"]
+                    or registration_id not in source_row.source_registration_ids
+                    or observer["role_id"] != selection.loaded_role_proof.role_id
+                    or observer["role_sha256"] != selection.loaded_role_proof.role_sha256
+                    or observer["role_source_receipt_handle"]
+                       != selection.loaded_role_proof.role_source_receipt_handle
+                    or observer["package_id"] != selection.package_id
+                    or observer["package_generation"] != selection.package_generation
+                    or observer["source_choice_selection_handle"] != adoption["signed_choice"]["selection_handle"]):
+                raise ValueError
+            release = InstalledRootReleaseVerifier.verify_installed_release()
+            try:
+                source = release.resolve_reviewed_source_module(
+                    "installer-module:hermes_installer.authority.owner_overlay_capture_schemas")
+                source_fd = release.open_file(source.artifact_id)
+                try:
+                    chunks = []
+                    remaining = source.size_bytes
+                    while remaining:
+                        block = os.read(source_fd, min(65_536, remaining))
+                        if not block:
+                            raise ValueError
+                        chunks.append(block)
+                        remaining -= len(block)
+                    source_bytes = b"".join(chunks)
+                finally:
+                    os.close(source_fd)
+                member = [row for row in adoption["source_members"]
+                          if row["role"] == "owner-overlay-capture-schema-source"
+                          and row["artifact_id"] == source.artifact_id]
+                if (len(member) != 1 or member[0]["sha256"] != source.sha256
+                        or member[0]["relative_path"] != source.relative_path
+                        or hashlib.sha256(source_bytes).hexdigest() != source.sha256):
+                    raise ValueError
+                for schema_id in (INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID):
+                    schema_bytes, schema_digest = CAPTURE_SCHEMAS[schema_id]
+                    if (not schema_bytes or not re.fullmatch(r"[0-9a-f]{64}", schema_digest)
+                            or hashlib.sha256(schema_bytes).hexdigest() != schema_digest):
+                        raise ValueError
+                issued = RootActiveOwnerOverlaySourceObserver(
+                    observer, selection, CAPTURE_SCHEMAS, release.release_commit,
+                    _ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL, self,
+                )
+                return issued
+            finally:
+                release.close()
+        except LocalProfileOverlayEffectsDenied:
+            self._retire(selection.selection_handle)
+            raise
+        except Exception:
+            self._retire(selection.selection_handle)
+            raise LocalProfileOverlayEffectsDenied(
+                "owner-overlay signed observer, held capture schemas or loaded source role is unavailable",
+            ) from None
 
     def _retire(self, handle: str) -> None:
         with self._lock:
