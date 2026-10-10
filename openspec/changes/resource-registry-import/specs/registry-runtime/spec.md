@@ -268,3 +268,14 @@ Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-t
 HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
 
 Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+### Requirement: Current selected local audio endpoint and explicit capture consent
+
+The installer SHALL bind original local-audio-assist capture to the exact protected current endpoint/runtime/controller and actual foreground TTY permission described by v118, preserving separate private-egress/memory consent and pending physical-device evidence.
+
+#### Scenario: Device changes or permission expires
+
+- **WHEN** the selected endpoint tuple changes, consent is revoked or expires, capture overruns or the stream cannot open under the actual selected controller
+- **THEN** capture fails, retained PCM is zeroed, and no source event or permission claim is promoted from worker input or synthetic streams

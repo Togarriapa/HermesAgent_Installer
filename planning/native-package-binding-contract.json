@@ -537,7 +537,9 @@
         "profile_id",
         "generation",
         "resolver_sha256",
-        "candidates"
+        "candidates",
+        "registration_projection_sha256",
+        "registrations"
       ],
       "candidate_fields": [
         "native_tool_name",
@@ -548,10 +550,14 @@
         "native_schema_sha256",
         "observer_enrollment_ids",
         "native_server_name",
-        "description"
+        "description",
+        "registration_id",
+        "toolset",
+        "family",
+        "handler_kind"
       ],
-      "encoding": "schema1 canonical UTF8 JSON sorted keys/compact separators/ensure_ascii=false/no newline/duplicate or unknown keys denied;<=1024 candidates,unique native_tool_name and adapter/action pair. Embedded argument/result schemas finite reviewed JSON schemas from compiled selected action catalog; native_schema_sha256 hashes canonical argument_schema exact bytes. Index document SHA is manifest candidate_index.sha256, separate resolver/entrypoint/source digest domains.",
-      "compiler": "Root native materializer creates exact index from active selected package/action/MCP/observer joins, records separate CAS output receipt role native-candidate-index and closure manifest member; session.resolve_materialization_receipt returns this additional role for activation. Root pinned adapter/schema bytes must be verified, no inferred schema/cache or arbitrary JSON refs/imports.",
+      "encoding": "schema1 canonical UTF8 JSON sorted keys/compact separators/ensure_ascii=false/no newline; strict keys, <=1024 unique native_tool_name registrations and candidates, <=2MiB whole document. One candidate per actual registered tool, not one per effect action. Repeated underlying effect action is permitted across registrations only through exact source-pinned registration rows. registration_projection_sha256 hashes canonical registrations array. All exact existing argument/result schema digest and mount/entrypoint joins remain required.",
+      "compiler": "Root compiler resolves the same sealed pre-active RootNativeAssemblyDefinitions or verified active selected projection, creates one row per actual source registration, and copies exact schemas and finite projection into existing native-candidate-index output. No active package prerequisite during initial assembly; compilation grants no effects.",
       "loader": "read_native_candidate_index(binding) root-selected fixed mount reader verifies binder closure/entrypoint/resolver pins, candidate manifest member and index profile/package/generation/resolver match. Presentation only; every effect still re-resolved root. Missing member yields precise native pre-discovery pending, not fallback discovery.",
       "hermes_envelope": "Root MCP native_server_name is exact selected native_mcp_tool_bindings.native_server_name; other installer compiled candidates use fixed hermes-installer toolset owner. Never parse it from native_tool_name. description bounded <=4096 characters from actual selected reviewed action/schema artifact; if no description supplied use literal Protected installer action. Hermes envelope is {name:native_tool_name,description,parameters:argument_schema}; native_schema_sha256 remains SHA256 canonical argument_schema only, not envelope or result schema. Exact trusted index includes server/description so worker does not query ambient config/cache."
     },
@@ -566,13 +572,16 @@
         "native_package_generation",
         "adapter_id",
         "action_id",
-        "source_receipt_handle"
+        "source_receipt_handle",
+        "size_bytes",
+        "derivation_receipt_handle"
       ],
       "schema_kind": "arguments|result",
       "artifact": "Root immutable CAS artifact exact canonical JSON schema bytes <=256KiB; strict finite supported JSON-schema subset object/array/string/integer/number/boolean/null, properties/required/additionalProperties/items/enum/minimum/maximum/minLength/maxLength/minItems/maxItems; no external references/ref resolution/imports/evaluation. Existing selected action validators remain required, schema alone is not effect authority.",
       "resolve_call": "resolve_native_schema(schema_id,native_package_id,native_package_generation,adapter_id,action_id,schema_kind)->verified schema mapping",
       "joins": "id equals action argument_schema_id/result_schema_id, or MCP binding request_schema_id/result_schema_id, for exact selected package/action. Root resolves row current active generation, actual ArtifactCatalog bytes/sha/source receipt/package selection; native_schema_sha256 equals canonical arguments schema SHA, not schema ID. Every required argument/result schema must resolve; no tool-name/service-label inference. Row source receipt is actual packaged selected action schema artifact or root selected authenticated MCP tools/list discovery schema receipt with current service/tool selection. Discovery unselected or changed schema cannot be silently enabled.",
-      "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step."
+      "compiler": "Native materializer copies exact verified schema bodies into candidate index and pins resulting index artifact/manifest; no generation from cache/model comments/default labels. MCP result schema is actual selected static root bounded MCP result envelope contract, or supported selected output schema if explicitly enrolled; do not fabricate an upstream output schema. Missing approved result artifact remains pending with exact selection step.",
+      "derived_row_clarification": "id remains exact selected action argument/result schema ID. source_receipt_handle is actual parent packaged artifact or authenticated tools/list exchange source; derivation_receipt_handle exact root child derivation receipt (null only direct exact packaged artifact). size_bytes is actual canonical child schema bytes1..262144. artifact_id/SHA pins child bytes, not parent archive/response. Strict field set shared static/dynamic; no inferred handles. Active containing digest is external resolved DTO binding, no self-reference."
     },
     "initial_execution_selection": {
       "owner_module": "hermes_installer.authority.source_observers",
@@ -666,5 +675,493 @@
     "CAS": "RootSchemaDerivationReceiptRegistry exclusively writes exact canonical child bytes into its already protected owned schema CAS, nofollow reopen/held FD proves device/inode/mode/owner/size/byte SHA. Dynamic schema need not already exist in static source ArtifactCatalog before this producer can write it. Returned derivation receipt binds actual source tools/list exchange, selected service enrollment/generation/tool/native binding/argument-or-result role and child artifact ID/SHA/size. Source/member proof is mandatory; no selfasserted receipt.",
     "resolver_API": "RootSchemaDerivationReceiptRegistry.resolve_schema_artifact(derivation_receipt_handle,*,selected_binding,schema_role)->RootDerivedSchemaArtifact root-private; result fields artifact_id,sha256,size_bytes,canonical_schema_bytes,source_receipt_handle,derivation_receipt_handle,service_enrollment_id,service_generation,native_binding_id,tool_name,schema_role. Exact currentness rechecked. RootSourceArtifactReceiptVerifier reads dynamic child bytes only via this typed resolver when selected native schema row references exact derivation receipt; static packaged schema path remains unchanged.",
     "publication": "Active publication installs selected protected native_schema_records row with child artifact_id/SHA/size and actual source+derivation handles. ArtifactCatalog may expose an immutable selected derived-artifact projection from this current root registry; it never accepts arbitrary unselected dynamic IDs. Prepublication bootstrap assembly uses sealed selected derivation receipt, not an active row prerequisite. Schema rotation requires fresh discovery/review/current selected binding and atomic generation update; no silent mutation."
+  },
+  "native_registration_projection": {
+    "schema": "argument_schema is exact actual register_tool parameters object from source-reviewed registration closure, canonical SHA equals native_schema_sha256. result_schema is source-reviewed actual bounded handler result schema or selected protected action result schema; generic selectors require reviewed bounded result contract covering exact finite branch outputs, never a fabricated upstream schema. Source extraction does not execute effects. Missing result proof remains explicit unavailable and a required task, not permission to discard the family.",
+    "requirements": [
+      "HI08",
+      "HI11",
+      "RB08",
+      "MC-F01"
+    ],
+    "tasks": [
+      "HI-T08",
+      "HI-T11",
+      "RB-T08",
+      "MC-F01"
+    ],
+    "owner": "Root selected installation binding owns projection producer; native materializer consumes it; pinned native boundary installs candidates; root dispatcher independently re-resolves invocation.",
+    "api": "RootSelectedInstallationBinding.resolve_native_registration_projection(selection_handle)->tuple[RootNativeRegistrationProjection,...]; resolve_native_assembly_definitions includes registration_records and candidate_records from the SAME projection. Never callback-only caller rows.",
+    "row_fields": [
+      "registration_id",
+      "native_tool_name",
+      "native_server_name",
+      "toolset",
+      "family",
+      "adapter_id",
+      "argument_schema",
+      "result_schema",
+      "native_schema_sha256",
+      "registration_source_artifact_id",
+      "registration_source_sha256",
+      "registration_source_receipt_handle",
+      "handler_kind",
+      "handler_id",
+      "selector_fields",
+      "action_bindings",
+      "observer_enrollment_ids"
+    ],
+    "identity": "registration_id = adapter_id + :tool: + actual native_tool_name (ASCII bounded512). Full registration source module, imported handler/schema closure and current actual source receipt pins, not an effect catalog ordinal. native_server_name remains selected MCP server for MCP and hermes-installer for other tools; toolset is actual register_tool source value, family actual selected component family. All18 requested families are represented; missing prerequisites remain explicit unavailable rather than silently absent from coverage.",
+    "handler_kind_enum": [
+      "effect-action",
+      "finite-selector",
+      "finite-workflow",
+      "public-registry-read",
+      "owner-overlay",
+      "mcp-dispatch"
+    ],
+    "action_binding_fields": [
+      "selector_values",
+      "action_id",
+      "argument_projection",
+      "workflow_id"
+    ],
+    "binding_types": "selector_fields tuple unique source-declared top-level argument names; selector_values exact finite mapping of those names to source enum literals. Direct effects use empty selector mapping. argument_projection tuple exact {name,source_field} identifies existing root action argument names and source registered argument fields; identity mapping unless actual pinned handler transforms it. Additional transformation only existing reviewed typed recipe/workflow, never code expression/caller path. workflow_id null unless actual selected protected finite workflow. Every external input matches exactly one binding (or fixed workflow), zero/ambiguous rejected. Finite provider-operation pairs use source tables, never cartesian expansion of independent enums.",
+    "lexical_binding": "Candidate action_id for direct one-action tools stays the existing selected action ID; selector/workflow/public/overlay registrations use registration_id as the external observed action ID. Provider metadata binds exact external tool name/schema/full actual argument bytes. Root reviewed registration dispatcher resolves the finite branch/normalization and fresh child effect authorization or executes the finite workflow wholly in root. Worker primitive invoke cannot bypass by relaxing full argument/action equality; source wrapper is patched to invoke the selected external registration once. Each actual effect keeps independent HI12 authorization/currentness/consent/source closure. No generic perform-effect or worker minted child context.",
+    "local_families": "agent37-discovery and mcp-registry use their existing invoke_public_registry_read source handlers against selected immutable catalogs; they are public-registry-read, not fabricated protected account effects. resource-overlay-store uses existing profile-owner local CAS read/write/history/delete with exact owner root/revision/sizes and current invocation/source binding, never global overlay or account write. Compile exact registration and result schemas from native_plugins.py. MCP service dispatch remains separately selected mcp-dispatch with authenticated/packaged schema receipts. These families need explicit records even though absent from PluginActionSchemaRegistry.",
+    "source_inventory": {
+      "plugin_accounts_adapters.py": "03d2d19a64501e0d0673d620d9b8976639888612e32b9d54226d26551f629b35",
+      "plugin_documents.py": "678255485e6b131ee4eb1db08c30cdc5ec9f258e351bb3632c5721a1126e53d4",
+      "plugin_local_voice_web.py": "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487",
+      "plugin_finance.py": "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73",
+      "plugin_homelab.py": "ba1d3bcad55fb13e09ce78fa953a7c90499c3bebf6b5b181564b2f614793e68d",
+      "native_plugins.py": "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7"
+    },
+    "source_revision": "Installer implementation source audit c51793149f (full actual candidate Git identity retained by installed release receipt). Source modules under src/hermes_installer/components; actual future reviewed module changes require new observed release pins, not reuse these hashes.",
+    "known_mapping": "GitHub repository/list_issues/read_file/write_file/create_issue to repo.get/issues.list/content.get/content.put/issue.create; Composio read/write invoke.read/invoke.write; codex_run run; ebook build/inspect/validate to run/inspect/validate; Kobo deliver/read_export to deliver/read. epic_board operation create/read/add_item/move_item/delete_accepted exact same action IDs. voice_transcribe/speak actual finite workflows. Financial data has sole read action with exact provider-operation source table, execution sole execute with exact provider-operation table. Live wallet construct/simulate/estimate-fee/inspect read; sign/broadcast execute. Sandbox read-balance/simulate/inspect-receipt read; create-account/reset-account/sign-test-transaction/send-test-asset/deploy-test-contract/reviewed-testnet-dapp execute. Homelab actual Authentik5/Cloudflare6/fixed inspect/run source registrations and finite enums, no inferred action IDs. Local overlay4/MCP registry2/Agent37 registry2 explicit actual register_tool schemas. This is factual inventory; complete exact source registration/schema extraction remains required.",
+    "evidence": "Actual all18 PluginManager registrations under official PM, source-exact schemas/toolsets, generic selector positive/unknown/ambiguous negatives, eight local tools actual dispatch, no flattened61 substitution or ignore-family tests; current closed registration/schema/observer proofs and real effects required. All AC pending.",
+    "captured_inventory": {
+      "path": "plans/amendments/2026-10-10-native-registration-projection-v99/source-registration-inventory.json",
+      "sha256": "efb44b18361a3466d8970d30a3979843394c46d7ca8af8d515597a80f3b2920f",
+      "size_bytes": 64110,
+      "registration_count": 42,
+      "component_count": 18,
+      "operational_projection": false,
+      "meaning": "Actual recording register_tool source facts only, never handler execution or selected result/observer/source receipt authority. Null result/source receipts and empty observers stay unqualified; root selected producer resolves actual proofs before executable candidates."
+    },
+    "toolset_namespace_clarification": "toolset is exact actual register_tool source value; native_server_name is selected transport/ownership namespace label (hermes-installer for nonMCP), distinct from toolset. Patched pre-discovery registration preserves trusted toolset separately from MCP ownership prefix; no schema field renaming/inference. Source-only inventory remains separate, executable index includes only fully proved selected rows; missing required family/tool proof is incomplete coverage, not accepted omission.",
+    "binding_examples": {
+      "direct": {
+        "selector_values": {},
+        "action_id": "exact-existing-selected-action-id",
+        "argument_projection": [
+          {
+            "name": "exact-action-field",
+            "source_field": "exact-registered-field"
+          }
+        ],
+        "workflow_id": null
+      },
+      "workflow": "Same four keys; action_id external registration_id, workflow_id actual selected fixed workflow, selectors source exact literals or empty if one validated workflow. MCP direct binding selects protected native_mcp_tool_bindings.id as action_id per existing explicit id/action mapping (row has no invented action_id field). Public/owner rows select external registration_id and exact reviewed handler_id; no fake effect enrollment."
+    }
+  },
+  "private_input_recipient_consent": {
+    "schema": 1,
+    "requirements": [
+      "HI11",
+      "PR-F03",
+      "RB07",
+      "SK-F02"
+    ],
+    "tasks": [
+      "HI-T11",
+      "HI-T12",
+      "RB-T08",
+      "PR-F03"
+    ],
+    "owner_module": "hermes_installer.authority.root_private_input_consent",
+    "registry": "RootPrivateInputConsentRegistry",
+    "type": "RootPrivateInputConsent",
+    "constructor": "from_authority_service(service,root_setup_choice_registry,selected_provider_catalog,root_journal)->RootPrivateInputConsentRegistry root-only; all dependencies actual root selected objects, same signing key/current epoch/profile registry.",
+    "choice_source": "Existing root setup/owner TTY choice registry adds observe_selected_private_provider_routes(current_profile_selection_handle)->opaque RootPrivateProviderRouteChoice receipt. Actual current verified root actor/TTY explicitly records selected finite private route choice from protected catalog; root resolves owner principal/profile/namespace/current policy itself. No caller boolean/dict, worker config, raw route enum in RPC, inferred consent from private classification or group membership. This is one setup/profile preference, no repeated per-turn prompt. Default no selected choice means disabled. Choice records actual actor/session/transaction/TTY observation ID/profile selection receipt/selected route IDs/policy digest/issued time and same protected journal link.",
+    "issue": "issue_selected_private_input_consent(current_explicit_choice_receipt_handle,selected_private_profile_binding)->opaque private_consent_selection_handle. Root independently resolves live choice record and current principal/private profile/namespace/provider route selection, finite recipient IDs, policy/current enrollment. Persists purpose-specific preference under root journal owner0/0700/no-follow. Memory capture consent never substitutes for provider egress.",
+    "persistent_record_fields": [
+      "schema",
+      "selection_handle",
+      "consent_id",
+      "purpose",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "profile_generation",
+      "provider_route_ids",
+      "private_recipient_ids",
+      "additional_metered_budget_usd",
+      "policy_revision",
+      "policy_selection_sha256",
+      "choice_receipt_handle",
+      "state",
+      "revocation_epoch",
+      "signature"
+    ],
+    "persistent_types": "schema1; purpose private-provider-egress; exact current IDs and opaque profile_generation, provider_route_ids/private_recipient_ids sorted unique<=1024 actual selected private route/recipient IDs, no public/wildcard; additional_metered_budget_usd literal0 (a separate current account/metered authorization still required for any charge); state enabled|revoked; positive persisted revocation_epoch; existing root signed canonical domain root-private-input-consent-selection-v1. No containing snapshot digest field inside its own digest preimage.",
+    "resolve": "resolve_for_selected_input(private_consent_selection_handle,*,observed_input_proof,selected_input_binding)->RootPrivateInputConsent. Both typed input proof and binding independently looked up in actual root retained selected execution/ingress registry before first input SourceReceipt; not a SourceReceipt prerequisite or caller asserted source. Verify current principal/profile/namespace/profile generation/current policy/current provider private route receipts/revocation epoch and actual source input selection digest. Genuine first ingress may have no parents; existing parents are retained.",
+    "dto_fields": [
+      "schema",
+      "receipt_handle",
+      "consent_id",
+      "purpose",
+      "selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "profile_generation",
+      "service_generation_digest",
+      "input_selection_digest",
+      "input_observation_handle",
+      "provider_route_ids",
+      "private_recipient_ids",
+      "additional_metered_budget_usd",
+      "policy_revision",
+      "policy_selection_sha256",
+      "revocation_epoch",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "dto_types": "Root-only sealed immutable DTO; schema1 and purpose/private recipients/zero budget as above. receipt_handle independent random actual registry lookup. input_selection_digest is actual root canonical selected input closure, input_observation_handle root retained actual input record before source capture, never source-text classification. service_generation_digest verified containing current runtime snapshot supplied externally, no recursive active row. Fresh lease min(input proof,selected execution,policy/route/principal leases,now+30s); signed domain root-private-input-consent-v1. Copied DTO/signature alone cannot bypass actual lookup/current revocation.",
+    "selected_input_join": "RootNativeInputSelection gains root-derived private_consent_selection_handle (null means no egress consent). Root selected task/health/Desktop/HTTP/audio selection resolver obtains it from registry current profile preference, never worker request. AuthorityService.issue_selected_input_source resolves fresh consent against EXACT same observed_input_proof/selected_input_binding and intersects selected source_issuer.private_provider_route_ids, current consent route recipients and EVERY parent recipient ceiling. UNKNOWN/private sensitivity stays unchanged. Empty intersection remains empty/deny; do not strip ancestry or grant public route. This permits authentic selected private input only when actual current root-held explicit preference exists.",
+    "revoke": "revoke_selected_private_input_consent(selection_handle,current_authorized_owner_request)->RootPrivateInputConsentRevocationReceipt {schema,selection_handle,consent_id,revocation_epoch,revoked_monotonic,signature}. Actual current owner request bound root actor/principal/private profile, atomically increments durable epoch/state. Recheck before source issuance and every dispatch/retry/background child. Old receipt ceilings are necessary but not sufficient: current consent epoch checked separately. Previously emitted/committed bytes are not claimed undone.",
+    "evidence": "Explicit selected private route choice then authentic initial input and private provider request positive; absent/public/wrong owner/profile/generation/unknown route/stale policy/revoked epoch/parent empty ceiling/replayed lookup/forged choice/worker authorized flag negatives. No public promotion or account/budget readiness inferred. All acceptance pending.",
+    "dispatch_revalidation": "revalidate_retained_input_consent(consent_receipt_handle,*,retained_input_selection_handle,expected_consent_id,expected_revocation_epoch)->same retained RootPrivateInputConsent. Root registry non-consumingly resolves actual original input/selection and consent record after ingress consumed, rechecks current owner/profile/namespace/service/policy/routes/revocation and original expiry. Expected fields match independently retained root request closure, not caller dict. No re-consume ingress, extend stale input/source lease, remint permission or strip ancestry. Authority every dispatch/retry/background child calls it; current empty/revoked/expired denies."
+  },
+  "native_local_result_bounds_v110": {
+    "artifact_id": "installer-native-local-registration-results-v1",
+    "path": "plans/amendments/2026-10-10-native-local-result-bounds-v110/native-local-registration-results-v1.json",
+    "sha256": "2bc50e29087e8725159c7cb71000cc06f37e8cda08a67780d3dd00227173863c",
+    "size_bytes": 4889,
+    "source_pins": {
+      "src/hermes_installer/components/native_plugins.py": "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7",
+      "src/hermes_installer/components/public_registries.py": "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f"
+    },
+    "semantics": "These are finite transport output schemas for actual eight local registrations, not new effect permissions/source receipts/operational evidence. Public JSON remains untrusted-public-source authority none, root source ancestry retained; overlay reads require actual selected owner/profile CAS receipt and updates require existing owner consent/grant. Existing v99 actual source/schema/handler/observer/effect join before executable candidate, no audit null promotion.",
+    "unavailable_results": [
+      "financial-execution-gateway.execute",
+      "agent-live-wallet.read",
+      "agent-live-wallet.execute",
+      "agent-sandbox-wallet.read",
+      "agent-sandbox-wallet.execute",
+      "web-retrieve.source_receipt"
+    ]
+  },
+  "native_local_schema_artifacts_v112": {
+    "schema": 1,
+    "artifact_rows": [
+      {
+        "tool_name": "agent37_discover_skills",
+        "schema_id": "installer-native-local-result-agent37_discover_skills-v1",
+        "artifact_id": "installer-native-local-result-agent37_discover_skills-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/agent37_discover_skills.result.schema.json",
+        "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
+        "size_bytes": 247,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "agent37_inspect_skill",
+        "schema_id": "installer-native-local-result-agent37_inspect_skill-v1",
+        "artifact_id": "installer-native-local-result-agent37_inspect_skill-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/agent37_inspect_skill.result.schema.json",
+        "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
+        "size_bytes": 247,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "mcp_registry_discover",
+        "schema_id": "installer-native-local-result-mcp_registry_discover-v1",
+        "artifact_id": "installer-native-local-result-mcp_registry_discover-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/mcp_registry_discover.result.schema.json",
+        "sha256": "50f0ae652265cd9ccba17417179b428cdc8155db491016e1d01fa1cd395277df",
+        "size_bytes": 260,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "mcp_registry_inspect",
+        "schema_id": "installer-native-local-result-mcp_registry_inspect-v1",
+        "artifact_id": "installer-native-local-result-mcp_registry_inspect-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/mcp_registry_inspect.result.schema.json",
+        "sha256": "50f0ae652265cd9ccba17417179b428cdc8155db491016e1d01fa1cd395277df",
+        "size_bytes": 260,
+        "schema_role": "result",
+        "handler_kind": "public-registry-read"
+      },
+      {
+        "tool_name": "resource_overlay_delete",
+        "schema_id": "installer-native-local-result-resource_overlay_delete-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_delete-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_delete.result.schema.json",
+        "sha256": "3572956bdc827ed057de0f7253dae2b48a32ea50b406861486796a7f45191912",
+        "size_bytes": 283,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      },
+      {
+        "tool_name": "resource_overlay_history",
+        "schema_id": "installer-native-local-result-resource_overlay_history-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_history-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_history.result.schema.json",
+        "sha256": "5069d7469c89174278f0158cf7b5b3d70e54d53106a07085d4cdda6e5c1154fd",
+        "size_bytes": 309,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      },
+      {
+        "tool_name": "resource_overlay_read",
+        "schema_id": "installer-native-local-result-resource_overlay_read-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_read-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_read.result.schema.json",
+        "sha256": "cd520b2360a36ffc2aa4a6892a63a89cd70b226ff545b927b3e297a8eaf82b19",
+        "size_bytes": 607,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      },
+      {
+        "tool_name": "resource_overlay_write",
+        "schema_id": "installer-native-local-result-resource_overlay_write-v1",
+        "artifact_id": "installer-native-local-result-resource_overlay_write-v1",
+        "path": "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/resource_overlay_write.result.schema.json",
+        "sha256": "c250bdf7f703773c26c21b352af1d8c3560683aa02ad9d11968e1f7394552edb",
+        "size_bytes": 267,
+        "schema_role": "result",
+        "handler_kind": "owner-overlay"
+      }
+    ],
+    "publication": "Installed release builder includes these exact source artifact files with native-result-schema role and full installed module source/import closure. Root bootstrap native assembly resolves packaged exact schema bytes through existing RootSourceArtifactReceiptVerifier and actual source artifact receipt; prepared policy may retain staged sealed rows, atomic active publication later installs native_schema_records. This source table is NOT an already active row or receipt. No invented receipt/source handle/null promotion.",
+    "native_schema_record_join": "native_schema_records.id equals schema_id; artifact_id/hash/size exactly child file. role=result, selected package/action/native binding exact actual v99 registration. source_receipt_handle is actual packaged artifact receipt; derivation_receipt_handle null only direct exact packaged file, otherwise actual existing root schema derivation. Keep exact existing v39/v92/v96 row schema and enclosing generation semantics.",
+    "result_constraints": "Eight local schemas exact v110 definitions PLUS mandatory v110 depth/node/string/serialized-public/raw-overlay budgets. Source schema file alone does not assert enforcement: selected installed validator handler full closure and current validation recipe must be pinned. Public trust/source ancestry and owner-overlay CAS grants unchanged. Protected finance/wallet/web backend generic objects remain unavailable; no all18 omission/acceptance.",
+    "catalog_identity_correction_v114": "Exact static ArtifactCatalog grammar [A-Za-z0-9_.-] does not admit colon. These eight literal schema/artifact IDs supersede impossible v112 colon IDs; actual source schema bytes/path/SHA/size unchanged. Do not widen staticcatalog/rootreceipt grammar or mintaliases. Logical registration/action IDs remain protected schema domain, not ArtifactCatalog IDs."
+  },
+  "protected_registration_records_v113": {
+    "schema": 1,
+    "requirements": [
+      "HI08",
+      "HI11",
+      "HI12",
+      "RB08",
+      "MC-F01"
+    ],
+    "tasks": [
+      "HI-T08",
+      "HI-T11",
+      "HI-T12",
+      "RB-T08",
+      "MC-F01"
+    ],
+    "finding": "v99 projection DTO exists but protected NativeAdapterBinding is keyed adapter_id with one action/schema. It cannot store reviewed42 registrations distinct from61 backend action routes. This refinement adds exact protected arrays; no new product capability.",
+    "snapshot_location": "service_generations.native_packages[*] adds profile_generation, action_records, registration_records, workflow_records. Same exact records retained by sealed pre-active RootNativeAssemblyDefinitions.action_registration_records before active publication; root writer splits typed records into these three arrays. NativePackageBinding owns typed action_records/registration_records/workflow_records maps. NativeAdapterBinding legacy single-route map is never inferred to be registrations or expanded authority; migrate exact source-reviewed route records, reject conflicting legacy duplicates.",
+    "action_record_fields": [
+      "action_binding_id",
+      "adapter_id",
+      "action_id",
+      "manifest_sha256",
+      "adapter_artifact_id",
+      "adapter_sha256",
+      "argument_schema_id",
+      "result_schema_id",
+      "effect_enrollment_id",
+      "operation",
+      "capability",
+      "target_id",
+      "recipient",
+      "generation",
+      "observer_enrollment_ids"
+    ],
+    "action_identity": "action_binding_id=adapter_id+:action:+action_id, ASCII<=512; unique per selected package. adapter_id may repeat across actions; pair(adapter_id,action_id) unique. generation is native package generation, profile_generation is separate actual selected HostServiceProfile generation. Exact selected action artifact/schema/effect enrollment operation/capability/target/recipient/current process profile join; do not infer effects from tool schemas. These are source61 effect rows, never one-per-tool. Local/public tools have no fabricated effect row.",
+    "registration_record_fields": [
+      "registration_id",
+      "native_tool_name",
+      "native_server_name",
+      "toolset",
+      "family",
+      "adapter_id",
+      "argument_schema_id",
+      "result_schema_id",
+      "native_schema_sha256",
+      "registration_source_artifact_id",
+      "registration_source_sha256",
+      "registration_source_receipt_handle",
+      "handler_kind",
+      "handler_id",
+      "selector_fields",
+      "action_bindings",
+      "observer_enrollment_ids",
+      "generation"
+    ],
+    "registration_identity": "registration_id=adapter_id+:tool:+actual native_tool_name; source actual42 unique names across18 requiredfamilies. Native server hermes-installer for nonMCP, exact protected server forMCP; actual source toolset preserved. argument_schema_id/result_schema_id resolve actual selected native_schema_records bytes/hash/size/receipt, never caller embedded schema. native_schema_sha256 hashes exact full captured argument_schema. schema bodies enter v99 projection only after these IDs resolve. generation is package generation; enclosing profile generation from package explicit field.",
+    "action_binding_fields": [
+      "selector_values",
+      "action_binding_id",
+      "argument_projection",
+      "workflow_id"
+    ],
+    "binding_types": "selector_values exact finite source field->literal mapping; selector_fields unique actual schema enum field names. argument_projection list exact {name,source_field} root actionargument<-original external field. No expression, dotted path, command or caller schema. Direct exactly1 binding empty selector and actual action_binding_id; selectors finite source provider-operation admissible pairs, not cartesian enums. workflow bindings action_binding_id null, workflow_id exact selected workflow_records.id. public-registry-read/owner-overlay exactly1 binding empty selector, both refs null, existing root selected source handler resolves actual private profile owner/public immutable registry. MCP exactly1 binding action_binding_id null, workflow_id null; handler_id exactly native_mcp_tool_bindings.id and lexical action_id remains that selected MCP ID. Every input exactly1match or deny.",
+    "handler_kind_enum": [
+      "effect-action",
+      "finite-selector",
+      "finite-workflow",
+      "public-registry-read",
+      "owner-overlay",
+      "mcp-dispatch"
+    ],
+    "lexical_action": "Direct lexical action_id is selected action_records.action_id. Selector/workflow/public/overlay external lexical action_id is registration_id. MCP exact native_mcp_tool_bindings.id. Original tool argument bytes/digest preserved before any root projection. Root registration dispatcher derives branch from exact source selector and issues fresh independent child effects or fixed root workflow; no worker relaxed matching.",
+    "workflow_record_fields": [
+      "id",
+      "registration_id",
+      "external_argument_schema_id",
+      "external_result_schema_id",
+      "workflow_artifact_id",
+      "workflow_sha256",
+      "workflow_source_receipt_handle",
+      "step_action_binding_ids",
+      "generation"
+    ],
+    "workflow_joins": "Exact v99/v46 finite voice source workflow: transcribe open_session/capture_audio/voice_transcribe/close_session; speak open_session/voice_speak/close_session. Artifact contains source-reviewed finite ordering, state/cancellation/cleanup/argument/result rules; root stage producer emits canonical reviewed source recipe and observes actual artifact receipt before active publication. step_action_binding_ids ordered actual actionrecords refs; no callercreated workflow or inferred callback. Existing source-verified workflow primitive result schemas and current consent/source closure required at every independently authorized step.",
+    "observer_joins": "registration/action observer_enrollment_ids each FK exactly one source_issuers[*].observer_enrollment_id in same staged/active selection; source issuer profile+process generation/role/package nativegeneration/capture schema/source_action IDs resolve separately. Registration source_action_ids contain exact external lexical action above; primitive child effects inherit actual parent closure and their finite actionproofs, not fabricated external tool calls. Same producer observed source/response receipt closure and peerPIDFD/current loaded package proof remain mandatory. Unknown/missing observer keeps readiness pending, not source omission.",
+    "constraints": {
+      "max_registration_records": 128,
+      "max_action_records": 256,
+      "max_workflow_records": 64,
+      "max_bindings_per_registration": 128,
+      "max_projection_fields": 128,
+      "max_observers_per_record": 128,
+      "max_workflow_steps": 16,
+      "max_id_chars": 512,
+      "max_name_chars": 128
+    },
+    "preactive_producer": "RootSelectedInstallationBinding.resolve_native_registration_projection(selection_handle) independently joins actual RootReleaseModuleReceipt source observations from observe_root_native_registrations, reviewed_native_registration_definitions finite source tables, actual packaged/native result schema receipts, same setup selected effect/observer/workflow/MCP receipts. Staged selections originate actual installed release+prepared transaction+source/PM/materialization and selected installation target, not active adapter_records. Root writer validates exact arrays and computes canonical definitions SHA; nativeassembler consumes same proof-backed projection then activepolicycompiler atomically publishes arrays with output receipts. No pre-existing active registration/effect catalog required merely to compile its own selected rows; effect selections must be genuinely rooted in setup allowed source recipe/account/consent policy, never raw caller JSON.",
+    "actual_source_map": "Use actual source38bda246 observe_root_native_registrations RootReleaseModuleReceipt + reviewed_native_registration_definitions. Six original module pins/source42 inventoryv99, exact local eight schema filesv112, existing61 packaged PluginActionSchemaRegistry source actionschemas for remaining bounded types, actual selected MCP schemas separately. Artifact receipts cannot be replaced by hashes alone. v99 exact GitHub/Composio/Codex/doc/Epic/homelab/finance/wallet selector source maps remain binding.",
+    "bounded_passthrough_wrapper": {
+      "schema_id": "installer-native-bounded-backend-result-v1",
+      "artifact_id": "installer-native-bounded-backend-result-v1",
+      "path": "plans/amendments/2026-10-10-protected-native-registration-records-v113/bounded-native-backend-result-v1.schema.json",
+      "sha256": "8ef1ffe2ca1c26f2bb82fd9178b4cd223bbee4b3b7c1a8d784f850e289026cb4",
+      "size_bytes": 235,
+      "applies_to": [
+        "financial_execute_one_order",
+        "agent_live_wallet_action",
+        "agent_sandbox_wallet_action"
+      ],
+      "implementation": "Root selected registration dispatcher wraps actual source handler/backend returned JSON object|array as exact {schema:1,result_trust:untrusted-backend-data,result:<unchanged validated data>}. Preserve actual raw response digest/source receipt ancestry out-of-band. Backend returned caller-controlled result or model output cannot substitute actual effect dispatch/receipt. Original action argument bytes/grant remain unchanged. Reject scalar/nonJSON/duplicate keys/nonfinite/oversize; no model-provided authority keys consumed.",
+      "limits": {
+        "max_response_bytes": 2097152,
+        "max_serialized_result_bytes": 2097152,
+        "max_json_depth": 32,
+        "max_json_nodes": 65536,
+        "max_string_utf8_bytes": 2097152
+      },
+      "trust": "This bounded source wrapper replaces unbounded generic object at REGISTERED TOOL RESULT boundary only, not selected backend operation validator. Unknown backend fields are data, never authorization/account eligibility/order executed proof or readiness. Functional financial/wallet operation requires actual account/source-specific handler/effect result/readback validation. Private source ancestry and current zero additional budget/consent persist. Missing backend/account proof remains exact pending, not permanently omitted family."
+    },
+    "web_result": "Use actual root retrieval source receipt handle as opaque source_receipt_handle in a closed registered result envelope with untrusted_source=true,authority=none, bounded response data; backend source_receipt object is root resolved and retained privately, never passed as caller authority. Actual retrieval serializer/result fields require source handler owner to wrap current returned fields according to this closed rule and publish canonical schema before executablecandidate. No arbitrary nested source_receipt claims.",
+    "implementation_owners": "Native registration binding owner source facts/result schema observation; factory staged protected arrays and typed source/effect/observer selection writer; host enrollment typed parser; source observer actual selected issuer records; native assembler output; active policy compiler atomic publisher; component owners implement wrapper source branches and actual handler tests. Existing original implementation/acceptance checkbox tasks remain open.",
+    "status": "Source review only, actual complete42/61 source/effect/schema/observer/package assembly and all18 acceptance open. No application fixture native mapping."
+  },
+  "native_schema_catalog_identity_v114": {
+    "map_path": "plans/amendments/2026-10-10-native-schema-catalog-identities-v114/native-local-schema-artifact-map-v2.json",
+    "semantics": "Exact static ArtifactCatalog grammar [A-Za-z0-9_.-] does not admit colon. These eight literal schema/artifact IDs supersede impossible v112 colon IDs; actual source schema bytes/path/SHA/size unchanged. Do not widen staticcatalog/rootreceipt grammar or mintaliases. Logical registration/action IDs remain protected schema domain, not ArtifactCatalog IDs."
+  },
+  "financial_web_results_v120": {
+    "schema": 1,
+    "id": "native-financial-web-results-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T11"
+    ],
+    "schema_artifacts": [
+      {
+        "tool_name": "financial_data_read",
+        "schema_id": "installer-native-result-financial_data_read-v1",
+        "artifact_id": "installer-native-result-financial_data_read-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/financial_data_read.result.schema.json",
+        "sha256": "6902fd82075320bad86cd622d6304ffd248ec236b70ea4a27c44071c843fbf03",
+        "size_bytes": 935
+      },
+      {
+        "tool_name": "web_retrieve",
+        "schema_id": "installer-native-result-web_retrieve-v1",
+        "artifact_id": "installer-native-result-web_retrieve-v1",
+        "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/web_retrieve.result.schema.json",
+        "sha256": "dea89695c5206d563b2f0cd199490042af85612981fd504086e16a92ab767e13",
+        "size_bytes": 1315
+      }
+    ],
+    "source_pins": {
+      "plugin_finance.py": "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73",
+      "plugin_local_voice_web.py": "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
+    },
+    "financial": "Exact source-normalized observations, <=1000 rows/64 scalar keys each. Enforce total canonical UTF8 result <=2097152, finite numbers, <=2048 UTF8 bytes per data string/control denial, source provider-operation pair and current selected alias. Strip source credential/account identifiers as existing normalizer; no new effect/account authority. Numeric/time/schema fields do not prove current bank/trade state.",
+    "web": "Closed source-established outer return key set preserved. Existing source only checks receipt object; implementation must now populate/resolve the exact selected root artifact receipt fields, rather than promote backend-provided dictionary. Require current root registry membership, actual captured content artifact SHA/size/media/profile/owner/operation/source ancestry and expiry; response bytes and redirects remain untrusted/authority none. maxItems32 is reviewed bounded result ceiling, never authorization to follow32 redirects: actual stricter fetch policy remains controlling.",
+    "bounds": "Canonical bytes <=2MiB, duplicate keys/nonfinite values denied; string UTF8 byte limits enforced independently of JSON Schema maxLength. New finite receipt field ceilings are validator obligations, not inferred source guarantees. Schemas become operational only after actual source artifact observation, component wrapper implementation and protected selected schema/registration joins.",
+    "registration_schema_foreign_keys": "For external registration argument/result native_schema_artifacts row: adapter_id exactly registration.adapter_id, action_id exactly registration.registration_id, id exactly explicit argument_schema_id/result_schema_id and schema_kind corresponding role. Both exact records/proofs mandatory for executable registration. Backend effect action schemas remain separate; identical bytes may share storage but not erase explicit role joins.",
+    "tasks": [
+      "HI-T120.1: registration/component owner apply exact finite financial/web result validators and genuine root artifact receipt resolver; no generic object schema.",
+      "HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.",
+      "HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open."
+    ]
+  },
+  "financial_alias_source_bound_v121": {
+    "schema": 1,
+    "id": "financial-alias-source-bound-v1",
+    "supersedes": "v120 financial account_alias maxLength96 only; immutable v120 retained",
+    "why": "Actual plugin_finance._ID accepts up to128 characters; preserve the entire source-reviewed alias domain, not an unintentional narrower guessed ceiling.",
+    "schema_id": "installer-native-result-financial_data_read-v1",
+    "artifact_id": "installer-native-result-financial_data_read-v1",
+    "path": "plans/amendments/2026-10-10-financial-alias-source-bound-v121/financial_data_read.result.schema.json",
+    "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
+    "size_bytes": 984,
+    "rule": "Exact actual root selected account alias, source regex/max128; all other v120 fields/bounds/proof/task obligations unchanged. Current selected schema artifact pin must resolve this v121 source member, not stale v120 bytes."
+  },
+  "process_role_association_v123": {
+    "schema": 1,
+    "id": "native-process-role-association-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "Actual v113 package parser has multiple action/registration/workflow rows while observer resolver still equates process role with one legacy adapter artifact. Process roles and effects have independent provenance.",
+    "active_key": "native_packages[*].process_role_records",
+    "type": "NativeProcessRoleRecord",
+    "fields": [
+      "role_id",
+      "package_id",
+      "native_package_generation",
+      "profile_id",
+      "profile_generation",
+      "role_artifact_id",
+      "role_sha256",
+      "role_source_receipt_handle",
+      "module_name",
+      "closure_member_path",
+      "role_source_revision",
+      "role_source_tree_sha256",
+      "observer_enrollment_ids",
+      "registration_ids",
+      "action_binding_ids",
+      "workflow_ids"
+    ],
+    "field_rules": "IDs explicit root selected and finite; tuple IDs unique and all foreign keys exact. module_name actual qualified module identity, closure_member_path normalized relative regular-file member of verified compiled closure, no ambient search/import fallback. role_artifact_id/SHA identify actual role module artifact bytes; never action adapter automatically. profile_generation is process generation; native_package_generation independent. No embedding enclosing generation digest in row.",
+    "producer": "Root selected preactive native assembly definitions include process_role_records alongside v113 action/registration/workflow/source-issuer/schema records. Factory/projection owner derives actual role module receipt from RootReleaseModuleReceipt and reviewed pinned native loader/boundary/source role definition; joins exact staged loaded-module member/source/observer/effect selections before assembly. Prepared worker catalogs can remain empty; sealed RootNativeBootstrapAssemblySelection owns these staged definitions. Do not require existing active rows to compile their initial records.",
+    "factory_api": "RootSelectedInstallationBinding.resolve_native_bootstrap_assembly(selection_handle) returns the sealed selected process-role/action/registration/workflow/source-issuer/schema definition closure; actual source/effect/schema receipt registries validate each member. No caller JSON/path or action label derives role identity. Active compiler publishes same validated records with actual output receipt closure.",
+    "observer_join": "SourceObserverEnrollment.role_id resolves package.process_role_records[role_id]. Exact package/profile/process generation/native generation/source role artifact/hash; observer ID belongs to role.observer_enrollment_ids and selected source issuer same observer/package/profile/process generation. observer source_action_id joins exact external registration or reviewed standalone source action, not every action in a family. Target/recipient/action/schema comes from exact observer/source-issuer and selected registration/action effect binding, never process role itself. Legacy adapter_records never used as role resolver.",
+    "current_proof": "Root loaded package proof requires actual current producer PIDFD/start identity/executable/profile generation, held managed mount/source closure, actual loaded module_name/member origin SHA corresponding to this selected role record and fresh authenticated loader event. Root proof receiver retains immutable proof identity. Module receipt/source digest alone does not prove live loading; package process proof alone does not prove imported role.",
+    "runtime_api": "RootRuntimeBindings.resolve_selected_native_process_role(package_id,native_package_generation,role_id)->NativeProcessRoleRecord. SourceObserverRegistry._resolve_package_role returns exact package plus process role; independent effect/action lookup uses role FK sets and observer-specific exact action, not role adapter lookup.",
+    "migration": "Required process_role_records array on new v123 package records. Reject missing/conflicting role artifact/module/profile/observer joins. Old legacy-only packages unavailable for source capture until actual role definition/proof migrated; no invented role IDs or inferred action artifact association.",
+    "tasks": [
+      "HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.",
+      "HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.",
+      "HI-T123.3: source/custody owner independently join actual loaded role/source proof to producer and exact selected action; test wrong role module/adapter/observer and two generations; actual native runtime acceptance open."
+    ]
   }
 }

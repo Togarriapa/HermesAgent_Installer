@@ -2,24 +2,171 @@ from __future__ import annotations
 
 import unittest
 import os
+import json
+from types import SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import (
-    BootstrapEnrollmentPending, ServiceIdentity, VerifiedRootSetupAuthorization,
+    BootstrapEnrollmentPending, EnrollmentPolicy, EnrollmentReceipt, ServiceIdentity,
+    VerifiedRootSetupAuthorization, _generation,
 )
 from hermes_installer.authority.bootstrap_runtime_factory import (
     InstalledBootstrapPolicyResolver,
+    RootComposioSetupSelectionAuthority,
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
+    RootInitialCompilationRegistry,
+    RootBootstrapSession,
+    VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_active_enrollment_accessor_rejects_prepared_and_returns_only_current_commit(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="a" * 64)
+        prepared = EnrollmentReceipt(
+            1, "a" * 64, "b" * 64, "prepared-generation", "c" * 64,
+            None, "prepared", (), 1.0, 100.0)
+        session._last_receipt = prepared
+        with self.assertRaises(BootstrapEnrollmentPending):
+            session._resolve_current_active_enrollment()
+
+        committed = EnrollmentReceipt(
+            1, "a" * 64, "d" * 64, "active-generation", "e" * 64,
+            "c" * 64, "committed", ("selected-enrollment",), 2.0, 100.0)
+        session._last_receipt = committed
+        self.assertIs(session._resolve_current_active_enrollment(), committed)
+
+    def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
+        import hermes_installer.authority.bootstrap_runtime_factory as factory_module
+
+        raw = Path("plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/"
+                   "reviewed-native-capability-map-v1.json").read_bytes()
+        session = SimpleNamespace(compilation_session_handle="a" * 64)
+        registry = object.__new__(RootInitialCompilationRegistry)
+        registry._seal = "test-registry-seal"
+        registry.resolve_initial_session = lambda handle: session
+        registry.verify_initial_session = lambda value: self.assertIs(value, session)
+        descriptor = SimpleNamespace(
+            relative_path=factory_module._CAPABILITY_MAP_TEMPLATE_PATH,
+            sha256=factory_module._CAPABILITY_MAP_TEMPLATE_SHA256,
+            size_bytes=factory_module._CAPABILITY_MAP_TEMPLATE_SIZE,
+            roles=("template",))
+        registry._release_file = lambda artifact_id: (descriptor, raw)
+
+        result = registry.resolve_reviewed_capability_map("a" * 64)
+        self.assertIsInstance(result, VerifiedReviewedNativeCapabilityMap)
+        self.assertEqual(result.artifact_id, "installer-reviewed-native-capability-map-v1")
+        self.assertEqual(result._session_handle, session.compilation_session_handle)
+        self.assertEqual(result.document["prepared_capabilities"], [])
+        self.assertEqual(json.dumps(dict(result.document), sort_keys=True, separators=(",", ":"),
+                                    ensure_ascii=False).encode() + b"\n", raw)
+
+        registry._release_file = lambda artifact_id: (descriptor, raw + b" ")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            registry.resolve_reviewed_capability_map("a" * 64)
+
+    def test_adopted_capability_map_rechecks_live_handoff_and_session(self):
+        import hermes_installer.authority.bootstrap_runtime_factory as factory_module
+        from hermes_installer.authority.bootstrap_enrollment import RootSetupSessionHandle
+
+        raw = Path("plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/"
+                   "reviewed-native-capability-map-v1.json").read_bytes()
+        handle = RootSetupSessionHandle("c" * 64, "fixture-session-seal")
+        authorization = SimpleNamespace(transaction_handle="d" * 64, plan_digest="e" * 64)
+        live = object()
+        actor = SimpleNamespace(verify_current=lambda release: None)
+        descriptor = SimpleNamespace(
+            relative_path=factory_module._CAPABILITY_MAP_TEMPLATE_PATH,
+            sha256=factory_module._CAPABILITY_MAP_TEMPLATE_SHA256,
+            size_bytes=factory_module._CAPABILITY_MAP_TEMPLATE_SIZE,
+            roles=("template",))
+        handoff = factory_module.RootInitialPublicationHandoff(
+            1, "f" * 64, "a" * 64, "b" * 64, "g" * 64, "h" * 64,
+            "e" * 64, "i" * 64, "j" * 64, (), 1.0, 1e20,
+            handle.session_id, authorization.transaction_handle)
+        registry = object.__new__(RootInitialCompilationRegistry)
+        registry._session_store = SimpleNamespace(
+            _live=lambda actual: live,
+            _proof=lambda actual: authorization)
+        registry._adopted_handoffs = {handle.session_id: handoff}
+        registry.actor, registry.release = actor, object()
+        registry._validate_release_closure = lambda: None
+        registry._release_file = lambda artifact_id: (descriptor, raw)
+        registry._seal = "fixture-registry-seal"
+
+        result = registry.resolve_adopted_reviewed_capability_map(handle)
+        self.assertIsInstance(result, VerifiedReviewedNativeCapabilityMap)
+        self.assertEqual(result._session_handle, handle.session_id)
+        self.assertEqual(result._registry_seal, registry._seal)
+        self.assertEqual(result.document["prepared_capabilities"], [])
+
+        registry._session_store._proof = lambda actual: SimpleNamespace(
+            transaction_handle="x" * 64, plan_digest="e" * 64)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            registry.resolve_adopted_reviewed_capability_map(handle)
+
+    def test_prepared_authority_base_accepts_only_exact_empty_root_snapshot(self):
+        root = {"root_id": "installer-authority-journal-v1",
+                "absolute_path": "/var/lib/hermes-installer/authority-journal",
+                "owner_uid": 0, "owner_gid": 0, "mode": 0o700, "device": 1,
+                "inode": 2, "generation": "journal-fixture", "purpose": "authority-journal"}
+        generation = _generation(EnrollmentPolicy(
+            service_profile_id="profile", principal_id="principal", generation_id="prepared-fixture",
+            source_artifact_id="source", records=(), resource_controller_roles=(),
+            native_mcp_tool_bindings=(), remote_observation_enrollments=(),
+            root_journal_roots=(root,), activation_state="prepared"))
+        base = {"schema": 1, "key_id": "authority-key-fixture", "principals": {}, "rules": {},
+                "authentik": {}, "process_profiles": {}, "provider_enrollments": {},
+                "mcp_services": {}, "mcp_http_bindings": {}, "memory_providers": {},
+                "native_bridges": {}, "normalization_policies": {}, "delegations": {},
+                "service_generations": generation}
+        InstalledBootstrapPolicyResolver._validate_authority_base_template(base)
+        empty_template = dict(base)
+        empty_template["key_id"] = {"root_binding": "authority_key.key_id"}
+        empty_template["service_generations"] = {
+            "root_binding": "prepared_service_generation.exact_empty_snapshot"}
+        InstalledBootstrapPolicyResolver._validate_authority_base_template(empty_template)
+        for mutate in (
+                lambda value: value.update(service_generations={}),
+                lambda value: value["service_generations"].update(service_records=[{"enabled": True}]),
+                lambda value: value["service_generations"].update(root_journal_roots=[]),
+                lambda value: value.update(authentik={"token": "must-not-exist"})):
+            invalid = {**base, "service_generations": dict(generation), "authentik": {}}
+            mutate(invalid)
+            with self.subTest(invalid=invalid), self.assertRaises(BootstrapEnrollmentPending):
+                InstalledBootstrapPolicyResolver._validate_authority_base_template(invalid)
+
+    def test_composio_catalog_projection_is_pinned_version_and_strictly_bounded(self):
+        authority = object.__new__(RootComposioSetupSelectionAuthority)
+        authority._SLUG = RootComposioSetupSelectionAuthority._SLUG
+        row = {"slug": "WHATSAPP_MESSAGE", "name": "Send message", "description": "Send",
+               "type": "trigger", "toolkit": {"slug": "whatsapp", "name": "WhatsApp"},
+               "version": "20260721_00", "config": {}, "payload": {}}
+        projected = authority._trigger_projection(row, "20260721_00")
+        self.assertEqual(projected["toolkit"], {"slug": "whatsapp", "version": "20260721_00"})
+        self.assertNotIn("instructions", projected)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            authority._trigger_projection({**row, "version": "other"}, "20260721_00")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            authority._trigger_projection({**row, "unreviewed": "field"}, "20260721_00")
+
     def test_installed_factory_has_no_caller_selected_trust_paths(self):
         with self.assertRaises(TypeError):
             RootBootstrapRuntimeFactory(selection_path="/tmp/caller-selection.json")
+
+    def test_session_id_lookup_only_resolves_an_existing_root_issued_session(self):
+        factory = object.__new__(RootBootstrapRuntimeFactory)
+        factory._sessions = {}
+        with self.assertRaises(BootstrapEnrollmentPending):
+            factory.resolve_live_session_id("not-a-session")
+        with self.assertRaises(BootstrapEnrollmentPending):
+            factory.resolve_live_session_id("a" * 64)
 
     def test_factory_refuses_non_linux_or_uninstalled_root_trust(self):
         if os.geteuid() == 0 and Path("/proc/sys/kernel/ostype").exists() \
@@ -38,7 +185,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             root_policy={"journal_root_id": "installer-authority-journal-v1",
                          "service_home_root_id": "hermes-home-v1", "service_work_root_id": "hermes-work-v1",
                          "service_data_root_id": "hermes-data-v1",
-                         "service_parent_root": "/var/lib/hermes-installer/services"},
+                         "service_parent_root": "/var/lib/hermes-installer/services/hermes-agent-native-v1"},
             authority_base_template={"schema": 1, "key_id": "root-key", "principals": {}, "rules": {},
                                      "authentik": {}, "process_profiles": {}, "provider_enrollments": {},
                                      "mcp_services": {}, "mcp_http_bindings": {}, "memory_providers": {},
@@ -49,13 +196,15 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                 "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
-                "resource_validators", "root_journal_roots")},
+                "resource_validators", "root_journal_roots", "resource_controller_roles",
+                "native_mcp_tool_bindings", "remote_observation_enrollments",
+                "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings")},
             receipt_binding_rules=(),
         )
 
         class Resolver:
             @staticmethod
-            def resolve_policy(_plan_id):
+            def resolve_policy(_plan_id, **_kwargs):
                 return policy
 
         authorization = VerifiedRootSetupAuthorization(
@@ -71,8 +220,8 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         self.assertEqual(prepared.activation_state, "prepared")
         self.assertEqual(prepared.records, ())
         self.assertEqual(prepared.root_journal_roots, (dict(authorization.root_journal_root),))
-        self.assertEqual(prepared.home_root.as_posix(), "/var/lib/hermes-installer/services/home")
-        self.assertEqual(prepared.data_root.as_posix(), "/var/lib/hermes-installer/services/data")
+        self.assertEqual(prepared.home_root.as_posix(), "/var/lib/hermes-installer/services/hermes-agent-native-v1/home")
+        self.assertEqual(prepared.data_root.as_posix(), "/var/lib/hermes-installer/services/hermes-agent-native-v1/data")
 
     def test_prepared_policy_can_activate_only_after_a_root_runtime_receipt(self):
         record = {"generation": "template-generation", "service_uid": 0, "service_gid": 0,
@@ -86,7 +235,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             root_policy={"journal_root_id": "installer-authority-journal-v1",
                          "service_home_root_id": "hermes-home-v1", "service_work_root_id": "hermes-work-v1",
                          "service_data_root_id": "hermes-data-v1",
-                         "service_parent_root": "/var/lib/hermes-installer/services"},
+                         "service_parent_root": "/var/lib/hermes-installer/services/hermes-agent-native-v1"},
             authority_base_template={"schema": 1, "key_id": "root-key", "principals": {}, "rules": {},
                                      "authentik": {}, "process_profiles": {}, "provider_enrollments": {},
                                      "mcp_services": {}, "mcp_http_bindings": {}, "memory_providers": {},
@@ -100,7 +249,9 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
                 "protected_devices", "protected_build_records", "native_packages", "memory_enrollments",
                 "operation_parameter_schemas", "source_issuers", "resource_jobs", "remote_session_enrollments",
                 "resource_backend_enrollments", "resource_body_recipes", "resource_scope_bindings",
-                "resource_validators", "root_journal_roots")},
+                "resource_validators", "root_journal_roots", "resource_controller_roles",
+                "native_mcp_tool_bindings", "remote_observation_enrollments",
+                "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings")},
             receipt_binding_rules=({"receipt_role": "official-pm-runtime",
                                     "allowed_artifact_ids": ["pm-runtime-fixture"],
                                     "allowed_output_kinds": ["source-archive"],
@@ -112,7 +263,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
 
         class Resolver:
             @staticmethod
-            def resolve_policy(_plan_id):
+            def resolve_policy(_plan_id, **_kwargs):
                 return policy
 
         authorization = VerifiedRootSetupAuthorization(
@@ -158,7 +309,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
     def test_receipt_rules_bind_one_exact_role_artifact_phase_and_output_kind(self):
         row = {"receipt_role": "official-pm-runtime",
                "allowed_artifact_ids": ["pm-runtime-314"],
-               "allowed_output_kinds": ["source-archive"],
+               "allowed_output_kinds": ["pm-runtime"],
                "required_phase": "runnable", "field_bindings": []}
         parsed = InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
             [row], ["pm-runtime-314"])
@@ -166,7 +317,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         for mutate in (
                 lambda value: value.update(allowed_artifact_ids=["unselected-runtime"]),
                 lambda value: value.update(required_phase="functional-health"),
-                lambda value: value.update(allowed_output_kinds=["shell-script"]),
+                lambda value: value.update(allowed_output_kinds=["native-health"]),
                 lambda value: value.update(receipt_role=["official-pm-runtime"]),
                 lambda value: value.update(allowed_artifact_ids=[{}]),
                 lambda value: value.update(allowed_output_kinds=[{}]),
@@ -188,6 +339,36 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaises(BootstrapEnrollmentPending):
             InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
                 [row], ["pm-runtime-314"])
+
+    def test_receipt_rules_require_role_specific_output_kind(self):
+        for role, output in (("official-pm-runtime", "pm-runtime"),
+                             ("native-compiled-closure", "compiled-closure"),
+                             ("native-entrypoint-manifest", "entrypoint-json"),
+                             ("native-action-resolver", "resolver-json"),
+                             ("native-boundary-overlay", "boundary-overlay"),
+                             ("native-candidate-index", "candidate-index-json"),
+                             ("native-health", "native-health")):
+            row = {"receipt_role": role, "allowed_artifact_ids": ["selected-output"],
+                   "allowed_output_kinds": [output],
+                   "required_phase": "functional-health" if role == "native-health" else "runnable",
+                   "field_bindings": []}
+            parsed = InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                [row], ["selected-output"])
+            self.assertEqual(parsed, [row])
+            invalid = {**row, "allowed_output_kinds": ["source-archive"]}
+            with self.subTest(role=role), self.assertRaises(BootstrapEnrollmentPending):
+                InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                    [invalid], ["selected-output"])
+
+    def test_empty_runtime_receipt_ids_only_allowed_for_prepared_dormant_roles(self):
+        row = {"receipt_role": "native-compiled-closure", "allowed_artifact_ids": [],
+               "allowed_output_kinds": ["compiled-closure"], "required_phase": "runnable",
+               "field_bindings": []}
+        self.assertEqual(
+            InstalledBootstrapPolicyResolver._validate_receipt_binding_rules(
+                [row], [], dormant_prepared=True), [row])
+        with self.assertRaises(BootstrapEnrollmentPending):
+            InstalledBootstrapPolicyResolver._validate_receipt_binding_rules([row], [])
 
 
 if __name__ == "__main__":
