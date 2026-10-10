@@ -148,6 +148,14 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
             raise MemoryRecipeDenied("AgentMemory search accepts only query and limit")
         query = _nonempty_text(body["query"], "query", 16384)
         payload = {"query": query, "limit": _positive_limit(body["limit"]), **forced}
+    elif provider == "openviking" and route_id == "openviking-ready" and body_recipe == "openviking-ready-empty-v1":
+        if body:
+            raise MemoryRecipeDenied("OpenViking readiness probe accepts no caller fields")
+        payload = {}
+    elif provider == "agentmemory" and route_id == "agentmemory-ready" and body_recipe == "agentmemory-livez-empty-v1":
+        if body:
+            raise MemoryRecipeDenied("AgentMemory liveness probe accepts no caller fields")
+        payload = {}
     elif provider == "agentmemory" and route_id == "agentmemory-capture" and body_recipe == "agentmemory-remember-owned-v1":
         if set(body) != {"content"}:
             raise MemoryRecipeDenied("AgentMemory capture accepts only content")
@@ -221,10 +229,15 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
     credential = _opaque(recipe.get("credential_reference_id"), "vault credential reference")
     if type(maximum_bytes) is not int or not 1 <= maximum_bytes <= _MAX_BODY:
         raise MemoryRecipeDenied("enrolled request limit is invalid")
-    encoded = canonical_json(payload, maximum_bytes)
+    # The pinned probes are GETs with no request body. Do not synthesize JSON
+    # bytes for them: the endpoint contract is a bounded authenticated or
+    # unauthenticated status request, not a mutation.
+    encoded = b"" if method == "GET" and not payload else canonical_json(payload, maximum_bytes)
+    headers = (("accept", "application/json"),) if not encoded else (
+        ("accept", "application/json"), ("content-type", "application/json"))
     return MemoryServiceRequest(
         method=method, path=resolved_path,
-        headers=(("accept", "application/json"), ("content-type", "application/json")),
+        headers=headers,
         body=encoded, credential_reference_id=credential,
     )
 
@@ -259,6 +272,46 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
     """Validate only known response families and root-captured identifiers."""
     if type(status) is not int or not 200 <= status < 300 or not isinstance(value, dict):
         raise MemoryRecipeUnavailable("memory service response is not a successful JSON object")
+    if route_id == "openviking-ready" and step_id == "ready":
+        if (set(value) != {"status", "checks"} or value.get("status") != "ready"
+                or not isinstance(value.get("checks"), dict)):
+            raise MemoryRecipeUnavailable("OpenViking readiness response is not a ready result")
+        checks = value["checks"]
+        expected_checks = {"agfs", "vectordb", "api_key_manager", "embedding", "ollama"}
+        if set(checks) != expected_checks:
+            raise MemoryRecipeUnavailable("OpenViking readiness check set differs from the pinned source")
+
+        def check_ok(check: Any) -> bool:
+            if isinstance(check, dict):
+                if set(check) - {"status", "checks"}:
+                    return False
+                state = check.get("status")
+                nested = check.get("checks")
+                if state not in {"ok", "not_configured", "not_supported"}:
+                    return False
+                return nested is None or (isinstance(nested, dict) and bool(nested)
+                                          and all(check_ok(item) for item in nested.values()))
+            return check in {"ok", "not_configured", "not_supported"}
+
+        if not all(check_ok(item) for item in checks.values()):
+            raise MemoryRecipeUnavailable("OpenViking has an unhealthy configured subsystem")
+        return MemoryStepOutcome({"service_ready": True, "checks": checks}, {})
+    if route_id == "agentmemory-ready" and step_id == "livez":
+        # The pinned CLI uses this endpoint to discover the optional viewer
+        # port. It proves that the REST process answered, not that the iii
+        # engine or memory retrieval is functional.
+        if set(value) != {"status", "service", "viewerPort", "viewerSkipped", "streamsPort"}:
+            raise MemoryRecipeUnavailable("AgentMemory liveness response differs from the pinned CLI schema")
+        viewer_port = value.get("viewerPort")
+        viewer_skipped = value.get("viewerSkipped")
+        streams_port = value.get("streamsPort")
+        if (value.get("status") != "ok" or value.get("service") != "agentmemory"
+                or (viewer_port is not None and
+                    (type(viewer_port) is not int or not 1 <= viewer_port <= 65535))
+                or type(viewer_skipped) is not bool
+                or type(streams_port) is not int or not 1 <= streams_port <= 65535):
+            raise MemoryRecipeUnavailable("AgentMemory liveness response differs from the pinned CLI schema")
+        return MemoryStepOutcome({"service_live": True, "memory_ready": False}, {})
     if route_id == "openviking-session-capture":
         if step_id == "create":
             result = value.get("result")
@@ -473,6 +526,10 @@ class MemoryRouteRecipe:
         # route schemas. Other provider variants stay unavailable until their
         # own semantic request/response validators are implemented.
         catalog = {
+            "openviking-ready": ("default", "openviking-ready-request-v1",
+                "openviking-ready-result-v1",
+                (("ready", "GET", "/ready", "openviking-ready-empty-v1",
+                  "openviking-ready-result-v1", (), None),)),
             "agentmemory-search": ("default", "agentmemory-search-request-v1",
                 "agentmemory-search-result-v1",
                 (("search", "POST", "/agentmemory/smart-search",
@@ -481,6 +538,10 @@ class MemoryRouteRecipe:
                 "agentmemory-remember-result-v1",
                 (("capture", "POST", "/agentmemory/remember",
                   "agentmemory-remember-owned-v1", "agentmemory-remember-result-v1", (), None),)),
+            "agentmemory-ready": ("default", "agentmemory-ready-request-v1",
+                "agentmemory-livez-result-v1",
+                (("livez", "GET", "/agentmemory/livez", "agentmemory-livez-empty-v1",
+                  "agentmemory-livez-result-v1", (), None),)),
             "openviking-find": ("default", "openviking-find-request-v1",
                 "openviking-find-result-v1",
                 (("find", "POST", "/api/v1/search/find",

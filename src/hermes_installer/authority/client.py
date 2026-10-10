@@ -240,8 +240,12 @@ class AuthorityClient:
             return None
         fields = {"schema", "source_receipt_handle", "selected_execution_handle",
                   "input_sha256", "input_size_bytes", "expires_monotonic"}
-        if set(result) != fields:
+        if set(result) not in (fields, fields | {"turn_handle"}):
             raise AuthorityDenied("native.input.take", "authority returned unexpected input delivery fields")
+        turn_handle = result.get("turn_handle")
+        if turn_handle is not None and (not isinstance(turn_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle)):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed turn handle")
         try:
             delivery = NativeInitialInputDelivery(**result)
         except (TypeError, ValueError):
