@@ -1011,3 +1011,17 @@ The installer SHALL consume only the issuer-current v231 active authority aggreg
 #### Scenario: Current source receipts join active compilation
 - **WHEN** the current sealed aggregate and exact native precompile reservation have been validated
 - **THEN** the compiler binds the real core and distinct crosswalk members without resolving an already published policy to obtain its own inputs
+
+
+## ADDED Requirements
+
+### Requirement: Exact Jarvis cohort source closure
+The installer SHALL apply the finite source membership and byte tuples in `planning/jarvis-runtime-source-pin-review-v228.json`, preserving the immutable selected source snapshot, held module custody and unchanged execution authority.
+
+#### Scenario: Delayed module is absent or comes from a checkout
+- **WHEN** any of the three selected fixed module members cannot be imported from the sealed installed release
+- **THEN** staging or actor verification fails without source fallback or expanded module-prefix authority
+
+#### Scenario: Materialization or direct mount fixture succeeds
+- **WHEN** exact source profiles/skills or isolated bind effects pass
+- **THEN** evidence retains that phase and does not promote task/provider/runtime/Pi acceptance

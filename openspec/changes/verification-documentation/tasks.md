@@ -226,3 +226,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] VD-T230.2: Verify pre-attachment denial, exact current owner joins, original expiry and both cleanup phases; target acceptance remains open.
 - [ ] BD-T232.1: Source owner implements exact BootstrapPendingStepFailure and nine fixed boundaries/formatter with actor, account, redaction, subclass and malformed-field failures.
 - [ ] VD-T232.2: Review actual coherent committed diagnostic bytes under v228 and next target evidence independently; no source/acceptance promotion.
+
+
+- [ ] VD-T180.6 / VD-T183.5 (v228): Apply exact reviewed8185 outer module/catalog tuples and three fixed delayed module preloads, prove isolated installed origins and retain full coherent checks/target evidence separately.
+- [ ] VD-T232.2 (v228): Confirm committed exact pending diagnostic leaves and future observed target stage without inferred cause or acceptance.
