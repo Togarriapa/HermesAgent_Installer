@@ -142,6 +142,7 @@ class NativeOutputReservation:
     claim_digest: str
     prepared_generation_id: str
     receipt_ids: tuple[str, ...]
+    state: str = "reserved"
 
 
 class RootMaterializationReceiptRegistry:
@@ -349,10 +350,12 @@ class RootMaterializationReceiptRegistry:
                     if changed != 1:
                         raise NativeOutputReceiptDenied("native output changed during active compilation reservation")
                 db.execute(
-                    "INSERT INTO reservations VALUES(?,?,?,?,?,?,?,?)",
+                    "INSERT INTO reservations(reservation_handle,publication_handle,claim_digest,"
+                    "prepared_generation_id,receipt_ids,transaction_handle,expires_monotonic,state) "
+                    "VALUES(?,?,?,?,?,?,?,'reserved')",
                     (reservation.reservation_handle, publication_handle, claim_digest,
                      prepared_generation_id, json.dumps(role_ids), first["transaction_handle"],
-                     min(record["expires_monotonic"] for record in records), "reserved"),
+                     min(record["expires_monotonic"] for record in records)),
                 )
             except Exception:
                 db.rollback()
@@ -384,6 +387,63 @@ class RootMaterializationReceiptRegistry:
                                           resolving=True)
         return tuple(_receipt_from_record(record) for record in records)
 
+    def resolve_active_compilation_reservation(
+        self, publication_receipt: Any,
+    ) -> NativeOutputReservation:
+        """Recover exactly one still-current reservation after process restart.
+
+        The receipt is only a selector. The sealed root binding must re-resolve
+        the current durable publication before a reservation is returned.
+        """
+        self._require_root()
+        publication_handle = getattr(publication_receipt, "publication_handle", None)
+        claim_digest = getattr(publication_receipt, "claim_digest", None)
+        prepared_generation_id = getattr(publication_receipt, "prepared_generation_id", None)
+        transaction_handle = getattr(publication_receipt, "transaction_handle", None)
+        output_handles = getattr(publication_receipt, "materialization_receipt_handles", None)
+        if (getattr(publication_receipt, "state", None) not in {"active-committed", "active", "committed"}
+                or not _valid_handle(publication_handle)
+                or not isinstance(claim_digest, str) or not _HEX.fullmatch(claim_digest)
+                or not _valid_identifier(prepared_generation_id)
+                or not _valid_handle(transaction_handle)
+                or not isinstance(output_handles, tuple)
+                or any(not _valid_identifier(value) for value in output_handles)
+                or len(set(output_handles)) != len(output_handles)):
+            raise NativeOutputReceiptDenied("active publication receipt cannot select a native reservation")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM reservations WHERE publication_handle=? AND claim_digest=? "
+                "AND prepared_generation_id=? AND transaction_handle=? AND state IN ('reserved','completed')",
+                (publication_handle, claim_digest, prepared_generation_id, transaction_handle),
+            ).fetchall()
+        matching: list[NativeOutputReservation] = []
+        for row in rows:
+            ids = tuple(json.loads(row["receipt_ids"]))
+            if (row["expires_monotonic"] <= self._monotonic()
+                    or not set(ids).issubset(output_handles)):
+                continue
+            candidate = NativeOutputReservation(
+                row["reservation_handle"], publication_handle, claim_digest,
+                prepared_generation_id, ids, row["state"],
+            )
+            verifier = getattr(self._binding, "verify_native_publication_receipt", None)
+            try:
+                current = callable(verifier) and verifier(candidate, publication_receipt) is True
+            except Exception:
+                current = False
+            if not current:
+                continue
+            try:
+                self._verify_reservation_outputs(candidate)
+            except NativeOutputReceiptDenied:
+                continue
+            matching.append(candidate)
+        if len(matching) != 1:
+            raise NativeOutputReceiptDenied(
+                "active publication does not resolve one current native output reservation"
+            )
+        return matching[0]
+
     def complete_active_compilation(
         self, reservation_handle: str, publication_receipt: Any, *,
         prepared_generation_id: str, publication_handle: str,
@@ -398,6 +458,7 @@ class RootMaterializationReceiptRegistry:
         reservation = self._get_reservation(
             reservation_handle, prepared_generation_id=prepared_generation_id,
             publication_handle=publication_handle, claim_digest=claim_digest,
+            allow_completed=True,
         )
         verifier = getattr(self._binding, "verify_native_publication_receipt", None)
         if not callable(verifier):
@@ -416,6 +477,8 @@ class RootMaterializationReceiptRegistry:
             verified = False
         if verified is not True:
             raise NativeOutputReceiptDenied("active policy publication receipt does not bind this reservation")
+        if reservation.state == "completed":
+            return self._verify_reservation_outputs(reservation)
         receipts = self.verify_active_compilation(
             reservation_handle, prepared_generation_id=prepared_generation_id,
             publication_handle=publication_handle, claim_digest=claim_digest)
@@ -501,13 +564,15 @@ class RootMaterializationReceiptRegistry:
         return _read_private_file(path, _MAX_OUTPUT_BYTES[record["artifact_role"]])
 
     def _get_reservation(self, handle: str, *, prepared_generation_id: str,
-                         publication_handle: str, claim_digest: str) -> NativeOutputReservation:
+                         publication_handle: str, claim_digest: str,
+                         allow_completed: bool = False) -> NativeOutputReservation:
         self._require_root()
         if not _valid_handle(handle):
             raise NativeOutputReceiptDenied("active compilation reservation handle is malformed")
         with self._connect() as db:
             row = db.execute("SELECT * FROM reservations WHERE reservation_handle=?", (handle,)).fetchone()
-        if row is None or row["state"] not in {"reserved", "released"}:
+        accepted_states = {"reserved", "released"} | ({"completed"} if allow_completed else set())
+        if row is None or row["state"] not in accepted_states:
             raise NativeOutputReceiptDenied("active compilation reservation is stale or spent")
         if row["expires_monotonic"] <= self._monotonic():
             raise NativeOutputReceiptDenied("active compilation reservation is expired")
@@ -516,7 +581,24 @@ class RootMaterializationReceiptRegistry:
                 or row["claim_digest"] != claim_digest):
             raise NativeOutputReceiptDenied("active compilation reservation belongs to another claim")
         return NativeOutputReservation(handle, publication_handle, claim_digest,
-                                       prepared_generation_id, tuple(json.loads(row["receipt_ids"])))
+                                       prepared_generation_id, tuple(json.loads(row["receipt_ids"])),
+                                       row["state"])
+
+    def _verify_reservation_outputs(
+        self, reservation: NativeOutputReservation,
+    ) -> tuple[RuntimeArtifactReceipt, ...]:
+        records = [self._get_record(receipt_id) for receipt_id in reservation.receipt_ids]
+        expected_state = "consumed" if reservation.state == "completed" else "reserved"
+        for record in records:
+            if record["state"] != expected_state:
+                raise NativeOutputReceiptDenied("recovered native reservation output state is inconsistent")
+            self._verify_record_current(record)
+            payload = self._read_record_payload(record)
+            self._assert_output_relations(self._selection_for_record(record),
+                                          record["artifact_role"], payload, resolving=True)
+        if {record["artifact_role"] for record in records} != _GENERATED_ROLES:
+            raise NativeOutputReceiptDenied("recovered reservation lost a fixed native output role")
+        return tuple(_receipt_from_record(record) for record in records)
 
     def _validate_selection(self, selection: NativeOutputSelection,
                             role: str, kind: str, member_digest: str,
@@ -786,13 +868,22 @@ class RootMaterializationReceiptRegistry:
             if manifest != embedded_manifest:
                 raise NativeOutputReceiptDenied("entrypoint receipt differs from the selected closure manifest")
             _verify_closure_tree_manifest(manifest, closure)
-            pin = _parse_canonical_json(manifest)["candidate_index"]
+            manifest_doc = _parse_canonical_json(manifest)
+            pin = manifest_doc["candidate_index"]
             if (pin["sha256"] != hashlib.sha256(embedded_index).hexdigest()
                     or pin["size_bytes"] != len(embedded_index)):
                 raise NativeOutputReceiptDenied("entrypoint candidate pin differs from the closure member")
         resolver = payloads.get("native-action-resolver")
-        if resolver is not None and resolver != _read_archive_member(closure, "resolver/resolver"):
-            raise NativeOutputReceiptDenied("resolver receipt differs from the selected closure resolver")
+        if resolver is not None:
+            embedded_resolver = _read_archive_member(closure, "resolver/resolver")
+            if resolver != embedded_resolver:
+                raise NativeOutputReceiptDenied("resolver receipt differs from the selected closure resolver")
+            if manifest is not None:
+                resolver_doc = _parse_canonical_json(resolver)
+                if (manifest_doc["resolver_sha256"] != hashlib.sha256(resolver).hexdigest()
+                        or resolver_doc["process_role_records_sha256"]
+                        != manifest_doc["process_role_records_sha256"]):
+                    raise NativeOutputReceiptDenied("manifest and resolver process-role cross-pins differ")
         overlay = payloads.get("native-boundary-overlay")
         if overlay is not None:
             overlay_doc = _verify_boundary_overlay(overlay)
@@ -1089,13 +1180,18 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
             if hashlib.sha256(_canonical(tree_rows)).hexdigest() != selection.compiled_closure_sha256:
                 raise NativeOutputReceiptDenied("selected compiled closure tree digest differs from its entrypoint")
             resolver = _parse_canonical_json(_read_archive_member(payload, "resolver/resolver"))
-            if not isinstance(resolver, dict):
+            manifest = _parse_canonical_json(embedded_manifest)
+            resolver_bytes = _read_archive_member(payload, "resolver/resolver")
+            if (not isinstance(resolver, dict)
+                    or hashlib.sha256(resolver_bytes).hexdigest() != manifest.get("resolver_sha256")
+                    or resolver.get("process_role_records_sha256")
+                    != manifest.get("process_role_records_sha256")):
                 raise NativeOutputReceiptDenied("compiled closure resolver document is malformed")
     if role == "native-entrypoint-manifest":
         value = _parse_canonical_json(payload)
         expected_top = {"schema", "package_id", "profile_id", "generation",
                         "closure_files", "adapters", "dependencies", "candidate_index",
-                        "process_role_records"}
+                        "process_role_records", "process_role_records_sha256", "resolver_sha256"}
         if (set(value) != expected_top or value.get("schema") != 1
                 or value.get("package_id") != selection.package_id
                 or value.get("profile_id") != selection.profile_id
@@ -1132,6 +1228,11 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
         _validate_member_rows(normalized)
         if hashlib.sha256(_canonical(closure_files)).hexdigest() != selection.compiled_closure_sha256:
             raise NativeOutputReceiptDenied("entrypoint closure tree differs from selected package binding")
+        role_digest = hashlib.sha256(_canonical(value["process_role_records"])).hexdigest()
+        if (value["process_role_records_sha256"] != role_digest
+                or not isinstance(value["resolver_sha256"], str)
+                or not _HEX.fullmatch(value["resolver_sha256"])):
+            raise NativeOutputReceiptDenied("entrypoint role or resolver digest cross-pin is invalid")
         _validate_process_role_records(selection, value["process_role_records"], normalized)
     if role == "native-boundary-overlay":
         value = _verify_boundary_overlay(payload)
@@ -1185,7 +1286,7 @@ def _validate_process_role_records(selection: NativeOutputSelection,
         for key in ("observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids"):
             values = row[key]
             if (not isinstance(values, list) or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in values)
-                    or len(set(values)) != len(values)):
+                    or len(set(values)) != len(values) or values != sorted(values)):
                 raise NativeOutputReceiptDenied("process-role foreign-key list is invalid")
         if not row["observer_enrollment_ids"] or row["module_name"] in module_names:
             raise NativeOutputReceiptDenied("process-role observer or module identity is incomplete")
