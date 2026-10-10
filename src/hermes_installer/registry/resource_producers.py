@@ -370,7 +370,10 @@ class SelectedWebhookIngress:
             )
             if not isinstance(secret_value, str):
                 raise ValueError("credential vault returned a non-text value")
-            delivery_header = (spec.get("replayProtection") or {}).get("deliveryIdHeader")
+            replay_policy = spec.get("replayProtection")
+            delivery_header = replay_policy.get("deliveryIdHeader") if isinstance(replay_policy, Mapping) else None
+            if delivery_header is None and isinstance(spec.get("policy"), Mapping):
+                delivery_header = spec["policy"].get("deliveryIdHeader")
             delivery_id = next((value for name, value in observation.headers
                                 if isinstance(delivery_header, str)
                                 and name.casefold() == delivery_header.casefold()), None)
@@ -507,6 +510,40 @@ class SelectedWebhookIngress:
             capability, controller_proof=controller, raw_observation=raw_observation,
         )
         return controller_registry.capture_selected_ingress(controller.proof_handle, proof)
+
+    def resolve_controller_for_request(self, method: str, path: str,
+                                       controller_registry: Any) -> Any:
+        """Resolve custody before the listener reads the request body."""
+        from ..authority.resource_source_controllers import RootResourceControllerRegistry
+
+        if (method != "POST" or not isinstance(path, str)
+                or path not in self._routes
+                or type(controller_registry) is not RootResourceControllerRegistry
+                or controller_registry is not getattr(self._event_issuer, "controller_registry", None)):
+            raise ResourceObservationError("selected webhook listener route is unavailable")
+        selected, enrollment = self._routes[path]
+        attached = self._source_producers.get(enrollment.resource_id)
+        if attached is None:
+            raise ResourceObservationError("selected webhook producer is not attached")
+        _producer, _capability, binding = attached
+        return controller_registry.resolve_selected_ingress_controller(
+            binding.role.id, binding.source_issuer.issuer_channel_id,
+            binding.backend.backend_id,
+        )
+
+    @staticmethod
+    def discard_controller_proof(controller_registry: Any, controller_proof: object) -> None:
+        """Release a pre-body ingress reservation when HTTP verification fails."""
+        from ..authority.root_controller_custody import RootIngressControllerProof
+
+        if type(controller_proof) is not RootIngressControllerProof:
+            return
+        release = getattr(controller_registry, "release_ingress_proof", None)
+        if callable(release):
+            try:
+                release(controller_proof.proof_handle)
+            finally:
+                controller_proof.close()
 
     def _consume_for_source(self, raw_observation: object, controller_proof: object,
                             resource_id: str, selected: Any, enrollment: Any,

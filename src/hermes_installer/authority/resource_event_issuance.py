@@ -117,6 +117,30 @@ class ResourceEventContextIssuer:
             self._source_proofs[id(proof)] = (proof, match)
             return proof
 
+    def discard_source_proof(self, proof: RootResourceSourceEventProof) -> bool:
+        """Drop only this issuer's exact unconsumed proof after custody setup fails.
+
+        This is intentionally identity- and token-scoped. It cannot cancel a
+        reconstructed dataclass or another producer's pending observation.
+        Once capture begins, ``capture_selected_ingress`` consumes the proof.
+        """
+        if (type(proof) is not RootResourceSourceEventProof
+                or proof.issuer_token is not self._registry_capability._token):
+            return False
+        with self._producer_lock:
+            retained = self._source_proofs.get(id(proof))
+            if retained is None or retained[0] is not proof:
+                return False
+            del self._source_proofs[id(proof)]
+            observer = getattr(retained[1].producer, "observer", None)
+        consume = getattr(observer, "consume", None)
+        if callable(consume):
+            try:
+                consume(proof.verified_provenance)
+            except Exception:
+                pass
+        return True
+
     def issue_source_event(self, proof: RootResourceSourceEventProof,
                            registry_capability: object) -> RootResourceIssuedSourceEvent:
         """Reject pre-v36 issuance that lacks the registry's retained custody proof."""

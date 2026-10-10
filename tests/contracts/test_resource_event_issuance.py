@@ -341,6 +341,36 @@ def test_initial_source_proof_is_producer_bound_opaque_and_one_use():
         issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
 
 
+def test_source_proof_discard_is_exact_identity_scoped_and_cleans_observer_state():
+    issuer, _request, _registry, _service, record = _case()
+    provenance = object()
+
+    class _Observer:
+        consumed = []
+
+        def consume(self, proof):
+            self.consumed.append(proof)
+
+    producer = SimpleNamespace(observer=_Observer())
+    capability = issuer.register_source_producer(
+        producer, source_kind="schedule-event", observer_enrollment_id="observer-schedule",
+        validate_provenance=lambda candidate: candidate is provenance,
+    )
+    proof = issuer.mint_source_proof(
+        capability, event_id="e" + secrets.token_urlsafe(32), resource_id="demo",
+        resource_generation=record.handle.resource_generation,
+        source_observer_enrollment_id="observer-schedule",
+        payload=b'{"event":"timer-fire"}', provenance=provenance,
+    )
+    forged = replace(proof)
+    assert issuer.discard_source_proof(forged) is False
+    assert issuer.discard_source_proof(proof) is True
+    assert producer.observer.consumed == [provenance]
+    assert issuer.discard_source_proof(proof) is False
+    with pytest.raises(AuthorityDenied, match="stale or already consumed"):
+        issuer.capture_selected_ingress(SimpleNamespace(), proof, issuer._registry_capability)
+
+
 def test_initial_source_resolves_only_signed_current_parent_receipts_from_exact_observer():
     issuer, _request, registry, service, record = _case()
     observer_row = registry.source_observers.observers["observer-schedule"]
