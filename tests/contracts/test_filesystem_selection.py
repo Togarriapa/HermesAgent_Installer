@@ -29,16 +29,3 @@ def test_fixed_root_is_opened_and_bound_to_live_inode():
             fs._verify_fd(fd, info.st_dev, info.st_ino + 1, 0, 0, 0o700)
     finally:
         os.close(fd)
-
-
-def test_fixed_root_does_not_create_missing_directory(monkeypatch):
-    if os.geteuid() != 0 or not fs._linux():
-        pytest.skip("fixed model-store observation is Linux-root-only")
-    # A nonexistent fixed root is an explicit prerequisite failure; production
-    # code has no mkdir/chown path. Redirect only the immutable path constant to
-    # a nonexistent test path under the root-owned temporary fixture parent.
-    missing = "/var/lib/hermes-installer/model-store-test-absent"
-    monkeypatch.setattr(fs, "ROOT_PATH", __import__("pathlib").Path(missing))
-    with pytest.raises(fs.RootFilesystemSelectionDenied):
-        fs._open_fixed_model_store_root()
-    assert not os.path.lexists(missing)

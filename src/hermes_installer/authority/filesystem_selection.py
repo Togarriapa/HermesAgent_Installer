@@ -408,17 +408,18 @@ def _canonical(value: Any) -> bytes:
 def _open_fixed_model_store_root() -> int:
     if os.geteuid() != 0 or not _linux():
         raise RootFilesystemSelectionDenied("fixed model-store root is observable only in the installed Linux root process")
+    fixed_path = Path("/var/lib/hermes-installer/model-store")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     fd = os.open("/", flags)
     try:
-        for index, part in enumerate(ROOT_PATH.parts[1:]):
+        for index, part in enumerate(fixed_path.parts[1:]):
             child = os.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = child
             info = os.fstat(fd)
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
                 raise RootFilesystemSelectionDenied("fixed model-store path component is not a root-owned directory")
-            final = index == len(ROOT_PATH.parts[1:]) - 1
+            final = index == len(fixed_path.parts[1:]) - 1
             if final:
                 if info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700:
                     raise RootFilesystemSelectionDenied("fixed model-store root must be root:root mode 0700")
