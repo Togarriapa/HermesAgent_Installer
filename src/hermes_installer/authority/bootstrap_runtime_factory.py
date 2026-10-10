@@ -4150,6 +4150,226 @@ class RootBootstrapSession:
         except Exception:
             raise BootstrapEnrollmentPending("current durable setup choice could not be revoked") from None
 
+    def _resolve_current_native_policy_registry(self) -> Any:
+        """Compose the retained preactive native-policy registries once per session."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("native policy configuration requires current empty prepared custody")
+        principal = self._adopted_principal_registry
+        if principal is None:
+            raise BootstrapEnrollmentPending("native policy configuration requires the adopted root principal registry")
+        if self._native_policy_preparation_registry is None:
+            from .native_component_targets import RootNativeComponentTargetRegistry
+            from .native_registration_projection import RootNativeRegistrationProjectionRegistry
+            from .native_policy_preparation import RootNativePolicyPreparationRegistry
+            from .native_source_definitions import RootNativeSourceDefinitionRegistry
+            journal = self._current_root_journal_selection().path
+            binding = self._selected_installation
+            targets = RootNativeComponentTargetRegistry.from_root_setup(binding, principal, journal)
+            projections = RootNativeRegistrationProjectionRegistry.from_root_setup(binding, journal)
+            source_definitions = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+            registry = RootNativePolicyPreparationRegistry.from_root_setup(
+                binding, principal, targets, binding, projections, binding, journal)
+            registry.attach_source_definition_registry(source_definitions)
+            self._native_component_target_registry = targets
+            self._native_registration_projection_registry = projections
+            self._native_source_definition_registry = source_definitions
+            self._native_policy_preparation_registry = registry
+        self._verify_current_setup_controller()
+        return self._native_policy_preparation_registry
+
+    def observe_native_policy_configuration(self) -> Any:
+        """Capture root-TTY intent for finite native component families.
+
+        The choice selects source families only. The registry separately
+        resolves targets and reports any absent action, role, schema, observer,
+        account or permission evidence as pending.
+        """
+        self._check_live()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending("native policy choice requires current empty prepared custody")
+        registry = self._resolve_current_native_policy_registry()
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):
+            raise BootstrapEnrollmentPending("native policy configuration requires the root controlling TTY")
+        from ..root_setup import _capture_root_tty_proof, _verify_root_tty_proof
+        proof = _capture_root_tty_proof()
+        choice_handle: str | None = None
+        try:
+            _verify_root_tty_proof(proof)
+            if (proof.controller_uid != 0 or proof.controller_gid != 0
+                    or proof.controller_pid != os.getpid()):
+                raise BootstrapEnrollmentPending("native policy choice is not joined to the current root TTY")
+            current = self.resolve_current_setup_identity()
+            principal_selector = self.resolve_adopted_principal_selector()
+            namespace_selector = self.resolve_adopted_namespace_selector()
+            if (current.principal_selection_handle != principal_selector.selection_handle
+                    or current.namespace_selection_handle != namespace_selector.selection_handle):
+                raise BootstrapEnrollmentPending("native policy choice identity selectors changed")
+            from .native_registration_projection import (
+                capture_actual_hermes_registrations, reviewed_native_registration_definitions,
+            )
+            captured = capture_actual_hermes_registrations()
+            definitions = reviewed_native_registration_definitions(captured)
+            component_ids = tuple(sorted({row.family for row in definitions}))
+            print("\nNative component source configuration (intent only):")
+            for index, component_id in enumerate(component_ids, 1):
+                print(f"  {index}. {component_id}")
+            print("Choose component family numbers separated by commas; blank selects none.")
+            answer = input("Native component families: ").strip()
+            _verify_root_tty_proof(proof)
+            selected: tuple[str, ...]
+            if not answer:
+                selected = ()
+            else:
+                try:
+                    numbers = tuple(int(item.strip(), 10) for item in answer.split(","))
+                except ValueError:
+                    raise BootstrapEnrollmentPending("native selection must use listed numbers or blank") from None
+                if (not numbers or len(set(numbers)) != len(numbers)
+                        or any(number < 1 or number > len(component_ids) for number in numbers)):
+                    raise BootstrapEnrollmentPending("native selection contains a duplicate or unknown component")
+                selected = tuple(component_ids[number - 1] for number in numbers)
+            selected_set = set(selected)
+            selected_registrations: list[str] = []
+            selected_actions: list[str] = []
+            for row in definitions:
+                if row.family not in selected_set:
+                    continue
+                selected_registrations.append(f"{row.adapter_id}:tool:{row.native_tool_name}")
+                selected_actions.extend(binding.action_id for binding in row.action_bindings)
+            selected_registrations = sorted(set(selected_registrations))
+            selected_actions = sorted(set(selected_actions))
+            if len(captured) != 42 or len(component_ids) != 18:
+                raise BootstrapEnrollmentPending("native source capture differs from the reviewed 18/42 set")
+            profile_rows = [self.resolve_selected_resource_profile(handle)
+                            for handle in tuple(self._resource_profiles)]
+            if len(profile_rows) > 1:
+                raise BootstrapEnrollmentPending("native policy choice has ambiguous Resources profiles")
+            resource_handle = profile_rows[0].receipt_handle if profile_rows else None
+            service_profile_id = self._policy.identity_policy.get("service_profile_id")
+            if not isinstance(service_profile_id, str) or not service_profile_id:
+                raise BootstrapEnrollmentPending("native policy choice lacks its selected service profile")
+            now = time.monotonic()
+            deadline = self._factory.session_store.current_deadline(self._handle)
+            expires = min(deadline, current.expires_monotonic, now + 300.0)
+            if expires <= now:
+                raise BootstrapEnrollmentPending("native policy choice lease is already expired")
+            choice_handle = secrets.token_urlsafe(36)
+            controller_handle = secrets.token_urlsafe(36)
+            from .native_policy_preparation import _issue_root_native_policy_configuration_choice
+            choice = _issue_root_native_policy_configuration_choice(
+                choice_handle=choice_handle, choice_observation_id=secrets.token_hex(16),
+                setup_session_id=self._handle.session_id,
+                transaction_handle=self._authorization.transaction_handle,
+                plan_sha256=self._authorization.plan_digest,
+                prepared_generation_id=prepared.generation_id,
+                prepared_generation_digest=prepared.generation_digest,
+                principal_selection_handle=principal_selector.selection_handle,
+                principal_binding_sha256=principal_selector.binding_sha256,
+                namespace_selection_handle=namespace_selector.selection_handle,
+                namespace_binding_sha256=namespace_selector.binding_sha256,
+                service_profile_id=service_profile_id,
+                service_generation=prepared.generation_id,
+                resource_profile_selection_handle=resource_handle,
+                package_id="hermes-agent-native-package-v1",
+                native_package_generation=None,
+                selected_component_ids=tuple(selected),
+                selected_registration_ids=tuple(selected_registrations),
+                selected_action_binding_ids=tuple(selected_actions),
+                controller_binding_handle=controller_handle,
+                private_input_consent_selection_handle=None,
+                issued_monotonic=now, expires_monotonic=expires, revocation_epoch=0,
+            )
+            self._native_policy_choices[choice_handle] = choice
+            self._native_policy_tty_proofs[choice_handle] = proof
+            selection = registry.record_configuration(choice)
+            records = registry.prepare_selected_policy(selection.selection_handle)
+            self._native_policy_records_by_selection[selection.selection_handle] = records
+            self._current_native_policy_selection_handle = selection.selection_handle
+            proof = None
+            return registry.resolve_selection_current(selection.selection_handle)
+        except BootstrapEnrollmentPending:
+            if choice_handle is not None:
+                self._native_policy_choices.pop(choice_handle, None)
+                self._native_policy_tty_proofs.pop(choice_handle, None)
+            raise
+        except Exception:
+            if choice_handle is not None:
+                self._native_policy_choices.pop(choice_handle, None)
+                self._native_policy_tty_proofs.pop(choice_handle, None)
+            raise BootstrapEnrollmentPending("native policy configuration could not be retained from root TTY") from None
+        finally:
+            if proof is not None:
+                proof.close()
+
+    def resolve_current_native_policy_configuration_choice(self, choice_handle: str) -> Any:
+        self._check_live()
+        choice = self._native_policy_choices.get(choice_handle)
+        proof = self._native_policy_tty_proofs.get(choice_handle)
+        if choice is None or proof is None or choice.expires_monotonic <= time.monotonic():
+            raise BootstrapEnrollmentPending("native policy TTY choice is absent, stale or revoked")
+        from ..root_setup import _verify_root_tty_proof
+        _verify_root_tty_proof(proof)
+        current = self.resolve_current_setup_identity()
+        principal_selector = self.resolve_adopted_principal_selector()
+        namespace_selector = self.resolve_adopted_namespace_selector()
+        prepared = self._last_receipt
+        resource_profile_current = None
+        if choice.resource_profile_selection_handle is not None:
+            resource_profile_current = self.resolve_selected_resource_profile(
+                choice.resource_profile_selection_handle)
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or choice.setup_session_id != self._handle.session_id
+                or choice.transaction_handle != self._authorization.transaction_handle
+                or choice.plan_sha256 != self._authorization.plan_digest
+                or choice.prepared_generation_id != prepared.generation_id
+                or choice.prepared_generation_digest != prepared.generation_digest
+                or choice.principal_selection_handle != principal_selector.selection_handle
+                or choice.principal_binding_sha256 != principal_selector.binding_sha256
+                or choice.namespace_selection_handle != namespace_selector.selection_handle
+                or choice.namespace_binding_sha256 != namespace_selector.binding_sha256
+                or current.principal_selection_handle != choice.principal_selection_handle
+                or current.namespace_selection_handle != choice.namespace_selection_handle
+                or self._policy.identity_policy.get("service_profile_id") != choice.service_profile_id
+                or choice.service_generation != prepared.generation_id
+                or (resource_profile_current is not None
+                    and resource_profile_current.receipt_handle != choice.resource_profile_selection_handle)):
+            raise BootstrapEnrollmentPending("native policy choice no longer matches current setup identity")
+        self._verify_current_setup_controller()
+        return choice
+
+    def resolve_current_native_policy_selection(self, selection_handle: str) -> Any:
+        registry = self._resolve_current_native_policy_registry()
+        try:
+            return registry.resolve_selection_current(selection_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("native policy selection is absent or stale") from None
+
+    def resolve_current_native_policy_targets(self, selection_handle: str) -> tuple[Any, ...]:
+        registry = self._resolve_current_native_policy_registry()
+        selection = registry.resolve_selection_current(selection_handle)
+        records = self._native_policy_records_by_selection.get(selection_handle)
+        if records is None:
+            try:
+                records = registry.prepare_selected_policy(selection_handle)
+            except Exception:
+                raise BootstrapEnrollmentPending("native policy target preparation is unavailable") from None
+            self._native_policy_records_by_selection[selection_handle] = records
+        try:
+            current_records = registry.resolve_prepared_policy(records.records_handle, self._selected_installation)
+            if current_records is not records:
+                raise ValueError
+            targets = self._native_component_target_registry
+            return tuple(targets.resolve_current_target(handle, selection_handle)
+                         for handle in current_records.target_selection_handles)
+        except Exception:
+            raise BootstrapEnrollmentPending("current native policy targets are unavailable") from None
+
     def resolve_current_prepared_native_policy_records(self, selection_handle: str) -> Any:
         """Re-resolve the exact native policy/source/target record bundle.
 

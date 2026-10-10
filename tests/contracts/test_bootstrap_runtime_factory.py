@@ -16,6 +16,8 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootBootstrapRuntimeFactory,
     RootSetupPolicyFactory,
     RootRuntimeArtifactReceipt,
+    RootReleaseModuleReceipt,
+    RootPreparedReleaseMemberReceipt,
     RootInitialCompilationRegistry,
     RootBootstrapSession,
     VerifiedReviewedNativeCapabilityMap,
@@ -112,6 +114,149 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         registry.resolve_prepared_policy = lambda *_args: SimpleNamespace()
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "records are unavailable"):
             session.resolve_current_prepared_native_policy_records("selection")
+
+    def test_runtime_receipt_generation_is_derived_from_current_prepared_authorization(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(transaction_handle="tx-current")
+        session._resolve_current_prepared_enrollment = lambda: SimpleNamespace(
+            state="prepared", enrollment_ids=(), transaction_handle="tx-current")
+        receipt = SimpleNamespace(generation="tx-current")
+        calls = []
+        session.resolve_runtime_receipt = lambda role, handle, generation: (
+            calls.append((role, handle, generation)) or receipt)
+        session._policy = SimpleNamespace(receipt_binding_rules=[
+            {"receipt_role": "official-pm-runtime", "required_phase": "runnable"}])
+        session._factory = SimpleNamespace(
+            _actor=SimpleNamespace(verify_current=lambda _release: None),
+            _release=SimpleNamespace(verify_current=lambda: None))
+        assert session._resolve_current_runtime_receipt("official-pm-runtime", "opaque-cas-handle") is receipt
+        assert calls == [("official-pm-runtime", "opaque-cas-handle", "tx-current")]
+
+        session._policy.receipt_binding_rules[0]["required_phase"] = "prepared-source"
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "current runnable role"):
+            session._resolve_current_runtime_receipt("official-pm-runtime", "opaque-cas-handle")
+
+    def test_capture_profile_members_remain_pending_when_release_lacks_exact_amendments(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), provision_receipt_handle="prepared-receipt",
+            generation_id="generation")
+        session._authorization = SimpleNamespace(plan_artifact_id="plan")
+        session._factory = SimpleNamespace(
+            _release=SimpleNamespace(files=()),
+            _actor=SimpleNamespace(verify_current=lambda _release: None),
+            resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(allowed_artifact_ids=())))
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "not uniquely pinned"):
+            session._resolve_prepared_native_capture_profile_receipts()
+
+    def test_prepared_release_member_rechecks_its_exact_role(self):
+        import hashlib
+        import tempfile
+        from hermes_installer.authority.bootstrap_runtime_factory import _PREPARED_RELEASE_MEMBER_SEAL
+
+        with tempfile.NamedTemporaryFile() as file:
+            raw = b"reviewed amendment bytes"
+            file.write(raw)
+            file.flush()
+            digest = hashlib.sha256(raw).hexdigest()
+            release = SimpleNamespace(
+                files=[SimpleNamespace(artifact_id="capture-profile", roles=("amendment",),
+                                       relative_path="plans/capture.json", sha256=digest,
+                                       size_bytes=len(raw))],
+                release_commit="commit", deployment_receipt_sha256="d" * 64,
+                open_file=lambda _artifact_id: os.open(file.name, os.O_RDONLY))
+            session = object.__new__(RootBootstrapSession)
+            session._check_live = lambda: None
+            session._last_receipt = SimpleNamespace(state="prepared", enrollment_ids=(), generation_id="g")
+            session._authorization = SimpleNamespace(plan_artifact_id="plan")
+            session._factory = SimpleNamespace(
+                _release=release,
+                _actor=SimpleNamespace(verify_current=lambda _release: None),
+                resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(
+                    allowed_artifact_ids=("capture-profile",))))
+            session._handle = SimpleNamespace(session_id="session")
+            session._seal = "session-seal"
+            session._prepared_release_file_receipts = {}
+            receipt = RootPreparedReleaseMemberReceipt(
+                "capture-profile", "plans/capture.json", digest, len(raw), "commit",
+                "d" * 64, "receipt-handle", "session", "g",
+                _PREPARED_RELEASE_MEMBER_SEAL, "session-seal", session, "amendment")
+            session._prepared_release_file_receipts[receipt.source_receipt_handle] = receipt
+            self.assertEqual(receipt.read_current(), raw)
+
+            release.files[0].roles = ("module",)
+            with self.assertRaisesRegex(BootstrapEnrollmentPending, "differs from its fixed receipt"):
+                receipt.read_current()
+
+    def test_action_schema_modules_require_exact_release_and_import_closure(self):
+        import hashlib
+
+        paths = (
+            "src/hermes_installer/components/plugin_accounts_schemas.py",
+            "src/hermes_installer/components/plugin_document_schemas.py",
+            "src/hermes_installer/components/plugin_finance_schemas.py",
+            "src/hermes_installer/components/plugin_homelab_schemas.py",
+            "src/hermes_installer/components/plugin_local_voice_web_schemas.py",
+        )
+        descriptors = []
+        artifact_files = {}
+        origins = []
+        for index, relative_path in enumerate(paths):
+            raw = Path(relative_path).read_bytes()
+            artifact_id = f"release-artifact-{index}"
+            digest = hashlib.sha256(raw).hexdigest()
+            descriptors.append(SimpleNamespace(
+                artifact_id=artifact_id, relative_path=relative_path, sha256=digest,
+                size_bytes=len(raw), roles=("module",)))
+            artifact_files[artifact_id] = Path(relative_path)
+            origins.append(("module", f"/release/{relative_path}", "origin", "loader", digest))
+        release = SimpleNamespace(
+            files=descriptors, release_root=Path("/release"), release_commit="commit",
+            deployment_receipt_sha256="d" * 64,
+            open_file=lambda artifact_id: os.open(artifact_files[artifact_id], os.O_RDONLY))
+        actor = SimpleNamespace(module_origins=origins, verify_current=lambda _release: None)
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(plan_artifact_id="plan")
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), provision_receipt_handle="prepared",
+            generation_id="generation")
+        session._handle = SimpleNamespace(session_id="session")
+        session._seal = "session-seal"
+        session._release_member_receipts = {}
+        session._prepared_release_member_receipts = {}
+        session._factory = SimpleNamespace(
+            _release=release, _actor=actor,
+            resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(
+                allowed_artifact_ids=tuple(artifact_files))))
+
+        receipts = session._resolve_prepared_native_action_schema_module_receipts()
+        self.assertEqual(len(receipts), 5)
+        self.assertTrue(all(type(item) is RootReleaseModuleReceipt for item in receipts))
+        self.assertEqual(tuple(item.relative_path for item in receipts), paths)
+        self.assertEqual(tuple(item.read_current() for item in receipts),
+                         tuple(Path(path).read_bytes() for path in paths))
+        self.assertIs(receipts[0], session._resolve_prepared_native_action_schema_module_receipts()[0])
+
+        actor.module_origins = origins[:-1]
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
+            session._resolve_prepared_native_action_schema_module_receipts()
+
+    def test_native_assembly_requires_retained_root_tty_policy_selection(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session.resolve_prepared_receipt = lambda _handle: object()
+        session.prepare_selected_native_bundle = lambda: object()
+        session._resolve_current_prepared_native_bundle = lambda _bundle: None
+        session._current_native_policy_selection_handle = None
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "root-TTY native policy configuration"):
+            session._resolve_native_bootstrap_assembly("prepared-handle", "materialization-handle")
 
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
