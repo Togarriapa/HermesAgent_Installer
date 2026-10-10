@@ -208,6 +208,52 @@ class SetupPrincipalHTTPContract(unittest.TestCase):
                 Path("/var/lib/hermes-installer/authority-journal"),
             )
 
+    def test_adopted_policy_requires_current_normal_session_and_publication_join(self):
+        import hermes_installer.authority.setup_principal as principal_module
+
+        with tempfile.TemporaryDirectory(prefix="setup-principal-adoption-") as temp:
+            journal = Path(temp)
+            store = _LiveStore(journal)
+            handoff = SimpleNamespace(
+                normal_setup_session_id=store.record["setup_session_id"],
+                normal_transaction_handle=store.record["transaction_handle"],
+                principal_selection_receipt_handle="a" * 64,
+            )
+
+            class InitialRegistry:
+                def resolve_adopted_handoff(self, handle):
+                    if handle != store.handle:
+                        raise ValueError("foreign session")
+                    return handoff
+
+            class PrincipalRegistry:
+                def _read_selection(self, _handle):
+                    return SimpleNamespace(
+                        authentik_subject_id="subject-17",
+                        actor_credential_ref="setup-authentik-actor",
+                    )
+
+            policy = _policy("https://auth.example.test")
+            resolver = principal_module._AdoptedNormalPolicyResolver(
+                store=store, handle=store.handle, initial_registry=InitialRegistry(),
+                principal_registry=PrincipalRegistry(), policy=policy,
+                initial_subject="subject-17", initial_credential_ref="setup-authentik-actor",
+                normal_session_id=store.record["setup_session_id"],
+                normal_transaction_handle=store.record["transaction_handle"],
+                normal_plan_digest=store.record["plan_digest"],
+            )
+            with (patch.object(principal_module.os, "geteuid", return_value=0),
+                  patch.object(principal_module.sys, "platform", "linux")):
+                self.assertEqual(
+                    resolver.resolve_policy_selection(store.handle, resolver.selection_handle), policy)
+                store.record["transaction_handle"] = "transaction-replaced"
+                with self.assertRaises(BootstrapEnrollmentPending):
+                    resolver.resolve_policy_selection(store.handle, resolver.selection_handle)
+                store.record["transaction_handle"] = "transaction-fixture-1"
+                handoff.normal_transaction_handle = "transaction-replaced"
+                with self.assertRaises(BootstrapEnrollmentPending):
+                    resolver.resolve_policy_selection(store.handle, resolver.selection_handle)
+
     def test_fixed_tls_reads_use_current_identity_and_complete_group_hierarchy(self):
         if shutil.which("openssl") is None:
             self.skipTest("openssl is unavailable for the local TLS fixture")
