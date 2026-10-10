@@ -76,6 +76,7 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         self.assertEqual(_validate_service_generations(snapshot), snapshot)
         self.assertEqual(snapshot["private_memory_endpoint_selections"], [])
         self.assertEqual(snapshot["private_memory_model_selections"], [])
+        self.assertEqual(snapshot["public_web_scopes"], [])
         self.assertEqual(set(snapshot), {
             "schema", "generation_id", "service_records", "protected_devices",
             "protected_build_records", "native_packages", "memory_enrollments",
@@ -85,6 +86,7 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "root_journal_roots",
             "remote_startup_enrollments", "private_loopback_networks", "selected_resource_executions",
             "selected_application_runtimes",
+            "public_web_scopes",
             "native_schema_artifacts", "composio_channel_enrollments", "channel_delivery_bindings",
             "resource_controller_roles", "native_mcp_tool_bindings",
             "remote_observation_enrollments",
