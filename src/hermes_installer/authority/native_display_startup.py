@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -18,16 +19,114 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
+from .types import EffectAuthorization, HostContext, canonical_digest
+
 
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
 _ID = re.compile(r"[A-Za-z0-9_.:@/-]{1,128}\Z", re.ASCII)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _AUTH_NAME = b"MIT-MAGIC-COOKIE-1"
 _COOKIE_BYTES = 32
+XAUTHORITY_MOUNT_TARGET = Path("/run/hermes-installer/display/Xauthority")
 
 
 class NativeDisplayStartupDenied(PermissionError):
     """Selected native display startup or current receipt proof is unavailable."""
+
+
+_STARTUP_OPERATIONS = {
+    "display": "native-display-start-v1",
+    "gateway": "native-remote-gateway-start-v1",
+    "desktop": "native-desktop-app-start-v1",
+}
+
+
+def selected_start_payload(enrollment_id: str, generation: str,
+                           operation_id: str) -> bytes:
+    """Canonical parameters-empty selection for one protected startup role."""
+    if (not isinstance(enrollment_id, str) or not _ID.fullmatch(enrollment_id)
+            or not isinstance(generation, str) or not _ID.fullmatch(generation)
+            or operation_id not in _STARTUP_OPERATIONS.values()):
+        raise NativeDisplayStartupDenied("selected startup operation is invalid")
+    return _canonical({
+        "schema": 1, "enrollment_id": enrollment_id,
+        "generation": generation, "operation_id": operation_id,
+        "parameters": {},
+    })
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedStartupGrant:
+    """Authority-issued one-use launch grant for one v65 selected role.
+
+    Construction does not confer authority: custody must verify/consume the
+    signed context and effect grant with the live root AuthorityService before
+    any process or mount effect.
+    """
+    schema: int
+    startup_authorization_handle: str
+    role: str
+    service_enrollment_id: str
+    generation: str
+    operation_id: str
+    selection_payload_sha256: str
+    controller_proof_handle: str
+    context: HostContext = field(repr=False)
+    effect_authorization: EffectAuthorization = field(repr=False)
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (self.schema != 1 or self.role not in _STARTUP_OPERATIONS
+                or self.operation_id != _STARTUP_OPERATIONS.get(self.role)
+                or not isinstance(self.service_enrollment_id, str)
+                or not _ID.fullmatch(self.service_enrollment_id)
+                or not isinstance(self.generation, str) or not _ID.fullmatch(self.generation)
+                or not _OPAQUE.fullmatch(self.startup_authorization_handle)
+                or not _OPAQUE.fullmatch(self.controller_proof_handle)
+                or not _SHA256.fullmatch(self.selection_payload_sha256)
+                or not isinstance(self.context, HostContext)
+                or not isinstance(self.effect_authorization, EffectAuthorization)
+                or isinstance(self.issued_monotonic, bool)
+                or not isinstance(self.issued_monotonic, (int, float))
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or not (0 < self.issued_monotonic < self.expires_monotonic)):
+            raise NativeDisplayStartupDenied("root-selected startup grant is malformed")
+        payload = selected_start_payload(
+            self.service_enrollment_id, self.generation, self.operation_id,
+        )
+        if canonical_digest(payload) != self.selection_payload_sha256:
+            raise NativeDisplayStartupDenied("startup grant selection digest is inconsistent")
+        if (self.context.operation != "process.start"
+                or self.context.enrollment_id != self.service_enrollment_id
+                or self.context.generation != self.generation
+                or self.context.final_payload_digest != self.selection_payload_sha256
+                or self.effect_authorization.operation != "process.start"
+                or self.effect_authorization.enrollment_id != self.service_enrollment_id
+                or self.effect_authorization.generation != self.generation
+                or self.effect_authorization.final_payload_digest != self.selection_payload_sha256
+                or self.effect_authorization.request_digest != self.selection_payload_sha256
+                or self.effect_authorization.context_digest != canonical_digest({
+                    **self.context.claims(), "signature": self.context.signature,
+                })
+                or self.effect_authorization.profile_id != self.context.profile_id
+                or self.effect_authorization.principal_id != self.context.principal_id
+                or self.effect_authorization.namespace_id != self.context.namespace_id
+                or self.effect_authorization.uid != self.context.uid
+                or self.effect_authorization.capability != "hermes-profile-invoke"
+                or "hermes-profile-invoke" not in self.context.capabilities):
+            raise NativeDisplayStartupDenied("startup grant is not bound to its exact operation and selection")
+
+    def __repr__(self) -> str:
+        return "RootSelectedStartupGrant(<root-private>)"
+
+    def selection_payload(self) -> bytes:
+        return selected_start_payload(
+            self.service_enrollment_id, self.generation, self.operation_id,
+        )
 
 
 class DisplayReceiptSigner(Protocol):
@@ -47,6 +146,7 @@ class SelectedDisplayStartup:
     receipt_handle: str
     display_uid: int
     display_gid: int
+    xauthority_reader_gid: int
 
     def __post_init__(self) -> None:
         ids = (self.remote_enrollment_id, self.native_profile_id,
@@ -57,7 +157,8 @@ class SelectedDisplayStartup:
                 or not isinstance(self.display_name, str)
                 or not re.fullmatch(r":[0-9]{1,3}(?:\.[0-9]{1,2})?", self.display_name)
                 or type(self.display_uid) is not int or self.display_uid <= 0
-                or type(self.display_gid) is not int or self.display_gid <= 0):
+                or type(self.display_gid) is not int or self.display_gid <= 0
+                or type(self.xauthority_reader_gid) is not int or self.xauthority_reader_gid <= 0):
             raise ValueError("root-selected display startup identity is malformed")
 
 
@@ -73,6 +174,7 @@ class PreparedXauthority:
     receipt_handle: str
     display_uid: int
     display_gid: int
+    xauthority_reader_gid: int
     path: Path = field(repr=False)
     device: int
     inode: int
@@ -83,6 +185,48 @@ class PreparedXauthority:
 
     def __repr__(self) -> str:
         return "PreparedXauthority(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class XauthorityMountBinding:
+    """Root-only exact file identity and fixed read-only service mount."""
+    receipt_handle: str
+    display_profile_id: str
+    display_generation: str
+    source_path: Path = field(repr=False)
+    source_device: int
+    source_inode: int
+    source_uid: int
+    source_gid: int
+    source_mode: int
+    source_sha256: str = field(repr=False)
+    target_path: Path = XAUTHORITY_MOUNT_TARGET
+    display_name: str = ":0"
+    read_only: bool = True
+    nofollow: bool = True
+    nosuid: bool = True
+    nodev: bool = True
+    signature: bytes = field(default=b"", repr=False, compare=False)
+
+    @property
+    def environment(self) -> Mapping[str, str]:
+        return {"DISPLAY": self.display_name, "XAUTHORITY": str(self.target_path)}
+
+    def __repr__(self) -> str:
+        return "XauthorityMountBinding(<root-private>)"
+
+    def payload(self) -> bytes:
+        return _canonical({
+            "receipt_handle": self.receipt_handle,
+            "display_profile_id": self.display_profile_id,
+            "display_generation": self.display_generation,
+            "source_path": str(self.source_path), "source_device": self.source_device,
+            "source_inode": self.source_inode, "source_uid": self.source_uid,
+            "source_gid": self.source_gid, "source_mode": self.source_mode,
+            "source_sha256": self.source_sha256, "target_path": str(self.target_path),
+            "display_name": self.display_name, "read_only": self.read_only,
+            "nofollow": self.nofollow, "nosuid": self.nosuid, "nodev": self.nodev,
+        })
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -339,6 +483,7 @@ class XauthorityStartupRegistry:
         self._lock = threading.RLock()
         self._receipts: dict[str, XauthorityStartupReceipt] = {}
         self._pidfds: dict[str, int] = {}
+        self._prepared: dict[str, PreparedXauthority] = {}
 
     def prepare(self, selected: SelectedDisplayStartup) -> PreparedXauthority:
         """Create a root-owned, group-readable Xauthority file before launch.
@@ -349,7 +494,7 @@ class XauthorityStartupRegistry:
         if not isinstance(selected, SelectedDisplayStartup):
             raise NativeDisplayStartupDenied("root-selected display enrollment is required")
         directory_fd, directory_path = _safe_profile_dir(
-            self.root, selected.display_profile_id, selected.display_gid,
+            self.root, selected.display_profile_id, selected.xauthority_reader_gid,
             writer_uid=self.writer_uid)
         cookie = bytearray(os.urandom(_COOKIE_BYTES))
         content = encode_xauthority(selected.display_name, bytes(cookie))
@@ -362,8 +507,8 @@ class XauthorityStartupRegistry:
         try:
             fd = os.open(name, flags, 0o600, dir_fd=directory_fd)
             created = True
-            os.fchown(fd, self.writer_uid, selected.display_gid)
-            os.fchmod(fd, 0o440)
+            os.fchown(fd, self.writer_uid, selected.xauthority_reader_gid)
+            os.fchmod(fd, 0o640)
             view = memoryview(content)
             while view:
                 count = os.write(fd, view)
@@ -373,19 +518,25 @@ class XauthorityStartupRegistry:
             os.fsync(fd)
             info = os.fstat(fd)
             digest = hashlib.sha256(content).hexdigest()
-            if (info.st_uid != self.writer_uid or info.st_gid != selected.display_gid
-                    or stat.S_IMODE(info.st_mode) != 0o440
+            if (info.st_uid != self.writer_uid or info.st_gid != selected.xauthority_reader_gid
+                    or stat.S_IMODE(info.st_mode) != 0o640
                     or info.st_size != len(content)):
                 raise NativeDisplayStartupDenied("Xauthority file metadata is not protected")
             os.fsync(directory_fd)
-            return PreparedXauthority(
+            prepared = PreparedXauthority(
                 selected.remote_enrollment_id, selected.native_profile_id,
                 selected.native_generation, selected.display_profile_id,
                 selected.display_generation, selected.display_name,
                 selected.receipt_handle, selected.display_uid, selected.display_gid,
+                selected.xauthority_reader_gid,
                 directory_path / name,
                 info.st_dev, info.st_ino, info.st_uid, info.st_gid,
                 stat.S_IMODE(info.st_mode), digest)
+            with self._lock:
+                if selected.receipt_handle in self._prepared:
+                    raise NativeDisplayStartupDenied("Xauthority preparation handle is already active")
+                self._prepared[selected.receipt_handle] = prepared
+            return prepared
         except BaseException:
             if created:
                 try:
@@ -412,6 +563,9 @@ class XauthorityStartupRegistry:
         from hermes_installer.managed_process_custodian import ManagedProcessIdentityLease
         if not isinstance(prepared, PreparedXauthority):
             raise NativeDisplayStartupDenied("prepared protected Xauthority file is required")
+        with self._lock:
+            if self._prepared.get(prepared.receipt_handle) is not prepared:
+                raise NativeDisplayStartupDenied("Xauthority preparation is not owned by this root registry")
         lease = self.custody.resolve_active_process_handle(
             prepared.display_profile_id, prepared.display_generation)
         if not isinstance(lease, ManagedProcessIdentityLease):
@@ -487,6 +641,57 @@ class XauthorityStartupRegistry:
             self._receipts[receipt.receipt_handle] = receipt
             self._pidfds[receipt.receipt_handle] = retained_pidfd
         return receipt
+
+    def mount_binding(self, prepared: PreparedXauthority) -> XauthorityMountBinding:
+        """Return signed fixed-target mount data for the root custody adapter."""
+        with self._lock:
+            if self._prepared.get(prepared.receipt_handle) is not prepared:
+                raise NativeDisplayStartupDenied("Xauthority preparation is not owned by this root registry")
+        fd = self._open_and_check(prepared)
+        os.close(fd)
+        unsigned = XauthorityMountBinding(
+            receipt_handle=prepared.receipt_handle,
+            display_profile_id=prepared.display_profile_id,
+            display_generation=prepared.display_generation,
+            source_path=prepared.path, source_device=prepared.device, source_inode=prepared.inode,
+            source_uid=prepared.owner_uid, source_gid=prepared.owner_gid, source_mode=prepared.mode,
+            source_sha256=prepared.content_sha256, display_name=prepared.display_name,
+        )
+        return XauthorityMountBinding(
+            receipt_handle=unsigned.receipt_handle,
+            display_profile_id=unsigned.display_profile_id,
+            display_generation=unsigned.display_generation,
+            source_path=unsigned.source_path, source_device=unsigned.source_device,
+            source_inode=unsigned.source_inode, source_uid=unsigned.source_uid,
+            source_gid=unsigned.source_gid, source_mode=unsigned.source_mode,
+            source_sha256=unsigned.source_sha256, target_path=unsigned.target_path,
+            display_name=unsigned.display_name, read_only=True, nofollow=True,
+            nosuid=True, nodev=True, signature=self.signer.sign(unsigned.payload()),
+        )
+
+    def verify_mount_binding(self, binding: XauthorityMountBinding) -> bool:
+        """Revalidate signed mount instructions and active file identity."""
+        if (not isinstance(binding, XauthorityMountBinding)
+                or binding.target_path != XAUTHORITY_MOUNT_TARGET
+                or not (binding.read_only and binding.nofollow and binding.nosuid and binding.nodev)
+                or not self.signer.verify(binding.payload(), binding.signature)):
+            return False
+        with self._lock:
+            prepared = self._prepared.get(binding.receipt_handle)
+        if (prepared is None or binding.display_profile_id != prepared.display_profile_id
+                or binding.display_generation != prepared.display_generation
+                or binding.source_path != prepared.path
+                or binding.source_device != prepared.device or binding.source_inode != prepared.inode
+                or binding.source_uid != prepared.owner_uid or binding.source_gid != prepared.owner_gid
+                or binding.source_mode != prepared.mode or binding.source_sha256 != prepared.content_sha256
+                or binding.display_name != prepared.display_name):
+            return False
+        try:
+            fd = self._open_and_check(prepared)
+            os.close(fd)
+            return True
+        except NativeDisplayStartupDenied:
+            return False
 
     def resolve_selected(self, receipt_handle: str, *, remote_enrollment_id: str,
                          native_profile_id: str, native_generation: str,
@@ -591,6 +796,9 @@ class XauthorityStartupRegistry:
     def discard_prepared(self, prepared: PreparedXauthority) -> None:
         if not isinstance(prepared, PreparedXauthority):
             return
+        with self._lock:
+            if self._prepared.get(prepared.receipt_handle) is prepared:
+                self._prepared.pop(prepared.receipt_handle, None)
         try:
             directory = os.open(prepared.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
@@ -618,6 +826,7 @@ class XauthorityStartupRegistry:
         with self._lock:
             receipt = self._receipts.pop(receipt_handle, None)
             pidfd = self._pidfds.pop(receipt_handle, None)
+            self._prepared.pop(receipt_handle, None)
         if pidfd is not None:
             try:
                 os.close(pidfd)
