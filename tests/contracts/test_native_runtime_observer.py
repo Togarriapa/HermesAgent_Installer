@@ -90,6 +90,26 @@ def _authorization(context):
 
 
 class NativeRuntimeObserverContracts(unittest.TestCase):
+    def test_owner_overlay_rpc_cannot_coerce_generic_invocation_or_unknown_handle(self):
+        import threading
+
+        registry = object.__new__(NativeInvocationRegistry)
+        registry._lock = threading.RLock()
+        registry._closed = False
+        registry.monotonic = lambda: 10.0
+        registry._responses = {}
+        registry._deliveries = {}
+        registry._calls = {}
+        registry._invocations = {}
+        registry._selected_application_invocations = {}
+        registry._mcp_dispatches = {}
+        registry._owner_overlay_invocations = {"i" * 40: SimpleNamespace(expires_monotonic=20.0)}
+        registry._owner_overlay_consumed = set()
+        for handle in ("i" * 40, "x" * 40):
+            with self.subTest(handle=handle[:1]), self.assertRaises(AuthorityDenied):
+                registry.resolve_current_owner_overlay_invocation(
+                    handle, b"{}", peer_uid=2001, peer_pid=41, peer_pidfd=141)
+
     def _observer(self, source_observers=None):
         source_observers = source_observers or _SourceObservers()
         observer = NativeRuntimeObserver(
