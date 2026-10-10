@@ -264,3 +264,5 @@ Actual publication core/acquisition compatibility v201: `plans/amendments/2026-1
 
 
 Finite real remote choice/three-role source producer v202: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`. Workload owns actual TTY/source/runtime/NSS/build inputs; compiler consumes exact sealed inputs; original source/account/ARM64/sandbox/network acceptance remains OPEN.
+
+Typed finite bootstrap diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; exact source boundary RuntimeError only, no dynamic trust error text or behavior change.
