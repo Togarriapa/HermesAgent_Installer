@@ -1212,6 +1212,19 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("native.health.identity", "selected health PIDFD identity is unavailable")
         return lease
 
+    def resolve_selected_health_observation_handle(self, control_handle: str) -> str:
+        """Resolve the actual observer run handle for the exact live health control."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+            observation = self._health_observation_handles.get(control_handle)
+        if (retained is None or retained[0] is not control
+                or not isinstance(observation, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", observation)
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.observer", "selected health observer run is stale")
+        return observation
+
     def set_task_input_coordinator(self, coordinator: Any) -> None:
         """Install the concrete root-native pre-stdin coordinator once."""
         from hermes_installer.authority.native_observer_wiring import RootTaskInputCoordinator
