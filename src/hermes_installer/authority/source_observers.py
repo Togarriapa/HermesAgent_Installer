@@ -311,6 +311,37 @@ class LiveSourceProducer:
 
 
 @dataclass(frozen=True, slots=True)
+class RetainedSelectedInputConsent:
+    """Root-only join from an issued input receipt to current private consent.
+
+    The consent object remains owned by RootPrivateInputConsentRegistry. This
+    DTO carries exact in-process references and immutable identifiers for
+    request admission; it is never serialized or returned over worker RPC.
+    """
+
+    source_receipt_handle: SourceReceiptHandle
+    selection_handle: str
+    consent_receipt_handle: str
+    consent_id: str
+    revocation_epoch: int
+    selected_execution: Any = field(repr=False, compare=False)
+    selection_registry: Any = field(repr=False, compare=False)
+    consent: Any = field(repr=False, compare=False)
+    expires_monotonic: float
+    authority_epoch: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.source_receipt_handle, SourceReceiptHandle)
+                or not isinstance(self.selection_handle, str) or len(self.selection_handle) < 32
+                or not isinstance(self.consent_receipt_handle, str)
+                or not isinstance(self.consent_id, str)
+                or type(self.revocation_epoch) is not int or self.revocation_epoch < 0
+                or not math.isfinite(self.expires_monotonic)
+                or not isinstance(self.authority_epoch, str) or not self.authority_epoch):
+            raise ValueError("retained private-input consent binding is malformed")
+
+
+@dataclass(frozen=True, slots=True)
 class RootSourcePayloadCapsule:
     """One-use root-internal payload view for a selected event recipe.
 
@@ -380,6 +411,8 @@ class SourceObserverRegistry:
         self._proof_token = object()
         self._proofs_pending: dict[str, int] = {}
         self._selected_input_proofs: dict[str, tuple[Any, Any]] = {}
+        self._consumed_selected_input_proofs: dict[str, tuple[int, Any, Any, float, str]] = {}
+        self._selected_input_consents: dict[str, RetainedSelectedInputConsent] = {}
         self._lock = threading.RLock()
         self._closed = False
 
@@ -1108,6 +1141,7 @@ class SourceObserverRegistry:
     def _revoke_source_handle_locked(self, handle: str) -> bool:
         """Remove authority lookup and peer-delivery state for one receipt."""
         self._forget_invocation_handle_locked(handle)
+        self._selected_input_consents.pop(handle, None)
         row = self._payload_capsules.pop(handle, None)
         if row is not None:
             self._capsule_bytes -= len(row[2])
@@ -1194,7 +1228,193 @@ class SourceObserverRegistry:
                 raise AuthorityDenied("source.native_input", "private consent selection differs from retained input")
             self._proofs_pending.pop(observation.proof_nonce, None)
             self._selected_input_proofs.pop(observation.proof_nonce, None)
+            self._consumed_selected_input_proofs[observation.proof_nonce] = (
+                id(observation), selected_execution, retained[1],
+                min(observation.expires_monotonic, self.service.monotonic() + 30.0),
+                self.service.authority_epoch,
+            )
         return True
+
+    def verify_current_selected_input_proof(self, observation: VerifiedSourceObservation,
+                                            selected_execution: Any) -> bool:
+        """Non-consuming currentness check for the root consent issuer.
+
+        This accepts only the exact proof instance retained by this registry,
+        with its exact still-current native execution selection and protected
+        observer route catalog. Consent resolution must precede proof
+        consumption so the service can compute its recipient intersection.
+        """
+        if (type(observation) is not VerifiedSourceObservation
+                or selected_execution is not observation.selected_execution
+                or observation._issuer_token is not self._proof_token):
+            return False
+        with self._lock:
+            if (self._proofs_pending.get(observation.proof_nonce) != id(observation)
+                    or observation.proof_nonce not in self._selected_input_proofs):
+                return False
+            retained = self._selected_input_proofs[observation.proof_nonce]
+            if retained[0] is not selected_execution or retained[1] is None:
+                return False
+            try:
+                current = retained[1].resolve_current_execution(selected_execution)
+            except Exception:
+                return False
+            observer = self.observers.get(observation.observer_enrollment_id)
+            return bool(
+                current is selected_execution and observer is not None
+                and observer.source_kind == "native-input"
+                and observation.private_provider_route_ids == observer.private_provider_route_ids
+                and observation.profile_id == selected_execution.profile_id
+                and observation.generation == selected_execution.generation
+                and observation.package_id == selected_execution.native_package_id
+                and observation.source_action_id == selected_execution.source_action_id
+                and observation.private_consent_selection_handle ==
+                    selected_execution.private_consent_selection_handle
+                and observation.authority_epoch == self.service.authority_epoch
+                and observation.expires_monotonic > self.service.monotonic()
+            )
+
+    def resolve_selected_input_execution_registry(
+        self, observation: VerifiedSourceObservation, selected_execution: Any,
+    ) -> Any:
+        """Return the retained selection registry only for a current proof pair."""
+        if not self.verify_current_selected_input_proof(observation, selected_execution):
+            raise AuthorityDenied("source.native_input", "selected input proof is not current")
+        with self._lock:
+            retained = self._selected_input_proofs.get(observation.proof_nonce)
+            if (retained is None or retained[0] is not selected_execution
+                    or retained[1] is None):
+                raise AuthorityDenied("source.native_input", "selected input registry binding is stale")
+            return retained[1]
+
+    def retain_selected_input_consent(
+        self, observation: VerifiedSourceObservation,
+        selected_execution: Any, source_receipt_handle: SourceReceiptHandle,
+        consent: Any,
+    ) -> RetainedSelectedInputConsent:
+        """Bind freshly resolved consent to the exact signed native-input receipt.
+
+        Called only by AuthorityService after it has consumed ``observation``
+        and stored the signed receipt handle. This prevents an unissued proof,
+        receipt from another task, or copied consent DTO from becoming a
+        request-admission capability.
+        """
+        if (type(observation) is not VerifiedSourceObservation
+                or type(source_receipt_handle) is not SourceReceiptHandle
+                or selected_execution is not observation.selected_execution
+                or observation._issuer_token is not self._proof_token):
+            raise AuthorityDenied("source.native_input", "consent receipt binding is not root-issued")
+        consent_registry = getattr(self.service, "private_input_consent_registry", None)
+        consent_type = getattr(consent_registry, "consent_type", None)
+        if consent_registry is None or not callable(
+                getattr(consent_registry, "revalidate_retained_input_consent", None)):
+            raise AuthorityDenied("source.native_input", "private input consent registry is unavailable")
+        # RootPrivateInputConsent is imported lazily to avoid a service/module
+        # cycle while keeping the proof type exact once the registry is wired.
+        try:
+            from .root_private_input_consent import RootPrivateInputConsent
+        except ImportError:
+            RootPrivateInputConsent = consent_type
+        if RootPrivateInputConsent is None or type(consent) is not RootPrivateInputConsent:
+            raise AuthorityDenied("source.native_input", "private input consent proof type is invalid")
+        with self._lock:
+            consumed = self._consumed_selected_input_proofs.get(observation.proof_nonce)
+            capsule_entry = self._payload_capsules.get(str(source_receipt_handle))
+            if (consumed is None or consumed[0] != id(observation)
+                    or consumed[1] is not selected_execution
+                    or consumed[4] != self.service.authority_epoch
+                    or self.service.monotonic() >= consumed[3]
+                    or capsule_entry is None
+                    or capsule_entry[3] != self.service.authority_epoch):
+                raise AuthorityDenied("source.native_input", "selected input receipt is stale or unissued")
+            receipt, _capsule, _payload, _epoch = capsule_entry
+            route_ids = self.observers[observation.observer_enrollment_id].private_provider_route_ids
+            if (getattr(consent, "selection_handle", None)
+                    != observation.private_consent_selection_handle
+                    or getattr(consent, "input_observation_handle", None)
+                    != selected_execution.selection_handle
+                    or getattr(consent, "profile_id", None) != selected_execution.profile_id
+                    or getattr(consent, "service_generation_digest", None)
+                    != selected_execution.service_generation_digest
+                    or getattr(consent, "provider_route_ids", None) is None
+                    or not set(getattr(consent, "provider_route_ids", ())).issubset(set(route_ids))
+                    or not set(getattr(consent, "private_recipient_ids", ())).issubset(
+                        set(receipt.recipient_ceiling))
+                    or getattr(consent, "expires_monotonic", 0) <= self.service.monotonic()
+                    or receipt.source_kind != "native-input"
+                    or receipt.profile_id != selected_execution.profile_id
+                    or receipt.process_generation != selected_execution.generation):
+                raise AuthorityDenied("source.native_input", "consent does not match the selected input receipt")
+            binding = RetainedSelectedInputConsent(
+                source_receipt_handle=source_receipt_handle,
+                selection_handle=selected_execution.selection_handle,
+                consent_receipt_handle=consent.receipt_handle,
+                consent_id=consent.consent_id,
+                revocation_epoch=consent.revocation_epoch,
+                selected_execution=selected_execution,
+                selection_registry=consumed[2],
+                consent=consent,
+                expires_monotonic=min(receipt.monotonic_expires_at,
+                                      consent.expires_monotonic),
+                authority_epoch=self.service.authority_epoch,
+            )
+            key = str(source_receipt_handle)
+            if key in self._selected_input_consents:
+                raise AuthorityDenied("source.native_input", "input consent was already retained")
+            self._selected_input_consents[key] = binding
+            self._consumed_selected_input_proofs.pop(observation.proof_nonce, None)
+            return binding
+
+    def resolve_selected_input_consent(
+        self, source_receipt_handle: SourceReceiptHandle,
+        selected_execution: Any,
+    ) -> RetainedSelectedInputConsent:
+        """Revalidate the retained consent/receipt/selection join for root dispatch."""
+        if type(source_receipt_handle) is not SourceReceiptHandle:
+            raise AuthorityDenied("source.native_input", "source receipt handle is invalid")
+        with self._lock:
+            binding = self._selected_input_consents.get(str(source_receipt_handle))
+            capsule_entry = self._payload_capsules.get(str(source_receipt_handle))
+            if (binding is None or binding.selected_execution is not selected_execution
+                    or binding.authority_epoch != self.service.authority_epoch
+                    or binding.expires_monotonic <= self.service.monotonic()
+                    or capsule_entry is None or capsule_entry[3] != self.service.authority_epoch):
+                raise AuthorityDenied("source.native_input", "retained consent binding is stale")
+            try:
+                current = binding.selection_registry.resolve_current_execution(selected_execution)
+            except Exception:
+                raise AuthorityDenied("source.native_input", "native input selection is no longer current") from None
+            if current is not selected_execution:
+                raise AuthorityDenied("source.native_input", "native input selection changed")
+            consent_registry = getattr(self.service, "private_input_consent_registry", None)
+            if consent_registry is None:
+                raise AuthorityDenied("source.native_input", "private input consent registry is unavailable")
+            renewed = consent_registry.revalidate_retained_input_consent(
+                binding.consent_receipt_handle,
+                retained_input_selection_handle=binding.selection_handle,
+                expected_consent_id=binding.consent_id,
+                expected_revocation_epoch=binding.revocation_epoch,
+            )
+            if renewed is not binding.consent:
+                raise AuthorityDenied("source.native_input", "retained consent proof changed")
+            return binding
+
+    def resolve_retained_selected_input_execution(
+        self, source_receipt_handle: SourceReceiptHandle,
+    ) -> Any:
+        """Resolve the exact root selection attached to a retained input receipt."""
+        if type(source_receipt_handle) is not SourceReceiptHandle:
+            raise AuthorityDenied("source.native_input", "source receipt handle is invalid")
+        with self._lock:
+            binding = self._selected_input_consents.get(str(source_receipt_handle))
+            if (binding is None or binding.authority_epoch != self.service.authority_epoch
+                    or binding.expires_monotonic <= self.service.monotonic()):
+                raise AuthorityDenied("source.native_input", "input consent binding is stale")
+            current = binding.selection_registry.resolve_current_execution(
+                binding.selected_execution)
+            if current is not binding.selected_execution:
+                raise AuthorityDenied("source.native_input", "selected input execution changed")
+            return binding.selected_execution
 
     def _resolve_parent_closure(self, observer: SourceObserverEnrollment,
                                 handles: Sequence[str], context: HostContext,
@@ -1387,6 +1607,10 @@ class SourceObserverRegistry:
                 self._pending_bytes -= len(event.payload)
                 os.close(event.producer_pidfd)
                 os.close(event.target_peer_pidfd)
+        for nonce, (_observation_id, _selection, _registry, expires, epoch) in tuple(
+                self._consumed_selected_input_proofs.items()):
+            if expires <= now or epoch != self.service.authority_epoch:
+                self._consumed_selected_input_proofs.pop(nonce, None)
 
     def _prune_receipt_bindings_locked(self, now: float) -> None:
         for receipt_id, binding in tuple(self._receipt_process_bindings.items()):
@@ -1405,6 +1629,7 @@ class SourceObserverRegistry:
         for handle, (_receipt, capsule, payload, epoch) in tuple(self._payload_capsules.items()):
             if capsule.expires_monotonic <= now or epoch != self.service.authority_epoch:
                 self._payload_capsules.pop(handle, None)
+                self._selected_input_consents.pop(handle, None)
                 self._capsule_bytes -= len(payload)
                 payload[:] = b"\x00" * len(payload)
 
@@ -1421,6 +1646,8 @@ class SourceObserverRegistry:
             self._pending_bytes = 0
             self._proofs_pending.clear()
             self._selected_input_proofs.clear()
+            self._consumed_selected_input_proofs.clear()
+            self._selected_input_consents.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
@@ -1533,6 +1760,37 @@ class RootNativeExecutionSelectionRegistry:
         self._target_resolver: Any = None
         self._closed = False
 
+    def _private_consent_selection_handle(self, observer: SourceObserverEnrollment,
+                                          running_binding: Any) -> str | None:
+        """Read the active root profile preference from its exact principal row."""
+        consent_registry = getattr(self.service, "private_input_consent_registry", None)
+        if consent_registry is None:
+            # No current profile choice is equivalent to no private provider
+            # egress consent. Input capture can still proceed with an empty
+            # recipient ceiling.
+            return None
+        resolver = getattr(consent_registry, "selection_handle_for_current_profile", None)
+        if (not callable(resolver) or getattr(consent_registry, "service", None) is not self.service):
+            raise AuthorityDenied("resource.native_consent", "root private input consent registry is invalid")
+        source = getattr(running_binding, "source", None)
+        matches = [binding for binding in self.service.bindings_by_uid.values()
+                   if binding.profile_id == observer.profile_id
+                   and binding.principal_id == observer.principal_id
+                   and binding.namespace_id == observer.namespace_id
+                   and binding.uid == observer.producer_uid
+                   and binding.principal_id == getattr(source, "principal_id", None)
+                   and binding.profile_id == getattr(source, "profile_id", None)
+                   and binding.namespace_id == getattr(source, "namespace_id", None)]
+        if len(matches) != 1:
+            raise AuthorityDenied("resource.native_consent", "selected profile principal binding is ambiguous")
+        handle = resolver(matches[0])
+        if handle is None:
+            return None
+        if (not isinstance(handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)):
+            raise AuthorityDenied("resource.native_consent", "root consent selection handle is malformed")
+        return handle
+
     def select_resource_task(self, admission_handle: Any, node_id: str,
                              managed_task_handle: Any) -> RootSelectedNativeExecution:
         """Join exact root admission/source with the actual pre-EOF task handle."""
@@ -1630,6 +1888,7 @@ class RootNativeExecutionSelectionRegistry:
         if (not math.isfinite(expiry) or expiry <= now
                 or self.service.service_generation_digest != binding.service_generation_digest):
             raise AuthorityDenied("resource.native_selection", "selected task or package lease expired")
+        consent_selection_handle = self._private_consent_selection_handle(observer, binding)
         selected = RootSelectedNativeExecution(
             schema=1, selection_handle=secrets.token_urlsafe(32), kind="resource-task",
             execution_handle=admission_handle, process_handle=managed_task_handle,
@@ -1640,8 +1899,7 @@ class RootNativeExecutionSelectionRegistry:
             source_action_id=adapter.action_id,
             service_generation_digest=self.service.service_generation_digest,
             expires_monotonic=expiry,
-            private_consent_selection_handle=getattr(
-                admission_handle, "private_consent_selection_handle", None),
+            private_consent_selection_handle=consent_selection_handle,
         )
         record = _SelectedNativeExecutionRecord(
             selected, binding, observer, package, adapter, self.service.authority_epoch)
@@ -1718,6 +1976,11 @@ class RootNativeExecutionSelectionRegistry:
                 raise AuthorityDenied("resource.native_selection", "selected execution handle is unknown or consumed")
             selected = record.selection
         return self.resolve_current_execution(selected)
+
+    def resolve_current_selected_execution(self, selection_handle: str
+                                           ) -> RootSelectedNativeExecution:
+        """Consent-registry lookup for an opaque retained selection handle."""
+        return self.resolve_selection_handle(selection_handle)
 
     def attach_native_input_target_resolver(self, resolver: Any) -> None:
         """Attach the concrete PIDFD/loaded-package target resolver exactly once."""
