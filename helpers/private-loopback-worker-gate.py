@@ -190,7 +190,7 @@ def _probe(contract):
             socket.AF_INET, "127.0.0.1", contract["allowed_bind_port"])
     if contract["allowed_connect_port"] is not None:
         checks["allowed_connect"] = _connect_probe(contract["allowed_connect_port"])
-    checks["af_unix_control"] = _unix_control_probe()
+    checks["af_unix_control"] = _unix_control_probe(contract)
     checks["wrong_port_bind"] = _bind_probe(
         socket.AF_INET, "127.0.0.1", contract["denied_port"])
     checks["ipv6_bind"] = _bind_probe(
@@ -210,25 +210,24 @@ def _probe(contract):
     return checks, "ready" if outcomes and all(outcomes) else "unsupported"
 
 
-def _unix_control_probe():
-    """Exercise an allowed AF_UNIX operation; denial probes alone are ambiguous."""
-    left = right = None
+def _selected_authority_socket(uid):
+    """Return the one enrolled service authority endpoint for this worker UID."""
+    return f"/run/hermes-installer/authority/{uid}.sock"
+
+
+def _unix_control_probe(contract):
+    """Connect to the exact selected root authority endpoint as the allowed control."""
+    sock = None
     try:
-        left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-        left.settimeout(0.5)
-        right.settimeout(0.5)
-        left.sendall(b"hermes-private-loopback-af-unix-v1")
-        observed = right.recv(64)
-        if observed != b"hermes-private-loopback-af-unix-v1":
-            return {"outcome": "error", "errno": None}
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | getattr(socket, "SOCK_CLOEXEC", 0))
+        sock.settimeout(0.5)
+        sock.connect(_selected_authority_socket(contract["uid"]))
         return {"outcome": "connected", "errno": None}
     except OSError as exc:
         return {"outcome": "error", "errno": exc.errno}
     finally:
-        if left is not None:
-            left.close()
-        if right is not None:
-            right.close()
+        if sock is not None:
+            sock.close()
 
 
 def _gate_channel_from_activation(env):
