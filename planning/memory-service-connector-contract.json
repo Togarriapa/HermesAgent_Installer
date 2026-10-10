@@ -1163,5 +1163,91 @@
     "added_signed_observation_field": "supporting_source_receipt_sha256",
     "digest": "SHA256 canonical UTF8 JSON sorted by artifact_id of exact supporting root source observations projected as {artifact_id,sha256,size_bytes,receipt_handle}; includes v135 glm52-quantized-readme-6bbb01e actual catalog receipt. No newline; same canonical sort_keys/separators/ensure_ascii=False. Root-held durable registry record retains the actual observation handles/pins/bytes and verifies current membership on restore; signature includes this digest. No caller supporting rows/active selection fields or model weight evidence is added.",
     "implementation": "Models observer constructs supporting-source evidence from fixed held v135 contract and actual RootCatalogArtifactObserver. Host authority finite existing model-observation signer/verifier adds this exact claim; no private _sign or new key/source kind."
+  },
+  "existing_model_store_selection_source_v139": {
+    "schema": 1,
+    "requirements": [
+      "SK-T127.2",
+      "SK-T133.2",
+      "SK-F02"
+    ],
+    "why": "v127 names held model-store root without actual finite source root/registry producer. v133 private profile receipt cannot substitute a filesystem observation. Exact fixed source template below authorizes only root-local existing-tree selection, not model install/download.",
+    "template": {
+      "artifact_id": "installer-existing-model-store-root-template-v1",
+      "relative_path": "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json",
+      "sha256": "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
+      "size_bytes": 712,
+      "release_role": "existing-model-store-root-template"
+    },
+    "root_policy": {
+      "schema": 1,
+      "id": "installer-existing-model-store-root-template-v1",
+      "root_id": "installer-existing-model-store-v1",
+      "absolute_path": "/var/lib/hermes-installer/model-store",
+      "owner_uid": 0,
+      "directory_mode": 448,
+      "selection_kind": "existing-model-store",
+      "model_directory_choice": "explicit already-present direct child; no default or prefill",
+      "source_model_id": "mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp",
+      "source_revision": "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+      "source_manifest_artifact_id": "glm52-artifact-metadata-v1",
+      "license_artifact_id": "glm52-upstream-mit-license-cf457fa",
+      "supporting_source_artifact_ids": [
+        "glm52-quantized-readme-6bbb01e"
+      ],
+      "public_egress_allowed": false,
+      "additional_metered_budget_usd": 0
+    },
+    "owner_module": "hermes_installer.authority.bootstrap_runtime_factory",
+    "registry": "RootOwnedFilesystemSelectionRegistry",
+    "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_journal,authority_service)",
+    "observe_API": "observe_existing_model_store(private_profile_selection_handle)->RootOwnedFilesystemSelection; called only from RootBootstrapSession existing-model configuration source. No caller root path/root record accepted.",
+    "selection_fields": [
+      "selection_handle",
+      "root_id",
+      "selection_kind",
+      "template_artifact_receipt_handle",
+      "template_sha256",
+      "private_profile_selection_handle",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "root_device",
+      "root_inode",
+      "root_uid",
+      "root_gid",
+      "root_mode",
+      "controller_binding_handle",
+      "selection_sha256",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "root_observation": "Open only the fixed template path using root-owned secure /var/lib/hermes-installer parent and nofollow directory traversal/held FDs. Exact root UID0 and0700 mode, no symlinks or writable untrusted ancestor; retain directory FD/device/inode/owner/mode in private registry. Existing absent root is a precise prerequisite; observer never creates/chowns/copies/downloads/replaces root or model data. An administrator may separately populate this explicit managed store under applicable authorization; no ambient checkout/home/cache/default external directory substitute. Template itself is reviewed source only, actual root receipt requires observed directory.",
+    "resolve_API": "resolve_current_root(selection_handle,private_profile_selection_handle)->VerifiedRootOwnedFilesystemSelection; verifies actual registry membership/current installed release/template/current private purpose/identity/controller and reopened same directory identity, issues <=30s current snapshot. open_selected_root(selection_handle)->RootHeldFilesystemDirectory with root selection plus duplicated nofollow directory_fd/device/inode/uid/gid/mode/expiry, caller closes duplicate; registry retains original. No path API or worker filesystem authority.",
+    "configuration_source": "RootBootstrapSession.observe_existing_model_selection(private_profile_selection_handle) first resolves current purpose existing-model-selection through v133 and actual filesystem root selection. Foreground root TTY presents only eligible already-present immediate child directories from held root (max256 candidates, sorted names), selected basename matches ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ excluding . and ..; no default/prefill/model download. Selection remains same actual configuration choice, not another approval loop. Root opens child by dir_fd/nofollow, retains actual identity, verifies root0/no untrusted writes and exact selected metadata/license/README observations v135/v136. Raw TTY basename is intent only until genuine directory/source observations. No caller supplied path or guessed endpoint/model alias can enter model observation.",
+    "model_selection_join": "Existing v127 RootExistingModelArtifactSelection.model_store_root_id is installer-existing-model-store-v1; model_store_root_receipt_handle is actual RootOwnedFilesystemSelection selection handle, relative_subpath exactly observed selected direct basename. Add existing v133 private_profile_selection_handle/principal_selection_handle/namespace_selection_handle source intent joins. RootExistingModelSelectionRegistry.from_root_setup(selected_installation_binding,root_owned_filesystem_selection_registry,root_journal) uses actual resolver and retained child FD; v128 open_selected_directory returns duplicated genuine held child, models observer hashes actual complete source members. Fixed GLM source_manifest/license IDs and actual SHA receipts from v135, supporting README current record perv136; embedding remains no selected source until independently reviewed.",
+    "adoption": "Active publisher retains durable signed actual root selection/source template/current chosen model selector and original principal/profile/namespace binding under installed generation. Subsequent current model observations reopen fixed root+selected child and source members, require exact current profile/policy/choice/epoch and fresh actual authority proof; old setup session or monotonic receipt is not revived. Root selection is access/source provenance only, not deployed source-loaded server, model inference, embedding dimensions, capture or egress consent. Namespace selection does not duplicate shared immutable weights or permit arbitrary private data discovery.",
+    "verification": "Actual root-owned model member scan observes every149 inventory path/digest/size and complete manifest; no429GB weight acquisition/copy or source presence inferred from directory choice. Existing observation issue lease starts only after complete required source verification/currentness, not before an incomplete long scan. Revalidate actual selected controller/profile/source and immutable held file identities during scan/at finish; changed files/cancel/expired setup deny. Production absent store/tree remains exact pending.",
+    "tasks": [
+      {
+        "id": "SK-T139.1",
+        "owner": "factory/release builder",
+        "work": "Pin literal root template in genuine release/source descriptor, implement actual root-held filesystem observer and same normal configuration existing-child model selection; absent/unowned/symlink/writable/root/source mismatch denies."
+      },
+      {
+        "id": "SK-T139.2",
+        "owner": "models/active publisher",
+        "work": "Consume actual root/child/source observations and signed durable selection/current adoption, complete model member verification independent deployment; no arbitrary paths/copies/downloads or inferred embedding."
+      }
+    ],
+    "acceptance": "All original AC open; no root/store/model installation or model bytes accessed by Sol."
   }
 }
