@@ -746,3 +746,31 @@ The system SHALL use only the four v132 setup build targets with current genuine
 #### Scenario: Missing immutable package or native toolchain
 - **WHEN** a selected lock dependency, build hook, Bun/Node artifact or native dependency has no verified held source/integrity/license/toolchain proof
 - **THEN** the build denies that phase without network fallback, runtime receipt or functional acceptance.
+
+### Requirement: Setup intent selectors and current private profile proof
+The system SHALL distinguish stable root setup principal/namespace/private-purpose intent from current <=30s authenticated authority snapshots, using the v133 exact source/subject/session/generation joins. It SHALL mint a distinct private-purpose selection only from the actual adopted native principal/profile and verified v91 owner-private namespace source within actual root TTY configuration.
+
+#### Scenario: Identity changes during preparation
+- **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
+- **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Source-bound GLM inventory and independent license observations v135
+The installer SHALL observe the exact bounded inventory, upstream MIT license and selected quantizer declaration pinned by v135 before model-source selection; metadata SHALL NOT substitute for actual immutable model member/runtime/load evidence.
+
+#### Scenario: Source metadata is available but model is absent
+- **WHEN** the three small source blobs verify but no complete selected model directory or owned deployment is observed
+- **THEN** source provenance is retained and deployment remains pending; no weights are downloaded and no acceptance is promoted
+
+### Requirement: Current consent and actual lock-selected package source receipts v136
+The installer SHALL acquire only exact supported-origin integrity-locked package bytes under the explicit acquire-locked-runtime-packages qualification phase and retain genuine scoped CAS/license evidence; deployment SHALL exclude editable installs and default dependency groups.
+
+#### Scenario: Old source-only consent or missing package evidence
+- **WHEN** acquisition lacks the explicit phase, exact lock integrity, allowed origin, current held bytes or required reviewed license eligibility
+- **THEN** the affected phase remains pending and no static catalog handle, unchecked cache or metadata assertion substitutes for proof
+
+### Requirement: Actual held existing model-store source selection v139
+The installer SHALL select an already-present model directory only through the fixed reviewed model-store root and actual protected directory/source observations, independently of private profile intent and deployment proof.
+
+#### Scenario: Model store or selected tree absent
+- **WHEN** the exact store/child/source inventory is absent, unowned, writable or changed
+- **THEN** selection remains pending with its exact prerequisite and no arbitrary path, download, copy or inferred model load substitutes

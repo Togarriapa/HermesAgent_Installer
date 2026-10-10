@@ -74,6 +74,9 @@ class SourceObserverEnrollment:
     # These are only candidate routes; current consent and route policy are
     # rechecked by the root issuer before any ceiling is minted.
     private_provider_route_ids: tuple[str, ...] = ()
+    # Finite public-web scope enrollment IDs; candidates only.  Current
+    # per-input permission and active scope rows are independently resolved.
+    public_web_scope_ids: tuple[str, ...] = ()
     # v123 keeps the package process role distinct from the action binding.
     # These fields are populated from the protected role/action foreign keys;
     # legacy/manual rows may omit them but cannot resolve against a v123 package.
@@ -83,6 +86,10 @@ class SourceObserverEnrollment:
     role_closure_member_path: str | None = None
     role_source_revision: str | None = None
     role_source_tree_sha256: str | None = None
+    # Exact role registrations whose action bindings include this source action.
+    # Loaded-role proofs may contain unrelated registrations; they must still
+    # demonstrate this finite selected subset when one is required.
+    source_registration_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_protected_record(cls, record: Mapping[str, Any]) -> "SourceObserverEnrollment":
@@ -95,10 +102,10 @@ class SourceObserverEnrollment:
             "allowed_parent_source_kinds",
         }
         optional = {"max_event_bytes", "lease_seconds", "native_package_generation",
-                    "private_provider_route_ids", "source_action_binding_id",
+                    "private_provider_route_ids", "public_web_scope_ids", "source_action_binding_id",
                     "role_source_receipt_handle", "role_module_name",
                     "role_closure_member_path", "role_source_revision",
-                    "role_source_tree_sha256"}
+                    "role_source_tree_sha256", "source_registration_ids"}
         if (not isinstance(record, Mapping) or set(record) - (required | optional)
                 or required - set(record) or not isinstance(record["allowed_parent_source_kinds"], list)
                 or len(record["allowed_parent_source_kinds"]) > len(_ALLOWED_SOURCE_KINDS)
@@ -111,6 +118,14 @@ class SourceObserverEnrollment:
             if not isinstance(values["private_provider_route_ids"], (list, tuple)):
                 raise AuthorityDenied("source.enrollment", "protected private provider route IDs are invalid")
             values["private_provider_route_ids"] = tuple(values["private_provider_route_ids"])
+        if "public_web_scope_ids" in values:
+            if not isinstance(values["public_web_scope_ids"], (list, tuple)):
+                raise AuthorityDenied("source.enrollment", "protected public web scope IDs are invalid")
+            values["public_web_scope_ids"] = tuple(values["public_web_scope_ids"])
+        if "source_registration_ids" in values:
+            if not isinstance(values["source_registration_ids"], (list, tuple)):
+                raise AuthorityDenied("source.enrollment", "protected source registration IDs are invalid")
+            values["source_registration_ids"] = tuple(values["source_registration_ids"])
         try:
             return cls(**values)
         except (ValueError, TypeError):
@@ -137,6 +152,14 @@ class SourceObserverEnrollment:
                        for item in self.private_provider_route_ids)
                 or (self.private_provider_route_ids and self.source_kind != "native-input")):
             raise ValueError("private provider route IDs must be a finite unique protected tuple")
+        if (not isinstance(self.public_web_scope_ids, tuple)
+                or len(self.public_web_scope_ids) > 32
+                or tuple(sorted(set(self.public_web_scope_ids))) != self.public_web_scope_ids
+                or any(not isinstance(item, str)
+                       or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", item)
+                       for item in self.public_web_scope_ids)
+                or (self.public_web_scope_ids and self.source_kind != "native-input")):
+            raise ValueError("public web scope IDs must be a finite sorted protected tuple")
         for name in (
             "observer_enrollment_id", "origin_id", "profile_id", "principal_id",
             "namespace_id", "enrollment_id", "generation", "package_id", "role_id",
@@ -176,6 +199,12 @@ class SourceObserverEnrollment:
                 and (not isinstance(self.role_source_tree_sha256, str)
                      or not re.fullmatch(r"[0-9a-f]{64}", self.role_source_tree_sha256))):
             raise ValueError("role_source_tree_sha256 is invalid")
+        if (not isinstance(self.source_registration_ids, tuple)
+                or len(self.source_registration_ids) > 128
+                or len(set(self.source_registration_ids)) != len(self.source_registration_ids)):
+            raise ValueError("source_registration_ids must be a finite unique tuple")
+        for registration_id in self.source_registration_ids:
+            _identifier(registration_id, "source_registration_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +395,15 @@ class RetainedSelectedInputConsent:
 
 
 @dataclass(frozen=True, slots=True)
+class RootChannelSourceRegistrationToken:
+    """Exact one-use rollback capability for a root-created channel delivery."""
+
+    source_receipt_handle: SourceReceiptHandle
+    producer_context_delivery_handle: str
+    _token: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
 class RootSourcePayloadCapsule:
     """One-use root-internal payload view for a selected event recipe.
 
@@ -438,6 +476,10 @@ class SourceObserverRegistry:
         self._consumed_selected_input_proofs: dict[str, tuple[int, Any, Any, float, str]] = {}
         self._selected_input_selections: dict[str, tuple[Any, Any, float, str]] = {}
         self._selected_input_consents: dict[str, RetainedSelectedInputConsent] = {}
+        self._channel_peer_registry: Any = None
+        self._resource_controller_registry: Any = None
+        self._channel_delivery_tokens: dict[int, RootChannelSourceRegistrationToken] = {}
+        self._channel_event_handles: set[str] = set()
         self._lock = threading.RLock()
         self._closed = False
 
@@ -646,9 +688,8 @@ class SourceObserverRegistry:
                 observer_enrollment_id=observer.observer_enrollment_id,
                 event_record_id=event.event_record_id,
                 source_kind=observer.source_kind,
-                # Bind the event identifier in the proof itself. AuthorityService
-                # preserves this root-derived value; it must not append a second
-                # suffix while signing the receipt.
+                # Keep the event identifier in the signed receipt; authority
+                # preserves the root-derived origin without appending a suffix.
                 origin_id=f"{observer.origin_id}:{event.event_record_id}",
                 payload_bytes=event.payload,
                 payload_sha256=event.payload_sha256,
@@ -871,6 +912,348 @@ class SourceObserverRegistry:
                 raise AuthorityDenied("source.delivery", "receipt target PIDFD identity changed")
             binding.delivered = True
             return SourceReceiptHandle(handle)
+
+    def attach_channel_delivery_registries(self, channel_peer_registry: Any,
+                                           resource_controller_registry: Any) -> None:
+        """Attach the exact channel proof and retained-event registries once."""
+        from .channel_peer_delivery import RootChannelPeerDeliveryRegistry
+        from .resource_source_controllers import RootResourceControllerRegistry
+
+        if (type(channel_peer_registry) is not RootChannelPeerDeliveryRegistry
+                or type(resource_controller_registry) is not RootResourceControllerRegistry
+                or getattr(channel_peer_registry, "resource_registry", None)
+                    is not resource_controller_registry
+                or getattr(channel_peer_registry, "service", None) is not self.service
+                or getattr(resource_controller_registry, "service", None) is not self.service):
+            raise AuthorityDenied("source.channel_delivery", "root channel delivery graph is invalid")
+        with self._lock:
+            if self._channel_peer_registry is not None or self._resource_controller_registry is not None:
+                raise AuthorityDenied("source.channel_delivery", "channel delivery graph is already attached")
+            self._channel_peer_registry = channel_peer_registry
+            self._resource_controller_registry = resource_controller_registry
+
+    def register_root_channel_event_delivery(
+        self, proof: Any, source_receipt_handle: SourceReceiptHandle, receipt: SourceReceipt,
+        source_context: HostContext, event_payload: bytes, expires_monotonic: float,
+        producer_context_delivery_handle: str,
+    ) -> RootChannelSourceRegistrationToken:
+        """Retain a freshly signed channel receipt for its selected native peer.
+
+        The original producer process is resolved from the retained event's
+        signed source closure. The recipient is independently resolved from
+        the sealed current native-peer binding. This never retargets the
+        original event bearer or accepts a caller-selected PID.
+        """
+        from .channel_peer_delivery import RootRetainedChannelDeliveryProof
+
+        if (type(proof) is not RootRetainedChannelDeliveryProof
+                or type(source_receipt_handle) is not SourceReceiptHandle
+                or not isinstance(receipt, SourceReceipt)
+                or not isinstance(source_context, HostContext)
+                or not isinstance(event_payload, bytes)
+                or not 1 <= len(event_payload) <= MAX_OBSERVED_SOURCE_BYTES
+                or not isinstance(producer_context_delivery_handle, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", producer_context_delivery_handle) is None
+                or producer_context_delivery_handle == str(source_receipt_handle)
+                or type(expires_monotonic) not in (int, float)
+                or not math.isfinite(expires_monotonic)):
+            raise AuthorityDenied("source.channel_delivery", "channel delivery registration is malformed")
+        with self._lock:
+            proof_registry = self._channel_peer_registry
+            event_registry = self._resource_controller_registry
+            if self._closed or proof_registry is None or event_registry is None:
+                raise AuthorityDenied("source.channel_delivery", "root channel delivery graph is unavailable")
+        try:
+            event_handle, native_binding = proof_registry.resolve_retained_channel_proof(proof)
+            event_record = event_registry.resolve_retained_event(event_handle)
+            validator = getattr(proof_registry, "validate_retained_channel_proof", None)
+            if (not callable(validator)
+                    or validator(proof, event_handle=event_handle,
+                                 native_binding=native_binding,
+                                 retained_record=event_record) is not True):
+                raise AuthorityDenied("source.channel_delivery", "retained channel proof does not match event")
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.channel_delivery", "retained channel proof is stale") from None
+
+        now = self.service.monotonic()
+        observer = self.observers.get(event_handle.source_observer_enrollment_id)
+        binding_handle = getattr(native_binding, "binding_handle", None)
+        target_uid = getattr(native_binding, "peer_uid", None)
+        target_pid = getattr(native_binding, "peer_pid", None)
+        target_profile = getattr(native_binding, "profile_id", None)
+        target_generation = getattr(native_binding, "generation", None)
+        # These are intentionally private on the sealed binding. The public
+        # channel DTO carries no PIDFD or process identity; only a validated
+        # root-issued binding lets this root-owned registry reach its retained
+        # peer record. duplicate_peer_pidfd() supplies the descriptor we own.
+        retained_peer = getattr(native_binding, "_peer", None)
+        target_pidfd = getattr(retained_peer, "pidfd", None)
+        target_identity = getattr(retained_peer, "identity", None)
+        if (observer is None or event_handle.source_kind != "native-input"
+                or observer.source_kind != "native-input"
+                or event_record.handle is not event_handle
+                or event_record.payload != event_payload
+                or event_handle.payload_sha256 != canonical_digest(event_payload)
+                or getattr(proof, "event_handle", None) != event_handle.handle
+                or getattr(proof, "event_payload_sha256", None) != event_handle.payload_sha256
+                or getattr(proof, "event_payload_size_bytes", None) != len(event_payload)
+                or getattr(proof, "original_source_receipt_ids", None) != event_handle.source_receipt_ids
+                or getattr(proof, "source_observer_enrollment_id", None) != observer.observer_enrollment_id
+                or getattr(proof, "native_binding_handle", None) != binding_handle
+                or getattr(proof, "native_profile_id", None) != target_profile
+                or getattr(proof, "native_profile_generation", None) != target_generation
+                or getattr(proof, "native_package_id", None) != getattr(native_binding, "native_package_id", None)
+                or getattr(proof, "native_package_generation", None)
+                    != getattr(native_binding, "native_package_generation", None)
+                or getattr(proof, "namespace_id", None) != getattr(native_binding, "namespace_id", None)
+                or getattr(proof, "principal_id", None) != getattr(native_binding, "principal_id", None)
+                or getattr(proof, "native_process_identity_digest", None)
+                    != getattr(native_binding, "native_process_identity_digest", None)
+                or getattr(proof, "native_loaded_role_proof_handle", None)
+                    != getattr(native_binding, "loaded_role_proof_handle", None)
+                or type(target_uid) is not int or target_uid <= 0
+                or type(target_pid) is not int or target_pid <= 0
+                or type(target_pidfd) is not int or target_pidfd < 0
+                or target_profile != observer.profile_id
+                or target_generation != observer.generation
+                or target_identity is None
+                or type(expires_monotonic) not in (float, int)
+                or expires_monotonic <= now
+                or expires_monotonic > min(event_handle.expires_monotonic,
+                                           getattr(proof, "expires_monotonic", 0),
+                                           getattr(native_binding, "expires_monotonic", 0))):
+            raise AuthorityDenied("source.channel_delivery", "channel target or retained event changed")
+
+        # Select the actual event leaf from the full retained signed closure;
+        # its PIDFD binding remains the producer identity for the new receipt.
+        parent_by_id = {item.receipt_id: item for item in event_record.parent_receipts}
+        leaf_candidates = [item for item in event_record.parent_receipts
+                           if item.source_kind == event_handle.source_kind
+                           and item.payload_digest == event_handle.payload_sha256
+                           and item.origin_id == f"{observer.origin_id}:{event_handle.event_id}"]
+        if len(leaf_candidates) != 1:
+            raise AuthorityDenied("source.channel_delivery", "retained event has no unique signed source leaf")
+        source_leaf = leaf_candidates[0]
+        with self._lock:
+            source_binding = self._receipt_process_bindings.get(source_leaf.receipt_id)
+            service_receipt = self.service._source_receipt_handles.get(str(source_receipt_handle))
+        if (source_binding is None or service_receipt is not receipt
+                or source_binding.authority_epoch != self.service.authority_epoch
+                or source_binding.expires <= now
+                or source_binding.profile_id != observer.profile_id
+                or source_binding.generation != observer.generation
+                or source_binding.observer_enrollment_id != observer.observer_enrollment_id
+                or source_leaf.receipt_id not in event_handle.source_receipt_ids
+                or receipt.source_kind != observer.source_kind
+                or receipt.profile_id != observer.profile_id
+                or receipt.principal_id != observer.principal_id
+                or receipt.namespace_id != observer.namespace_id
+                or receipt.process_generation != observer.generation
+                or receipt.origin_id != (
+                    f"{source_leaf.origin_id}:channel:{getattr(proof, 'channel_ingress_id', '')}")
+                or getattr(proof, "channel_ingress_id", None)
+                    != getattr(native_binding, "channel_ingress_id", None)
+                or receipt.native_process_identity != source_leaf.native_process_identity
+                or receipt.payload_digest != canonical_digest(event_payload)
+                or receipt.parent_receipt_ids != event_handle.source_receipt_ids
+                or receipt.monotonic_expires_at <= now
+                or receipt.monotonic_expires_at > expires_monotonic
+                or any(parent_by_id.get(item.receipt_id) != item
+                       for item in event_record.parent_receipts)
+                or len(parent_by_id) != len(event_record.parent_receipts)):
+            raise AuthorityDenied("source.channel_delivery", "new receipt does not preserve exact event ancestry")
+        expected_context_ids = set(event_handle.source_receipt_ids) | {receipt.receipt_id}
+        context_ids = [item.receipt_id for item in source_context.source_receipts]
+        if (set(context_ids) != expected_context_ids or len(context_ids) != len(expected_context_ids)
+                or tuple(source_context.source_receipts)
+                    != (*event_record.parent_receipts, receipt)
+                or source_context.profile_id != observer.profile_id
+                or source_context.principal_id != observer.principal_id
+                or source_context.namespace_id != observer.namespace_id
+                or source_context.uid != target_uid
+                or source_context.generation != observer.generation
+                or source_context.final_payload_digest != canonical_digest(event_payload)
+                or source_context.monotonic_expires_at <= now
+                or source_context.monotonic_expires_at > expires_monotonic):
+            raise AuthorityDenied("source.channel_delivery", "target context omits or changes event ancestry")
+
+        principal_binding = self.service._binding(target_uid)
+        target_fd = -1
+        try:
+            self.service._verify_source_receipt(receipt, principal_binding)
+            self.service._verify_context_signature(source_context)
+            self.service._assert_current_context(source_context, principal_binding, target_uid)
+            source_live = self.process_resolver(
+                source_binding.pid, source_binding.pidfd,
+                profile_id=source_binding.profile_id, generation=source_binding.generation)
+            target_fd = native_binding.duplicate_peer_pidfd()
+            target_live = self.process_resolver(
+                target_pid, target_fd, profile_id=target_profile, generation=target_generation)
+            target_retained = self.process_resolver(
+                target_pid, target_pidfd, profile_id=target_profile, generation=target_generation)
+            if (source_live is None or source_live != source_binding.identity
+                    or target_live is None or target_live != target_identity
+                    or target_retained is None or target_retained != target_identity
+                    or target_live.kernel_uid != target_uid):
+                raise AuthorityDenied("source.channel_delivery", "source or target process identity changed")
+        except AuthorityDenied:
+            if target_fd >= 0:
+                os.close(target_fd)
+            raise
+        except Exception:
+            if target_fd >= 0:
+                os.close(target_fd)
+            raise AuthorityDenied("source.channel_delivery", "receipt signature or current peer validation failed") from None
+
+        receipt_fd = delivery_fd = -1
+        try:
+            receipt_fd = os.dup(source_binding.pidfd)
+            delivery_fd = target_fd
+            target_fd = -1
+            handle = str(source_receipt_handle)
+            capsule = RootSourcePayloadCapsule(
+                receipt_id=receipt.receipt_id,
+                observer_enrollment_id=observer.observer_enrollment_id,
+                event_record_id=event_handle.event_id,
+                invocation_id=source_context.grant_id,
+                source_kind=observer.source_kind,
+                channel_id=observer.channel_id,
+                capture_schema_id=observer.capture_schema_id,
+                source_action_id=observer.source_action_id,
+                profile_id=observer.profile_id,
+                principal_id=observer.principal_id,
+                namespace_id=observer.namespace_id,
+                generation=observer.generation,
+                payload_bytes=bytes(event_payload),
+                payload_sha256=canonical_digest(event_payload),
+                parent_receipt_ids=event_handle.source_receipt_ids,
+                parent_closure_digest=event_handle.parent_closure_digest,
+                issued_monotonic=now,
+                expires_monotonic=min(float(expires_monotonic), receipt.monotonic_expires_at,
+                                      source_context.monotonic_expires_at),
+            )
+            source_copy = _ReceiptProcessBinding(
+                receipt.receipt_id, handle, source_binding.pid, receipt_fd,
+                source_binding.identity, source_binding.profile_id, source_binding.generation,
+                source_binding.uid, capsule.expires_monotonic,
+                authority_epoch=self.service.authority_epoch,
+                observer_enrollment_id=observer.observer_enrollment_id,
+                source_action_id=observer.source_action_id,
+                channel_id=observer.channel_id,
+                loaded_package_proof=source_binding.loaded_package_proof)
+            target_copy = _ReceiptProcessBinding(
+                receipt.receipt_id, handle, target_pid, delivery_fd, target_identity,
+                target_profile, target_generation, target_uid, capsule.expires_monotonic,
+                authority_epoch=self.service.authority_epoch)
+            with self._lock:
+                if (self._closed or handle in self._receipt_delivery_bindings
+                        or receipt.receipt_id in self._receipt_process_bindings
+                        or handle in self._payload_capsules
+                        or len(self._receipt_delivery_bindings) >= MAX_RETAINED_CAPSULES
+                        or self._capsule_bytes + len(event_payload) > MAX_RETAINED_CAPSULE_BYTES):
+                    raise AuthorityDenied("source.channel_capacity", "channel source retention is full or replayed")
+                self._receipt_process_bindings[receipt.receipt_id] = source_copy
+                self._receipt_delivery_bindings[handle] = target_copy
+                self._channel_event_handles.add(handle)
+                self._payload_capsules[handle] = (
+                    receipt, capsule, bytearray(event_payload), self.service.authority_epoch)
+                self._invocation_receipt_handles.setdefault(capsule.invocation_id, set()).add(handle)
+                self._handle_invocations[handle] = capsule.invocation_id
+                self._capsule_bytes += len(event_payload)
+                receipt_fd = delivery_fd = -1
+                token = RootChannelSourceRegistrationToken(
+                    SourceReceiptHandle(handle), producer_context_delivery_handle, object())
+                self._channel_delivery_tokens[id(token)] = token
+                if len(self._channel_delivery_tokens) > MAX_RETAINED_CAPSULES:
+                    self._channel_delivery_tokens.pop(id(token), None)
+                    self._revoke_source_handle_locked(handle)
+                    raise AuthorityDenied("source.channel_capacity", "channel rollback registry is full")
+            return token
+        except BaseException:
+            if receipt_fd >= 0:
+                os.close(receipt_fd)
+            if delivery_fd >= 0:
+                os.close(delivery_fd)
+            raise
+        finally:
+            if target_fd >= 0:
+                os.close(target_fd)
+
+    def rollback_root_channel_event_delivery(
+        self, registration: RootChannelSourceRegistrationToken,
+    ) -> bool:
+        """Rollback only the exact in-process channel registration returned above."""
+        if type(registration) is not RootChannelSourceRegistrationToken:
+            raise AuthorityDenied("source.channel_delivery", "channel rollback token is invalid")
+        with self._lock:
+            retained = self._channel_delivery_tokens.pop(id(registration), None)
+            if retained is not registration:
+                raise AuthorityDenied("source.channel_delivery", "channel rollback token is stale or replayed")
+        return self.revoke_source_handle(registration.source_receipt_handle)
+
+    def resolve_root_channel_source_delivery(
+        self, handle: str, *, peer_uid: int, peer_pid: int, peer_pidfd: int,
+        require_pending: bool = True,
+    ) -> SourceReceiptHandle:
+        """Revalidate a registered channel receipt for native queue admission.
+
+        This checks membership/currentness only; it does not consume delivery.
+        The actual one-use producer take still goes through ``take_source_receipt``.
+        """
+        if (not isinstance(handle, str) or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle) is None
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or type(require_pending) is not bool):
+            raise AuthorityDenied("source.channel_delivery", "channel source lookup is malformed")
+        with self._lock:
+            binding = self._receipt_delivery_bindings.get(handle)
+            capsule = self._payload_capsules.get(handle)
+            if (handle not in self._channel_event_handles or binding is None or capsule is None
+                    or binding.authority_epoch != self.service.authority_epoch
+                    or capsule[3] != self.service.authority_epoch
+                    or (require_pending and binding.delivered)
+                    or binding.uid != peer_uid or binding.pid != peer_pid
+                    or binding.expires <= self.service.monotonic()
+                    or capsule[0].receipt_id != binding.receipt_id):
+                raise AuthorityDenied("source.channel_delivery", "channel receipt is stale or not selected for this peer")
+            retained_pidfd = os.dup(binding.pidfd)
+        try:
+            live = self.process_resolver(peer_pid, peer_pidfd,
+                                         profile_id=binding.profile_id,
+                                         generation=binding.generation)
+            retained = self.process_resolver(binding.pid, retained_pidfd,
+                                             profile_id=binding.profile_id,
+                                             generation=binding.generation)
+            if (live is None or retained is None or live != binding.identity
+                    or retained != binding.identity or live.kernel_uid != peer_uid):
+                raise AuthorityDenied("source.channel_delivery", "channel recipient PIDFD identity changed")
+        finally:
+            os.close(retained_pidfd)
+        return SourceReceiptHandle(handle)
+
+    def commit_root_channel_event_delivery(
+        self, registration: RootChannelSourceRegistrationToken,
+    ) -> SourceReceiptHandle:
+        """Finalize the service transaction while retaining its one-use receipt."""
+        if type(registration) is not RootChannelSourceRegistrationToken:
+            raise AuthorityDenied("source.channel_delivery", "channel commit token is invalid")
+        with self._lock:
+            retained = self._channel_delivery_tokens.pop(id(registration), None)
+            handle = str(registration.source_receipt_handle)
+            row = self._payload_capsules.get(handle)
+            delivery = self._receipt_delivery_bindings.get(handle)
+            if (retained is not registration or row is None or delivery is None
+                    or row[3] != self.service.authority_epoch
+                    or delivery.authority_epoch != self.service.authority_epoch
+                    or delivery.expires <= self.service.monotonic()):
+                self._channel_delivery_tokens.pop(id(registration), None)
+                if row is not None:
+                    self._revoke_source_handle_locked(handle)
+                raise AuthorityDenied("source.channel_delivery", "channel transaction became stale before commit")
+        return registration.source_receipt_handle
 
     def resolve_delivered_source_receipt(self, handle: str, *, peer_uid: int,
                                          peer_pid: int, peer_pidfd: int
@@ -1177,6 +1560,10 @@ class SourceObserverRegistry:
 
     def _revoke_source_handle_locked(self, handle: str) -> bool:
         """Remove authority lookup and peer-delivery state for one receipt."""
+        self._channel_event_handles.discard(handle)
+        for token_id, token in tuple(self._channel_delivery_tokens.items()):
+            if token.source_receipt_handle == handle:
+                self._channel_delivery_tokens.pop(token_id, None)
         self._forget_invocation_handle_locked(handle)
         self._selected_input_consents.pop(handle, None)
         self._selected_input_selections.pop(handle, None)
@@ -1567,6 +1954,15 @@ class SourceObserverRegistry:
         and recipient. Adapter artifacts are never promoted to process roles.
         """
         package_generation = observer.native_package_generation or observer.generation
+        if (observer.native_package_generation is None
+                or observer.source_action_binding_id is None
+                or observer.role_source_receipt_handle is None
+                or observer.role_module_name is None
+                or observer.role_closure_member_path is None
+                or observer.role_source_revision is None
+                or observer.role_source_tree_sha256 is None
+                or not observer.source_registration_ids):
+            raise AuthorityDenied("source.package", "selected process-role source and action registration proof is incomplete")
         try:
             package = self.package_resolver(observer.package_id, package_generation)
         except Exception:
@@ -1574,6 +1970,7 @@ class SourceObserverRegistry:
         roles = getattr(package, "process_role_records", {}) if package is not None else {}
         role = roles.get(observer.role_id) if isinstance(roles, Mapping) else None
         action_records = getattr(package, "action_records", {}) if package is not None else {}
+        registration_records = getattr(package, "registration_records", {}) if package is not None else {}
         action_candidates = [
             item for item in action_records.values()
             if getattr(item, "action_id", None) == observer.source_action_id
@@ -1597,6 +1994,8 @@ class SourceObserverRegistry:
                 or getattr(role, "role_artifact_id", None) != observer.role_artifact_id
                 or getattr(role, "role_sha256", None) != observer.role_sha256
                 or observer.observer_enrollment_id not in getattr(role, "observer_enrollment_ids", ())
+                or not set(observer.source_registration_ids).issubset(
+                    set(getattr(role, "registration_ids", ())))
                 or (observer.role_source_receipt_handle is not None
                     and getattr(role, "role_source_receipt_handle", None)
                         != observer.role_source_receipt_handle)
@@ -1615,6 +2014,18 @@ class SourceObserverRegistry:
                 or getattr(action, "recipient", None) != observer.recipient
                 or getattr(action, "generation", None) != package_generation):
             raise AuthorityDenied("source.package", "selected package role or protected route binding is incomplete")
+        if observer.source_registration_ids:
+            if not isinstance(registration_records, Mapping):
+                raise AuthorityDenied("source.package", "selected process role registrations are unavailable")
+            for registration_id in observer.source_registration_ids:
+                registration = registration_records.get(registration_id)
+                if (registration is None
+                        or registration_id not in getattr(role, "registration_ids", ())
+                        or observer.observer_enrollment_id not in getattr(
+                            registration, "observer_enrollment_ids", ())
+                        or not any(binding.action_binding_id == action.action_binding_id
+                                   for binding in getattr(registration, "action_bindings", ()))):
+                    raise AuthorityDenied("source.package", "source action registration is not in the selected role")
         package_fields = (
             "source_revision", "source_tree_sha256", "compiled_closure_artifact_id",
             "entrypoint_artifact_id", "entrypoint_sha256", "resolver_artifact_id",
@@ -1648,19 +2059,26 @@ class SourceObserverRegistry:
                 identity, observer, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
         except Exception:
             proof = None
+        package_role = getattr(package, "process_role_records", {}).get(observer.role_id)
+        role_fields = (
+            "role_id", "role_source_receipt_handle", "role_module_name",
+            "role_closure_member_path", "role_source_revision",
+            "role_source_tree_sha256", "role_module_device", "role_module_inode",
+            "role_module_sha256", "observed_registration_ids",
+        )
+        role_proof_required = True
         required = (
             "proof_id", "package_id", "profile_id", "generation",
             "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256",
             "mount_namespace_inode", "mount_id", "mount_target_digest", "mount_flags",
             "source_root_device", "source_root_inode", "target_peer_identity",
             "loader_role_artifact_id", "loader_role_sha256", "loader_ready_event_id",
-            "observed_entrypoint_action_ids", "issued_monotonic", "expires_monotonic",
+            "issued_monotonic", "expires_monotonic",
             "service_generation_digest",
-        )
+        ) + (role_fields if role_proof_required else ())
         if proof is None or any(not hasattr(proof, name) for name in required):
             raise AuthorityDenied("source.package", "root loaded-package proof is incomplete")
         flags = getattr(proof, "mount_flags")
-        actions = getattr(proof, "observed_entrypoint_action_ids")
         digest_fields = (
             "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256",
             "mount_target_digest", "service_generation_digest",
@@ -1677,10 +2095,6 @@ class SourceObserverRegistry:
                 or proof.loader_role_sha256 != observer.role_sha256
                 or not isinstance(proof.loader_ready_event_id, str)
                 or not 1 <= len(proof.loader_ready_event_id) <= 128
-                or not isinstance(actions, (tuple, list, frozenset, set))
-                or not 1 <= len(actions) <= 256
-                or any(not isinstance(action, str) or not action for action in actions)
-                or observer.source_action_id not in actions
                 or not isinstance(flags, (tuple, list, frozenset, set))
                 or not {"ro", "nosuid", "nodev"}.issubset(flags)
                 or "rw" in flags
@@ -1700,6 +2114,32 @@ class SourceObserverRegistry:
                        or any(char not in "0123456789abcdef" for char in getattr(proof, name))
                        for name in digest_fields)):
             raise AuthorityDenied("source.package", "loaded package proof does not match selected live closure")
+        if role_proof_required:
+            observed_registrations = getattr(proof, "observed_registration_ids", ())
+            role_registrations = set(getattr(package_role, "registration_ids", ()))
+            selected_registrations = set(observer.source_registration_ids)
+            if (package_role is None
+                    or getattr(proof, "role_id", None) != observer.role_id
+                    or getattr(proof, "role_source_receipt_handle", None)
+                        != observer.role_source_receipt_handle
+                    or getattr(proof, "role_module_name", None) != observer.role_module_name
+                    or getattr(proof, "role_closure_member_path", None)
+                        != observer.role_closure_member_path
+                    or getattr(proof, "role_source_revision", None) != observer.role_source_revision
+                    or getattr(proof, "role_source_tree_sha256", None)
+                        != observer.role_source_tree_sha256
+                    or getattr(proof, "role_module_sha256", None) != observer.role_sha256
+                    or type(getattr(proof, "role_module_device", None)) is not int
+                    or proof.role_module_device < 0
+                    or type(getattr(proof, "role_module_inode", None)) is not int
+                    or proof.role_module_inode <= 0
+                    or not isinstance(observed_registrations, (tuple, list, set, frozenset))
+                    or len(set(observed_registrations)) != len(observed_registrations)
+                    or any(not isinstance(item, str) or not item for item in observed_registrations)
+                    or not set(observed_registrations).issubset(role_registrations)
+                    or not selected_registrations
+                    or not selected_registrations.issubset(set(observed_registrations))):
+                raise AuthorityDenied("source.package", "loaded process-role module proof does not match protected role")
         return proof
 
     def _prune_locked(self, now: float) -> None:
@@ -1724,6 +2164,7 @@ class SourceObserverRegistry:
             if binding.expires <= now:
                 self._receipt_delivery_bindings.pop(handle, None)
                 os.close(binding.pidfd)
+                self._channel_event_handles.discard(handle)
                 self._forget_invocation_handle_locked(handle)
         self._prune_capsules_locked(now)
 
@@ -1759,6 +2200,8 @@ class SourceObserverRegistry:
             for binding in self._receipt_delivery_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_delivery_bindings.clear()
+            self._channel_event_handles.clear()
+            self._channel_delivery_tokens.clear()
             for _receipt, _capsule, payload, _epoch in self._payload_capsules.values():
                 payload[:] = b"\x00" * len(payload)
             self._payload_capsules.clear()
@@ -1796,6 +2239,10 @@ class RootSelectedNativeExecution:
     service_generation_digest: str
     expires_monotonic: float
     private_consent_selection_handle: str | None = field(default=None, repr=False)
+    # Public web authorization is a separate per-profile choice. It is never
+    # copied from private consent and is revalidated by the public permission
+    # registry for each exact input observation/dispatch.
+    public_input_permission_selection_handle: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (type(self.schema) is not int or self.schema != 1
@@ -1811,6 +2258,12 @@ class RootSelectedNativeExecution:
                 or (self.private_consent_selection_handle is not None
                     and (not isinstance(self.private_consent_selection_handle, str)
                          or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.private_consent_selection_handle)))
+                or (self.public_input_permission_selection_handle is not None
+                    and (not isinstance(self.public_input_permission_selection_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                             self.public_input_permission_selection_handle)))
+                or (self.private_consent_selection_handle is not None
+                    and self.public_input_permission_selection_handle is not None)
                 or not math.isfinite(self.expires_monotonic)):
             raise ValueError("selected native execution binding is malformed")
 
@@ -1894,6 +2347,48 @@ class RootNativeExecutionSelectionRegistry:
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)):
             raise AuthorityDenied("resource.native_consent", "root consent selection handle is malformed")
         return handle
+
+    def _public_input_permission_selection_handle(self, observer: SourceObserverEnrollment,
+                                                  running_binding: Any) -> str | None:
+        """Read the independent public-web choice from the exact root principal."""
+        permission_registry = getattr(self.service, "public_input_permission_registry", None)
+        if permission_registry is None:
+            return None
+        resolver = getattr(permission_registry, "selection_handle_for_current_profile", None)
+        if (not callable(resolver)
+                or getattr(permission_registry, "service", None) is not self.service):
+            raise AuthorityDenied("resource.native_permission",
+                                  "root public input permission registry is invalid")
+        source = getattr(running_binding, "source", None)
+        matches = [binding for binding in self.service.bindings_by_uid.values()
+                   if binding.profile_id == observer.profile_id
+                   and binding.principal_id == observer.principal_id
+                   and binding.namespace_id == observer.namespace_id
+                   and binding.uid == observer.producer_uid
+                   and binding.principal_id == getattr(source, "principal_id", None)
+                   and binding.profile_id == getattr(source, "profile_id", None)
+                   and binding.namespace_id == getattr(source, "namespace_id", None)]
+        if len(matches) != 1:
+            raise AuthorityDenied("resource.native_permission",
+                                  "selected profile principal binding is ambiguous")
+        handle = resolver(matches[0])
+        if handle is None:
+            return None
+        if (not isinstance(handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)):
+            raise AuthorityDenied("resource.native_permission",
+                                  "root public permission selection handle is malformed")
+        return handle
+
+    def _validate_input_permission_choice(self, observer: SourceObserverEnrollment,
+                                          running_binding: Any) -> tuple[str | None, str | None]:
+        """Select at most one independent private or public purpose for this input."""
+        private_handle = self._private_consent_selection_handle(observer, running_binding)
+        public_handle = self._public_input_permission_selection_handle(observer, running_binding)
+        if private_handle is not None and public_handle is not None:
+            raise AuthorityDenied("resource.native_permission",
+                                  "private and public input permissions cannot be combined")
+        return private_handle, public_handle
 
     def select_resource_task(self, admission_handle: Any, node_id: str,
                              managed_task_handle: Any) -> RootSelectedNativeExecution:
@@ -1992,7 +2487,8 @@ class RootNativeExecutionSelectionRegistry:
         if (not math.isfinite(expiry) or expiry <= now
                 or self.service.service_generation_digest != binding.service_generation_digest):
             raise AuthorityDenied("resource.native_selection", "selected task or package lease expired")
-        consent_selection_handle = self._private_consent_selection_handle(observer, binding)
+        consent_selection_handle, public_permission_selection_handle = (
+            self._validate_input_permission_choice(observer, binding))
         selected = RootSelectedNativeExecution(
             schema=1, selection_handle=secrets.token_urlsafe(32), kind="resource-task",
             execution_handle=admission_handle, process_handle=managed_task_handle,
@@ -2004,6 +2500,7 @@ class RootNativeExecutionSelectionRegistry:
             service_generation_digest=self.service.service_generation_digest,
             expires_monotonic=expiry,
             private_consent_selection_handle=consent_selection_handle,
+            public_input_permission_selection_handle=public_permission_selection_handle,
         )
         record = _SelectedNativeExecutionRecord(
             selected, binding, observer, package, adapter, self.service.authority_epoch)
