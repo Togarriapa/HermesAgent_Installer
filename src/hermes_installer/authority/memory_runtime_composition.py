@@ -194,6 +194,7 @@ def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
                                 enrollment: Any, memory_runtime: Any,
                                 service: Any,
                                 vault: Any = None,
+                                network_lease_resolver: RootMemoryNetworkLeaseResolver | None = None,
                                 monotonic: Callable[[], float] = time.monotonic
                                 ) -> RootMemoryRuntimeComposition:
     """Compose only concrete active memory registries; otherwise report why.
@@ -214,11 +215,15 @@ def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
         return RootMemoryRuntimeComposition(None, None, None, None, None,
                                             "active typed memory enrollment is unavailable")
 
-    network_resolver = None
-    try:
-        network_resolver = RootMemoryNetworkLeaseResolver(bindings, monotonic=monotonic)
-    except Exception:
-        pass
+    network_resolver = network_lease_resolver
+    if network_resolver is None:
+        try:
+            network_resolver = RootMemoryNetworkLeaseResolver(bindings, monotonic=monotonic)
+        except Exception:
+            pass
+    elif (type(network_resolver) is not RootMemoryNetworkLeaseResolver
+          or network_resolver.bindings is not bindings):
+        network_resolver = None
 
     prestart = semantic = enablement = lifecycle_registry = None
     journal = None
@@ -250,13 +255,19 @@ def compose_root_memory_runtime(*, bindings: RootRuntimeBindings,
     semantic_connector = None
     if network_resolver is not None and vault is not None:
         try:
-            semantic_connector = MemoryNamespaceConnector(
-                catalog=bindings.enrollment_catalog,
-                process_manager=bindings.process_manager,
-                vault=vault,
-                private_network_lease_resolver=network_resolver,
-                monotonic=monotonic,
-            )
+            candidate_connector = (memory_runtime.get("namespace_connector")
+                                   if isinstance(memory_runtime, Mapping) else None)
+            if (type(candidate_connector) is MemoryNamespaceConnector
+                    and candidate_connector.private_network_lease_resolver is network_resolver):
+                semantic_connector = candidate_connector
+            else:
+                semantic_connector = MemoryNamespaceConnector(
+                    catalog=bindings.enrollment_catalog,
+                    process_manager=bindings.process_manager,
+                    vault=vault,
+                    private_network_lease_resolver=network_resolver,
+                    monotonic=monotonic,
+                )
             if isinstance(memory_runtime, dict):
                 memory_runtime["namespace_connector"] = semantic_connector
         except Exception:

@@ -1482,6 +1482,7 @@ def compose_root_authority_runtime(
         )
 
     memory_runtime = None
+    memory_network_lease_resolver = None
     if enrollment.memory_enrollments:
         if (bindings.enrollment_catalog is None
                 or not callable(getattr(bindings, "resolve_root_journal", None))
@@ -1530,6 +1531,13 @@ def compose_root_authority_runtime(
                 raise AuthorityDenied("memory.unavailable", "memory enrollment is not active in this generation")
             return selected
 
+        try:
+            from .memory_runtime_composition import RootMemoryNetworkLeaseResolver
+            memory_network_lease_resolver = RootMemoryNetworkLeaseResolver(
+                bindings, monotonic=service.monotonic,
+            )
+        except Exception:
+            memory_network_lease_resolver = None
         memory_runtime = build_memory_runtime(
             memory_targets, service,
             root_journal_resolver=bindings.resolve_root_journal,
@@ -1537,6 +1545,7 @@ def compose_root_authority_runtime(
             vault=vault, service_catalog=bindings.enrollment_catalog,
             process_manager=bindings.process_manager,
             enrollment_resolver=resolve_memory_enrollment,
+            private_network_lease_resolver=memory_network_lease_resolver,
         )
         if not memory_runtime.get("engines"):
             memory_runtime["private_engine_unavailable_reason"] = (
@@ -1956,6 +1965,7 @@ def compose_root_authority_runtime(
                 bindings=bindings, enrollment=enrollment,
                 memory_runtime=memory_runtime, service=service,
                 vault=vault,
+                network_lease_resolver=memory_network_lease_resolver,
                 monotonic=service.monotonic,
             )
             memory_lifecycle_unavailable_reason = (
