@@ -71,6 +71,30 @@ class NativeMaterializedItem:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeMaterializedMember:
+    """Path-free identity for bytes retained in one selected generation."""
+
+    relative_path: str
+    sha256: str
+    size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class NativeMaterializedResourceDefinition:
+    """Source and transformed declaration join held by a materialization receipt."""
+
+    kind: str
+    resource_id: str
+    version: str
+    source_path: str
+    source_revision: str
+    source_document_sha256: str
+    effective_spec_sha256: str
+    native_path: str | None
+    members: tuple[NativeMaterializedMember, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class NativeMaterializationReceipt:
     """Path-free receipt for native profile/skill materialization only."""
 
@@ -87,6 +111,7 @@ class NativeMaterializationReceipt:
     hermes_revision: str
     python_version: str
     items: tuple[NativeMaterializedItem, ...]
+    resource_definitions: tuple[NativeMaterializedResourceDefinition, ...]
     state: str
     expires_monotonic: float
 
@@ -142,6 +167,9 @@ class RootNativeMaterialization:
             raise NativeMaterializationDenied("selected resource profile is absent or ambiguous")
         compiled = self._registry.materialize(discovery)
         mapping = _selected_files(compiled, resource_profile_id)
+        resource_definitions = _retained_resource_definitions(
+            self._registry, discovery, compiled,
+        )
         closure_digest = _closure_digest(mapping)
         operation_id = secrets.token_hex(16)
         plan = {
@@ -199,14 +227,134 @@ class RootNativeMaterialization:
         handle = secrets.token_urlsafe(32)
         expires = self._monotonic() + 600.0
         self._record_receipt(handle, selection, resource_profile_id, closure_digest,
-                             items, expires, operation_id, discovery)
+                             items, expires, operation_id, discovery,
+                             resource_definitions)
         return NativeMaterializationReceipt(
             1, handle, selection.enrollment_id, selection.service_generation,
             selection.protected_enrollment_digest, selection.service_profile_id,
             resource_profile_id, self._registry.source.revision,
             self._registry.source.content_digest, closure_digest, items,
+            resource_definitions,
             "native-discovered-awaiting-health", expires,
         )
+
+    def resolve_resource_definition(
+        self, receipt_handle: str, *, enrollment_id: str,
+        service_generation: str, resource_profile_id: str,
+        kind: str, resource_id: str, version: str,
+    ) -> NativeMaterializedResourceDefinition:
+        """Resolve one retained declaration from a current discovered receipt.
+
+        This accessor is root-private and returns only identity/digests/member
+        names. It proves which transformed source declaration was included in
+        the Hermes-discovered selected profile generation; it does not grant
+        runtime execution or expose filesystem paths.
+        """
+        self._require_authority()
+        self._selection(enrollment_id, service_generation, resource_profile_id)
+        record = self._receipt(receipt_handle)
+        if (record["enrollment_id"] != enrollment_id
+                or record["service_generation"] != service_generation
+                or record["resource_profile_id"] != resource_profile_id
+                or record["resources_revision"] != self._registry.source.revision
+                or record["resources_content_digest"] != self._registry.source.content_digest
+                or record["state"] not in {"discovered", "consumed"}
+                or record["expires"] <= self._monotonic()):
+            raise NativeMaterializationDenied("resource definition receipt is stale or outside its selection")
+        matches = [NativeMaterializedResourceDefinition(
+            row["kind"], row["resource_id"], row["version"], row["source_path"],
+            row["source_revision"], row["source_document_sha256"],
+            row["effective_spec_sha256"], row["native_path"],
+            tuple(NativeMaterializedMember(**member) for member in row["members"]),
+        ) for row in record["discovery"].get("resource_definitions", [])
+            if row.get("kind") == kind and row.get("resource_id") == resource_id
+            and row.get("version") == version]
+        if len(matches) != 1:
+            raise NativeMaterializationDenied("resource is not uniquely selected by this materialization receipt")
+        definition = matches[0]
+        for member in definition.members:
+            if not self._verify_materialized_member(member, record):
+                raise NativeMaterializationDenied("retained resource member differs from its materialization receipt")
+        return definition
+
+    def resolve_resource_definition_document(
+        self, receipt_handle: str, *, enrollment_id: str,
+        service_generation: str, resource_profile_id: str,
+        kind: str, resource_id: str, version: str,
+    ) -> bytes:
+        """Return the exact transformed source YAML joined to a current receipt.
+
+        The resource identity is the selector; there is no caller path. The
+        returned bytes are the compiler-produced declaration with the verified
+        effective ``spec`` and provenance annotations, not an independently
+        parsed caller document.
+        """
+        definition = self.resolve_resource_definition(
+            receipt_handle, enrollment_id=enrollment_id,
+            service_generation=service_generation,
+            resource_profile_id=resource_profile_id,
+            kind=kind, resource_id=resource_id, version=version,
+        )
+        record = self._receipt(receipt_handle)
+        current = self._registry.materialize(
+            self._registry.discover([f"profiles/{resource_profile_id}@*"])
+        )
+        content = current.get(definition.source_path)
+        source_member = next((member for member in definition.members
+                              if member.relative_path == definition.source_path), None)
+        if (not isinstance(content, bytes) or source_member is None
+                or len(content) != source_member.size_bytes
+                or hashlib.sha256(content).hexdigest() != source_member.sha256
+                or record["resources_content_digest"] != self._registry.source.content_digest):
+            raise NativeMaterializationDenied("transformed resource document differs from its retained receipt")
+        return content
+
+    def _verify_materialized_member(
+        self, member: NativeMaterializedMember, record: Mapping[str, Any],
+    ) -> bool:
+        if (not isinstance(member.relative_path, str)
+                or not member.relative_path
+                or member.relative_path.startswith("/")
+                or ".." in Path(member.relative_path).parts
+                or "\\" in member.relative_path):
+            return False
+        try:
+            if (self._registry.source.content_digest != record["resources_content_digest"]
+                    or self._registry.source.revision != record["resources_revision"]):
+                return False
+            current = self._registry.materialize(
+                self._registry.discover([f"profiles/{record['resource_profile_id']}@*"])
+            )
+            content = current.get(member.relative_path)
+            if (not isinstance(content, bytes) or len(content) != member.size_bytes
+                    or hashlib.sha256(content).hexdigest() != member.sha256):
+                return False
+            target = _hermes_target_path(member.relative_path, record["resource_profile_id"])
+            return target is None or self._read_home_member(target) == member.sha256
+        except (OSError, sqlite3.Error):
+            return False
+
+    def _read_home_member(self, relative_path: str) -> str | None:
+        try:
+            with _open_parent(self._home_root, relative_path, uid=None, gid=None,
+                              create_parents=False) as (parent_fd, leaf):
+                info = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    return None
+                fd = os.open(leaf, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+                try:
+                    digest = hashlib.sha256()
+                    size = 0
+                    while block := os.read(fd, 65536):
+                        size += len(block)
+                        digest.update(block)
+                        if size > 32 * 1024 * 1024:
+                            return None
+                    return digest.hexdigest()
+                finally:
+                    os.close(fd)
+        except (OSError, NativeMaterializationDenied):
+            return None
 
     def consume_for_activation(self, receipt_handle: str, *, enrollment_id: str,
                                service_generation: str,
@@ -362,7 +510,8 @@ class RootNativeMaterialization:
     def _record_receipt(self, handle: str, selection: NativeMaterializationSelection,
                         profile_id: str, closure_digest: str,
                         items: tuple[NativeMaterializedItem, ...], expires: float,
-                        operation_id: str, discovery: NativeInstallReceipt) -> None:
+                        operation_id: str, discovery: NativeInstallReceipt,
+                        resource_definitions: tuple[NativeMaterializedResourceDefinition, ...] = ()) -> None:
         expected_skills = sorted(item.resource_id for item in items if item.kind == "skill")
         if (discovery.hermes_revision != PINNED_HERMES_REVISION
                 or not discovery.python_version.startswith("3.14.")
@@ -380,9 +529,10 @@ class RootNativeMaterialization:
                  self._registry.source.content_digest, closure_digest,
                  _json([_item_dict(item) for item in items]), _json(skill_ids),
                  "discovered", expires,
-                 _json({"schema": 1, "hermes_revision": discovery.hermes_revision,
+                _json({"schema": 1, "hermes_revision": discovery.hermes_revision,
                         "python_version": discovery.python_version,
-                        "content_digests": discovery.content_digests})))
+                        "content_digests": discovery.content_digests,
+                        "resource_definitions": [_definition_dict(item) for item in resource_definitions]})))
             db.execute("UPDATE plans SET state='complete',updated=? WHERE operation_id=? AND state='applying'",
                        (self._monotonic(), operation_id))
 
@@ -428,6 +578,7 @@ class RootNativeMaterialization:
             record["resources_content_digest"], record["selected_closure_digest"],
             record["discovery"]["hermes_revision"], record["discovery"]["python_version"],
             tuple(NativeMaterializedItem(**item) for item in record["items"]),
+            tuple(_definition_from_dict(item) for item in record["discovery"].get("resource_definitions", [])),
             state, record["expires"],
         )
 
@@ -493,6 +644,75 @@ def _selected_files(compiled: Mapping[str, bytes], profile_id: str) -> dict[str,
     if not mapping:
         raise NativeMaterializationDenied("selected resource closure has no native profile files")
     return mapping
+
+
+def _retained_resource_definitions(
+    registry: NativeRegistry, discovery: Any, compiled: Mapping[str, bytes],
+) -> tuple[NativeMaterializedResourceDefinition, ...]:
+    bindings = {(row.kind, row.resource_id, row.version): row for row in registry.crosswalk(discovery)}
+    definitions: list[NativeMaterializedResourceDefinition] = []
+    for resolved in discovery.resources:
+        resource = resolved.resource
+        kind = resource.kind.value
+        key = f"{kind}/{resource.id}@{resource.version}"
+        raw = registry.resolver.raw.get(key)
+        source_path = registry.paths.get(key)
+        binding = bindings.get((kind, resource.id, resource.version))
+        if raw is None or source_path is None or binding is None:
+            raise NativeMaterializationDenied("selected resource lacks its verified source projection")
+        effective = dict(resolved.effective_spec or resource.body)
+        effective_bytes = json.dumps(
+            effective, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+        member_paths = {source_path,
+                        f"installer-registry/declarations/{kind}/{resource.id}.yaml"}
+        if kind == "profiles":
+            member_paths.update(path for path in compiled if path.startswith(f"homes/profiles/{resource.id}/"))
+        elif kind == "skills":
+            member_paths.add(f"homes/skills/{resource.id}/SKILL.md")
+        if binding.native_path and binding.native_path in compiled:
+            member_paths.add(binding.native_path)
+        members = tuple(
+            NativeMaterializedMember(path, hashlib.sha256(compiled[path]).hexdigest(), len(compiled[path]))
+            for path in sorted(member_paths) if path in compiled
+        )
+        if not members:
+            raise NativeMaterializationDenied("selected resource has no retained transformed bytes")
+        definitions.append(NativeMaterializedResourceDefinition(
+            kind, resource.id, resource.version, source_path, registry.source.revision,
+            raw.content_digest, hashlib.sha256(effective_bytes).hexdigest(),
+            binding.native_path, members,
+        ))
+    return tuple(sorted(definitions, key=lambda row: (row.kind, row.resource_id, row.version)))
+
+
+def _hermes_target_path(relative_path: str, profile_id: str) -> str | None:
+    if relative_path.startswith(f"homes/profiles/{profile_id}/"):
+        return "profiles/" + relative_path.removeprefix("homes/")
+    if relative_path.startswith("homes/skills/"):
+        parts = PurePosixPath(relative_path).parts
+        if len(parts) == 4 and parts[-1] == "SKILL.md":
+            return f"profiles/{profile_id}/skills/{parts[2]}/SKILL.md"
+    return None
+
+
+def _definition_dict(row: NativeMaterializedResourceDefinition) -> dict[str, Any]:
+    return {
+        "kind": row.kind, "resource_id": row.resource_id, "version": row.version,
+        "source_path": row.source_path, "source_revision": row.source_revision,
+        "source_document_sha256": row.source_document_sha256,
+        "effective_spec_sha256": row.effective_spec_sha256, "native_path": row.native_path,
+        "members": [{"relative_path": item.relative_path, "sha256": item.sha256,
+                     "size_bytes": item.size_bytes} for item in row.members],
+    }
+
+
+def _definition_from_dict(row: Mapping[str, Any]) -> NativeMaterializedResourceDefinition:
+    return NativeMaterializedResourceDefinition(
+        row["kind"], row["resource_id"], row["version"], row["source_path"],
+        row["source_revision"], row["source_document_sha256"], row["effective_spec_sha256"],
+        row["native_path"], tuple(NativeMaterializedMember(**member) for member in row["members"]),
+    )
 
 
 def _skill_ids(mapping: Mapping[str, bytes]) -> set[str]:
