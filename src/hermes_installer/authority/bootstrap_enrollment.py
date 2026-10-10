@@ -95,6 +95,12 @@ class EnrollmentPolicy:
     # not selected in this generation.
     remote_startup_enrollments: tuple[Mapping[str, Any], ...] = ()
     private_loopback_networks: tuple[Mapping[str, Any], ...] = ()
+    # v184 finite native AF_UNIX startup projection. These catalogs are empty
+    # until their root-held source, endpoint and active-generation producer is
+    # composed; callers do not get to submit them through an enrollment request.
+    native_worker_network_records: tuple[Mapping[str, Any], ...] = ()
+    active_network_generation_records: tuple[Mapping[str, Any], ...] = ()
+    native_worker_runtime_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_executions: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtimes: tuple[Mapping[str, Any], ...] = ()
     # Public network scopes become active only after their source-specific
@@ -1680,7 +1686,7 @@ class RootBootstrapEnrollment:
 
 
 def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
-    value = {"schema": 1, "generation_id": policy.generation_id,
+    value = {"schema": 2, "generation_id": policy.generation_id,
              "service_records": [dict(row) for row in policy.records],
              "protected_devices": [dict(row) for row in policy.protected_devices],
              "protected_build_records": [dict(row) for row in policy.protected_build_records],
@@ -1699,6 +1705,9 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "root_journal_roots": [dict(row) for row in policy.root_journal_roots],
              "remote_startup_enrollments": [dict(row) for row in policy.remote_startup_enrollments],
              "private_loopback_networks": [dict(row) for row in policy.private_loopback_networks],
+             "native_worker_network_records": [dict(row) for row in policy.native_worker_network_records],
+             "active_network_generation_records": [dict(row) for row in policy.active_network_generation_records],
+             "native_worker_runtime_records": [dict(row) for row in policy.native_worker_runtime_records],
              "selected_resource_executions": [dict(row) for row in policy.selected_resource_executions],
              "selected_application_runtimes": [dict(row) for row in policy.selected_application_runtimes],
              "public_web_scopes": [dict(row) for row in policy.public_web_scopes],

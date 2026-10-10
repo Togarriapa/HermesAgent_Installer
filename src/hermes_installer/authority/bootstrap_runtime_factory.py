@@ -5654,6 +5654,8 @@ class RootBootstrapSession:
                     "remote_observation_enrollments", "native_schema_artifacts",
                     "composio_channel_enrollments", "channel_delivery_bindings",
                     "remote_startup_enrollments", "private_loopback_networks",
+                    "native_worker_network_records", "active_network_generation_records",
+                    "native_worker_runtime_records",
             "selected_resource_executions", "selected_application_runtimes",
             "memory_service_enablement_projections",
                     "private_memory_endpoint_selections", "private_memory_model_selections",

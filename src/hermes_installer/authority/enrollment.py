@@ -1165,6 +1165,9 @@ class ProtectedEnrollment:
     channel_delivery_binding_records: tuple[Mapping[str, Any], ...] = ()
     remote_startup_records: tuple[Mapping[str, Any], ...] = ()
     private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
+    native_worker_network_records: tuple[Mapping[str, Any], ...] = ()
+    active_network_generation_records: tuple[Mapping[str, Any], ...] = ()
+    native_worker_runtime_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
     private_memory_endpoint_selection_records: tuple[Mapping[str, Any], ...] = ()
@@ -1443,8 +1446,16 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
             "memory_service_enablement_projections",
             "public_web_scopes",
             "generation_digest"}
+    if not isinstance(value, dict):
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot is invalid")
+    schema = value.get("schema")
+    if type(schema) is not int or schema not in (1, 2):
+        raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
+    if schema == 2:
+        keys.update({"native_worker_network_records", "active_network_generation_records",
+                     "native_worker_runtime_records"})
     item = _exact(value, keys, "service generation snapshot")
-    if type(item["schema"]) is not int or item["schema"] != 1:
+    if type(item["schema"]) is not int or item["schema"] != schema:
         raise AuthorityDenied("enrollment.generation", "service generation snapshot schema is unsupported")
     _read_id(item["generation_id"], "service generation snapshot ID")
     digest = item["generation_digest"]
@@ -1465,11 +1476,27 @@ def _validate_service_generations(value: Any) -> dict[str, Any]:
                    "private_memory_endpoint_selections", "private_memory_model_selections",
                    "memory_service_enablement_projections",
                    "public_web_scopes")
+    if schema == 2:
+        list_fields += ("native_worker_network_records", "active_network_generation_records",
+                        "native_worker_runtime_records")
     for name in list_fields:
         rows = item[name]
-        if (not isinstance(rows, list) or len(rows) > 1024
+        row_limit = 1 if schema == 2 and name in (
+            "native_worker_network_records", "active_network_generation_records",
+            "native_worker_runtime_records") else 1024
+        if (not isinstance(rows, list) or len(rows) > row_limit
                 or any(not isinstance(row, dict) for row in rows)):
             raise AuthorityDenied("enrollment.generation", f"protected {name} catalog is invalid")
+    if schema == 2 and any(item[name] for name in (
+            "native_worker_network_records", "active_network_generation_records",
+            "native_worker_runtime_records")):
+        # These rows are activated only by the HI182/HI183 root-held producer
+        # and current-generation owner. Do not accept their presence before
+        # the closed typed parser and complete source joins are installed.
+        raise AuthorityDenied(
+            "enrollment.generation",
+            "native worker network catalogs are unavailable until verified source joins are installed",
+        )
     # Parse the exact v128 row contracts at the digest boundary. Cross-catalog
     # service/profile/route joins are repeated by ProtectedEnrollmentCatalog.
     try:
@@ -2890,6 +2917,12 @@ def _parse_protected_enrollment_document(
         tuple(MappingProxyType(dict(row)) for row in service_generations["private_memory_model_selections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["memory_service_enablement_projections"]),
         tuple(MappingProxyType(dict(row)) for row in service_generations["public_web_scopes"]),
+        native_worker_network_records=tuple(MappingProxyType(dict(row)) for row in
+                                             service_generations.get("native_worker_network_records", ())),
+        active_network_generation_records=tuple(MappingProxyType(dict(row)) for row in
+                                                 service_generations.get("active_network_generation_records", ())),
+        native_worker_runtime_records=tuple(MappingProxyType(dict(row)) for row in
+                                            service_generations.get("native_worker_runtime_records", ())),
     )
 
 
