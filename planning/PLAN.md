@@ -122,6 +122,8 @@ Actual HA Assist resource scope/typed TTY selector: `plans/amendments/2026-10-10
 
 Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
 
+Release-build CAS retry admission under HI-T149.1: reserve twice the selected source bytes plus selected runtime/executable, generated plan and fixed manifest ceiling, serialized by a root-owned lock; preserve prior outputs and the existing 16 GiB cap. Evidence: `evidence/development/EV-VD-T149.1-release-build-cas-reservation-20261010.json`. Raspberry Pi publication/installed-runtime acceptance remains OPEN.
+
 
 Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
 

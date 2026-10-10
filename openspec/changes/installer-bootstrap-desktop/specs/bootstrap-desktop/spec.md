@@ -493,6 +493,10 @@ The installer SHALL verify actual selected source, isolated interpreter and curr
 - **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
 - **THEN** privileged release publication remains denied
 
+#### Scenario: Retry while retaining a prior sealed output
+- **WHEN** a selected source/runtime build is retried while a prior sealed output remains in the release build CAS
+- **THEN** the builder serializes capacity reservation, bounds the next output from the selected source/runtime, generated plan and fixed manifest ceiling, retains prior outputs, and never exceeds the existing aggregate CAS limit
+
 ### Requirement: Closed prepared base and reader policy
 The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
 
