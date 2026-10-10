@@ -10,11 +10,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 
 from .bootstrap_enrollment import BootstrapEnrollmentPending
@@ -72,10 +74,24 @@ class RootNativePolicyConfigurationChoice:
     expires_monotonic: float
     revocation_epoch: int
     _seal: object = field(repr=False, compare=False)
+    # The only supported initial worker recipe is issued by the source-held
+    # native worker recipe registry.  Keeping these as explicit signed fields
+    # prevents a later active compiler from inferring network authority from a
+    # component/profile selection.  Empty tuples mean no worker was selected.
+    selected_worker_recipe_handles: tuple[str, ...] = ()
+    selected_worker_recipe_digests: tuple[str, ...] = ()
+    selected_worker_recipe_records: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         if self._seal is not _CHOICE_SEAL:
             raise TypeError("native policy choices are issued by the root setup TTY")
+        _validate_worker_recipe_selection(
+            self.selected_worker_recipe_handles,
+            self.selected_worker_recipe_digests,
+            self.selected_worker_recipe_records,
+        )
+        object.__setattr__(self, "selected_worker_recipe_records", tuple(
+            MappingProxyType(dict(row)) for row in self.selected_worker_recipe_records))
 
 
 def _issue_root_native_policy_configuration_choice(**values: Any) -> RootNativePolicyConfigurationChoice:
@@ -117,10 +133,20 @@ class RootNativePolicyPreparationSelection:
     expires_monotonic: float
     revocation_epoch: int
     _seal: object = field(repr=False, compare=False)
+    selected_worker_recipe_handles: tuple[str, ...] = ()
+    selected_worker_recipe_digests: tuple[str, ...] = ()
+    selected_worker_recipe_records: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         if self._seal is not _SELECTION_SEAL:
             raise TypeError("native policy selections are registry issued")
+        _validate_worker_recipe_selection(
+            self.selected_worker_recipe_handles,
+            self.selected_worker_recipe_digests,
+            self.selected_worker_recipe_records,
+        )
+        object.__setattr__(self, "selected_worker_recipe_records", tuple(
+            MappingProxyType(dict(row)) for row in self.selected_worker_recipe_records))
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,6 +382,12 @@ class RootNativePolicyPreparationRegistry:
             choice.controller_binding_handle,
             "0" * 64, now, min(now + _TTL_SECONDS, choice.expires_monotonic),
             snapshot.revocation_epoch, _SELECTION_SEAL)
+        selection = replace(
+            selection,
+            selected_worker_recipe_handles=choice.selected_worker_recipe_handles,
+            selected_worker_recipe_digests=choice.selected_worker_recipe_digests,
+            selected_worker_recipe_records=choice.selected_worker_recipe_records,
+        )
         digest = hashlib.sha256(_canonical(_selection_payload(selection))).hexdigest()
         selection = replace(selection, selection_sha256=digest)
         self._validate_selection_context(selection)
@@ -817,16 +849,18 @@ def _choice_payload(choice: RootNativePolicyConfigurationChoice) -> dict[str, An
         "resource_profile_selection_handle", "package_id", "native_package_generation",
         "selected_component_ids", "selected_registration_ids", "selected_action_binding_ids",
         "selected_owner_overlay_registration_ids",
+        "selected_worker_recipe_handles", "selected_worker_recipe_digests",
+        "selected_worker_recipe_records",
         "controller_binding_handle", "private_input_consent_selection_handle",
         "issued_monotonic", "expires_monotonic", "revocation_epoch")}
     for name, value in tuple(payload.items()):
         if type(value) is tuple:
-            payload[name] = list(value)
+            payload[name] = [dict(item) if isinstance(item, Mapping) else item for item in value]
     return payload
 
 
 def _selection_payload(selection: RootNativePolicyPreparationSelection) -> dict[str, Any]:
-    return {name: getattr(selection, name) for name in (
+    payload = {name: getattr(selection, name) for name in (
         "choice_observation_id", "setup_session_id", "transaction_handle", "plan_sha256",
         "prepared_generation_id", "prepared_generation_digest", "principal_selection_handle",
         "namespace_selection_handle", "principal_binding_sha256", "namespace_binding_sha256",
@@ -835,8 +869,13 @@ def _selection_payload(selection: RootNativePolicyPreparationSelection) -> dict[
         "selected_registration_ids", "selected_action_binding_ids",
         "selected_owner_overlay_registration_ids", "target_selection_handles",
         "source_role_selection_handles", "private_input_consent_selection_handle",
+        "selected_worker_recipe_handles", "selected_worker_recipe_digests",
+        "selected_worker_recipe_records",
         "setup_choice_selection_handle", "choice_payload_sha256", "controller_binding_handle",
         "choice_epoch", "issued_monotonic", "expires_monotonic", "revocation_epoch")}
+    payload["selected_worker_recipe_records"] = [
+        dict(row) for row in selection.selected_worker_recipe_records]
+    return payload
 
 
 def _selection_matches_choice_payload(selection: RootNativePolicyPreparationSelection,
@@ -861,10 +900,35 @@ def _selection_matches_choice_payload(selection: RootNativePolicyPreparationSele
         "selected_registration_ids": list(selection.selected_registration_ids),
         "selected_action_binding_ids": list(selection.selected_action_binding_ids),
         "selected_owner_overlay_registration_ids": list(selection.selected_owner_overlay_registration_ids),
+        "selected_worker_recipe_handles": list(selection.selected_worker_recipe_handles),
+        "selected_worker_recipe_digests": list(selection.selected_worker_recipe_digests),
+        "selected_worker_recipe_records": [dict(row) for row in selection.selected_worker_recipe_records],
         "controller_binding_handle": selection.controller_binding_handle,
         "private_input_consent_selection_handle": selection.private_input_consent_selection_handle,
     }
     return all(payload.get(name) == value for name, value in expected.items())
+
+
+def _validate_worker_recipe_selection(
+        handles: Any, digests: Any, records: Any) -> None:
+    """Validate the signed, finite selection tuple without minting receipts.
+
+    Receipt membership and currentness are checked by the source registry and
+    the setup choice registry.  This boundary only ensures the signed payload
+    cannot be ambiguous, incomplete, duplicated, or unsorted.
+    """
+    if (type(handles) is not tuple or type(digests) is not tuple or type(records) is not tuple
+            or len(handles) > 8 or len(handles) != len(digests) or len(handles) != len(records)
+            or tuple(sorted(handles)) != handles
+            or len(set(handles)) != len(handles) or len(set(digests)) != len(digests)):
+        raise NativePolicyPreparationDenied("selected worker recipe rows are malformed or unpaired")
+    for handle, digest, row in zip(handles, digests, records, strict=True):
+        if (not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or not isinstance(row, Mapping)
+                or row.get("receipt_handle") != handle
+                or hashlib.sha256(_canonical(dict(row))).hexdigest() != digest):
+            raise NativePolicyPreparationDenied("selected worker recipe digest or projection is invalid")
 
 
 def _source_coverage(selection: RootNativePolicyPreparationSelection,
