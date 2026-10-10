@@ -6,11 +6,11 @@ import hmac
 import json
 import os
 import platform
+import secrets
 import shutil
 import sys
 import time
 import unittest
-import uuid
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -81,13 +81,16 @@ class XauthorityMountKernelTests(unittest.TestCase):
     def test_selected_display_mount_is_readonly_pinned_and_removed_on_stop(self) -> None:
         fixture = self.fixture
         selected = SelectedDisplayStartup(
-            remote_enrollment_id="ci-remote-" + fixture.token[:12],
-            native_profile_id="ci-native-" + fixture.token[:12],
+            # Reuse the active fixture enrollment/profile/generation as the
+            # selected subject. These values are issued by the real disposable
+            # service-profile fixture, rather than synthetic display IDs.
+            remote_enrollment_id=fixture.enrollment_id,
+            native_profile_id=fixture.profile.profile_id,
             native_generation=fixture.profile.generation,
             display_profile_id=fixture.profile.profile_id,
             display_generation=fixture.profile.generation,
             display_name=":0",
-            receipt_handle=uuid.uuid4().hex,
+            receipt_handle=secrets.token_urlsafe(32),
             display_uid=fixture.uid,
             display_gid=fixture.gid,
             xauthority_reader_gid=fixture.gid,
@@ -102,8 +105,17 @@ class XauthorityMountKernelTests(unittest.TestCase):
             fixture.profile, binding, self.registry)
         self.xauthority_stage = stage
         self.assertEqual(stage_receipt.source_sha256, binding.source_sha256)
-        self.assertEqual(stage_receipt.size_bytes, binding.source_size)
+        self.assertEqual(stage_receipt.source_size_bytes, binding.source_size)
         self.assertEqual(stage_receipt.owner_gid, fixture.gid)
+        source_stat = os.fstat(self.source_lease.file_fd)
+        self.assertEqual((source_stat.st_dev, source_stat.st_ino, source_stat.st_size),
+                         (binding.source_device, binding.source_inode, binding.source_size))
+        self.assertEqual(self.source_lease.content_sha256, binding.source_sha256)
+        self.assertEqual(
+            hashlib.sha256(os.pread(self.source_lease.file_fd, binding.source_size, 0)).hexdigest(),
+            binding.source_sha256,
+        )
+        self.assertTrue(self.registry.verify_mount_source(self.source_lease, binding))
 
         report_relative = "xauthority-mount-report.json"
         report_path = fixture.data_root / report_relative
