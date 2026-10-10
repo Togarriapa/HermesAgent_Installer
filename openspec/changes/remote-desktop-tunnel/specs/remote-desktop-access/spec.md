@@ -281,3 +281,10 @@ The system SHALL use v105 HostToolObservationRegistry to authenticate exact inst
 #### Scenario: Source measurement alone
 - **WHEN** only an archived package measurement exists without actual host and kernel proof
 - **THEN** private network execution remains unavailable.
+
+### Requirement: Finite managed Xpra transformation
+The system SHALL execute only the v106 selected empty-parameter Xpra build recipe under actual official PM runtime and pinned installed transform module, retaining original source and distinct regular staging closure. It SHALL require actual managed terminal and dynamic output attestation before overlay publication.
+
+#### Scenario: Archive hash presented as executable identity
+- **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
+- **THEN** build admission or publication is denied.

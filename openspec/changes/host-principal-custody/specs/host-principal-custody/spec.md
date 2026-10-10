@@ -450,3 +450,10 @@ The system SHALL use the v105 root-only HostToolObservationRegistry and exact me
 #### Scenario: Installed dependency changes
 - **WHEN** a held dependency, installed package state, keyring or selected generation changes or expires
 - **THEN** nft execution and network launch are denied until a fresh valid observation and required kernel probes succeed.
+
+### Requirement: Finite managed Xpra transformation
+The system SHALL execute only the v106 selected empty-parameter Xpra build recipe under actual official PM runtime and pinned installed transform module, retaining original source and distinct regular staging closure. It SHALL require actual managed terminal and dynamic output attestation before overlay publication.
+
+#### Scenario: Archive hash presented as executable identity
+- **WHEN** a builder selection supplies an archive SHA or local fixture output in place of actual executable or managed output proof
+- **THEN** build admission or publication is denied.
