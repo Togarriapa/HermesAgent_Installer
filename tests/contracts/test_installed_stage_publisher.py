@@ -171,6 +171,37 @@ class InstalledStagePublicationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             parent = Path(temp) / "usr-lib"
             parent.mkdir(mode=0o700)
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            real_open = os.open
+            attempts = 0
+
+            def replace_after_mkdir(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal attempts
+                if path == "hermes-installer" and dir_fd is not None:
+                    attempts += 1
+                    if attempts == 2:
+                        os.rename("hermes-installer", ".created-original",
+                                  src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                        os.mkdir("hermes-installer", 0o755, dir_fd=parent_fd)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            try:
+                with patch("hermes_installer.authority.installed_stage_publisher.os.open",
+                           side_effect=replace_after_mkdir):
+                    with self.assertRaises(BootstrapEnrollmentError):
+                        _ensure_release_store_children(parent_fd, expected_uid=os.getuid(),
+                                                       expected_gid=os.getgid())
+                replacement = parent / "hermes-installer"
+                self.assertTrue(replacement.is_dir())
+                self.assertEqual({item.name for item in replacement.iterdir()}, set())
+                self.assertTrue((parent / ".created-original").is_dir())
+                self.assertFalse((replacement / "releases").exists())
+            finally:
+                os.close(parent_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "usr-lib"
+            parent.mkdir(mode=0o700)
             hermes = parent / "hermes-installer"
             hermes.mkdir(mode=0o777)
             os.chmod(hermes, 0o777)

@@ -710,14 +710,18 @@ def _open_owned_directory_chain(parent_fd: int, components: tuple[str, ...], *,
 def _ensure_release_store_children(parent_fd: int, *, expected_uid: int,
                                    expected_gid: int) -> None:
     """Idempotently establish the two fixed children, never normalizing existing paths."""
-    created: list[tuple[int, str]] = []
+    created: list[tuple[int, str, int, int, int, int]] = []
     current_fd = os.dup(parent_fd)
 
     def rollback_created() -> None:
-        for owned_parent_fd, child_name in reversed(created):
+        for owned_parent_fd, child_name, device, inode, owner_uid, owner_gid in reversed(created):
             try:
-                os.rmdir(child_name, dir_fd=owned_parent_fd)
-                os.fsync(owned_parent_fd)
+                current = os.stat(child_name, dir_fd=owned_parent_fd, follow_symlinks=False)
+                if (stat.S_ISDIR(current.st_mode) and current.st_dev == device
+                        and current.st_ino == inode and current.st_uid == owner_uid
+                        and current.st_gid == owner_gid):
+                    os.rmdir(child_name, dir_fd=owned_parent_fd)
+                    os.fsync(owned_parent_fd)
             except OSError:
                 # A concurrently populated directory is preserved for safe review.
                 pass
@@ -732,14 +736,24 @@ def _ensure_release_store_children(parent_fd: int, *, expected_uid: int,
                 try:
                     os.mkdir(name, 0o755, dir_fd=current_fd)
                     created_here = True
-                    created.append((os.dup(current_fd), name))
+                    created_info = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                    if (not stat.S_ISDIR(created_info.st_mode)
+                            or created_info.st_uid != expected_uid
+                            or created_info.st_gid != expected_gid):
+                        raise BootstrapEnrollmentError("new release-store directory identity is unsafe")
+                    created.append((os.dup(current_fd), name, created_info.st_dev,
+                                    created_info.st_ino, created_info.st_uid, created_info.st_gid))
                 except FileExistsError:
                     pass
                 child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                                    dir_fd=current_fd)
             if created_here:
+                opened = os.fstat(child_fd)
+                if (opened.st_dev != created_info.st_dev or opened.st_ino != created_info.st_ino
+                        or opened.st_uid != expected_uid or opened.st_gid != expected_gid):
+                    os.close(child_fd)
+                    raise BootstrapEnrollmentError("new release-store directory changed during creation")
                 try:
-                    os.fchown(child_fd, expected_uid, expected_gid)
                     os.fchmod(child_fd, 0o755)
                     os.fsync(child_fd)
                     os.fsync(current_fd)
@@ -760,7 +774,7 @@ def _ensure_release_store_children(parent_fd: int, *, expected_uid: int,
         raise
     finally:
         os.close(current_fd)
-        for owned_parent_fd, _ in created:
+        for owned_parent_fd, *_ in created:
             os.close(owned_parent_fd)
 
 
