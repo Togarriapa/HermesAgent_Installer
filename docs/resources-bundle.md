@@ -34,6 +34,17 @@ and Skills into native `SKILL.md` directories. Other kinds keep exact adapter
 identities and explicit incomplete reasons until reviewed runtime
 implementations land. Functional, enabled, and target-verified state remains
 pending until observed.
+
+Runtime selection must join the root-protected `SelectedResourceExecution`
+rows to the verified `NativeRegistry` and its `NativeDiscovery`. The
+`selected_resource_registry_from_verified_materialization` helper re-resolves
+each source identity and uses the resolver's effective spec, including the
+installer-owned update-cron rewrite; it never trusts an effective spec copied
+from an enrollment or caller DTO. Until the host enrollment exposes those
+typed selected rows and the v67 root ingress proof carries distinct raw and
+canonical payloads, webhook/timer events remain unable to enter the resource
+job ledger. A signed webhook receipt alone is authentication/replay evidence,
+not source authority or a runnable job.
 This user-authorized owner copy does not assert a blanket redistribution grant.
 Preserve all source notices and apply the relevant terms before distributing
 the Installer or its bundled snapshot.
