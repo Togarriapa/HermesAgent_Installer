@@ -58,6 +58,20 @@ retained event projection is bounded, job-expiring, and scrubbed when the job
 terminates, expires, or is revoked. Caller-supplied event bytes and unsigned
 webhook receipts cannot supply recipe values.
 
+Root ingress now has a separate `ResourceJobAuthority.admit_root_resource_event()`
+entry point. Producers pass only the exact in-process `RootResourceEventHandle`
+returned by the selected root controller registry; the method rechecks the
+active resource generation and consent, signed parent context, full source
+receipt closure, event digest, root controller lease, deadline and cancellation
+before writing the replay-keyed job row. It retains the validated event fields
+and source closure under the resulting job ID. This does not expose admission
+over worker RPC and does not make target or account acceptance evidence.
+
+The v66 predecessor-result closure is still required before a root dispatcher
+can safely advance dependent DAG nodes. Until the shared resolver and fresh
+root task/controller path are attached, admission alone does not establish
+that a job ran; RB-T08/EV-RB07 remain open.
+
 For a selected profile task, the private admission row retains the actual
 verified `_JobEvent`, signed parent context, and complete source receipt
 objects beside the one-use node handle. `resolve_admitted_task_source()` is
@@ -89,11 +103,22 @@ effects.
 # Root source-event authority
 
 Root timer, webhook, and channel adapters must be attached to the active
-`ResourceEventContextIssuer` inside the authority process. An attached producer
-receives an opaque per-instance capability and can create a one-use
-`RootResourceSourceEventProof` only at its native accepted-event seam. The
-proof is not serializable and carries the exact canonical event bytes plus an
-opaque producer observation that is revalidated when consumed. Before an
+`ResourceEventContextIssuer` inside the authority process by
+`register_selected_source_producer(producer, selected_ingress_binding=...)`.
+The issuer accepts only the exact protected `RootSelectedIngressBinding` and a
+concrete producer with a one-use `consume_verified_raw_observation` method;
+there is no caller-supplied boolean validator or caller-selected mint API.
+After live custody resolution, the producer passes its exact pending opaque
+observation to `mint_selected_source_proof(capability,
+controller_proof=proof, raw_observation=observation)`. The issuer creates a
+sealed immutable raw snapshot and one-use `RootResourceSourceEventProof` whose
+payload is the exact original input bytes. It separately derives the canonical
+v67 envelope from the selected schema and validated event fields; the signed
+receipt covers the envelope while the retained record binds the raw bytes,
+digest, replay key, and observation time. Webhook event schemas are selected by
+the root-only `selected_protocol_schema(resource_id, generation,
+source_issuer_id, source_kind)` resolver and checked against the pinned
+artifact IDs/hashes; an absent or unknown mapping denies registration. Before an
 event or receipt exists, `RootResourceControllerRegistry` resolves the
 selected role/issuer/backend through `resolve_selected_ingress_controller` and
 retains a one-use `RootIngressControllerProof` backed by live systemd MainPID,
