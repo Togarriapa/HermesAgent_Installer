@@ -4151,6 +4151,85 @@ class RootBootstrapSession:
         except Exception:
             raise BootstrapEnrollmentPending("current durable setup choice could not be revoked") from None
 
+    def attach_public_web_selection_registry(self, registry: Any) -> None:
+        """Attach the public-specific configuration producer during root composition."""
+        self._check_live()
+        from .public_web_selection import RootPublicWebSelectionRegistry
+        targets = getattr(self, "_native_component_target_registry", None)
+        if (type(registry) is not RootPublicWebSelectionRegistry
+                or registry._session is not self or targets is None
+                or registry._targets is not targets
+                or self._public_web_selection_registry is not None):
+            raise BootstrapEnrollmentPending("public web selector is not the exact retained native-target composition")
+        self._public_web_selection_registry = registry
+
+    def observe_public_web_permission_selection(
+            self, native_policy_selection_handle: str,
+    ) -> str | None:
+        """Ask the root TTY to select finite source-derived public scope intent."""
+        self._check_live()
+        from .public_web_selection import RootPublicWebSelectionRegistry
+        registry = self._public_web_selection_registry
+        if (type(registry) is not RootPublicWebSelectionRegistry
+                or registry._session is not self
+                or registry._targets is not getattr(self, "_native_component_target_registry", None)):
+            raise BootstrapEnrollmentPending("public web configuration producer is not composed")
+        try:
+            return registry.observe_public_web_permission_selection(native_policy_selection_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY public web choice is unavailable or was declined") from None
+
+    def resolve_current_public_web_permission_choice(self, choice_handle: str) -> Any:
+        self._check_live()
+        registry = self._public_web_selection_registry
+        if registry is None:
+            raise BootstrapEnrollmentPending("public web choice resolver is not composed")
+        try:
+            return registry.resolve_current_public_web_permission_choice(choice_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("root TTY public web choice is absent or no longer current") from None
+
+    def attach_public_input_disclosure_registry(self, registry: Any) -> None:
+        """Attach the single public-specific TTY proof registry during root composition."""
+        self._check_live()
+        from .public_web_selection import RootPublicInputDisclosureRegistry
+        source = (getattr(self, "_source_observer_registry", None)
+                  or getattr(self._factory, "_source_observer_registry", None))
+        if (type(registry) is not RootPublicInputDisclosureRegistry
+                or source is None or registry._session is not self
+                or registry._source is not source
+                or self._public_input_disclosure_registry is not None):
+            raise BootstrapEnrollmentPending("public input disclosure registry is not the exact root source composition")
+        attach = getattr(source, "attach_public_input_disclosure_registry", None)
+        if not callable(attach):
+            raise BootstrapEnrollmentPending("source observer cannot retain the exact TTY disclosure registry")
+        attach(registry)
+        self._public_input_disclosure_registry = registry
+
+    def resolve_current_public_input_disclosure_registry(self) -> Any:
+        self._check_live()
+        from .public_web_selection import RootPublicInputDisclosureRegistry
+        registry = self._public_input_disclosure_registry
+        source = (getattr(self, "_source_observer_registry", None)
+                  or getattr(self._factory, "_source_observer_registry", None))
+        if (type(registry) is not RootPublicInputDisclosureRegistry
+                or registry._session is not self or source is None or registry._source is not source):
+            raise BootstrapEnrollmentPending("root public input disclosure is not composed with the current source observer")
+        return registry
+
+    def observe_public_input_disclosure(
+            self, public_permission_selection_handle: str,
+            retained_observed_input_handle: str, selected_execution_handle: str,
+    ) -> Any:
+        """Review one exact retained input at the root TTY before public issuance."""
+        self._check_live()
+        registry = self.resolve_current_public_input_disclosure_registry()
+        try:
+            return registry.observe_public_input_disclosure(
+                public_permission_selection_handle, retained_observed_input_handle,
+                selected_execution_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("exact public input disclosure is unavailable or was declined") from None
     def _resolve_current_native_policy_registry(self) -> Any:
         """Compose the retained preactive native-policy registries once per session."""
         self._check_live()

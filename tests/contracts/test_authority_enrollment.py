@@ -144,6 +144,7 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
+
     @unittest.skipUnless(os.geteuid() == 0, "root-key signer fixture requires uid 0")
     def test_setup_choice_signer_binds_finite_purpose_and_live_key_bytes(self):
         class Issuer:

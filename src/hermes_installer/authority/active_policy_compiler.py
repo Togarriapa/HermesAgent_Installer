@@ -671,8 +671,20 @@ class RootActivePolicyCompilationRegistry:
             raise BootstrapEnrollmentError("active compilation completion requires the typed root publication receipt")
         publication_handle = getattr(receipt, "publication_handle", None)
         claim_digest = getattr(receipt, "claim_digest", None)
-        claim = self._get_claim(publication_handle)
-        self._verify_postpublication_claim(claim)
+        try:
+            claim = self._get_claim(publication_handle)
+        except BootstrapEnrollmentPending:
+            # A publisher recovery call after process restart has no live claim
+            # object. Reconstruct only from the durable claim bundle/current
+            # typed publication and native registry's exact reservation join.
+            return self.recover_active_publication_receipt(receipt)
+        claim_state = self._states.get(publication_handle)
+        if claim_state == "claimed":
+            self._verify_postpublication_claim(claim)
+        elif claim_state == "active-committed":
+            self._verify_committed_claim(claim)
+        else:
+            raise BootstrapEnrollmentPending("active compilation claim is not eligible for publication completion")
         current_receipt = PolicyPublicationReceiptResolver.verify_current_active_claim(
             publication_handle=claim.publication_handle,
             claim_digest=claim.claim_digest,
@@ -699,22 +711,241 @@ class RootActivePolicyCompilationRegistry:
         # Publication is already the atomic externally visible commit. Persist
         # that fact before consuming output capabilities so a later local CAS
         # failure cannot make the selected generation look releasable/replayable.
-        self._write_state(claim, "active-committed", receipt.receipt_handle)
         state_path = self._claim_root / ("transaction-" + claim.transaction_handle + ".json")
-        state_record = dict(_read_json(state_path))
-        state_record["active_selection_catalog_sha256"] = receipt.current_selection_catalog_sha256
-        state_record["publication_sha256"] = receipt.publication_sha256
-        state_record["descriptor_sha256"] = receipt.descriptor_sha256
-        state_record["publication_generation_id"] = receipt.generation_id
-        state_record["publication_generation_device"] = receipt.generation_device
-        state_record["publication_generation_inode"] = receipt.generation_inode
-        _write_json(state_path, state_record)
-        self._states[publication_handle] = "active-committed"
-        self._close_lock(publication_handle)
+        if claim_state == "claimed":
+            self._write_state(claim, "active-committed", receipt.receipt_handle)
+            state_record = dict(_read_json(state_path))
+            state_record["active_selection_catalog_sha256"] = receipt.current_selection_catalog_sha256
+            state_record["publication_sha256"] = receipt.publication_sha256
+            state_record["descriptor_sha256"] = receipt.descriptor_sha256
+            state_record["publication_generation_id"] = receipt.generation_id
+            state_record["publication_generation_device"] = receipt.generation_device
+            state_record["publication_generation_inode"] = receipt.generation_inode
+            _write_json(state_path, state_record)
+            self._states[publication_handle] = "active-committed"
+            self._close_lock(publication_handle)
+        else:
+            state_record = _read_json(state_path)
+            expected_state = {
+                "state": "active-committed",
+                "publication_handle": claim.publication_handle,
+                "claim_digest": claim.claim_digest,
+                "publication_receipt_handle": receipt.receipt_handle,
+                "active_selection_catalog_sha256": receipt.current_selection_catalog_sha256,
+                "publication_sha256": receipt.publication_sha256,
+                "descriptor_sha256": receipt.descriptor_sha256,
+                "publication_generation_id": receipt.generation_id,
+                "publication_generation_device": receipt.generation_device,
+                "publication_generation_inode": receipt.generation_inode,
+            }
+            if any(state_record.get(key) != value for key, value in expected_state.items()):
+                raise BootstrapEnrollmentPending("durable active publication completion record changed")
         self.materialization_receipts.complete_active_compilation(
             claim._reservation_handle, receipt,
             prepared_generation_id=claim.prepared_generation_id,
             publication_handle=claim.publication_handle, claim_digest=claim.claim_digest)
+
+    def _verify_committed_claim(self, claim: RootActivePolicyCompilationClaim) -> None:
+        """Verify retained compiler bytes for retry after the selection CAS."""
+        if (not isinstance(claim, RootActivePolicyCompilationClaim)
+                or claim._seal is not self._seal
+                or self._claims.get(claim.publication_handle) is not claim
+                or not secrets.compare_digest(claim.claim_digest, _sha(_canonical(_manifest(claim))))):
+            raise BootstrapEnrollmentPending("committed active policy claim is altered or unsealed")
+        _validate_claim_output_hashes(claim)
+        self._verify_claim_bundle(claim)
+
+    def recover_active_publication_receipt(self, receipt: Any) -> Any:
+        """Finalize a committed publication after compiler-process restart.
+
+        Recovery consumes only the fixed root journal, the publication resolver's
+        current typed receipt, immutable compiler outputs and the native registry's
+        unique current reservation lookup. It does not reattach setup-session,
+        actor, principal, namespace or choice-selection authority.
+        """
+        self._require_root()
+        from .setup_policy_publication import (
+            PolicyPublicationReceiptResolver,
+            RootSetupPublicationReceipt,
+            _SEAL as _PUBLICATION_SEAL,
+            _read_generation_descriptor,
+        )
+        from .native_output_receipts import NativeOutputReservation
+
+        if (type(receipt) is not RootSetupPublicationReceipt
+                or receipt._seal is not _PUBLICATION_SEAL
+                or receipt.state != "active-committed"):
+            raise BootstrapEnrollmentPending("restart recovery requires a sealed active publication receipt")
+        current = PolicyPublicationReceiptResolver.resolve_current()
+        if current != receipt:
+            raise BootstrapEnrollmentPending("restart recovery receipt is not the current selected publication")
+        publication_handle = receipt.publication_handle
+        if not isinstance(publication_handle, str) or not _HANDLE.fullmatch(publication_handle):
+            raise BootstrapEnrollmentPending("current publication handle is malformed")
+
+        prefix = self._claim_root / publication_handle
+        claim_path = prefix.with_suffix(".claim.json")
+        claim_record = _read_json(claim_path)
+        required_record_fields = {
+            "schema", "publication_handle", "claim_digest", "manifest",
+            "policy_sha256", "artifact_catalog_sha256", "selection_sha256",
+        }
+        manifest = claim_record.get("manifest")
+        if (set(claim_record) != required_record_fields or claim_record.get("schema") != 1
+                or claim_record.get("publication_handle") != publication_handle
+                or claim_record.get("claim_digest") != receipt.claim_digest
+                or not isinstance(manifest, dict)
+                or _sha(_canonical(manifest)) != receipt.claim_digest):
+            raise BootstrapEnrollmentPending("durable compiler claim manifest does not bind the active receipt")
+        expected_manifest_fields = {
+            "schema", "publication_handle", "setup_session_id", "transaction_handle",
+            "plan_sha256", "prepared_generation_id", "expected_selection_catalog_sha256",
+            "expected_service_generation_digest", "policy_template_artifact_id",
+            "policy_template_sha256", "principal_selection_receipt_handle",
+            "runtime_receipt_handles", "materialization_receipt_handles",
+            "compiled_policy_sha256", "compiled_artifact_catalog_sha256",
+            "compiled_selection_sha256", "selection_catalog_sha256",
+            "observed_root_receipt_handle", "plan_artifact_id", "release_commit",
+            "source_receipt_handles", "choice_adoptions", "issued_monotonic",
+            "expires_monotonic",
+        }
+        if set(manifest) != expected_manifest_fields:
+            raise BootstrapEnrollmentPending("durable compiler claim manifest has an invalid schema")
+        source_handles = manifest.get("source_receipt_handles")
+        runtime_handles = manifest.get("runtime_receipt_handles")
+        output_handles = manifest.get("materialization_receipt_handles")
+        observed_handle = manifest.get("observed_root_receipt_handle")
+        if (not isinstance(source_handles, list) or not source_handles
+                or len(source_handles) > 128
+                or _ordered_unique_receipt_handles(source_handles, "recovered source") != tuple(source_handles)
+                or not isinstance(runtime_handles, list) or len(runtime_handles) != 1
+                or not isinstance(output_handles, list) or len(output_handles) != 5
+                or not isinstance(manifest.get("choice_adoptions"), list)
+                or len(manifest["choice_adoptions"]) > len(_SETUP_CHOICE_PURPOSES)
+                or not isinstance(observed_handle, str) or not _HANDLE.fullmatch(observed_handle)
+                or not set(runtime_handles).issubset(source_handles)
+                or not set(output_handles).issubset(source_handles)
+                or manifest.get("principal_selection_receipt_handle") not in source_handles):
+            raise BootstrapEnrollmentPending("durable compiler receipt closure is malformed or incomplete")
+        expected_identity = {
+            "publication_handle": publication_handle,
+            "transaction_handle": receipt.transaction_handle,
+            "prepared_generation_id": receipt.prepared_generation_id,
+            "expected_service_generation_digest": receipt.service_generation_digest,
+            "expected_selection_catalog_sha256": receipt.previous_selection_catalog_sha256,
+            "compiled_policy_sha256": receipt.policy_sha256,
+            "compiled_artifact_catalog_sha256": receipt.artifact_catalog_sha256,
+            "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
+            "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+        }
+        if any(manifest.get(key) != value for key, value in expected_identity.items()):
+            raise BootstrapEnrollmentPending("durable compiler claim differs from the active publication receipt")
+        expected_claim_record = {
+            "schema": 1,
+            "publication_handle": publication_handle,
+            "claim_digest": receipt.claim_digest,
+            "manifest": manifest,
+            "policy_sha256": manifest["compiled_policy_sha256"],
+            "artifact_catalog_sha256": manifest["compiled_artifact_catalog_sha256"],
+            "selection_sha256": manifest["compiled_selection_sha256"],
+        }
+        if claim_record != expected_claim_record:
+            raise BootstrapEnrollmentPending("durable compiler output record differs from its manifest")
+        expected_inputs = (observed_handle, *source_handles)
+        if receipt.input_receipt_handles != expected_inputs:
+            raise BootstrapEnrollmentPending("active publication receipt differs from canonical compiler closure")
+
+        policy = _read_immutable_bytes(prefix.with_suffix(".policy"))
+        catalog = _read_immutable_bytes(prefix.with_suffix(".catalog"))
+        selection_bytes = _read_immutable_bytes(prefix.with_suffix(".selection"))
+        if (_sha(policy) != manifest["compiled_policy_sha256"]
+                or _sha(catalog) != manifest["compiled_artifact_catalog_sha256"]
+                or _sha(selection_bytes) != manifest["compiled_selection_sha256"]):
+            raise BootstrapEnrollmentPending("durable compiler output bytes differ from the claim manifest")
+        try:
+            selection = json.loads(selection_bytes.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                                   parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            raise BootstrapEnrollmentPending("durable compiler selection document is malformed") from None
+        if (not isinstance(selection, dict)
+                or selection.get("catalog_sha256") != manifest["selection_catalog_sha256"]
+                or _sha(_canonical({key: value for key, value in selection.items()
+                                    if key != "catalog_sha256"})
+                        ) != manifest["selection_catalog_sha256"]):
+            raise BootstrapEnrollmentPending("durable compiler selection digest is inconsistent")
+
+        descriptor, _file_digests, file_bytes = _read_generation_descriptor(receipt, 0)
+        inputs = descriptor.get("inputs")
+        if (not isinstance(inputs, Mapping)
+                or inputs.get("source_receipt_handles") != source_handles
+                or inputs.get("observed_root_receipt_handle") != observed_handle
+                or inputs.get("selection_catalog_sha256") != manifest["selection_catalog_sha256"]
+                or inputs.get("choice_projections") != manifest.get("choice_adoptions")
+                or any(inputs.get(key) != value for key, value in {
+                    "publication_handle": publication_handle,
+                    "claim_digest": receipt.claim_digest,
+                    "prepared_generation_id": receipt.prepared_generation_id,
+                    "expected_service_generation_digest": receipt.service_generation_digest,
+                    "transaction_handle": receipt.transaction_handle,
+                    "runtime_receipt_handles": runtime_handles,
+                    "materialization_receipt_handles": output_handles,
+                }.items())
+                or file_bytes.get("plans/bootstrap-policy-v1.json") != policy
+                or file_bytes.get("catalog/artifacts.json") != catalog):
+            raise BootstrapEnrollmentPending("active descriptor differs from durable compiler inputs")
+
+        state_path = self._claim_root / ("transaction-" + receipt.transaction_handle + ".json")
+        state = _read_json(state_path)
+        expected_state_identity = {
+            "schema": 1,
+            "publication_handle": publication_handle,
+            "claim_digest": receipt.claim_digest,
+            "transaction_handle": receipt.transaction_handle,
+            "setup_session_id": manifest["setup_session_id"],
+            "prepared_generation_id": receipt.prepared_generation_id,
+            "expected_selection_catalog_sha256": receipt.previous_selection_catalog_sha256,
+            "expected_service_generation_digest": receipt.service_generation_digest,
+            "policy_sha256": receipt.policy_sha256,
+            "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
+            "selection_sha256": manifest["compiled_selection_sha256"],
+            "observed_root_receipt_handle": observed_handle,
+            "principal_selection_receipt_handle": manifest["principal_selection_receipt_handle"],
+            "runtime_receipt_handles": runtime_handles,
+            "materialization_receipt_handles": output_handles,
+        }
+        if (state.get("state") not in {"claimed", "active-committed"}
+                or any(state.get(key) != value for key, value in expected_state_identity.items())):
+            raise BootstrapEnrollmentPending("durable compiler transaction is not recoverable")
+
+        reservation = self.materialization_receipts.resolve_active_compilation_reservation(receipt)
+        if (type(reservation) is not NativeOutputReservation
+                or reservation.publication_handle != publication_handle
+                or reservation.claim_digest != receipt.claim_digest
+                or reservation.prepared_generation_id != receipt.prepared_generation_id
+                or reservation.receipt_ids != tuple(output_handles)):
+            raise BootstrapEnrollmentPending("native output registry returned another durable reservation")
+        completed = self.materialization_receipts.complete_active_compilation(
+            reservation.reservation_handle, receipt,
+            prepared_generation_id=receipt.prepared_generation_id,
+            publication_handle=publication_handle, claim_digest=receipt.claim_digest)
+        if (not isinstance(completed, tuple)
+                or tuple(item.receipt_id for item in completed) != tuple(output_handles)):
+            raise BootstrapEnrollmentPending("recovered native completion returned another output closure")
+
+        recovered = dict(state)
+        recovered.update({
+            "state": "active-committed",
+            "publication_receipt_handle": receipt.receipt_handle,
+            "active_selection_catalog_sha256": receipt.current_selection_catalog_sha256,
+            "publication_sha256": receipt.publication_sha256,
+            "descriptor_sha256": receipt.descriptor_sha256,
+            "publication_generation_id": receipt.generation_id,
+            "publication_generation_device": receipt.generation_device,
+            "publication_generation_inode": receipt.generation_inode,
+        })
+        _write_json(state_path, recovered)
+        self._states[publication_handle] = "active-committed"
+        return receipt
 
     def release_active_policy(self, publication_handle: str) -> None:
         claim = self._get_claim(publication_handle)
