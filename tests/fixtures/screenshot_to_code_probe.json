@@ -1,0 +1,21 @@
+{
+  "schema": "hermes-screenshot-to-code-fixture-asset-v1",
+  "asset": "screenshot_to_code_probe.png",
+  "sha256": "1f97cca4bdb8787d252a4fa6b3c9c755c764835f8cc048e39de467b9a131d9aa",
+  "size_bytes": 12309,
+  "media_type": "image/png",
+  "dimensions_px": {
+    "width": 640,
+    "height": 360
+  },
+  "member_roles": [
+    "synthetic-input-screenshot",
+    "local-fixture-only",
+    "not-user-content",
+    "not-a-runtime-receipt"
+  ],
+  "description": "Synthetic project dashboard with title, three metric cards, and recent-activity panel; no personal or external content.",
+  "provider_transport": "controlled-httpx-mock-transport-only",
+  "live_provider_dispatch": false,
+  "metered_budget_default": 0
+}
