@@ -126,3 +126,10 @@ Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v23
 Break the actual preactive/active manager cycle with sealed native setup-only factories; invoke the existing genuine root choice/provider/build/aggregate flow.
 
 Exact contract: `planning/preactive-native-build-manager-composition-v237.json`; all AC OPEN.
+
+
+## v238 Concrete Xpra source policy
+
+Supply the previously absent actual held Xpra native source policy/keyring member from bounded verified official sources, with full dependency/license evidence.
+
+Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.

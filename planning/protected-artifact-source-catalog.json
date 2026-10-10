@@ -263,5 +263,31 @@
     "Canonical Hermes PM runtime remains separate from installer/component runtimes; no global downgrade.",
     "Official bootstrap minor3.14 acquisition must be mediated/prestaged with reviewed PM artifacts; no arbitrary network fallback or lazy resolver.",
     "Full dependency locks/native driver/toolchain and exact owned generation still require validation; baseline has no universal distro apt version set."
-  ]
+  ],
+  "xpra_native_source_policy_v238": {
+    "contract": "planning/xpra-native-source-policy-v238.json",
+    "members": [
+      {
+        "artifact_id": "xpra-native-source-policy-v1",
+        "relative_path": "plans/amendments/2026-10-10-xpra-native-source-policy-v238/xpra-native-source-policy-v1.json",
+        "sha256": "2b316eb88b634713af2a3fffe53dd495aa0bd61bad371aee0b51b2dbca26898e",
+        "size_bytes": 381431,
+        "mode": "0444",
+        "roles": [
+          "xpra-native-source-policy-v1"
+        ]
+      },
+      {
+        "artifact_id": "xpra-native-debian-archive-keyring-2025.1-v1",
+        "relative_path": "plans/amendments/2026-10-10-xpra-native-source-policy-v238/debian-archive-keyring-2025.1.pgp",
+        "sha256": "506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017",
+        "size_bytes": 55918,
+        "mode": "0444",
+        "roles": [
+          "xpra-native-source-keyring-v1"
+        ]
+      }
+    ],
+    "status": "reviewed source acquisition policy; runtime acceptance not established"
+  }
 }

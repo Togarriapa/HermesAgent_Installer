@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-xpra-native-source-policy-v238.md",
+  "extends": [
+    "v219",
+    "v227"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "owner": "luna_xpra_runtime_builder",
+  "source_audit_commit": "6460b63c20ba369bf3f0370bb1159db8f3b99969",
+  "source_members": [
+    {
+      "artifact_id": "xpra-native-source-policy-v1",
+      "relative_path": "plans/amendments/2026-10-10-xpra-native-source-policy-v238/xpra-native-source-policy-v1.json",
+      "sha256": "2b316eb88b634713af2a3fffe53dd495aa0bd61bad371aee0b51b2dbca26898e",
+      "size_bytes": 381431,
+      "mode": "0444",
+      "roles": [
+        "xpra-native-source-policy-v1"
+      ]
+    },
+    {
+      "artifact_id": "xpra-native-debian-archive-keyring-2025.1-v1",
+      "relative_path": "plans/amendments/2026-10-10-xpra-native-source-policy-v238/debian-archive-keyring-2025.1.pgp",
+      "sha256": "506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017",
+      "size_bytes": 55918,
+      "mode": "0444",
+      "roles": [
+        "xpra-native-source-keyring-v1"
+      ]
+    }
+  ],
+  "policy_schema": {
+    "schema": 1,
+    "top_fields": [
+      "schema",
+      "origin_rows",
+      "package_rows",
+      "python_rows",
+      "required_package_roots",
+      "license_closure_sha256",
+      "dependency_selections",
+      "license_references"
+    ],
+    "package_fields": [
+      "name",
+      "version",
+      "architecture",
+      "origin_id",
+      "filename",
+      "sha256",
+      "size_bytes",
+      "depends",
+      "pre_depends",
+      "provides",
+      "multi_arch",
+      "license_sha256"
+    ],
+    "dependency_selection_fields": [
+      "package",
+      "field",
+      "group_index",
+      "dependency"
+    ],
+    "dependency_selection_semantics": "One row for each original signed Depends/Pre-Depends comma group, field depends|pre_depends, zero-based group_index; dependency names exact concrete signed package. Validate selected original alternative+full Debian version relation, qualifier and signed Provides; no alias package or dependency rewriting. Unknown/ambiguous choice denies. Actual :any edges only python3 arm64 Multi-Arch allowed; :native arm64. Other :any cases need new actual review. Recurse exact selected graph and reject unused/missing rows.",
+    "license_reference_fields": [
+      "package",
+      "license_package",
+      "license_path",
+      "license_size_bytes",
+      "links"
+    ],
+    "license_link_fields": [
+      "package",
+      "path",
+      "target"
+    ],
+    "license_reference_semantics": "Exact observed copyright reference; license_sha256 on package row remains actual regular copyright bytes. Each relative doc-directory link is independently measured from its signed held archive, bounded16hops/no cycles, normalized within usr/share/doc. Reopen final regular copyright from exact license_package held archive; compare path/hash/size. References bind exact held policySHA and complete graph proof, not arbitrary CAS symlink permission. Do not emit admissible artifact/closure until whole graph license verification succeeds.",
+    "license_closure_projection": "Keep v227 current canonical sorted Debian kind/name/license_sha256 plus sorted Python kind/project/version/license_id. Reference bytes separately bound by policy SHA.",
+    "python_fields": [
+      "project",
+      "version",
+      "filename",
+      "sha256",
+      "size_bytes",
+      "license_id",
+      "python_abi",
+      "requires_python"
+    ],
+    "python_path": "Actual official files.pythonhosted.org path packages/<2hex>/<2hex>/<64hex>/<filename>, five components. Reject redirects or arbitrary path; exact lock SHA/size enforced.",
+    "python_abi_semantics": "py3-none-any describes downloaded universal wheel tag; cp314-aarch64-linux-gnu on sdist is only required build target, not existing binary compatibility proof. Full PM314 source/native headers and actual built ELF/CP314 imports required before native build receipt."
+  },
+  "source_evidence": {
+    "path": "plans/amendments/2026-10-10-xpra-native-source-policy-v238/source-observation-evidence.json",
+    "native_archives": 399,
+    "native_archive_bytes": 211517160,
+    "expanded_inspection_bytes": 915875971,
+    "python_artifacts": 8,
+    "source_signature_verifier": "Actual isolated official cached ARM64 Debian sqv cleartext verification + independently observed official FTP archive fingerprints; production uses its held signed gpgv/keyring and must independently recheck current signatures/date/index/rows. Fixture sqv is not production grant receipt.",
+    "dependency_versions": "All original signed relations checked with ARM64 dpkg version comparisons, zero errors; exact selected edges stored in artifact.",
+    "licenses": "All399 package copyrights measured;365ownregular and34cross-package via37 observed doc-directory links. Python bytes SHA/size and upstream license metadata/licenses reviewed; setuptools vendored license notices retained.",
+    "signed_metadata_status": "Observed 2026-10-10 source snapshot; production fetches fresh InRelease/Packages and requires the same locked rows still signed/current. Snapshot/digest never substitutes current receipt.",
+    "actual_reader_validation": {
+      "owner_commit": "11cabf341b549accdf585ea2e6d1cfc02561358e",
+      "rows": 399,
+      "python_rows": 8,
+      "signed_dependency_edges": 1299,
+      "copyright_references": 399,
+      "focused_tests": "35 passed/2 skipped",
+      "scope": "Owner actual parser accepted exact canonical policy/graph; structure only, not current signed acquisition/runtime."
+    }
+  },
+  "recipe": {
+    "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+    "source_archive_sha256": "20b55586457df5aed8453b0d1b446e4dd954f2027d814f1eb7c0a96227ef1c80",
+    "source_manifest_sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+    "candidate_flags": [
+      "--minimal",
+      "--with-server",
+      "--with-x11",
+      "--with-gtk_x11",
+      "--with-gtk3",
+      "--with-cairo",
+      "--with-websockets",
+      "--with-data",
+      "--with-scripts",
+      "--with-http",
+      "--with-clipboard",
+      "--with-keyboard",
+      "--with-argb",
+      "--with-webp",
+      "--with-jpeg_encoder",
+      "--with-jpeg_decoder",
+      "--without-client",
+      "--without-audio",
+      "--without-shadow",
+      "--without-proxy",
+      "--without-printing",
+      "--without-webcam",
+      "--without-notifications"
+    ],
+    "status": "Source-audited candidate only; no successful complete Xpra build/session. HTML5 asset input separately pending; data/scripts flags not proof of packaged HTML5. Actual output observer/current source transform/native receipt qualification required.",
+    "python_split": "Full signed native acquisition graph includes Debian CP313 dependencies of python-gi-dev; acquire/verify only, no host installation, role runtime use or execution. Only exact headers/pygobject.pc build metadata admitted from python-gi-dev; PM314 executable/stdlib/libpython remains selected. Any scanner/shebang requiring CP313 remains denied until separately PM314-built actual tool receipt, no ambient fallback.",
+    "backend_split": "Locked meson-python/meson/packaging/pyproject-metadata wheels plus signed ninja-build support offline CP314 sdist builds. No pip build isolation/lazy network, no Debian Python substitution. Newly observed backend versions are source candidates until actual native build tested."
+  },
+  "catalog_insertion": "Release owner enrolls exactly these two immutable source members/roles in allowed artifact plan and held release, using observed tuples. RootSetupComponentSourceCAS and RootXpraNativeSourcePolicy resolve exactly one held policy member by role; original setup/grant/PM/NSS/transform joins unchanged. Source catalogue entry is acquisition policy availability only, never ready runtime selector. No code cohort pins.",
+  "bounds": {
+    "network_total_max_bytes": 536870912,
+    "objects_max": 1024,
+    "requests_max": 4096,
+    "expanded_total_max_bytes": 2147483648,
+    "license_link_hops_max": 16,
+    "metadata_max_bytes": 67108864
+  },
+  "tasks": {
+    "RT-T238.1": "Enroll source policy/keyring members; implement exact closed schema/full signed edge/license-reference verifier with mutations.",
+    "RT-T238.2": "Implement actual acquisition and offline candidate recipe using current PM314/held grants/CAS/transform; independently test full native+HTML5/session closure.",
+    "VD-T238.3": "Reject hash/version/Provides/Multi-Arch/license-link/origin/signature changes, forbid CP313/lazy paths; distinguish acquisition proof from runtime."
+  },
+  "acceptance": "Source acquisition contract only; all native runtime/Pi/AC acceptance OPEN."
+}

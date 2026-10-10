@@ -181,3 +181,12 @@ Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v23
 - [ ] VD-T237.3 Test empty prepared composition and wrong-owner/currentness/effect/cancellation/mount journal failures.
 
 Exact contract: `planning/preactive-native-build-manager-composition-v237.json`; all AC OPEN.
+
+
+## v238 Concrete Xpra source policy
+
+- [ ] RT-T238.1 Enroll concrete policy/keyring and exact closed dependency/license verifier.
+- [ ] RT-T238.2 Acquire/build actual offline PM314/native/HTML5/session closure and observe outputs.
+- [ ] VD-T238.3 Exercise signature/version/provider/qualifier/license/hash/CP313/lazy-path failures.
+
+Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.

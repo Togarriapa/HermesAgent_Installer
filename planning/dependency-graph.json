@@ -3611,5 +3611,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "xpra_native_source_policy_v238": {
+    "contract": "planning/xpra-native-source-policy-v238.json",
+    "tasks": {
+      "RT-T238.1": [
+        "RT-T227.1"
+      ],
+      "RT-T238.2": [
+        "RT-T238.1",
+        "RT-T227.2"
+      ],
+      "VD-T238.3": [
+        "RT-T238.1",
+        "RT-T238.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }
