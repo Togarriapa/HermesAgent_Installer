@@ -250,13 +250,14 @@ class RootMemoryCaptureConsentRegistry:
         resolver = getattr(self.choices, "current_profile_selection_handle", None)
         if not callable(resolver):
             raise AuthorityDenied("memory.profile", "current root profile-selection resolver is unavailable")
-        principals = [item for item in self.service.bindings_by_uid.values()
-                      if item.profile_id == enrollment.profile_id
-                      and item.principal_id == enrollment.principal_id
-                      and item.namespace_id == enrollment.namespace_identity]
-        if len(principals) != 1:
-            raise AuthorityDenied("memory.profile", "memory owner has no unique current principal binding")
-        handle = resolver(principals[0])
+        active_binding = getattr(self.service, "resolve_current_active_principal_binding", None)
+        if not callable(active_binding):
+            raise AuthorityDenied("memory.profile", "active protected principal resolver is unavailable")
+        principal = active_binding(enrollment.profile_id)
+        if (principal.principal_id != enrollment.principal_id
+                or principal.namespace_id != enrollment.namespace_identity):
+            raise AuthorityDenied("memory.profile", "memory owner differs from active principal binding")
+        handle = resolver(principal)
         if not isinstance(handle, str) or not 32 <= len(handle) <= 128:
             raise AuthorityDenied("memory.profile", "current root profile-selection handle is unavailable")
         return handle

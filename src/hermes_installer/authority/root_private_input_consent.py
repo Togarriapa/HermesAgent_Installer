@@ -413,17 +413,18 @@ class RootPrivateInputConsentRegistry:
     def _current_binding(self, binding: Any) -> PrincipalBinding:
         if type(binding) is not PrincipalBinding:
             raise AuthorityDenied("consent.profile", "root selected principal binding is required")
-        current = self.service.bindings_by_uid.get(binding.uid)
-        if current is not binding or current.profile_id != binding.profile_id:
+        resolve = getattr(self.service, "resolve_current_active_principal_binding", None)
+        current = resolve(binding.profile_id) if callable(resolve) else None
+        if current is not binding or current.uid != binding.uid:
             raise AuthorityDenied("consent.profile", "selected principal binding is not current")
         return current
 
     def _current_binding_for_selection(self, selection: Any) -> PrincipalBinding:
-        matches = [item for item in self.service.bindings_by_uid.values()
-                   if item.profile_id == getattr(selection, "profile_id", None)]
-        if len(matches) != 1:
+        profile_id = getattr(selection, "profile_id", None)
+        resolve = getattr(self.service, "resolve_current_active_principal_binding", None)
+        if not callable(resolve):
             raise AuthorityDenied("consent.profile", "selected input profile has no unique current principal")
-        return matches[0]
+        return resolve(profile_id)
 
     def _binding_for_retained(self, selection: Any) -> PrincipalBinding:
         return self._current_binding_for_selection(selection)
