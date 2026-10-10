@@ -570,3 +570,10 @@ The installer SHALL prepare native action, registration, workflow, process-role 
 #### Scenario: A selected family lacks target or source proof
 - **WHEN** a required target/account/permission/schema/observer/runtime source is not observed
 - **THEN** all-family coverage retains the registration as configurable pending with exact next step, emits no unproved executable candidate and preserves the original functional obligation
+
+### Requirement: Purpose-bound PUBLIC input web permission v138
+The installer SHALL authorize public web egress only from genuine root-observed PUBLIC input and current exact selected public web permission; PRIVATE or UNKNOWN source ancestry SHALL remain denied even when a public scope is configured.
+
+#### Scenario: Private input requests an enrolled public website
+- **WHEN** any retained parent/input source is PRIVATE or UNKNOWN or the public permission is absent/revoked/expired
+- **THEN** public web dispatch and retries are denied without dropping ancestry, widening private consent or adding budget

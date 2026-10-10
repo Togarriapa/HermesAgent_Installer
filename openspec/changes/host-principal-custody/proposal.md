@@ -199,3 +199,5 @@ Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selecto
 Native process-role delivery v134: `plans/amendments/2026-10-10-native-process-role-delivery-v134.md`; exact manifest role rows/digest and actual loader import observations with independently verified root custody, not adapter inference or catalog-only loaded proof. All AC open.
 
 Initial native policy source v137: `plans/amendments/2026-10-10-native-policy-preparation-source-v137.md`; root TTY setup-owned actual target/effect/role/observer selection feeds first assembly, no active-before-selection, static-source authority or live proof inference. All eighteen obligations/AC remain open.
+
+Public input/web permission v138: `plans/amendments/2026-10-10-public-input-web-permission-v138.md`; actual PUBLIC input plus purpose-specific finite scope permission, zero budget and per-retry currentness; no private consent widening or profile-based classification. All AC remain open.

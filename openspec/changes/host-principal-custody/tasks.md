@@ -239,3 +239,9 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T137.2 component target/source owners: Implement finite reviewed per-component target/account/vault/permission observation adapters and protected source-role/observer definition producer; preserve configurable pending for absent auth/rights/runtime, no installation-test writes/messages.
 
 - [ ] HI-T137.3 registration projection/source observer/native assembler/active compiler: Produce exact 61 action/42 registration/workflow/process-role/schema/observer joins from actual staged records, real root source receipts; compile then atomically publish real outputs without active-before-assembly cycle, verify all-family coverage and missing proof denial.
+
+- [ ] PR-T138.1 factory/consent: Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias.
+
+- [ ] HI-T138.2 source input/host authority: Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests.
+
+- [ ] RB-T138.3 web/native integration: Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance.
