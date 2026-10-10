@@ -774,3 +774,10 @@ The installer SHALL select an already-present model directory only through the f
 #### Scenario: Model store or selected tree absent
 - **WHEN** the exact store/child/source inventory is absent, unowned, writable or changed
 - **THEN** selection remains pending with its exact prerequisite and no arbitrary path, download, copy or inferred model load substitutes
+
+### Requirement: Finite Hyperframes Node and Bun toolchain source v144
+The installer SHALL select exact independently verified Node and Bun source artifacts and observe held isolated toolchain bytes before the fixed offline environment build and distinct native runtime probe.
+
+#### Scenario: Upstream workspace has no exact Bun declaration
+- **WHEN** Hyperframes needs a Bun toolchain
+- **THEN** only the reviewed finite source selection is acquired and qualified without guessing a project pin, enabling lifecycle scripts or claiming native compatibility
