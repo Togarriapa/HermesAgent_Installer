@@ -85,7 +85,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         self.assertEqual(_parse_native_schema_artifact_records([dynamic])[0]["size_bytes"], 123)
         with self.assertRaises(AuthorityDenied):
             _parse_native_schema_artifact_records([{**dynamic, "derivation_receipt_handle": None}])
-
     def test_source_issuer_private_provider_route_ceiling_is_optional_finite_and_protected(self):
         row = {
             "issuer_channel_id": "native-input", "producer_profile_id": "producer-profile",
@@ -102,7 +101,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["provider-route-a"] * 2}])
         with self.assertRaises(AuthorityDenied):
             _parse_source_issuers([{**row, "private_provider_route_ids": ["route\nunsafe"]}])
-
     def test_authority_key_selection_receipt_is_exact_and_digest_independent(self):
         row = {
             "schema": 1, "receipt_handle": "a" * 64,
@@ -122,7 +120,6 @@ class ProtectedEnrollmentContracts(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(AuthorityDenied):
                 _validate_root_key_selection(invalid)
-
     def test_native_observer_delivery_rows_join_current_peer_generation_and_exact_role(self):
         issuer = _parse_source_issuers([{
             "issuer_channel_id": "tool-result", "producer_profile_id": "producer-profile",

@@ -87,6 +87,13 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert dict(runtime.job_enrollments) == {}
     assert runtime.memory_runtime is None
     assert runtime.build_execution_service is None
+    assert runtime.provider_runtime_selection is None
+    assert runtime.root_tty_consent_choices is None
+    assert runtime.private_input_consent_registry is None
+    assert runtime.memory_capture_consent_registry is None
+    assert runtime.consent_unavailable_reason == (
+        "a fully attached active provider invocation and bridge graph is required for root TTY choices"
+    )
     assert runtime.source_observer_registry is None
     assert runtime.source_observer_unavailable_reason == (
         "source-observer candidates are not complete typed protected joins"

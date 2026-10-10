@@ -400,6 +400,17 @@ class ProtectedEnrollmentCatalog:
             issuer_by_id[observer_id] = issuer
         observer_joins: dict[str, NativeSourceObserverJoin] = {}
         for package in parsed_native.values():
+            package_roles = {observer_id: role for role in package.process_role_records.values()
+                             for observer_id in role.observer_enrollment_ids}
+            for role in package.process_role_records.values():
+                for observer_id in role.observer_enrollment_ids:
+                    issuer = issuer_by_id.get(observer_id)
+                    if (issuer is None
+                            or getattr(issuer, "producer_profile_id", None) != package.profile_id
+                            or getattr(issuer, "generation", None) != package.profile_generation
+                            or getattr(issuer, "producer_role_artifact_id", None) != role.role_artifact_id
+                            or getattr(issuer, "producer_role_sha256", None) != role.role_sha256):
+                        raise EnrollmentDenied("native process role does not join its exact active source issuer")
             for action in package.action_records.values():
                 for observer_id in action.observer_enrollment_ids:
                     issuer = issuer_by_id.get(observer_id)
@@ -408,9 +419,11 @@ class ProtectedEnrollmentCatalog:
                     if (getattr(issuer, "producer_profile_id", None) != package.profile_id
                             or getattr(issuer, "generation", None) != package.profile_generation):
                         raise EnrollmentDenied("native action observer does not match its process profile generation")
-                    # v113 keeps process-role artifacts distinct from action
-                    # artifacts. Until a protected process-role association is
-                    # loaded, retain no executable observer join here.
+                    role = package_roles.get(observer_id)
+                    if role is None or action.action_binding_id not in role.action_binding_ids:
+                        raise EnrollmentDenied("native action observer has no exact process-role action join")
+                    if action.action_id not in getattr(issuer, "source_action_ids", ()):
+                        raise EnrollmentDenied("native action observer source action does not match its action binding")
             for registration in package.registration_records.values():
                 lexical_actions: set[str] = set()
                 for binding in registration.action_bindings:
@@ -427,12 +440,56 @@ class ProtectedEnrollmentCatalog:
                     expected_lexical = next(iter(lexical_actions))
                 for observer_id in registration.observer_enrollment_ids:
                     issuer = issuer_by_id.get(observer_id)
-                    existing = observer_joins.get(observer_id)
                     if (issuer is None
                             or getattr(issuer, "producer_profile_id", None) != package.profile_id
                             or getattr(issuer, "generation", None) != package.profile_generation
                             or expected_lexical not in getattr(issuer, "source_action_ids", ())):
                         raise EnrollmentDenied("native registration observer does not join its current issuer action")
+                    role = package_roles.get(observer_id)
+                    if (role is None or registration.registration_id not in role.registration_ids
+                            or any(binding.action_binding_id is not None
+                                   and binding.action_binding_id not in role.action_binding_ids
+                                   for binding in registration.action_bindings)
+                            or any(binding.workflow_id is not None
+                                   and binding.workflow_id not in role.workflow_ids
+                                   for binding in registration.action_bindings)):
+                        raise EnrollmentDenied("native registration observer has no exact process-role registration join")
+            for role in package.process_role_records.values():
+                for observer_id in role.observer_enrollment_ids:
+                    issuer = issuer_by_id[observer_id]
+                    actions: dict[str, NativeActionRecord] = {}
+                    registrations: dict[str, NativeRegistrationRecord] = {}
+                    source_action_ids = set(getattr(issuer, "source_action_ids", ()))
+                    for registration_id in role.registration_ids:
+                        registration = package.registration_records[registration_id]
+                        child_actions: set[str] = set()
+                        for binding in registration.action_bindings:
+                            if binding.action_binding_id is not None:
+                                child_actions.add(binding.action_binding_id)
+                            elif binding.workflow_id is not None:
+                                child_actions.update(
+                                    package.workflow_records[binding.workflow_id].step_action_binding_ids,
+                                )
+                        lexical_ids = {registration.registration_id}
+                        if registration.handler_kind == "mcp-dispatch":
+                            lexical_ids.add(registration.handler_id)
+                        direct_action_ids = {package.action_records[key].action_id for key in child_actions}
+                        if not source_action_ids.intersection(lexical_ids | direct_action_ids):
+                            continue
+                        registrations[registration_id] = registration
+                        for action_binding_id in child_actions:
+                            actions[action_binding_id] = package.action_records[action_binding_id]
+                    for action_binding_id in role.action_binding_ids:
+                        action = package.action_records[action_binding_id]
+                        if action.action_id in source_action_ids:
+                            actions[action_binding_id] = action
+                    if not registrations and not actions:
+                        raise EnrollmentDenied("native process role source action has no exact registration/action join")
+                    if observer_id in observer_joins:
+                        raise EnrollmentDenied("native observer is assigned to multiple packages or process roles")
+                    observer_joins[observer_id] = NativeSourceObserverJoin(
+                        issuer, package, role, MappingProxyType(actions), MappingProxyType(registrations),
+                    )
             for action in package.action_records.values():
                 for kind, schema_id in (("arguments", action.argument_schema_id),
                                          ("result", action.result_schema_id)):
@@ -616,6 +673,20 @@ class ProtectedEnrollmentCatalog:
             raise EnrollmentDenied("native registration schema artifact is absent or ambiguous")
         return matches[0]
 
+    def resolve_selected_native_process_role(
+        self, package_id: str, native_package_generation: str, role_id: str,
+    ) -> NativeProcessRoleRecord:
+        package = self.resolve_native_package(package_id, native_package_generation)
+        role = package.process_role_records.get(_native_catalog_id(role_id, "native process role ID"))
+        if role is None:
+            raise EnrollmentDenied("selected native process role is absent")
+        service = self.resolve_profile_generation(package.profile_id, package.profile_generation)
+        if (role.profile_id != service.profile_id or role.profile_generation != service.generation
+                or role.package_id != package.package_id
+                or role.native_package_generation != package.generation):
+            raise EnrollmentDenied("selected native process role is stale for its process profile")
+        return role
+
     @property
     def parameter_schemas(self) -> Mapping[str, OperationParameterSchema]:
         return self._parameter_schemas
@@ -708,6 +779,24 @@ class ProtectedEnrollmentCatalog:
                 or hashlib.sha256(executable.read_bytes()).hexdigest() != profile.executable_sha256):
             raise EnrollmentDenied("enrolled service executable changed or is not executable")
         return profile
+
+    def resolve_memory_enrollment(self, memory_enrollment_id: str, *,
+                                  service_generation_digest: str) -> Any:
+        """Resolve one active protected memory enrollment by its target ID."""
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("memory enrollment belongs to a stale service generation")
+        target_id = _id(memory_enrollment_id, "memory enrollment target")
+        matches = [record for record in self._memory_enrollments.values()
+                   if getattr(record, "target_id", None) == target_id]
+        if len(matches) != 1:
+            raise EnrollmentDenied("memory enrollment target is absent or ambiguous")
+        record = matches[0]
+        profile = self.resolve(record.service_enrollment_id, record.service_generation)
+        if (profile.profile_id != record.profile_id
+                or profile.principal_id != record.principal_id
+                or profile.namespace_identity != record.namespace_identity):
+            raise EnrollmentDenied("memory enrollment no longer joins its selected service profile")
+        return record
 
     def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
         """Resolve a unique current service enrollment by its opaque ID."""
@@ -1109,6 +1198,105 @@ class NativeWorkflowRecord:
     generation: str
 
 
+@dataclass(frozen=True, slots=True)
+class NativeProcessRoleRecord:
+    role_id: str
+    package_id: str
+    native_package_generation: str
+    profile_id: str
+    profile_generation: str
+    role_artifact_id: str
+    role_sha256: str
+    role_source_receipt_handle: str
+    module_name: str
+    closure_member_path: str
+    role_source_revision: str
+    role_source_tree_sha256: str
+    observer_enrollment_ids: tuple[str, ...]
+    registration_ids: tuple[str, ...]
+    action_binding_ids: tuple[str, ...]
+    workflow_ids: tuple[str, ...]
+
+
+def _parse_native_process_role_records(value: Any, *, package_id: str, generation: str,
+                                       profile_id: str, profile_generation: str,
+                                       actions: Mapping[str, NativeActionRecord],
+                                       registrations: Mapping[str, NativeRegistrationRecord],
+                                       workflows: Mapping[str, NativeWorkflowRecord]) -> dict[str, NativeProcessRoleRecord]:
+    fields = {
+        "role_id", "package_id", "native_package_generation", "profile_id", "profile_generation",
+        "role_artifact_id", "role_sha256", "role_source_receipt_handle", "module_name",
+        "closure_member_path", "role_source_revision", "role_source_tree_sha256",
+        "observer_enrollment_ids", "registration_ids", "action_binding_ids", "workflow_ids",
+    }
+    if not isinstance(value, list) or len(value) > 128:
+        raise EnrollmentDenied("protected native process-role catalog is malformed")
+    result: dict[str, NativeProcessRoleRecord] = {}
+    observers: set[str] = set()
+    module_names: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, Mapping) or set(raw) != fields:
+            raise EnrollmentDenied("protected native process-role record fields are invalid")
+        role_id = _native_catalog_id(raw["role_id"], "native process role ID")
+        if role_id in result:
+            raise EnrollmentDenied("protected native process role is duplicated")
+        ids = {
+            "package_id": _native_catalog_id(raw["package_id"], "native process-role package ID"),
+            "native_package_generation": _native_catalog_id(
+                raw["native_package_generation"], "native process-role package generation"),
+            "profile_id": _native_catalog_id(raw["profile_id"], "native process-role profile ID"),
+            "profile_generation": _native_catalog_id(raw["profile_generation"], "native process-role process generation"),
+        }
+        if ids != {"package_id": package_id, "native_package_generation": generation,
+                   "profile_id": profile_id, "profile_generation": profile_generation}:
+            raise EnrollmentDenied("native process role belongs to another package or profile generation")
+        role_sha = _native_catalog_sha(raw["role_sha256"], "native process-role artifact")
+        source_tree_sha = _native_catalog_sha(raw["role_source_tree_sha256"], "native process-role source tree")
+        role_artifact_id = _native_catalog_id(raw["role_artifact_id"], "native process-role artifact ID")
+        receipt = _native_catalog_id(raw["role_source_receipt_handle"], "native process-role source receipt")
+        module_name = raw["module_name"]
+        if (not isinstance(module_name, str) or len(module_name) > 256
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", module_name, re.ASCII)
+                or module_name in module_names):
+            raise EnrollmentDenied("native process-role module name is invalid or duplicated")
+        module_names.add(module_name)
+        member_path = raw["closure_member_path"]
+        if (not isinstance(member_path, str) or not member_path or len(member_path) > 512
+                or "\\" in member_path or any(ord(char) < 0x20 for char in member_path)):
+            raise EnrollmentDenied("native process-role closure member path is invalid")
+        parsed_path = PurePosixPath(member_path)
+        if (parsed_path.is_absolute() or any(part in {"", ".", ".."} for part in parsed_path.parts)
+                or parsed_path.as_posix() != member_path):
+            raise EnrollmentDenied("native process-role closure member path is not normalized and relative")
+        revision = raw["role_source_revision"]
+        if (not isinstance(revision, str) or not 1 <= len(revision) <= 256
+                or any(ord(char) < 0x20 for char in revision)):
+            raise EnrollmentDenied("native process-role source revision is invalid")
+        observer_ids = _native_unique_ids(raw["observer_enrollment_ids"],
+                                          "native process-role observer ID", maximum=512)
+        registration_ids = _native_unique_ids(raw["registration_ids"],
+                                              "native process-role registration ID", maximum=512)
+        action_ids = _native_unique_ids(raw["action_binding_ids"],
+                                        "native process-role action binding ID", maximum=512)
+        workflow_ids = _native_unique_ids(raw["workflow_ids"],
+                                          "native process-role workflow ID", maximum=512)
+        if (any(item not in registrations for item in registration_ids)
+                or any(item not in actions for item in action_ids)
+                or any(item not in workflows for item in workflow_ids)):
+            raise EnrollmentDenied("native process role references an absent action, registration or workflow")
+        if any(workflows[item].registration_id not in registration_ids for item in workflow_ids):
+            raise EnrollmentDenied("native process-role workflow is outside its registration set")
+        if observers.intersection(observer_ids):
+            raise EnrollmentDenied("native source observer is ambiguously assigned to process roles")
+        observers.update(observer_ids)
+        result[role_id] = NativeProcessRoleRecord(
+            role_id, package_id, generation, profile_id, profile_generation, role_artifact_id,
+            role_sha, receipt, module_name, member_path, revision, source_tree_sha,
+            observer_ids, registration_ids, action_ids, workflow_ids,
+        )
+    return result
+
+
 _NATIVE_HANDLER_KINDS = frozenset({
     "effect-action", "finite-selector", "finite-workflow",
     "public-registry-read", "owner-overlay", "mcp-dispatch",
@@ -1410,6 +1598,7 @@ class NativePackageBinding:
     action_records: Mapping[str, NativeActionRecord]
     registration_records: Mapping[str, NativeRegistrationRecord]
     workflow_records: Mapping[str, NativeWorkflowRecord]
+    process_role_records: Mapping[str, NativeProcessRoleRecord]
 
     @classmethod
     def from_protected_record(cls, item: Mapping[str, Any]) -> "NativePackageBinding":
@@ -1418,7 +1607,7 @@ class NativePackageBinding:
                     "compiled_closure_sha256", "entrypoint_artifact_id", "entrypoint_sha256",
                     "resolver_artifact_id", "resolver_sha256", "service_package_root_id",
                     "service_mount_id", "adapter_records", "action_records",
-                    "registration_records", "workflow_records"}
+                    "registration_records", "workflow_records", "process_role_records"}
         if not isinstance(item, Mapping) or set(item) != expected:
             raise EnrollmentDenied("protected native package record fields are invalid")
         digests = ("source_tree_sha256", "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256")
@@ -1505,6 +1694,11 @@ class NativePackageBinding:
             adapters=adapters, actions=action_records, registrations=registration_records,
             workflows=workflow_records, package_id=package_id,
         )
+        process_role_records = _parse_native_process_role_records(
+            item["process_role_records"], package_id=package_id, generation=generation,
+            profile_id=profile_id, profile_generation=profile_generation,
+            actions=action_records, registrations=registration_records, workflows=workflow_records,
+        )
         return cls(
             package_id, profile_id, generation, revision, item["source_tree_sha256"],
             _native_catalog_id(item["compiled_closure_artifact_id"], "compiled closure artifact ID"),
@@ -1513,7 +1707,7 @@ class NativePackageBinding:
             item["resolver_sha256"], _native_catalog_id(item["service_package_root_id"], "service package root ID"),
             _native_catalog_id(item["service_mount_id"], "service mount ID"), MappingProxyType(adapters),
             profile_generation, MappingProxyType(action_records), MappingProxyType(registration_records),
-            MappingProxyType(workflow_records),
+            MappingProxyType(workflow_records), MappingProxyType(process_role_records),
         )
 
 
@@ -1882,7 +2076,15 @@ class NativeSourceObserverJoin:
 
     issuer: Any
     package: NativePackageBinding
-    adapter: NativeActionRecord
+    process_role: NativeProcessRoleRecord
+    actions: Mapping[str, NativeActionRecord]
+    registrations: Mapping[str, NativeRegistrationRecord]
+
+    @property
+    def action(self) -> NativeActionRecord:
+        if len(self.actions) != 1:
+            raise EnrollmentDenied("source observer has multiple selected action bindings")
+        return next(iter(self.actions.values()))
 
 
 def _parse_profile(item: Any) -> HostServiceProfile:
