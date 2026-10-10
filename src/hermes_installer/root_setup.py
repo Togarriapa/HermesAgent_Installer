@@ -459,7 +459,7 @@ def run_root_setup_action(
 
     Selection handles are accepted only as opaque root-issued references.
     Their resolution remains inside the installed registries. Lifecycle
-    recovery and update are kept pending until their durable rehydration and
+    recovery remains pending until its durable rehydration and
     generation-CAS consumers are available; installation drives current
     source/runtime and native materialization before requiring distinct
     allowlisted runtime-role receipts for strict active enrollment.
@@ -490,6 +490,7 @@ def run_root_setup_action(
     from .authority.installer_release import InstalledRootReleaseVerifier
     from .authority.installer_release_build import (
         InstallerReleaseBuildError,
+        RootInstallerUpdateTransitionRegistry,
         bootstrap_selected_release,
         observe_deployment_predecessor,
         resolve_verified_deployment_release,
@@ -498,11 +499,15 @@ def run_root_setup_action(
     # A missing deployment pointer is the only state that permits the reviewed
     # source/runtime bootstrap. Present-but-invalid and inaccessible pointers
     # are errors, never invitations to replace the installed release.
+    installed_update_transition = None
     try:
         with bootstrap_runtime_error_step("installed_release.predecessor"):
             predecessor = observe_deployment_predecessor()
             predecessor.verify_current()
         if predecessor.state == "absent":
+            if selected_action is RootSetupAction.UPDATE:
+                return _result(selected_action, RootSetupState.PENDING, "admission",
+                               "Update requires an existing verified installed predecessor; run install for a first deployment.")
             selection_registry = RootBootstrapCandidateSelectionRegistry()
             try:
                 with bootstrap_runtime_error_step("bootstrap.tty_selection"):
@@ -517,8 +522,13 @@ def run_root_setup_action(
         if predecessor.verified_release_receipt_handle is None:
             raise InstallerReleaseBuildError("verified deployment predecessor has no retained release receipt")
         held_release = resolve_verified_deployment_release(
-            predecessor.verified_release_receipt_handle, consume=True)
-        held_release.close()
+            predecessor.verified_release_receipt_handle, consume=selected_action is not RootSetupAction.UPDATE)
+        if selected_action is not RootSetupAction.UPDATE:
+            held_release.close()
+        elif _fd_is_open(3):
+            registry = RootInstallerUpdateTransitionRegistry.from_installed_entry()
+            with bootstrap_runtime_error_step("installed_update.intent"):
+                installed_update_transition = registry.resolve_current_update_for_installed_entry()
     except BootstrapEnrollmentPending as exc:
         return _result(selected_action, RootSetupState.PENDING, "distribution", _safe_reason(exc))
     except (OSError, RuntimeError, ValueError, InstallerReleaseBuildError) as exc:
@@ -555,6 +565,21 @@ def run_root_setup_action(
         with bootstrap_runtime_error_step("installed_release.actor_verification"):
             actor.verify_current(release)
         actor_verified = True
+        if selected_action is RootSetupAction.UPDATE:
+            if installed_update_transition is not None:
+                return _result(
+                    selected_action, RootSetupState.PENDING, "runtime",
+                    "The selected installer release is published and verified; its compatible active-runtime update adapter is unavailable, so the prior active generation remains in place.")
+            selection_registry = RootBootstrapCandidateSelectionRegistry()
+            try:
+                with bootstrap_runtime_error_step("bootstrap.tty_selection"):
+                    choices = selection_registry.issue_explicit_tty_choice(RootSetupAction.UPDATE)
+                bootstrap_selected_release(
+                    choices, selection_registry, update_predecessor=predecessor)
+                return _result(selected_action, RootSetupState.PENDING, "distribution",
+                               "Selected update source bootstrap returned without its required same-process handoff.")
+            finally:
+                selection_registry.close()
         selection_leaf = Path("/etc/hermes-installer/root-setup-selection.json")
         try:
             selection_leaf.lstat()
@@ -617,10 +642,6 @@ def run_root_setup_action(
             release_for_factory, actor_for_factory = release, actor
             release = actor = None  # type: ignore[assignment]
             factory = RootBootstrapRuntimeFactory(_release=release_for_factory, _actor=actor_for_factory)
-        if selected_action is RootSetupAction.UPDATE:
-            return _result(selected_action, RootSetupState.PENDING, "runtime",
-                           "Fresh-generation update and rollback publication are not yet connected to the root setup runtime.",
-                           resume_allowed=True)
         mode = "resume" if selected_action is RootSetupAction.RESUME else "install"
         if session is None:
             session = factory.begin(mode, account)
@@ -1086,6 +1107,14 @@ def _process_start_ticks(pid: int) -> int:
         return int(fields[19])
     except (OSError, ValueError, IndexError):
         raise RuntimeError("root process start identity is unavailable") from None
+
+
+def _fd_is_open(fd: int) -> bool:
+    try:
+        os.fstat(fd)
+        return True
+    except OSError:
+        return False
 
 
 def _require_root_linux() -> None:

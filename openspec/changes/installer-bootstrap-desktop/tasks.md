@@ -335,3 +335,6 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 
 - [ ] VD-T180.6 / VD-T183.5 (v228): Apply exact reviewed8185 outer module/catalog tuples and three fixed delayed module preloads, prove isolated installed origins and retain full coherent checks/target evidence separately.
 - [ ] VD-T232.2 (v228): Confirm committed exact pending diagnostic leaves and future observed target stage without inferred cause or acceptance.
+- [ ] BD-T235.1: Implement the v235 exact predecessor-bound candidate selection/source/build/sealed exec transition; preserve all existing data/authority and exact pending prerequisites.
+- [ ] LC-T235.2: Implement the v235 publisher-owned present pointer CAS, durable rollback/reexecution and exact pending runtime behavior.
+- [ ] VD-T235.3 (v235): Verify genuine installed-predecessor candidate pipeline, pointer/controller/input drift, crash/rollback/preservation failures; target acceptance separate.

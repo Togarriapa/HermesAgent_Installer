@@ -212,3 +212,5 @@ Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-ac
 
 
 v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md`;13 outer leaf tuples +3 exact held module members/preloads +4 existing catalog rows. Source/effect pin application evidence: `evidence/development/EV-VD-T180.6-VD-T183.5-v228-source-pin-20261010.json`. Existing VD-T180.6/VD-T183.5/VD-T232.2 OPEN; coherent full checks and actual runtime evidence pending. All AC OPEN.
+
+Existing predecessor candidate update v235: plans/amendments/2026-10-10-predecessor-bound-candidate-update-v235.md; BD-T235.1 → LC-T235.2 → VD-T235.3 OPEN. Exact old release before staging, reviewed candidate inputs, samecontroller sealed transition, present pointer CAS and owned rollback/reexec; distribution/runtime claims separate; all AC OPEN.

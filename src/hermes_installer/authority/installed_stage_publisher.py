@@ -7,6 +7,7 @@ deployment locations consumed by :mod:`installer_release`.
 from __future__ import annotations
 
 import fcntl
+import base64
 import hashlib
 import json
 import os
@@ -29,6 +30,7 @@ from .installer_release_roles import RELEASE_MEMBER_ROLES
 
 _RECEIPT_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-"
 _MAX_RECORDS = 50_000
+_UPDATE_TRANSACTION_ROOT = Path("/var/lib/hermes-installer/authority-journal/installer-update-transactions")
 
 
 def _canonical(value: Any) -> bytes:
@@ -68,11 +70,22 @@ class RootInstalledStagePublisher:
     def from_root_setup(cls, builder: Any) -> "RootInstalledStagePublisher":
         return cls(builder)
 
-    def publish_installed_stage(self, release_build_receipt_handle: str) -> Any:
+    def publish_installed_stage(self, release_build_receipt_handle: str, *,
+                                update_transition: Any = None,
+                                controller_snapshot: dict[str, Any] | None = None) -> Any:
         if not sys.platform.startswith("linux") or os.getuid() != 0 or os.geteuid() != 0:
             raise BootstrapEnrollmentPending("installed release publication requires the installed Linux root process")
         receipt = self.builder.resolve_build_receipt(release_build_receipt_handle, consume=False)
         receipt.verify_current()
+        if update_transition is not None:
+            from .installer_release_build import RootAdmittedInstallerUpdate
+            if type(update_transition) is not RootAdmittedInstallerUpdate:
+                raise BootstrapEnrollmentPending("publication requires the issuer's admitted update transition")
+            update_transition.verify_current()
+            if (update_transition.candidate_git_sha != receipt.candidate_git_sha
+                    or receipt.deployment_predecessor != update_transition.deployment_predecessor()
+                    or not isinstance(controller_snapshot, dict)):
+                raise BootstrapEnrollmentPending("release build no longer matches the admitted update subject")
         predecessor = receipt.deployment_predecessor
         _publish_retained_build(
             receipt=receipt,
@@ -80,6 +93,8 @@ class RootInstalledStagePublisher:
             receipt_path=DEPLOYMENT_RECEIPT_PATH,
             expected_uid=0,
             predecessor=predecessor,
+            update_transition=update_transition,
+            controller_snapshot=controller_snapshot,
         )
         # Verify through the same fixed-path verifier used by the stage-zero actor.
         installed = InstalledRootReleaseVerifier.verify_installed_release()
@@ -87,9 +102,26 @@ class RootInstalledStagePublisher:
         receipt.consume()
         return installed
 
+    def rollback_installed_stage(self, update_transition: Any) -> Any:
+        from .installer_release_build import RootAdmittedInstallerUpdate
+        if (type(update_transition) is not RootAdmittedInstallerUpdate
+                or update_transition._seal is None):
+            raise BootstrapEnrollmentPending("rollback requires the issuer's installed update transition")
+        snapshot = update_transition.snapshot()
+        installed = _rollback_update_transaction(
+            _UPDATE_TRANSACTION_ROOT, snapshot["update_transaction_handle"],
+            DEPLOYMENT_RECEIPT_PATH, 0)
+        if installed.release_commit != snapshot["pointer"]["candidate_git_sha"]:
+            installed.close()
+            raise BootstrapEnrollmentPending("rollback did not restore the exact verified predecessor")
+        return installed
+
 
 def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: Path,
-                            expected_uid: int, predecessor: Any) -> None:
+                            expected_uid: int, predecessor: Any,
+                            update_transition: Any = None,
+                            controller_snapshot: dict[str, Any] | None = None,
+                            update_transaction_root: Path | None = None) -> None:
     """Filesystem core, parameterized only for nonprivileged temporary fixtures."""
     if (not release_root.is_absolute() or not receipt_path.is_absolute()
             or type(expected_uid) is not int or expected_uid < 0):
@@ -120,6 +152,24 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
         # Distinct domains are expected in normal releases; equality is possible
         # cryptographically, but treating it as a policy error would be incorrect.
         pass
+    update_record = None
+    transaction = None
+    if update_transition is not None:
+        from .installer_release_build import RootAdmittedInstallerUpdate
+        if type(update_transition) is not RootAdmittedInstallerUpdate:
+            raise BootstrapEnrollmentPending("publisher requires the issuer's admitted update transition")
+        update_transition.verify_current()
+        if (update_transition.candidate_git_sha != candidate
+                or predecessor != update_transition.deployment_predecessor()
+                or not isinstance(controller_snapshot, dict)):
+            raise BootstrapEnrollmentPending("publisher inputs differ from the admitted update transaction")
+        update_snapshot = update_transition.snapshot()
+        update_record = update_snapshot
+    transaction_root = update_transaction_root or _UPDATE_TRANSACTION_ROOT
+    if update_record is not None:
+        _verify_update_transaction_root(transaction_root, expected_uid,
+                                        allow_fixture=not (expected_uid == 0
+                                                           and receipt_path == DEPLOYMENT_RECEIPT_PATH))
     fixed_root_publication = (
         release_root == RELEASE_STORE_ROOT / candidate
         and receipt_path == DEPLOYMENT_RECEIPT_PATH and expected_uid == 0)
@@ -164,8 +214,84 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
             verified.close()
         # Check exact prior inode/digest again immediately before pointer CAS.
         _verify_predecessor(receipt_path, predecessor, expected_uid, parent_info)
+        transaction_handle = None
+        transaction_bytes = None
+        if update_record is not None:
+            # The source-acquisition confirmation is the authority for the
+            # pointer switch.  Its deadline is not extended by staging or by
+            # this publisher; expiry leaves the predecessor pointer current.
+            from .installer_release_build import _verify_current_selection_snapshot
+            _verify_current_selection_snapshot(controller_snapshot, {
+                "candidate_git_sha": candidate,
+                "lifecycle_action": "update",
+                "original_pid": controller_snapshot.get("controller_pid"),
+                "original_start_ticks": controller_snapshot.get("controller_start_ticks"),
+                "expires_monotonic": controller_snapshot.get("expires_monotonic"),
+            })
+            transaction_handle = update_record["update_transaction_handle"]
+            old_pointer = update_record["pointer"]
+            transaction = {
+                "schema": 1,
+                "state": "publication-prepared",
+                "update_transaction_handle": transaction_handle,
+                "candidate_git_sha": candidate,
+                "selection_choice_sha256": update_record["selection_choice_sha256"],
+                "controller": controller_snapshot,
+                "old_pointer": old_pointer,
+                "old_release": update_record["release"],
+                "candidate_pointer_b64": base64.b64encode(raw).decode("ascii"),
+                "candidate_pointer_sha256": _sha(raw),
+                "candidate_release_root": str(release_root),
+                "candidate_closure_manifest_sha256": _sha(manifest_bytes),
+                "prepared_monotonic": time.monotonic(),
+            }
+            transaction_bytes = _write_update_transaction(
+                transaction_root, transaction_handle, transaction, expected_uid)
+        if update_record is not None:
+            # Close the interval between durable rollback preparation and the
+            # present-pointer CAS without refreshing or reconstructing intent.
+            from .installer_release_build import _verify_current_selection_snapshot
+            _verify_current_selection_snapshot(controller_snapshot, {
+                "candidate_git_sha": candidate,
+                "lifecycle_action": "update",
+                "original_pid": controller_snapshot.get("controller_pid"),
+                "original_start_ticks": controller_snapshot.get("controller_start_ticks"),
+                "expires_monotonic": controller_snapshot.get("expires_monotonic"),
+            })
         _replace_receipt(receipt_path, raw, expected_uid, predecessor)
         _fsync_dir(receipt_path.parent)
+        if transaction is not None:
+            try:
+                published_raw, published_info = _read_record(receipt_path, expected_uid)
+                if published_raw != raw:
+                    raise BootstrapEnrollmentPending("published candidate pointer differs from its transaction")
+                installed = InstalledRootReleaseVerifier.verify_installed_release()
+                try:
+                    if (installed.release_commit != candidate
+                            or installed.closure_manifest_sha256 != _sha(manifest_bytes)):
+                        raise BootstrapEnrollmentPending("published candidate closure failed exact verification")
+                    installed.verify_current()
+                finally:
+                    installed.close()
+                transaction["state"] = "pointer-published"
+                transaction["candidate_pointer_device"] = published_info.st_dev
+                transaction["candidate_pointer_inode"] = published_info.st_ino
+                transaction["published_monotonic"] = time.monotonic()
+                _replace_update_transaction(transaction_root, transaction_handle,
+                                            transaction_bytes, transaction, expected_uid)
+            except BaseException:
+                # If the CAS did not happen (for example, controller expiry or
+                # a write error), preserve the original failure and old pointer.
+                # Roll back only after observing our exact candidate bytes live.
+                try:
+                    current_raw, _ = _read_record(receipt_path, expected_uid)
+                except BaseException:
+                    current_raw = None
+                if current_raw == raw:
+                    _rollback_update_transaction(
+                        transaction_root, transaction_handle, receipt_path, expected_uid,
+                        expected_current_bytes=raw, lock_is_held=True)
+                raise
     finally:
         os.close(lock_fd)
 
@@ -508,6 +634,268 @@ def _already_published(receipt: Any, receipt_path: Path, release_root: Path,
                 and installed.baseline_tree_sha256 == receipt.baseline_tree_sha256)
     finally:
         installed.close()
+
+
+def _verify_update_transaction_root(path: Path, uid: int, *, allow_fixture: bool) -> None:
+    if not path.is_absolute() or type(uid) is not int or uid < 0:
+        raise BootstrapEnrollmentError("update transaction root identity is invalid")
+    if path == _UPDATE_TRANSACTION_ROOT:
+        parent = path.parent
+        _verify_directory(parent, uid, mode=0o700)
+        try:
+            os.mkdir(path, 0o700)
+        except FileExistsError:
+            pass
+        _verify_directory(path, uid, mode=0o700)
+        return
+    if not allow_fixture:
+        raise BootstrapEnrollmentError("update transaction root is fixed by installed policy")
+    _verify_directory(path, uid, mode=0o700)
+
+
+def _update_record_name(handle: str) -> str:
+    if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+        raise BootstrapEnrollmentError("update transaction handle is malformed")
+    return handle + ".json"
+
+
+def _write_update_transaction(root: Path, handle: str, value: dict[str, Any], uid: int) -> bytes:
+    _verify_update_transaction_root(root, uid, allow_fixture=root != _UPDATE_TRANSACTION_ROOT)
+    raw = _canonical(value)
+    if len(raw) > 2 * 1024 * 1024:
+        raise BootstrapEnrollmentError("update transaction exceeds its fixed record bound")
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        name = _update_record_name(handle)
+        try:
+            os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise BootstrapEnrollmentPending("update transaction handle already exists")
+        temporary = ".tmp-" + secrets.token_hex(16)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     0o600, dir_fd=root_fd)
+        try:
+            view = memoryview(raw)
+            while view:
+                count = os.write(fd, view)
+                if count <= 0:
+                    raise OSError("short write to update transaction")
+                view = view[count:]
+            os.fchown(fd, uid, _gid(uid)); os.fchmod(fd, 0o600); os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.rename(temporary, name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+        os.fsync(root_fd)
+        return raw
+    finally:
+        os.close(root_fd)
+
+
+def _read_update_transaction(root: Path, handle: str, uid: int) -> tuple[dict[str, Any], bytes]:
+    _verify_update_transaction_root(root, uid, allow_fixture=root != _UPDATE_TRANSACTION_ROOT)
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        fd = os.open(_update_record_name(handle), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=root_fd)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != _gid(uid)
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or info.st_size > 2 * 1024 * 1024):
+                raise BootstrapEnrollmentError("update transaction custody is invalid")
+            raw = os.read(fd, info.st_size + 1)
+            if len(raw) != info.st_size:
+                raise BootstrapEnrollmentError("update transaction changed during read")
+        finally:
+            os.close(fd)
+    finally:
+        os.close(root_fd)
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+    except (UnicodeError, ValueError):
+        raise BootstrapEnrollmentError("update transaction record is malformed") from None
+    if not isinstance(value, dict) or _canonical(value) != raw:
+        raise BootstrapEnrollmentError("update transaction is not canonical")
+    return value, raw
+
+
+def _replace_update_transaction(root: Path, handle: str, expected_raw: bytes,
+                                value: dict[str, Any], uid: int) -> bytes:
+    current, raw = _read_update_transaction(root, handle, uid)
+    if raw != expected_raw:
+        raise BootstrapEnrollmentPending("update transaction changed before its state transition")
+    updated = _canonical(value)
+    if len(updated) > 2 * 1024 * 1024:
+        raise BootstrapEnrollmentError("update transaction exceeds its fixed record bound")
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    temporary = ".tmp-" + secrets.token_hex(16)
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     0o600, dir_fd=root_fd)
+        try:
+            view = memoryview(updated)
+            while view:
+                count = os.write(fd, view)
+                if count <= 0:
+                    raise OSError("short update transaction state write")
+                view = view[count:]
+            os.fchown(fd, uid, _gid(uid)); os.fchmod(fd, 0o600); os.fsync(fd)
+        finally:
+            os.close(fd)
+        # Recheck exact inode/bytes immediately before replacing the record.
+        verify, verify_raw = _read_update_transaction(root, handle, uid)
+        if verify_raw != expected_raw or verify != current:
+            raise BootstrapEnrollmentPending("update transaction changed before state replacement")
+        os.rename(temporary, _update_record_name(handle), src_dir_fd=root_fd, dst_dir_fd=root_fd)
+        os.fsync(root_fd)
+        return updated
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=root_fd)
+        except FileNotFoundError:
+            pass
+        os.close(root_fd)
+
+
+def _rollback_update_transaction(root: Path, handle: str, receipt_path: Path, uid: int,
+                                 *, expected_current_bytes: bytes | None = None,
+                                 lock_is_held: bool = False) -> Any:
+    transaction, transaction_raw = _read_update_transaction(root, handle, uid)
+    if (transaction.get("schema") != 1 or transaction.get("update_transaction_handle") != handle
+            or transaction.get("state") not in {"publication-prepared", "pointer-published"}):
+        raise BootstrapEnrollmentPending("update transaction is not recoverable for rollback")
+    candidate_raw = base64.b64decode(transaction.get("candidate_pointer_b64", ""), validate=True)
+    if expected_current_bytes is not None and candidate_raw != expected_current_bytes:
+        raise BootstrapEnrollmentError("rollback expected pointer does not match its transaction")
+    lock_fd = -1
+    if not lock_is_held:
+        lock_fd = _open_lock(receipt_path.parent / ".publication.lock", uid)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        current_raw, current_info = _read_record(receipt_path, uid)
+        if current_raw != candidate_raw or _sha(current_raw) != transaction.get("candidate_pointer_sha256"):
+            raise BootstrapEnrollmentPending("a newer or foreign deployment pointer prevents update rollback")
+        if (transaction.get("candidate_pointer_device") is not None
+                and (current_info.st_dev, current_info.st_ino)
+                != (transaction.get("candidate_pointer_device"), transaction.get("candidate_pointer_inode"))):
+            raise BootstrapEnrollmentPending("published candidate pointer identity changed before rollback")
+        from .installer_release_build import DeploymentPredecessor
+        parent = os.stat(receipt_path.parent, follow_symlinks=False)
+        candidate_record = json.loads(current_raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+        candidate = DeploymentPredecessor("present", parent.st_dev, parent.st_ino,
+                                          _sha(current_raw), current_info.st_dev, current_info.st_ino,
+                                          candidate_record["candidate_git_sha"])
+        current_release = InstalledRootReleaseVerifier.verify_installed_release()
+        try:
+            if (current_release.release_commit != transaction.get("candidate_git_sha")
+                    or current_release.closure_manifest_sha256
+                    != transaction.get("candidate_closure_manifest_sha256")):
+                raise BootstrapEnrollmentPending("candidate closure changed before conditional rollback")
+            current_release.verify_current()
+        finally:
+            current_release.close()
+        old_pointer = transaction.get("old_pointer")
+        old_release_projection = transaction.get("old_release")
+        if not isinstance(old_pointer, dict) or not isinstance(old_release_projection, dict):
+            raise BootstrapEnrollmentError("update rollback record lacks its predecessor proof")
+        old_raw = base64.b64decode(old_pointer.get("canonical_bytes_b64", ""), validate=True)
+        if (not old_raw or _sha(old_raw) != old_pointer.get("sha256")
+                or len(old_raw) > MAX_RECEIPT_BYTES):
+            raise BootstrapEnrollmentError("update rollback predecessor bytes are invalid")
+        old_record = json.loads(old_raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+        old_verified = InstalledRootReleaseVerifier._mint_release(
+            {**old_record, "_receipt_sha256": _sha(old_raw)}, expected_uid=uid)
+        try:
+            if (old_verified.release_commit != old_pointer.get("candidate_git_sha")
+                    or old_verified.root_device != old_release_projection.get("root_device")
+                    or old_verified.root_inode != old_release_projection.get("root_inode")
+                    or old_verified.closure_manifest_sha256
+                    != old_release_projection.get("closure_manifest_sha256")
+                    or old_verified.baseline_tree_sha256
+                    != old_release_projection.get("baseline_tree_sha256")
+                    or old_verified.amendment_manifest_sha256
+                    != old_release_projection.get("amendment_manifest_sha256")):
+                raise BootstrapEnrollmentPending("verified rollback predecessor closure changed")
+            old_verified.verify_current()
+        finally:
+            old_verified.close()
+        _replace_receipt(receipt_path, old_raw, uid, candidate)
+        _fsync_dir(receipt_path.parent)
+        restored_raw, restored_info = _read_record(receipt_path, uid)
+        if restored_raw != old_raw:
+            raise BootstrapEnrollmentPending("rollback did not restore the exact predecessor pointer bytes")
+        restored = InstalledRootReleaseVerifier.verify_installed_release()
+        if (restored.release_commit != old_pointer.get("candidate_git_sha")
+                or restored.deployment_receipt_sha256 != _sha(old_raw)):
+            restored.close()
+            raise BootstrapEnrollmentPending("restored predecessor pointer does not resolve to the old release")
+        transaction["state"] = "rolled-back"
+        transaction["restored_pointer_device"] = restored_info.st_dev
+        transaction["restored_pointer_inode"] = restored_info.st_ino
+        transaction["rolled_back_monotonic"] = time.monotonic()
+        _replace_update_transaction(root, handle, transaction_raw, transaction, uid)
+        return restored
+    finally:
+        if lock_fd >= 0:
+            os.close(lock_fd)
+
+
+def _verify_published_update_transaction(handle: str) -> dict[str, Any]:
+    transaction, _ = _read_update_transaction(_UPDATE_TRANSACTION_ROOT, handle, 0)
+    if (transaction.get("schema") != 1
+            or transaction.get("update_transaction_handle") != handle
+            or transaction.get("state") not in {"pointer-published", "runtime-update-pending"}):
+        raise BootstrapEnrollmentPending("installed update transaction is not in a published phase")
+    candidate_raw = base64.b64decode(transaction.get("candidate_pointer_b64", ""), validate=True)
+    current_raw, current_info = _read_record(DEPLOYMENT_RECEIPT_PATH, 0)
+    if (current_raw != candidate_raw
+            or _sha(current_raw) != transaction.get("candidate_pointer_sha256")
+            or (current_info.st_dev, current_info.st_ino)
+            != (transaction.get("candidate_pointer_device"), transaction.get("candidate_pointer_inode"))):
+        raise BootstrapEnrollmentPending("installed candidate pointer changed after update publication")
+    installed = InstalledRootReleaseVerifier.verify_installed_release()
+    try:
+        if (installed.release_commit != transaction.get("candidate_git_sha")
+                or installed.closure_manifest_sha256
+                != transaction.get("candidate_closure_manifest_sha256")):
+            raise BootstrapEnrollmentPending("installed candidate closure no longer matches its update")
+        installed.verify_current()
+    finally:
+        installed.close()
+    old_pointer = transaction.get("old_pointer")
+    old_projection = transaction.get("old_release")
+    if not isinstance(old_pointer, dict) or not isinstance(old_projection, dict):
+        raise BootstrapEnrollmentError("published update transaction lost its verified predecessor")
+    old_raw = base64.b64decode(old_pointer.get("canonical_bytes_b64", ""), validate=True)
+    if _sha(old_raw) != old_pointer.get("sha256"):
+        raise BootstrapEnrollmentError("published update predecessor bytes no longer match")
+    old_record = json.loads(old_raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+    previous = InstalledRootReleaseVerifier._mint_release(
+        {**old_record, "_receipt_sha256": _sha(old_raw)}, expected_uid=0)
+    try:
+        if (previous.release_commit != old_pointer.get("candidate_git_sha")
+                or previous.closure_manifest_sha256 != old_projection.get("closure_manifest_sha256")
+                or previous.root_device != old_projection.get("root_device")
+                or previous.root_inode != old_projection.get("root_inode")):
+            raise BootstrapEnrollmentPending("published update predecessor closure is not retained")
+        previous.verify_current()
+    finally:
+        previous.close()
+    return transaction
+
+
+def _mark_runtime_update_pending(handle: str) -> None:
+    transaction = _verify_published_update_transaction(handle)
+    if transaction.get("state") == "runtime-update-pending":
+        raise BootstrapEnrollmentPending("installed update intent was already consumed")
+    current, raw = _read_update_transaction(_UPDATE_TRANSACTION_ROOT, handle, 0)
+    if current != transaction:
+        raise BootstrapEnrollmentPending("installed update transaction changed before intent consumption")
+    current["state"] = "runtime-update-pending"
+    current["runtime_pending_monotonic"] = time.monotonic()
+    _replace_update_transaction(_UPDATE_TRANSACTION_ROOT, handle, raw, current, 0)
 
 
 def _read_record(path: Path, uid: int) -> tuple[bytes, os.stat_result]:
