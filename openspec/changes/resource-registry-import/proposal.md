@@ -49,3 +49,7 @@ HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-aud
 Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
 
 Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Local audio device/consent v118: `plans/amendments/2026-10-10-local-audio-device-consent-v118.md`; original RG-F03/R0060/HI-T08 obligations remain open.
+
+Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retained-peer-delivery-v129.md`; genuine reduced source/context issuer/store required, real channel acceptance open.

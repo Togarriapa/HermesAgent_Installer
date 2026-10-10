@@ -75,3 +75,37 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 Application request source v107: `plans/amendments/2026-10-10-application-request-source-v107.md`; actual finite installer qualification request distinct from absent native application mappings. Existing SK-F03/R0067/R0138/AC12 implementation and acceptance remain open.
 
 Private memory endpoint adapter v108: `plans/amendments/2026-10-10-private-memory-endpoint-adapter-v108.md`; exact distinct private text/embed model/deployment/current consent and bounded protocol producer required. Existing engine lifecycle/semantic memory/acceptance remain open.
+
+Preactive application source and qualification consent v117: `plans/amendments/2026-10-10-preactive-application-source-consent-v117.md`; actual setupsource/lock receipts beforeactive and same explicitchoice finite purposeconsent, operational authorization untouched. Existing application/AC12 gates open.
+
+Memory lifecycle active closure v119: `plans/amendments/2026-10-10-memory-lifecycle-active-closure-v119.md`; existing lifecycle/capture/semantic acceptance obligations remain open.
+
+Memory service enable choice v124: `plans/amendments/2026-10-10-memory-service-enable-choice-v124.md`; actual configuration producer/active service projection required, capture/semantic gates open.
+
+Private memory observed deployments v125: `plans/amendments/2026-10-10-private-memory-observed-deployments-v125.md`; actual endpoint/model/source/load/private route proofs remain open, no download authorized.
+
+Existing model tree observation v127: `plans/amendments/2026-10-10-existing-model-tree-observation-v127.md`; actual selected existing-tree/source/signing/load proofs required, no download or acceptance promotion.
+
+Private model selection projections v128: `plans/amendments/2026-10-10-private-model-selection-projections-v128.md`; actual selected/observed source and deployment proof separate, acceptance open.
+
+Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preactive-qualification-runtime-proof-v130.md`; actual environment/probe/fixture before active, all operational/AC12 obligations open.
+
+Application offline runtime build v132: `plans/amendments/2026-10-10-application-offline-runtime-build-v132.md`; exact four setup-only source/build targets and actual offline package/environment/probe receipts, separate Python versus Bun/Node; reviewed resource ceilings are not measured compatibility. All AC remain open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.
+
+GLM source/license pins v135: `plans/amendments/2026-10-10-glm-source-license-pins-v135.md`; actual finite source blobs and held model inventory verification remain separate from deployment, no weight acquisition or AC promotion.
+
+Locked package/license receipts v136: `plans/amendments/2026-10-10-locked-package-source-license-receipts-v136.md`; finite actual acquisition phase, root-held artifacts/license evidence and noneditable isolated deployment; license/platform/deployment acceptance remains pending.
+
+Existing model-store source v139: `plans/amendments/2026-10-10-existing-model-store-selection-source-v139.md`; actual fixed root/child FD selection and source observations distinct private profile/deployment. No model acquisition or acceptance promotion.
+
+Hyperframes finite toolchain source v144: `plans/amendments/2026-10-10-hyperframes-toolchain-source-v144.md`; separate held Node/Bun source receipts, exact offline lock and native probe, no Python substitution/global install. All AC open.
+
+Memory process control re-admission v145: `plans/amendments/2026-10-10-memory-process-control-readmission-v145.md`; fresh current short status/stop proof joins original owned process, immutable deadline and revocation cleanup. All AC open.
+
+Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
+
+Lock-derived offline dependency install v147: `plans/amendments/2026-10-10-lock-export-offline-wheel-install-v147.md`; official unchanged-lock export + hash-constrained offline pip sync, exact active package receipt closure, separate actual project wheel/backend and full env probe. All AC open.
+
+Offline probe provenance v148: `plans/amendments/2026-10-10-offline-probe-environment-clarification-v148.md`; container Python is fixture evidence, not observed PM receipt. Exact official uv and unchanged lock tests distinct production toolchain proof.
