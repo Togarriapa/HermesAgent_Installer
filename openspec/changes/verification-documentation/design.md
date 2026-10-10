@@ -182,3 +182,6 @@ Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal
 
 
 Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.
+
+
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md` and `planning/typed-initial-pending-diagnostics-v232.json` govern only nine fixed initial source boundaries and exact-type safe formatting. Actor/currentness and nested account checks remain genuine; no exception contents, TTL/parser changes or source hash approvals. BD-T232.1 → VD-T232.2 remain OPEN, all AC OPEN.

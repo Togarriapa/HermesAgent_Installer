@@ -193,3 +193,6 @@ v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-
 
 
 Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`; RT-T227.1 → RT-T227.2 → RT-T227.3 → VD-T227.4 OPEN. Actual one-use fixedHTTPS/dynamic sourceCAS, preactive transform and acyclic member/recipe input digests; finite role managed plans, all pins/AC OPEN.
+
+
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.

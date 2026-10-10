@@ -3422,5 +3422,18 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "typed_initial_pending_diagnostics_v232": {
+    "contract": "planning/typed-initial-pending-diagnostics-v232.json",
+    "task_dependencies": {
+      "BD-T232.1": [
+        "BD-F02",
+        "HI-T149.1"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

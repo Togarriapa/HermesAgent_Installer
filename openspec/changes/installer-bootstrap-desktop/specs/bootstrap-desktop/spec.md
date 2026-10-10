@@ -975,3 +975,21 @@ The installer SHALL apply planning/qualification-protected-row-serializer-v224.j
 #### Scenario: Fixture has no Authentik or native task proof
 - **WHEN** only genuine fixture NSS/materialization exists
 - **THEN** no Authentik identity or runnable package is fabricated and missing task source produces an explicit incomplete outcome
+
+
+## ADDED Requirements
+
+### Requirement: Bounded initial pending stage observation
+The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json` to annotate only exact base pending failures at its fixed initial compilation source boundaries, preserving every original authority check and pending exit behavior.
+
+#### Scenario: Actor check fails before compilation begins
+- **WHEN** the current actor check at begin_install raises an exact base pending failure
+- **THEN** the safe formatter emits the fixed actor_current stage and no original exception content
+
+#### Scenario: Nested account diagnostic or hostile pending subclass
+- **WHEN** account resolution is already tagged or a pending subclass supplies arbitrary diagnostic getters
+- **THEN** the outer wrapper leaves the subclass untouched and formatting reads only the exact authorized diagnostic type with a valid catalog stage
+
+#### Scenario: Diagnostic field changed after construction
+- **WHEN** the step is non-string or absent from the finite catalog
+- **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation

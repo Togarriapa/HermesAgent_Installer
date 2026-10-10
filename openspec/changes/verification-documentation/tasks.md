@@ -220,3 +220,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 
 
 - [ ] HI-T217.1 / HI-T217.2 / VD-T217.3 (v224): Implement exact source-owned row serializer/recipe selection, genuine fixture NSS policy/catalog and strict complete indexing; verify actual native outcome and missing-route incomplete without fake Authentik/rows/source proof.
+
+
+- [ ] BD-T232.1: Source owner implements exact BootstrapPendingStepFailure and nine fixed boundaries/formatter with actor, account, redaction, subclass and malformed-field failures.
+- [ ] VD-T232.2: Review actual coherent committed diagnostic bytes under v228 and next target evidence independently; no source/acceptance promotion.
