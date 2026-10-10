@@ -523,6 +523,21 @@ def main_adopt(activation_id: str) -> int:
     signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
     try:
         listener, active_listener = receiver.receive_listener()
+        # The v191 health intent and its completion share the protected
+        # authority journal with the setup transaction.  The /run activation
+        # record remains transport/currentness evidence only.
+        from .listener_activation import RootSetupHealthIntentJournal
+        root_journal = runtime.bindings.resolve_root_journal(
+            "installer-authority-journal-v1",
+            expected_active_generation_digest=runtime.enrollment.protected_enrollment_digest,
+        )
+        health_journal = RootSetupHealthIntentJournal.from_root_journal(
+            root_journal, activation_id, receiver=receiver,
+            active_receipt=receiver.current_active_receipt(),
+        )
+        receiver.attach_health_intent_journal(health_journal)
+        service.root_authority_listener_activation_receiver = receiver
+        service.root_setup_health_intent_journal = health_journal
         if process_manager is not None:
             # This owner binds fresh active PM/source projections and the
             # receiver's retained adopted FD. Failure leaves the native worker
@@ -562,6 +577,9 @@ def main_adopt(activation_id: str) -> int:
         close_owner = getattr(owner, "close", None)
         if callable(close_owner):
             close_owner()
+        close_receiver = getattr(receiver, "close", None)
+        if callable(close_receiver):
+            close_receiver()
         authority_runtime = getattr(service, "root_authority_runtime", None)
         close_runtime = getattr(authority_runtime, "close", None)
         if callable(close_runtime):

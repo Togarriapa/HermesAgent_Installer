@@ -360,7 +360,9 @@ def _import_v180_native_support_closure() -> None:
         native_definition_composition,
         native_policy_preparation,
         native_registration_projection,
+        native_health_source,
         native_source_definitions,
+        native_worker_recipes,
         native_worker_start_recipe,
         owner_overlay_capture_schemas,
         pm_runtime,
@@ -371,7 +373,8 @@ def _import_v180_native_support_closure() -> None:
     # Keep explicit references so this remains a finite, intentional import set.
     _ = (native_assembler, native_registration_projection, native_plugins, public_registries,
          native_definition_composition, native_policy_preparation,
-         native_source_definitions, local_resource_effects, native_worker_start_recipe,
+         native_health_source, native_source_definitions, local_resource_effects,
+         native_worker_recipes, native_worker_start_recipe,
          owner_overlay_capture_schemas,
          runtime_root_custody,
          native_plugin_loader, native_boundary_patch, native_plugin_bindings,
@@ -665,6 +668,7 @@ def run_root_setup_action(
                 )
                 supervisor = None
                 active_listener_receipt = None
+                functional_health_witness = None
                 try:
                     supervisor = RootAuthorityListenerActivationSupervisor.from_root_setup(
                         session.selected_installation, endpoint_custodian,
@@ -674,29 +678,51 @@ def run_root_setup_action(
                     active_listener_receipt = supervisor.begin_active_listener_activation(
                         endpoint.receipt_handle, current_publication,
                     )
+                    session._health_activation_supervisor = supervisor
+                    from .authority.listener_activation import RootSetupHealthIntentIssuer
+                    health_issuer = RootSetupHealthIntentIssuer.from_current_root_setup(
+                        session.selected_installation, session._factory._release,
+                        session._factory._actor, supervisor,
+                    )
+                    health_intent = health_issuer.issue_after_activation(
+                        endpoint.receipt_handle, current_publication, active_listener_receipt,
+                    )
+                    completion_handle, _completion_sha256 = supervisor.request_functional_health(
+                        health_intent,
+                    )
+                    functional_health_witness = session.record_functional_health(
+                        active_receipt, (health_intent.intent_handle, completion_handle),
+                    )
                 except ListenerActivationUnavailable as exc:
                     raise BootstrapEnrollmentPending(
-                        f"committed active enrollment awaits supervised listener adoption ({type(exc).__name__})"
+                        f"committed active enrollment awaits daemon-owned functional health ({type(exc).__name__})"
                     ) from None
                 except (OSError, RuntimeError, ValueError) as exc:
                     raise BootstrapEnrollmentPending(
-                        f"committed active enrollment awaits supervised listener adoption ({type(exc).__name__})"
+                        f"committed active enrollment awaits daemon-owned functional health ({type(exc).__name__})"
                     ) from None
                 finally:
                     if supervisor is not None:
                         supervisor.close()
+                    if hasattr(session, "_health_activation_supervisor"):
+                        del session._health_activation_supervisor
 
                 # Functional health is a distinct protected receipt phase; an
-                # ACK proves listener custody only and cannot enable capability.
+                # authenticated ACK is still insufficient without the actual
+                # completion row re-read by the original setup actor.
+                if functional_health_witness is None:
+                    raise BootstrapEnrollmentPending(
+                        "daemon returned no current committed functional-health witness")
                 return _result(
-                    selected_action, RootSetupState.PENDING, "health",
-                    "Active enrollment and supervised listener ACK are current; functional-health observation remains required.",
-                    resume_allowed=True, session_id=session._handle.session_id,
+                    selected_action, RootSetupState.ACTIVE, "health",
+                    "Active enrollment, supervised listener, and daemon-owned functional-health witness are current.",
+                    session_id=session._handle.session_id,
                     transaction_ref=_report_ref(active_receipt.transaction_handle),
                     generation_ref=_report_ref(active_receipt.generation_id),
                     receipt_refs=(_report_ref(active_receipt.provision_receipt_handle),
                                   _report_ref(publication.receipt_handle),
-                                  _report_ref(active_listener_receipt.activation_id)),
+                                  _report_ref(active_listener_receipt.activation_id),
+                                  _report_ref(functional_health_witness.body["health_receipt_handle"])),
                 )
         except BootstrapEnrollmentPending as exc:
             failure_refs = [_report_ref(receipt.provision_receipt_handle)]

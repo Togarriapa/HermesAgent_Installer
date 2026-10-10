@@ -9995,9 +9995,34 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("actual Hermes registration module receipts are unavailable")
         self._factory._actor.verify_current(self._factory._release)
 
-    def record_functional_health(self, _active_receipt: EnrollmentReceipt, _health_receipt: Any) -> None:
+    def record_functional_health(self, active_receipt: EnrollmentReceipt,
+                                 completion_reference: Any) -> Any:
+        """Resolve the actual daemon journal witness; never trust a caller result."""
         self._check_live()
-        raise BootstrapEnrollmentPending("functional health requires the root-native health observer receipt consumer")
+        if (type(active_receipt) is not EnrollmentReceipt
+                or not isinstance(completion_reference, tuple)
+                or len(completion_reference) != 2
+                or any(not isinstance(item, str) for item in completion_reference)):
+            raise BootstrapEnrollmentPending("functional health requires an opaque intent/completion reference")
+        try:
+            current = self._resolve_current_active_enrollment()
+            committed = self._transaction.verify_committed_receipt(current, self._authorization)
+            if (active_receipt.transaction_handle != current.transaction_handle
+                    or active_receipt.generation_id != current.generation_id
+                    or active_receipt.generation_digest != current.generation_digest
+                    or active_receipt.state != "committed"
+                    or committed.generation_id != active_receipt.generation_id):
+                raise ValueError("functional health reference is for another active commit")
+            from .listener_activation import RootSetupFunctionalHealthWitnessResolver
+            resolver = RootSetupFunctionalHealthWitnessResolver.from_current_root_setup(
+                self.selected_installation, self._factory._release, self._factory._actor,
+            )
+            return resolver.resolve_current_completed_intent(*completion_reference)
+        except BootstrapEnrollmentPending:
+            raise
+        except Exception as exc:
+            raise BootstrapEnrollmentPending(
+                f"functional-health completion is not current ({type(exc).__name__})") from None
 
     def _make_source_provisioner(self) -> Any:
         from ..hermes_source import PinnedHermesSourceProvisioner
