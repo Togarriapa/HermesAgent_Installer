@@ -1349,6 +1349,8 @@ class SourceObserverRegistry:
             if (getattr(consent, "selection_handle", None)
                     != observation.private_consent_selection_handle
                     or getattr(consent, "input_observation_handle", None)
+                    != observation.proof_nonce
+                    or getattr(consent, "retained_input_selection_handle", None)
                     != selected_execution.selection_handle
                     or getattr(consent, "profile_id", None) != selected_execution.profile_id
                     or getattr(consent, "service_generation_digest", None)
