@@ -112,3 +112,10 @@ Implement actual one-use fixedHTTPS setup acquisition/dynamic sourceCAS, existin
 ## Official Desktop ws type repair v229
 
 Add exact MIT @types/ws8.18.2 as separately reviewed types-only auxiliarytoolchain/workspace projection under `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; original source/lock and runtimews unchanged. Actual ARM64 original compiler/nativeAppDir effects remain required; tasks OPEN.
+
+
+## v234 Gateway digests and owned cleanup
+
+v234 corrects actual Gateway digest circularity and provides cleanup-only retained ownership after lease expiry/revocation; scope and ports unchanged.
+
+Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` and `planning/gateway-digests-owned-network-cleanup-v234.json`; all AC OPEN.

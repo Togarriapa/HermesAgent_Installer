@@ -120,3 +120,10 @@ Exact `planning/preactive-xpra-acquisition-build-v227.json` separates quarantine
 ## Types-only auxiliary workspace input v229
 
 Use exact `planning/official-desktop-ws-types-repair-v229.json` source artifact/member/dependency proofs through existing v226 current native registry. Originalrootlock@types/node22.20.1 satisfies wildcard withoutfetch. Disposable node_modules/@types/ws injection is explicitly digest-bound auxiliary projection, never fictional original lock membership, fake declarations or runtime substitution. Actual original compiler and nativeAppDir qualification remain separate.
+
+
+## v234 Gateway digests and owned cleanup
+
+Use the closed Gateway field sets and canonical acyclic projections in the v234 JSON. Reserve cleanup journal intent before namespace creation; retain creator placeholder/mount/namespace facts. Cleanup uses original sealed custody, fresh signed nft readback and zero owned members without active verification or renewal. Partial mismatches remain journaled recovery-pending.
+
+Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` and `planning/gateway-digests-owned-network-cleanup-v234.json`; all AC OPEN.

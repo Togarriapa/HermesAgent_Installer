@@ -450,3 +450,17 @@ The installer SHALL implement `planning/official-desktop-ws-types-repair-v229.js
 #### Scenario: Exact declarations applied
 - **WHEN** current auxiliary receipt and original dependency/compiler/source joins materialize the exact fixed declarations in an owned disposable workspace
 - **THEN** the owner SHALL verify the original actual ARM64 typecheck and record the distinct auxiliary projection before proceeding to required native/AppDir qualification
+
+
+## ADDED Requirements
+
+### Requirement: Gateway acyclic digest and owned expired-lease cleanup
+The implementation SHALL apply the exact v234 Gateway member/config/output digest split and SHALL use original sealed cleanup custody with durable pre-effect reservation, current ownership and fresh signed nft evidence for removal after expiry or revocation. It SHALL NOT renew active authority or remove foreign resources.
+
+#### Scenario: Expired owned network is removed safely
+- **WHEN** original live custody and journal/namespace/mount/placeholder identities remain exact, owned members are empty, and fresh signed nft readback proves the original table
+- **THEN** cleanup SHALL delete only the owned table/mount/placeholder with durable phase updates without requiring an unexpired active lease
+
+#### Scenario: Missing cleanup proof or cyclic Gateway digest
+- **WHEN** cleanup ownership/tool evidence is missing or Gateway config embeds a recipe-derived legacy input closure
+- **THEN** the implementation SHALL deny the affected effect and retain recovery-pending journal state where applicable

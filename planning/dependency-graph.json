@@ -3439,5 +3439,21 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "gateway_digests_owned_network_cleanup_v234": {
+    "contract": "planning/gateway-digests-owned-network-cleanup-v234.json",
+    "tasks": {
+      "RT-T234.1": [
+        "RT-T227.3"
+      ],
+      "RT-T234.2": [
+        "RT-T225.2"
+      ],
+      "VD-T234.3": [
+        "RT-T234.1",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

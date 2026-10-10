@@ -196,3 +196,6 @@ Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xp
 
 
 Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; RT-T229.1 → RT-T229.2 → VD-T229.3 OPEN. Exact separately reviewed types-only auxiliary artifact and owned workspace projection, unchanged originalsource/lock; actualARM64compiler/native/AppDir/AC separate.
+
+
+v234: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` / `planning/gateway-digests-owned-network-cleanup-v234.json`; RT-T234.1 → RT-T234.2 → VD-T234.3 OPEN. Gateway acyclic field correction and original-owned journaled cleanup after expiry/revocation; no new pins/all AC OPEN.
