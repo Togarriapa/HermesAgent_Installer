@@ -685,6 +685,7 @@ class RootSetupSessionStore:
         self.authority_path = authority_path
         self._instance_seal = secrets.token_hex(32)
         self._sessions: dict[str, _LiveSetupSession] = {}
+        self._selected_startup_intent_journal: Any | None = None
 
     def begin_from_initial_publication(self, handoff_handle: str) -> RootSetupSessionHandle:
         """Adopt the published stage-zero choices into a new live setup session.
@@ -833,10 +834,32 @@ class RootSetupSessionStore:
         if (not isinstance(session_handle, RootSetupSessionHandle)
                 or not secrets.compare_digest(session_handle._instance_seal, self._instance_seal)):
             raise BootstrapEnrollmentError("root setup session handle is not owned by this store instance")
-        live = self._sessions.pop(session_handle.session_id, None)
+        live = self._sessions.get(session_handle.session_id)
         if live is None or not secrets.compare_digest(live.instance_seal, session_handle._instance_seal):
             raise BootstrapEnrollmentError("root setup session is not live in this store")
+        journal = self._selected_startup_intent_journal
+        if journal is not None:
+            # Cancellation is durably committed before the PIDFD or live
+            # membership is released.  A failed journal write keeps the
+            # session live so callers cannot accidentally revoke only half
+            # of the delegated authority.
+            journal.cancel_for_setup_session(session_handle)
+        self._sessions.pop(session_handle.session_id, None)
         os.close(live.pidfd)
+
+    def attach_selected_startup_intent_journal(self, journal: Any) -> None:
+        """Attach the exact issuer-owned journal used by this live setup store."""
+        from .selected_startup_intents import RootSetupSelectedStartupIntentJournal
+        if (type(journal) is not RootSetupSelectedStartupIntentJournal
+                or journal.issuer is None
+                or journal.issuer.binding._session._factory.session_store is not self
+                or journal.issuer.session_store is not self):
+            raise BootstrapEnrollmentError(
+                "selected startup intent journal is not owned by this setup session store")
+        if (self._selected_startup_intent_journal is not None
+                and self._selected_startup_intent_journal is not journal):
+            raise BootstrapEnrollmentError("setup store already owns another startup intent journal")
+        self._selected_startup_intent_journal = journal
 
     def record_receipt(self, session_handle: RootSetupSessionHandle,
                        receipt: EnrollmentReceipt) -> None:
